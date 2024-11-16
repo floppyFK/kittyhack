@@ -1,0 +1,19 @@
+[Settings]
+# See https://en.wikipedia.org/wiki/List_of_tz_database_time_zones for valid timezone strings
+timezone = Europe/Berlin
+language = de
+date_format = dd.mm.yyyy
+database_path = ../kittyflap.db
+mouse_threshold = 75.0
+
+# How many images shall be displayed at the same time
+# higher numbers may have an significant impact on the performance
+elements_per_page = 20
+
+# If simulate_kittyflap is set to 'True', the actions which require the Kittyflap
+# hardware, will be simulated
+simulate_kittyflap = False
+
+# Possible values for loglevel:
+# DEBUG, INFO, WARN, ERROR, CRITICAL
+loglevel = INFO

@@ -1,0 +1,6 @@
+__pycache__/
+kittyhack.log
+*.db
+.venv/
+*.po~
+config.ini

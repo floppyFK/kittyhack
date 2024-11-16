@@ -1,0 +1,15 @@
+[Unit]
+Description=KittyHack WebGUI for Kittyflap
+After=network.target
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=/root/kittyhack
+ExecStart=/root/kittyhack/.venv/bin/shiny run --host=0.0.0.0 --port=80
+Environment="PATH=/root/kittyhack/.venv/bin:$PATH"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

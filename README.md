@@ -43,6 +43,7 @@ The following features will be implemented soon:
   ![kittyflap router configuration](doc/kittyflap-hostname.png)
 
 ### Instructions
+The setup is quite simple:
 
 1. **Establish SSH Access**  
    Open a terminal and connect via SSH:
@@ -51,45 +52,20 @@ The following features will be implemented soon:
    ```
    Default password: `kittyflap`  
 
-2. **Switch to Root Permissions**
+2. **Run the setup script on the Kittyflap**
    ```bash
-   sudo su
+   curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | sudo bash
    ```
+   You can choose between two options:
+   - **install**: Runs the full setup and disables unwanted services on the kittyflap (recommended)
+   - **update**: Runs only the update (or the initial installation, if not yet done) of the KittyHack application. No system configuration will be changed.
 
-3. **Create Directory**
-   ```bash
-   mkdir /root/kittyhack
-   cd /root/kittyhack
-   ```
-
-4. **Clone Git Repository**
-   ```bash
-   git clone https://github.com/floppyFK/kittyhack.git .
-   ```
-
-5. **Create Python Virtual Environment**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   ```
-
-6. **Install Dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-7. **Set up Kittyhack as a Service**
-   ```bash
-   cp setup/kittyhack.service /etc/systemd/system/kittyhack.service
-   systemctl daemon-reload
-   systemctl enable kittyhack.service
-   systemctl start kittyhack.service
-   ```
+   That's it!
 
 ### Language Settings
 By default, the language is set to English. You can adjust the configuration in the web interface or pre-load the German configuration file:
 ```bash
-cp config.ini.sample_DE config.ini
+sudo cp /root/kittyhack/config.ini.sample_DE /root/kittyhack/config.ini
 ```
 
 ### Access the Kittyhack Web Interface
@@ -100,6 +76,13 @@ Open the Kittyflap's IP address in your browser:
 >⚠️ Since the connection is unencrypted, the browser will display a warning. This connection is generally safe within the local network, as long as you don't enable remote access to the Kittyflap via your router. For a secure connection, additional measures like setting up a reverse proxy can be taken.
 
 >⚠️ To ensure Kittyhack is always reachable at the same IP address, it is recommended to assign a static IP address in your router.
+
+### Updates
+To check for updates just run the setup script again, as described above.  
+You can also start it with the argument `update` to directly run the update:
+```bash
+curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | sudo bash -s update
+```
 
 ---
 
@@ -145,6 +128,7 @@ Folgende Features werden demnächst implementiert:
   ![kittyflap router configuration](doc/kittyflap-hostname.png)
 
 ### Anleitung
+Die Installation ist kinderleicht:
 
 1. **SSH-Zugriff herstellen**  
    Öffne ein Terminal und verbinde dich per SSH:
@@ -153,45 +137,20 @@ Folgende Features werden demnächst implementiert:
    ```
    Standardpasswort: `kittyflap`  
 
-2. **Wechsel zu Root-Rechten**
+2. **Das Setup Script auf der Kittyflap ausführen**
    ```bash
-   sudo su
+   curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | sudo bash
    ```
+   Du hast die Auswahl zwischen zwei Optionen:
+   - **install**: Führt das komplette Setup aus, inklusive stoppen und entfernen von ungewollten Services auf der Kittyflap (empfohlen)
+   - **update**: Führt nur das Update (oder die initiale Installation, falls noch nicht geschehen) der KittyHack Applikation aus. An der bestehenden Systemkonfiguration wird nichts geändert.
 
-3. **Verzeichnis erstellen**
-   ```bash
-   mkdir /root/kittyhack
-   cd /root/kittyhack
-   ```
-
-4. **GIT-Repository klonen**
-   ```bash
-   git clone https://github.com/floppyFK/kittyhack.git .
-   ```
-
-5. **Python Virtual Environment erstellen**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   ```
-
-6. **Abhängigkeiten installieren**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-7. **Kittyhack als Service einrichten**
-   ```bash
-   cp setup/kittyhack.service /etc/systemd/system/kittyhack.service
-   systemctl daemon-reload
-   systemctl enable kittyhack.service
-   systemctl start kittyhack.service
-   ```
+   Das war's!
 
 ### Spracheinstellungen
 Standardmäßig ist die Sprache auf Englisch eingestellt. Du kannst die Konfiguration entweder im Webinterface anpassen oder die deutsche Konfigurationsdatei vorab laden:
 ```bash
-cp config.ini.sample_DE config.ini
+sudo cp /root/kittyhack/config.ini.sample_DE /root/kittyhack/config.ini
 ```
 
 ### Zugriff auf das Kittyhack Webinterface
@@ -202,3 +161,10 @@ Rufe die IP-Adresse der Kittyflap in deinem Browser auf:
 >⚠️ Da die Verbindung nicht verschlüsselt ist, wird der Browser eine Warnung anzeigen. Diese Verbindung ist innerhalb des lokalen Netzwerks in der Regel sicher, solange du keinen Fernzugriff auf die Kittyflap über deinen Router freigibst. Für eine sichere Verbindung können zusätzliche Maßnahmen wie ein Reverse-Proxy eingerichtet werden.
 
 >⚠️ Damit Kittyhack immer unter der selben IP Adresse erreichbar ist, empfiehlt es sich, im Router eine statische IP Adresse zu vergeben.
+
+### Updates
+Um nach Updates zu suchen, führe einfach das Setup Script wie oben beschrieben nochmal aus.  
+Du kannst das Script auch mit dem Argument `update` starten, um direkt das Update auszuführen:
+```bash
+curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | sudo bash -s update
+```

@@ -54,7 +54,7 @@ The setup is quite simple:
 
 2. **Run the setup script on the Kittyflap**
    ```bash
-   curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | sh
+   curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | sudo bash
    ```
    You can choose between two options:
    - **install**: Runs the full setup and disables unwanted services on the kittyflap (recommended)
@@ -81,7 +81,7 @@ Open the Kittyflap's IP address in your browser:
 To check for updates just run the setup script again, as described above.  
 You can also start it with the argument `update` to directly run the update:
 ```bash
-curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | bash -s update
+curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | sudo bash -s update
 ```
 
 ---

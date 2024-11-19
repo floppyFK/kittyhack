@@ -139,7 +139,7 @@ Die Installation ist kinderleicht:
 
 2. **Das Setup Script auf der Kittyflap ausführen**
    ```bash
-   curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | sh
+   curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | sudo bash
    ```
    Du hast die Auswahl zwischen zwei Optionen:
    - **install**: Führt das komplette Setup aus, inklusive stoppen und entfernen von ungewollten Services auf der Kittyflap (empfohlen)
@@ -166,5 +166,5 @@ Rufe die IP-Adresse der Kittyflap in deinem Browser auf:
 Um nach Updates zu suchen, führe einfach das Setup Script wie oben beschrieben nochmal aus.  
 Du kannst das Script auch mit dem Argument `update` starten, um direkt das Update auszuführen:
 ```bash
-curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | bash -s update
+curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | sudo bash -s update
 ```

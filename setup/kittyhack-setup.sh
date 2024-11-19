@@ -251,7 +251,7 @@ EOF
             install_kittyhack
             break
             ;;
-        q)
+        q|"")
             echo -e "${YELLOW}Quitting installation.${NC}"
             exit 0
             ;;

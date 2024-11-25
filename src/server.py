@@ -1,6 +1,6 @@
 import pandas as pd
-import sqlite3
 from datetime import datetime, timedelta
+import time as tm
 from shiny import render, ui, reactive
 import logging
 from logging.handlers import RotatingFileHandler
@@ -8,32 +8,38 @@ import base64
 from zoneinfo import ZoneInfo
 from faicons import icon_svg
 import math
+import threading
 from src.helper import *
 from src.database import *
 from src.system import *
 
 # LOGFILE SETUP
-LOGFILE = "kittyhack.log"
-# Convert the log level string to the corresponding logging level constant
+# Convert the log level string from the configuration to the corresponding logging level constant
 loglevel = logging._nameToLevel.get(CONFIG['LOGLEVEL'], logging.INFO)
 
-# Create a rotating file handler
-handler = RotatingFileHandler(LOGFILE, maxBytes=10*1024*1024, backupCount=5)  # 10 MB per file, keep 5 backups
+# Create a rotating file handler for logging
+# This handler will create log files with a maximum size of 10 MB each and keep up to 5 backup files
+handler = RotatingFileHandler(LOGFILE, maxBytes=10*1024*1024, backupCount=5)
+
+# Define the format for log messages
 formatter = logging.Formatter('%(asctime)s.%(msecs)d [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
 handler.setFormatter(formatter)
+
+# Get the root logger and set its level and handler
 logger = logging.getLogger()
 logger.setLevel(loglevel)
 logger.addHandler(handler)
 
-# Prepare gettext for translations
+# Prepare gettext for translations based on the configured language
 set_language(CONFIG['LANGUAGE'])
 
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
-logging.info(
-    f"Read config.ini: timezone={CONFIG['TIMEZONE']}, date_format={CONFIG['DATE_FORMAT']} database_path={CONFIG['DATABASE_PATH']}, "
-    f"simulate_kittyflap={CONFIG['SIMULATE_KITTYFLAP']}, mouse_threshold={CONFIG['MOUSE_THRESHOLD']}, "
-    f"elements_per_page={CONFIG['ELEMENTS_PER_PAGE']} loglevel={loglevel}"
-)
+logging.info("Application has started successfully.")
+
+# Log all configuration values from CONFIG dictionary
+logging.info("Configuration values:")
+for key, value in CONFIG.items():
+    logging.info(f"{key}={value}")
 
 # Validate timezone
 try:
@@ -42,36 +48,101 @@ except Exception:
     logging.error(f"Unknown timezone '{CONFIG['TIMEZONE']}'. Falling back to UTC.")
     local_timezone = ZoneInfo('UTC')
 
-def connect_to_db():
-    conn = sqlite3.connect(CONFIG['DATABASE_PATH'])
-    return conn
+# Check, if the kittyhack database file exists. If not, create it.
+if not os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
+    logging.info(f"Database '{CONFIG['KITTYHACK_DATABASE_PATH']}' not found. Creating it...")
+    create_kittyhack_photo_table(CONFIG['KITTYHACK_DATABASE_PATH'])
+
+# Background task in a separate thread
+def start_background_task():
+    def run_periodically():
+        while True:
+            logging.info(f"[TRIGGER: background task] Check and transfer new photos from kittyflap db to kittyhack db")
+            db_duplicate_photos(src_database=CONFIG['DATABASE_PATH'],
+                                dst_database=CONFIG['KITTYHACK_DATABASE_PATH'],
+                                dst_max_photos=CONFIG['MAX_PHOTOS_COUNT']
+            )
+            logging.info("[TRIGGER: background task] Check and transfer done")
+
+            # Perform VACUUM only once a day
+            last_vacuum_date = datetime.now().date()
+            if last_vacuum_date != getattr(run_periodically, 'last_vacuum_date', None):
+                logging.info("[TRIGGER: background task] VACUUM the kittyhack database")
+                write_stmt_to_database(CONFIG['KITTYHACK_DATABASE_PATH'], "VACUUM")
+                run_periodically.last_vacuum_date = last_vacuum_date
+            tm.sleep(CONFIG['PERIODIC_JOBS_INTERVAL'])
+
+    thread = threading.Thread(target=run_periodically, daemon=True)
+    thread.start()
+
+# Start the background task
+start_background_task()
 
 # The main server application
 def server(input, output, session):
+
+    # Create a reactive trigger
+    reload_trigger = reactive.Value(0)
+
+    # List of deleted photo IDs
+    deleted_ids = []
+
+    @reactive.Effect
+    def immediately_sync_photos():
+        logging.info("[TRIGGER: site load] Check and transfer new photos from kittyflap db to kittyhack db")
+        db_duplicate_photos(src_database=CONFIG['DATABASE_PATH'],
+                            dst_database=CONFIG['KITTYHACK_DATABASE_PATH'],
+                            dst_max_photos=CONFIG['MAX_PHOTOS_COUNT']
+        )
+        logging.info("[TRIGGER: site load] Check and transfer done")
+
     @output
     @render.ui
     def ui_photos_date():
+        """
+        Creates a UI component for selecting and filtering photos by date.
+
+        The UI component includes:
+        - A date selector with decrement and increment buttons.
+        - A "Today" button to quickly select the current date.
+        - Switches to filter photos to show only detected cats or mice.
+
+        Returns:
+            uiDateBar (ui.div): A UI div element containing the date selection and filtering controls.
+        """
         uiDateBar = ui.div(
-                ui.row(
-                    ui.div(button_decrement := ui.input_action_button("button_decrement", "", icon=icon_svg("angle-left"), class_="btn-date-control"), class_="col-auto"),
-                    ui.div(date := ui.input_date("date_selector", "", format=CONFIG['DATE_FORMAT']), class_="col-auto"),
-                    ui.div(button_increment := ui.input_action_button("button_increment", "", icon=icon_svg("angle-right"), class_="btn-date-control"), class_="col-auto"),
-                    ui.div(button_today := ui.input_action_button("button_today", _("Today"), icon=icon_svg("calendar-day"), class_="btn-date-filter"), class_="col-auto"),
-                    class_="d-flex justify-content-center align-items-center"  # Centers elements horizontally
+            ui.row(
+                ui.div(
+                    ui.div(button_decrement := ui.input_action_button("button_decrement", "", icon=icon_svg("angle-left"), class_="btn-date-control"), class_="col-auto px-1"),
+                    ui.div(date := ui.input_date("date_selector", "", format=CONFIG['DATE_FORMAT']), class_="col-auto px-1"),
+                    ui.div(button_increment := ui.input_action_button("button_increment", "", icon=icon_svg("angle-right"), class_="btn-date-control"), class_="col-auto px-1"),
+                    class_="d-flex justify-content-center align-items-center flex-nowrap"
                 ),
-                ui.br(),
-                ui.row(
-                    ui.div(button_cat_only := ui.input_switch("button_cat_only", _("Show detected cats only")), class_="col-auto btn-date-filter"),
-                    ui.div(button_mouse_only := ui.input_switch("button_mouse_only", _("Show detected mice only")), class_="col-auto btn-date-filter"),
-                    class_="d-flex justify-content-center align-items-center"  # Centers elements horizontally
-                ),
-                class_="container"  # Adds centering within a smaller container
+                ui.div(button_today := ui.input_action_button("button_today", _("Today"), icon=icon_svg("calendar-day"), class_="btn-date-filter"), class_="col-auto px-1"),
+                ui.div(button_reload := ui.input_action_button("button_reload", "", icon=icon_svg("rotate"), class_="btn-date-filter"), class_="col-auto px-1"),
+                class_="d-flex justify-content-center align-items-center"  # Centers elements horizontally and prevents wrapping
+            ),
+            ui.br(),
+            ui.row(
+                ui.div(button_cat_only := ui.input_switch("button_cat_only", _("Show detected cats only")), class_="col-auto btn-date-filter px-1"),
+                ui.div(button_mouse_only := ui.input_switch("button_mouse_only", _("Show detected mice only")), class_="col-auto btn-date-filter px-1"),
+                class_="d-flex justify-content-center align-items-center"  # Centers elements horizontally
+            ),
+            class_="container"  # Adds centering within a smaller container
             )
         return uiDateBar
 
     @reactive.Effect
     @reactive.event(input.button_decrement, ignore_none=True)
     def dec_ui_photos_date():
+        """
+        Decrease the date in the UI date selector by one day.
+        This function retrieves the current date from the input date selector,
+        decreases it by one day, and updates the date input using the session's
+        send_input_message method.
+        Returns:
+            None
+        """
         # Get the current date from the input
         current_date = input.date_selector()
         
@@ -80,10 +151,19 @@ def server(input, output, session):
             new_date = pd.to_datetime(current_date).date() - timedelta(days=1)
             # Update the date input using session.send_input_message
             session.send_input_message("date_selector", {"value": new_date.strftime("%Y-%m-%d")})
+            #reload_trigger.set(reload_trigger.get() + 1)
 
     @reactive.Effect
     @reactive.event(input.button_increment, ignore_none=True)
     def inc_ui_photos_date():
+        """
+        Increments the date selected in the UI by one day.
+        This function retrieves the current date from a date selector input,
+        increments it by one day, and updates the date selector input with
+        the new date.
+        Returns:
+            None
+        """
         # Get the current date from the input
         current_date = input.date_selector()
         
@@ -92,6 +172,7 @@ def server(input, output, session):
             new_date = pd.to_datetime(current_date).date() + timedelta(days=1)
             # Update the date input using session.send_input_message
             session.send_input_message("date_selector", {"value": new_date.strftime("%Y-%m-%d")})
+            #reload_trigger.set(reload_trigger.get() + 1)
 
     @reactive.Effect
     @reactive.event(input.button_today, ignore_none=True)
@@ -99,6 +180,7 @@ def server(input, output, session):
         # Get the current date
         now = datetime.now()
         session.send_input_message("date_selector", {"value": now.strftime("%Y-%m-%d")})
+        #reload_trigger.set(reload_trigger.get() + 1)
     
     @output
     @render.ui
@@ -106,7 +188,7 @@ def server(input, output, session):
         ui_tabs = []
         date_start = format_date_minmax(input.date_selector(), True)
         date_end = format_date_minmax(input.date_selector(), False)
-        df_photo_ids = db_get_photos(CONFIG['DATABASE_PATH'], ReturnDataPhotosDB.only_ids, date_start, date_end, input.button_cat_only(), input.button_mouse_only(), CONFIG['MOUSE_THRESHOLD'])
+        df_photo_ids = db_get_photos(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataPhotosDB.only_ids, date_start, date_end, input.button_cat_only(), input.button_mouse_only(), CONFIG['MOUSE_THRESHOLD'])
         try:
             data_elements_count = df_photo_ids.shape[0]
         except:
@@ -122,6 +204,7 @@ def server(input, output, session):
 
     @output
     @render.ui
+    @reactive.event(input.button_reload, input.date_selector, input.ui_photos_cards_tabs, input.button_mouse_only, input.button_cat_only, reload_trigger, ignore_none=True)
     def ui_photos_cards():
         ui_cards = []
 
@@ -132,7 +215,7 @@ def server(input, output, session):
         date_end = format_date_minmax(input.date_selector(), False)
         page_index = int(input.ui_photos_cards_tabs()) - 1
         df_photos = db_get_photos(
-            CONFIG['DATABASE_PATH'],
+            CONFIG['KITTYHACK_DATABASE_PATH'],
             ReturnDataPhotosDB.all,
             date_start,
             date_end,
@@ -177,15 +260,40 @@ def server(input, output, session):
                 
                 ui_cards.append(
                          ui.card(
-                            ui.card_header(photo_timestamp),
+                            ui.card_header(f"{photo_timestamp} | {data_row['id']}"),
                             ui.HTML(img_html),
                             ui.card_footer(
-                                _("Mouse probability: {:.1f}% | Cat: {}").format(mouse_probability, cat_name)
+                                ui.div(
+                                    ui.HTML(_("Mouse probability: {:.1f}% | Cat: {}").format(mouse_probability, cat_name)),
+                                    ui.input_action_button(f"delete_photo_{data_row['id']}", "", icon=icon_svg("trash"), class_="btn-delete-photo",)
+                                )
                             ),
                             full_screen=True,
                             class_="image-container" + (" image-container-alert" if mouse_probability >= CONFIG['MOUSE_THRESHOLD'] else "")
                         )
-                     )
+                )
+            
+            delete_buttons = [f"delete_photo_{id}" for id in df_photos['id']]
+
+            @reactive.Effect
+            @reactive.event(*[input[btn] for btn in delete_buttons], ignore_none=True)
+            def delete_photo():
+                for btn in delete_buttons:
+                    if input[btn]() and btn not in deleted_ids:
+                        # Add the ID to the list of deleted IDs
+                        deleted_ids.append(btn)
+
+                        photo_id = int(btn.replace("delete_photo_", ""))
+                        result = delete_photo_by_id(CONFIG['KITTYHACK_DATABASE_PATH'], photo_id)
+                        if result.success:
+                            ui.notification_show(_(f"Photo {photo_id} deleted successfully."), duration=5, type="message")
+                        else:
+                            ui.notification_show(_("An error occurred while deleting the photo: {}").format(result.message), duration=5, type="error")
+
+                        # Reload the images by updating button_reload
+                        reload_trigger.set(reload_trigger.get() + 1)
+                        break
+
             return ui.layout_columns(*ui_cards)
 
     @output
@@ -221,6 +329,8 @@ def server(input, output, session):
                 ui.column(12, numElementsPerPage := ui.input_numeric("numElementsPerPage", _("Maximum pictures per page"), CONFIG['ELEMENTS_PER_PAGE'], min=1)),
                 ui.column(12, ui.help_text(_("NOTE: Too many pictures per page could slow down the performance drastically!"))),
                 ui.br(),
+                ui.column(12, numMaxPhotosCount := ui.input_numeric("numMaxPhotosCount", _("Maximum number of photos to retain in the database"), CONFIG['MAX_PHOTOS_COUNT'], min=100)),
+                ui.br(),
                 ui.column(12, txtLoglevel := ui.input_select("txtLoglevel", "Loglevel", {"DEBUG": "DEBUG", "INFO": "INFO", "WARN": "WARN", "ERROR": "ERROR", "CRITICAL": "CRITICAL"}, selected=CONFIG['LOGLEVEL'])),
                 ui.input_action_button("bSaveKittyhackConfig", _("Save Kittyhack Config")),
                 ui.br(),
@@ -236,42 +346,21 @@ def server(input, output, session):
     def on_save_kittyflap_config():
         simulate_kittyflap = CONFIG['SIMULATE_KITTYFLAP'].lower() == "true"
         success = systemctl("stop", "kwork", simulate_kittyflap)
-        if success:
-            # prepare the data into a dictionary
-            data = {
-                "updated_at": [datetime.now(ZoneInfo("UTC"))],
-                "acceptance_rate": [input.sldAcceptanceRate()],
-                "accept_all_cats": [input.btnAcceptAllCats()],
-                "detect_prey": [input.btnDetectPrey()],
-                "cat_prob_threshold": [input.sldCatProbThreshold()]
-            }
-            logging.info(f"Writing new kittyflap configuration to 'config' table: {data}")
-            
+        if success:            
             # update the database with the data from the dictionary
-            try:
-                with connect_to_db() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        UPDATE config
-                        SET 
-                            updated_at = ?,
-                            acceptance_rate = ?,
-                            accept_all_cats = ?,
-                            detect_prey = ?,
-                            cat_prob_threshold = ?
-                        WHERE id = (SELECT id FROM config LIMIT 1)
-                    """, (data["updated_at"][0], data["acceptance_rate"][0], data["accept_all_cats"][0], data["detect_prey"][0], data["cat_prob_threshold"][0]))
-                    conn.commit()
-            except Exception as e:
-                logging.error(f"An error occurred while updating the database: {e}")
-                ui.notification_show(_("An error occurred while updating the database: {}").format(e), duration=5, type="error")
-
-            else:
-                # success
-                logging.info("Kittyflap configuration updated successfully.")
+            result = db_set_config(CONFIG['DATABASE_PATH'], 
+                                   datetime.now(ZoneInfo("UTC")), 
+                                   input.sldAcceptanceRate(), 
+                                   input.btnAcceptAllCats(), 
+                                   input.btnDetectPrey(), 
+                                   input.sldCatProbThreshold())
+            if result.success:
                 ui.notification_show(_("Kittyflap configuration updated successfully."), duration=5, type="message")
+            else:
+                ui.notification_show(_("An error occurred while updating the database: {}").format(result.message), duration=5, type="error")
+
         else:
-            # stop kwork service failed
+            # Stop kwork service failed
             ui.notification_show(_("An error occurred while stopping the Kittyflap service. The changed configuration was not saved."), duration=5, type="error")
 
         # Start the kwork process again
@@ -289,6 +378,7 @@ def server(input, output, session):
         CONFIG['DATE_FORMAT'] = input.txtConfigDateformat()
         CONFIG['MOUSE_THRESHOLD'] = float(input.sldMouseThreshold())
         CONFIG['ELEMENTS_PER_PAGE'] = int(input.numElementsPerPage())
+        CONFIG['MAX_PHOTOS_COUNT'] = int(input.numMaxPhotosCount())
         CONFIG['LOGLEVEL'] = input.txtLoglevel()
 
         loglevel = logging._nameToLevel.get(input.txtLoglevel(), logging.INFO)
@@ -324,7 +414,7 @@ def server(input, output, session):
     @output
     @render.table
     def ui_table_photo():
-        df = db_get_photos(CONFIG['DATABASE_PATH'], ReturnDataPhotosDB.all_except_photos)
+        df = db_get_photos(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataPhotosDB.all_except_photos)
         return df.style.set_table_attributes('class="dataframe table shiny-table w-auto table_nobgcolor"')
     
     @output

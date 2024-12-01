@@ -14,6 +14,7 @@ app_ui = ui.page_fillable(
             ui.output_ui("ui_photos_date"),
             ui.output_ui("ui_photos_cards_nav"),
             ui.output_ui("ui_photos_cards"),
+            ui.br(),
         ),
         ui.nav_panel(
             _("Configuration"),

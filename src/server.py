@@ -22,7 +22,7 @@ loglevel = logging._nameToLevel.get(CONFIG['LOGLEVEL'], logging.INFO)
 handler = RotatingFileHandler(LOGFILE, maxBytes=10*1024*1024, backupCount=5)
 
 # Define the format for log messages
-formatter = logging.Formatter('%(asctime)s.%(msecs)d [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
+formatter = logging.Formatter('%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 handler.setFormatter(formatter)
 
 # Get the root logger and set its level and handler
@@ -57,23 +57,28 @@ if not os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
 def start_background_task():
     def run_periodically():
         while True:
-            logging.info(f"[TRIGGER: background task] Check and transfer new photos from kittyflap db to kittyhack db")
-            db_duplicate_photos(src_database=CONFIG['DATABASE_PATH'],
-                                dst_database=CONFIG['KITTYHACK_DATABASE_PATH'],
-                                dst_max_photos=CONFIG['MAX_PHOTOS_COUNT']
-            )
-            logging.info("[TRIGGER: background task] Check and transfer done")
+            sync_photos("background task")
 
             # Perform VACUUM only once a day
             last_vacuum_date = datetime.now().date()
             if last_vacuum_date != getattr(run_periodically, 'last_vacuum_date', None):
-                logging.info("[TRIGGER: background task] VACUUM the kittyhack database")
+                logging.info("[TRIGGER: background task] Start VACUUM of the kittyhack database...")
                 write_stmt_to_database(CONFIG['KITTYHACK_DATABASE_PATH'], "VACUUM")
+                logging.info("[TRIGGER: background task] VACUUM done")
                 run_periodically.last_vacuum_date = last_vacuum_date
             tm.sleep(CONFIG['PERIODIC_JOBS_INTERVAL'])
 
     thread = threading.Thread(target=run_periodically, daemon=True)
     thread.start()
+
+# Immediate sync of photos from kittyflap to kittyhack
+def sync_photos(trigger = "reload"):
+    logging.info(f"[TRIGGER: {trigger}] Check and transfer new photos from kittyflap db to kittyhack db")
+    db_duplicate_photos(src_database=CONFIG['DATABASE_PATH'],
+                        dst_database=CONFIG['KITTYHACK_DATABASE_PATH'],
+                        dst_max_photos=CONFIG['MAX_PHOTOS_COUNT']
+    )
+    logging.info(f"[TRIGGER: {trigger}] Check and transfer done")
 
 # Start the background task
 start_background_task()
@@ -88,13 +93,19 @@ def server(input, output, session):
     deleted_ids = []
 
     @reactive.Effect
-    def immediately_sync_photos():
-        logging.info("[TRIGGER: site load] Check and transfer new photos from kittyflap db to kittyhack db")
-        db_duplicate_photos(src_database=CONFIG['DATABASE_PATH'],
-                            dst_database=CONFIG['KITTYHACK_DATABASE_PATH'],
-                            dst_max_photos=CONFIG['MAX_PHOTOS_COUNT']
-        )
-        logging.info("[TRIGGER: site load] Check and transfer done")
+    def sync_photos_site_load():
+        sync_photos("site load")
+
+    @reactive.Effect
+    @reactive.event(input.button_reload)
+    def sync_photos_reload_button():
+        sync_photos("reload button")
+
+    @reactive.Effect
+    @reactive.event(input.button_today)
+    def sync_photos_reload_button():
+        sync_photos("today button")
+
 
     @output
     @render.ui
@@ -249,7 +260,14 @@ def server(input, output, session):
                     except ValueError:
                         cat_name = data_row["rfid"]
                 else:
-                    cat_name = _("No cat detected.")
+                    cat_name = ""
+
+                card_footer_mouse = f"{icon_svg('magnifying-glass')} {mouse_probability:.1f}%"
+                if cat_name:
+                    card_footer_cat = f" | {icon_svg('cat')} {cat_name}"
+                else:
+                    card_footer_cat = ""
+                
 
                 data_uri = f"data:image/jpeg;base64,{blob_picture}"
                 if blob_picture:
@@ -260,12 +278,17 @@ def server(input, output, session):
                 
                 ui_cards.append(
                          ui.card(
-                            ui.card_header(f"{photo_timestamp} | {data_row['id']}"),
+                            ui.card_header(
+                                ui.div(
+                                    ui.HTML(f"{photo_timestamp} | {data_row['id']}"),
+                                    ui.input_action_button(f"delete_photo_{data_row['id']}", "", icon=icon_svg("trash"), class_="btn-delete-photo px-1 btn-no-border", style_="float: right;"),
+                                )
+                            ),
                             ui.HTML(img_html),
                             ui.card_footer(
                                 ui.div(
-                                    ui.HTML(_("Mouse probability: {:.1f}% | Cat: {}").format(mouse_probability, cat_name)),
-                                    ui.input_action_button(f"delete_photo_{data_row['id']}", "", icon=icon_svg("trash"), class_="btn-delete-photo",)
+                                    ui.tooltip(ui.HTML(card_footer_mouse), _("Mouse probability")),
+                                    ui.HTML(card_footer_cat),
                                 )
                             ),
                             full_screen=True,
@@ -286,7 +309,7 @@ def server(input, output, session):
                         photo_id = int(btn.replace("delete_photo_", ""))
                         result = delete_photo_by_id(CONFIG['KITTYHACK_DATABASE_PATH'], photo_id)
                         if result.success:
-                            ui.notification_show(_(f"Photo {photo_id} deleted successfully."), duration=5, type="message")
+                            ui.notification_show(_("Photo {} deleted successfully.").format(photo_id), duration=5, type="message")
                         else:
                             ui.notification_show(_("An error occurred while deleting the photo: {}").format(result.message), duration=5, type="error")
 

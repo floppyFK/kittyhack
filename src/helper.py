@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 import gettext
@@ -6,8 +7,14 @@ from configupdater import ConfigUpdater
 import logging
 import os
 
-# Path to configuration and locales
+
+###### CONSTANT DEFINITIONS ######
+
+# Files
 CONFIGFILE = 'config.ini'
+LOGFILE = "kittyhack.log"
+
+# Gettext constants
 LOCALE_DIR = "locales"
 DOMAIN = "messages"
 
@@ -21,12 +28,21 @@ DEFAULT_CONFIG = {
         "language": "en",
         "date_format": "yyyy-mm-dd",
         "database_path": "../kittyflap.db",
+        "kittyhack_database_path": "./kittyhack.db",
+        "max_photos_count": "2000",
         "simulate_kittyflap": "false",
         "mouse_threshold": "70.0",
         "elements_per_page": "20",
         "loglevel": "INFO",
+        "periodic_jobs_interval": "900"
     }
 }
+
+
+@dataclass
+class Result:
+    success: bool
+    message: str
 
 def create_default_config():
     """
@@ -55,10 +71,13 @@ def load_config():
         "LANGUAGE": parser.get('Settings', 'language', fallback=DEFAULT_CONFIG['Settings']['language']),
         "DATE_FORMAT": parser.get('Settings', 'date_format', fallback=DEFAULT_CONFIG['Settings']['date_format']),
         "DATABASE_PATH": parser.get('Settings', 'database_path', fallback=DEFAULT_CONFIG['Settings']['database_path']),
+        "KITTYHACK_DATABASE_PATH": parser.get('Settings', 'kittyhack_database_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_path']),
+        "MAX_PHOTOS_COUNT": int(parser.get('Settings', 'max_photos_count', fallback=DEFAULT_CONFIG['Settings']['max_photos_count'])),
         "SIMULATE_KITTYFLAP": parser.get('Settings', 'simulate_kittyflap', fallback=DEFAULT_CONFIG['Settings']['simulate_kittyflap']),
         "MOUSE_THRESHOLD": float(parser.get('Settings', 'mouse_threshold', fallback=DEFAULT_CONFIG['Settings']['mouse_threshold'])),
         "ELEMENTS_PER_PAGE": int(parser.get('Settings', 'elements_per_page', fallback=DEFAULT_CONFIG['Settings']['elements_per_page'])),
         "LOGLEVEL": parser.get('Settings', 'loglevel', fallback=DEFAULT_CONFIG['Settings']['loglevel']),
+        "PERIODIC_JOBS_INTERVAL": int(parser.get('Settings', 'periodic_jobs_interval', fallback=DEFAULT_CONFIG['Settings']['periodic_jobs_interval']))
     }
 
 def save_config():
@@ -71,12 +90,17 @@ def save_config():
     updater.read(CONFIGFILE)
 
     settings = updater['Settings']
-    settings['language'] = CONFIG['LANGUAGE']
     settings['timezone'] = CONFIG['TIMEZONE']
+    settings['language'] = CONFIG['LANGUAGE']
     settings['date_format'] = CONFIG['DATE_FORMAT']
+    settings['database_path'] = CONFIG['DATABASE_PATH']
+    settings['kittyhack_database_path'] = CONFIG['KITTYHACK_DATABASE_PATH']
+    settings['max_photos_count'] = str(CONFIG['MAX_PHOTOS_COUNT'])
+    settings['simulate_kittyflap'] = CONFIG['SIMULATE_KITTYFLAP']
     settings['mouse_threshold'] = str(CONFIG['MOUSE_THRESHOLD'])
     settings['elements_per_page'] = str(CONFIG['ELEMENTS_PER_PAGE'])
     settings['loglevel'] = CONFIG['LOGLEVEL']
+    settings['periodic_jobs_interval'] = str(CONFIG['PERIODIC_JOBS_INTERVAL'])
 
     # Write updated configuration back to the file
     try:

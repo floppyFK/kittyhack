@@ -88,6 +88,11 @@
     vertical-align:middle;
 }
 
+.btn-no-border {
+    border-color: transparent;
+    padding: 0.1rem;
+}
+
 .table_nobgcolor {
     --bs-table-bg: transparent !important;
 }

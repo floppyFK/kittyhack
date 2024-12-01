@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-11-15 22:10+0000\n"
+"POT-Creation-Date: 2024-12-01 16:21+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,144 +17,152 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/server.py:60
+#: src/server.py:132
 msgid "Today"
 msgstr ""
 
-#: src/server.py:65
+#: src/server.py:138
 msgid "Show detected cats only"
 msgstr ""
 
-#: src/server.py:66
+#: src/server.py:139
 msgid "Show detected mice only"
 msgstr ""
 
-#: src/server.py:149
+#: src/server.py:242
 msgid "No pictures for the selected filter criteria found."
 msgstr ""
 
-#: src/server.py:170
-msgid "No cat detected."
-msgstr ""
-
-#: src/server.py:176
+#: src/server.py:276
 msgid "No picture found!"
 msgstr ""
 
-#: src/server.py:184
-msgid "Mouse probability: {:.1f}% | Cat: {}"
+#: src/server.py:290
+msgid "Mouse probability"
 msgstr ""
 
-#: src/server.py:202
+#: src/server.py:312
+msgid "Photo {} deleted successfully."
+msgstr ""
+
+#: src/server.py:314
+msgid "An error occurred while deleting the photo: {}"
+msgstr ""
+
+#: src/server.py:332
 msgid "Kittyflap configuration"
 msgstr ""
 
-#: src/server.py:203
+#: src/server.py:333
 msgid "Change the configuration of the Kittyflap"
 msgstr ""
 
-#: src/server.py:205
+#: src/server.py:335
 msgid "Accept all cats"
 msgstr ""
 
-#: src/server.py:206
+#: src/server.py:336
 msgid "Detect prey"
 msgstr ""
 
-#: src/server.py:207
+#: src/server.py:337
 msgid "Acceptance rate"
 msgstr ""
 
-#: src/server.py:208
+#: src/server.py:338
 msgid "Cat probability threshold"
 msgstr ""
 
-#: src/server.py:209
+#: src/server.py:339
 msgid "Save Kittyflap Config"
 msgstr ""
 
-#: src/server.py:211
+#: src/server.py:341
 msgid "Kittyhack configuration"
 msgstr ""
 
-#: src/server.py:212
+#: src/server.py:342
 msgid ""
 "In this section you can change the behaviour of the Kittyhack user interface"
 msgstr ""
 
-#: src/server.py:215
+#: src/server.py:345
 msgid "Timezone"
 msgstr ""
 
-#: src/server.py:216
+#: src/server.py:346
 msgid "See"
 msgstr ""
 
-#: src/server.py:216
+#: src/server.py:346
 msgid "for valid timezone strings"
 msgstr ""
 
-#: src/server.py:218
+#: src/server.py:348
 msgid "Date format"
 msgstr ""
 
-#: src/server.py:219
+#: src/server.py:349
 msgid "Mouse filter threshold"
 msgstr ""
 
-#: src/server.py:220
+#: src/server.py:350
 msgid ""
 "NOTE: This value has no impact on the mouse detection of the Kittyflap! It "
 "is only used for the filter function of the 'Show detected mouse only' "
 "button in the pictures view."
 msgstr ""
 
-#: src/server.py:222
+#: src/server.py:352
 msgid "Maximum pictures per page"
 msgstr ""
 
-#: src/server.py:223
+#: src/server.py:353
 msgid ""
 "NOTE: Too many pictures per page could slow down the performance drastically!"
 msgstr ""
 
-#: src/server.py:226
+#: src/server.py:355
+msgid "Maximum number of photos to retain in the database"
+msgstr ""
+
+#: src/server.py:358
 msgid "Save Kittyhack Config"
 msgstr ""
 
-#: src/server.py:233
+#: src/server.py:365
 msgid "ERROR: Failed to read the configuration from the kittyflap."
 msgstr ""
 
-#: src/server.py:268
-msgid "An error occurred while updating the database: {}"
-msgstr ""
-
-#: src/server.py:273
+#: src/server.py:381
 msgid "Kittyflap configuration updated successfully."
 msgstr ""
 
-#: src/server.py:276
+#: src/server.py:383
+msgid "An error occurred while updating the database: {}"
+msgstr ""
+
+#: src/server.py:387
 msgid ""
 "An error occurred while stopping the Kittyflap service. The changed "
 "configuration was not saved."
 msgstr ""
 
-#: src/server.py:281
+#: src/server.py:392
 msgid ""
 "An error occurred while starting the Kittyflap service. Please restart the "
 "Kittyflap manually by unplugging the power cable and plugging it back in."
 msgstr ""
 
-#: src/server.py:300
+#: src/server.py:412
 msgid "Kittyhack configuration updated successfully."
 msgstr ""
 
-#: src/server.py:302
+#: src/server.py:414
 msgid "Reload this website to apply the new language."
 msgstr ""
 
-#: src/server.py:304
+#: src/server.py:416
 msgid "Failed to save the Kittyhack configuration."
 msgstr ""
 
@@ -162,10 +170,10 @@ msgstr ""
 msgid "Pictures"
 msgstr ""
 
-#: src/ui.py:19
+#: src/ui.py:20
 msgid "Configuration"
 msgstr ""
 
-#: src/ui.py:23
+#: src/ui.py:24
 msgid "Debug details"
 msgstr ""

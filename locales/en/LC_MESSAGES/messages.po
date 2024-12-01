@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-11-15 22:10+0000\n"
+"POT-Creation-Date: 2024-12-01 16:21+0000\n"
 "PO-Revision-Date: 2024-11-15 19:01+0000\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -17,93 +17,97 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: src/server.py:60
+#: src/server.py:132
 msgid "Today"
 msgstr "Today"
 
-#: src/server.py:65
+#: src/server.py:138
 msgid "Show detected cats only"
 msgstr "Show detected cats only"
 
-#: src/server.py:66
+#: src/server.py:139
 msgid "Show detected mice only"
 msgstr "Show detected mice only"
 
-#: src/server.py:149
+#: src/server.py:242
 msgid "No pictures for the selected filter criteria found."
 msgstr "No pictures for the selected filter criteria found."
 
-#: src/server.py:170
-msgid "No cat detected."
-msgstr "No cat detected."
-
-#: src/server.py:176
+#: src/server.py:276
 msgid "No picture found!"
 msgstr "No picture found!"
 
-#: src/server.py:184
-msgid "Mouse probability: {:.1f}% | Cat: {}"
-msgstr "Mouse probability: {:.1f}% | Cat: {}"
+#: src/server.py:290
+msgid "Mouse probability"
+msgstr "Mouse probability"
 
-#: src/server.py:202
+#: src/server.py:312
+msgid "Photo {} deleted successfully."
+msgstr "Photo {} deleted successfully."
+
+#: src/server.py:314
+msgid "An error occurred while deleting the photo: {}"
+msgstr "An error occurred while deleting the photo: {}"
+
+#: src/server.py:332
 msgid "Kittyflap configuration"
 msgstr "Kittyflap configuration"
 
-#: src/server.py:203
+#: src/server.py:333
 msgid "Change the configuration of the Kittyflap"
 msgstr "Change the configuration of the Kittyflap"
 
-#: src/server.py:205
+#: src/server.py:335
 msgid "Accept all cats"
 msgstr "Accept all cats"
 
-#: src/server.py:206
+#: src/server.py:336
 msgid "Detect prey"
 msgstr "Detect prey"
 
-#: src/server.py:207
+#: src/server.py:337
 msgid "Acceptance rate"
 msgstr "Acceptance rate"
 
-#: src/server.py:208
+#: src/server.py:338
 msgid "Cat probability threshold"
 msgstr "Cat probability threshold"
 
-#: src/server.py:209
+#: src/server.py:339
 msgid "Save Kittyflap Config"
 msgstr "Save Kittyflap Config"
 
-#: src/server.py:211
+#: src/server.py:341
 msgid "Kittyhack configuration"
 msgstr "Kittyhack configuration"
 
-#: src/server.py:212
+#: src/server.py:342
 msgid ""
 "In this section you can change the behaviour of the Kittyhack user interface"
 msgstr ""
 "In this section you can change the behaviour of the Kittyhack user interface"
 
-#: src/server.py:215
+#: src/server.py:345
 msgid "Timezone"
 msgstr "Timezone"
 
-#: src/server.py:216
+#: src/server.py:346
 msgid "See"
 msgstr "See"
 
-#: src/server.py:216
+#: src/server.py:346
 msgid "for valid timezone strings"
 msgstr "for valid timezone strings"
 
-#: src/server.py:218
+#: src/server.py:348
 msgid "Date format"
 msgstr "Date format"
 
-#: src/server.py:219
+#: src/server.py:349
 msgid "Mouse filter threshold"
 msgstr "Mouse filter threshold"
 
-#: src/server.py:220
+#: src/server.py:350
 msgid ""
 "NOTE: This value has no impact on the mouse detection of the Kittyflap! It "
 "is only used for the filter function of the 'Show detected mouse only' "
@@ -113,33 +117,37 @@ msgstr ""
 "is only used for the filter function of the 'Show detected mouse only' "
 "button in the pictures view."
 
-#: src/server.py:222
+#: src/server.py:352
 msgid "Maximum pictures per page"
 msgstr "Maximum pictures per page"
 
-#: src/server.py:223
+#: src/server.py:353
 msgid ""
 "NOTE: Too many pictures per page could slow down the performance drastically!"
 msgstr ""
 "NOTE: Too many pictures per page could slow down the performance drastically!"
 
-#: src/server.py:226
+#: src/server.py:355
+msgid "Maximum number of photos to retain in the database"
+msgstr "Maximum number of photos to retain in the database"
+
+#: src/server.py:358
 msgid "Save Kittyhack Config"
 msgstr "Save Kittyhack Config"
 
-#: src/server.py:233
+#: src/server.py:365
 msgid "ERROR: Failed to read the configuration from the kittyflap."
 msgstr "ERROR: Failed to read the configuration from the kittyflap."
 
-#: src/server.py:268
-msgid "An error occurred while updating the database: {}"
-msgstr "An error occurred while updating the database: {}"
-
-#: src/server.py:273
+#: src/server.py:381
 msgid "Kittyflap configuration updated successfully."
 msgstr "Kittyflap configuration updated successfully."
 
-#: src/server.py:276
+#: src/server.py:383
+msgid "An error occurred while updating the database: {}"
+msgstr "An error occurred while updating the database: {}"
+
+#: src/server.py:387
 msgid ""
 "An error occurred while stopping the Kittyflap service. The changed "
 "configuration was not saved."
@@ -147,7 +155,7 @@ msgstr ""
 "An error occurred while stopping the Kittyflap service. The changed "
 "configuration was not saved."
 
-#: src/server.py:281
+#: src/server.py:392
 msgid ""
 "An error occurred while starting the Kittyflap service. Please restart the "
 "Kittyflap manually by unplugging the power cable and plugging it back in."
@@ -155,15 +163,15 @@ msgstr ""
 "An error occurred while starting the Kittyflap service. Please restart the "
 "Kittyflap manually by unplugging the power cable and plugging it back in."
 
-#: src/server.py:300
+#: src/server.py:412
 msgid "Kittyhack configuration updated successfully."
 msgstr "Kittyhack configuration updated successfully."
 
-#: src/server.py:302
+#: src/server.py:414
 msgid "Reload this website to apply the new language."
 msgstr "Reload this website to apply the new language."
 
-#: src/server.py:304
+#: src/server.py:416
 msgid "Failed to save the Kittyhack configuration."
 msgstr "Failed to save the Kittyhack configuration."
 
@@ -171,10 +179,13 @@ msgstr "Failed to save the Kittyhack configuration."
 msgid "Pictures"
 msgstr "Pictures"
 
-#: src/ui.py:19
+#: src/ui.py:20
 msgid "Configuration"
 msgstr "Configuration"
 
-#: src/ui.py:23
+#: src/ui.py:24
 msgid "Debug details"
 msgstr "Debug details"
+
+#~ msgid "No cat detected."
+#~ msgstr "No cat detected."

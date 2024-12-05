@@ -336,7 +336,7 @@ def server(input, output, session):
     @reactive.event(input.bRestartKittyflap)
     def on_action_restart_system():
         simulate_kittyflap = CONFIG['SIMULATE_KITTYFLAP'].lower() == "true"
-        success = systemcmd(["reboot"], simulate_kittyflap)
+        success = systemcmd(["/sbin/reboot"], simulate_kittyflap)
         if success:
             ui.notification_show(_("Kittyflap is rebooting now..."), duration=5, type="message")
         else:

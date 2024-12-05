@@ -330,6 +330,7 @@ def server(input, output, session):
                 ui.hr(),
                 ui.br(),
                 ui.br()
+            )
     
     @reactive.Effect
     @reactive.event(input.bSaveKittyflapConfig)

@@ -333,8 +333,8 @@ def server(input, output, session):
             )
     
     @reactive.Effect
-    @reactive.event(input.bSaveKittyflapConfig)
-    def on_action_kittyflap_system():
+    @reactive.event(input.bRestartKittyflap)
+    def on_action_restart_system():
         simulate_kittyflap = CONFIG['SIMULATE_KITTYFLAP'].lower() == "true"
         success = systemcmd(["reboot"], simulate_kittyflap)
         if success:

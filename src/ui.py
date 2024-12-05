@@ -17,6 +17,10 @@ app_ui = ui.page_fillable(
             ui.br(),
         ),
         ui.nav_panel(
+            _("System"),
+            ui.output_ui("ui_system")
+        ),
+        ui.nav_panel(
             _("Configuration"),
             ui.output_ui("ui_configuration")
         ),

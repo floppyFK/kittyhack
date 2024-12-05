@@ -321,6 +321,29 @@ def server(input, output, session):
 
     @output
     @render.ui
+    def ui_system():
+            return ui.div(
+                ui.column(12, ui.h3(_("Kittyflap System Actions"))),
+                ui.column(12, ui.help_text(_("Start tasks/actions on the Kittyflap"))),
+                ui.br(),
+                ui.input_action_button("bRestartKittyflap", _("Restart Kittyflap")),
+                ui.hr(),
+                ui.br(),
+                ui.br()
+            )
+    
+    @reactive.Effect
+    @reactive.event(input.bRestartKittyflap)
+    def on_action_restart_system():
+        simulate_kittyflap = CONFIG['SIMULATE_KITTYFLAP'].lower() == "true"
+        success = systemcmd(["/sbin/reboot"], simulate_kittyflap)
+        if success:
+            ui.notification_show(_("Kittyflap is rebooting now..."), duration=5, type="message")
+        else:
+            ui.notification_show(_("An error occurred while rebooting Kittyflap."), duration=5, type="error")
+
+    @output
+    @render.ui
     def ui_configuration():
         df_config = db_get_config(CONFIG['DATABASE_PATH'], ReturnDataConfigDB.all)
         if not df_config.empty:

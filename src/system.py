@@ -4,7 +4,7 @@ import subprocess
 
 def systemctl(mode: str, service: str, simulate_operations=False):
     """
-    Format a date at the start or end of the day.
+    Start, stop or restart a service using systemctl.
 
     Parameters:
     - mode: start, stop, restart

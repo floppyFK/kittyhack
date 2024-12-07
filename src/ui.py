@@ -25,9 +25,15 @@ app_ui = ui.page_fillable(
             ui.output_ui("ui_configuration")
         ),
         ui.nav_panel(
+            _("Info"),
+            ui.output_ui("ui_info")
+        ),
+        ui.nav_panel(
             _("Debug details"),
             ui.output_ui("ui_debuginfo"),
         ),
         title=ui.HTML("<span style='font-weight: bold;'>KITTY " + str(icon_svg("shield-cat")) + "HACK</span>"),
+        position="fixed-top",
+        padding="3rem"
     ),
 )

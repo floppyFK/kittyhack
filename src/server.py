@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from faicons import icon_svg
 import math
 import threading
+import requests
 from src.helper import *
 from src.database import *
 from src.system import *
@@ -82,6 +83,9 @@ def sync_photos(trigger = "reload"):
 
 # Start the background task
 start_background_task()
+
+# Read the GIT version
+git_version = get_git_version()
 
 # The main server application
 def server(input, output, session):
@@ -474,3 +478,38 @@ def server(input, output, session):
     def ui_table_config():
         df = db_get_config(CONFIG['DATABASE_PATH'], ReturnDataConfigDB.all_except_password)
         return df.style.set_table_attributes('class="dataframe table shiny-table w-auto table_nobgcolor"')
+    
+    @render.download()
+    def download_logfile():
+        return LOGFILE
+    
+    @output
+    @render.ui
+    def ui_info():
+        # Fetch the latest kittyhack version via the GitHub API
+        try:
+            response = requests.get("https://api.github.com/repos/floppyFK/kittyhack/releases/latest")
+            latest_version = response.json().get("tag_name", "unknown")
+        except Exception as e:
+            logging.error(f"Failed to fetch the latest version from GitHub: {e}")
+            latest_version = "unknown"
+
+        return ui.div(
+            ui.h3("Information"),
+            ui.p("Kittyhack is an open-source project that enables offline use of the Kittyflap cat door—completely without internet access. It was created after the manufacturer of Kittyflap filed for bankruptcy, rendering the associated app non-functional."),
+            ui.h5("Important Notes"),
+            ui.p("I have no connection to the manufacturer of Kittyflap. This project was developed on my own initiative to continue using my Kittyflap."),
+            ui.p("Additionally, this project is in a very early stage! The planned features are not fully implemented yet, and bugs are to be expected!"),
+            ui.br(),
+            ui.HTML(f"<center><p><a href='https://github.com/floppyFK/kittyhack' target='_blank'>{icon_svg('square-github')} GitHub Repository</a></p></center>"),
+            ui.br(),
+            ui.br(),
+            ui.HTML(f"<center><p>Current Version: <code>{git_version}</code></p></center>"),            
+            ui.HTML(f"<center><p>Latest Version: <code>{latest_version}</code></p></center>"),
+            ui.hr(),
+            ui.br(),
+            ui.div(
+                ui.download_button("download_logfile", "Download Logfile"),
+                class_="d-flex justify-content-center"
+            )
+        )

@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 import gettext
 import configparser
 from configupdater import ConfigUpdater
+import subprocess
 import logging
 import os
 
@@ -140,3 +141,30 @@ def format_date_minmax(date: datetime, to_start=True):
     """
     dt_time = time.min if to_start else time.max
     return datetime.combine(date, dt_time).strftime('%Y-%m-%d %H:%M:%S')
+
+def get_git_version():
+    """
+    Retrieves the current Git version of the repository.
+
+    This function attempts to get the current Git tag if the current commit
+    has an exact match with a tag. If no tag is found, it returns the short
+    commit hash of the current commit.
+
+    Returns:
+        str: The current Git tag if available, otherwise the short commit hash.
+    """
+    try:
+        # Check if the current commit has a tag
+        tag = subprocess.check_output(
+            ["git", "describe", "--tags", "--exact-match"],
+            stderr=subprocess.DEVNULL,
+            text=True
+        ).strip()
+        return tag
+    except subprocess.CalledProcessError:
+        # If no tag is found, return the short commit hash
+        commit_hash = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            text=True
+        ).strip()
+        return commit_hash

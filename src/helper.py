@@ -153,10 +153,12 @@ def get_git_version():
     Returns:
         str: The current Git tag if available, otherwise the short commit hash.
     """
+    git_command = "/usr/bin/git" if os.name == "posix" else "git"
+
     try:
         # Check if the current commit has a tag
         tag = subprocess.check_output(
-            ["git", "describe", "--tags", "--exact-match"],
+            [git_command, "describe", "--tags", "--exact-match"],
             stderr=subprocess.DEVNULL,
             text=True
         ).strip()
@@ -164,7 +166,7 @@ def get_git_version():
     except subprocess.CalledProcessError:
         # If no tag is found, return the short commit hash
         commit_hash = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
+            [git_command, "rev-parse", "--short", "HEAD"],
             text=True
         ).strip()
         return commit_hash

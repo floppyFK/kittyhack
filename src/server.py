@@ -13,6 +13,7 @@ import requests
 from src.helper import *
 from src.database import *
 from src.system import *
+from src.backend import *
 
 # LOGFILE SETUP
 # Convert the log level string from the configuration to the corresponding logging level constant
@@ -35,7 +36,6 @@ logger.addHandler(handler)
 set_language(CONFIG['LANGUAGE'])
 
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
-logging.info("Application has started successfully.")
 
 # Log all configuration values from CONFIG dictionary
 logging.info("Configuration values:")
@@ -54,7 +54,15 @@ if not os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
     logging.info(f"Database '{CONFIG['KITTYHACK_DATABASE_PATH']}' not found. Creating it...")
     create_kittyhack_photo_table(CONFIG['KITTYHACK_DATABASE_PATH'])
 
-# Background task in a separate thread
+simulate_kittyflap = CONFIG['SIMULATE_KITTYFLAP'].lower() == "true"
+
+logging.info("Starting backend...")
+backend_thread = threading.Thread(target=backend_main, args=(CONFIG['DATABASE_PATH'], simulate_kittyflap,), daemon=True)
+backend_thread.start()
+
+logging.info("Starting frontend...")
+
+# Frontend background task in a separate thread
 def start_background_task():
     def run_periodically():
         while True:
@@ -69,8 +77,8 @@ def start_background_task():
                 run_periodically.last_vacuum_date = last_vacuum_date
             tm.sleep(CONFIG['PERIODIC_JOBS_INTERVAL'])
 
-    thread = threading.Thread(target=run_periodically, daemon=True)
-    thread.start()
+    frontend_bg_thread = threading.Thread(target=run_periodically, daemon=True)
+    frontend_bg_thread.start()
 
 # Immediate sync of photos from kittyflap to kittyhack
 def sync_photos(trigger = "reload"):
@@ -339,7 +347,7 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.bRestartKittyflap)
     def on_action_restart_system():
-        simulate_kittyflap = CONFIG['SIMULATE_KITTYFLAP'].lower() == "true"
+        global simulate_kittyflap
         success = systemcmd(["/sbin/reboot"], simulate_kittyflap)
         if success:
             ui.notification_show(_("Kittyflap is rebooting now..."), duration=5, type="message")
@@ -394,7 +402,7 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.bSaveKittyflapConfig)
     def on_save_kittyflap_config():
-        simulate_kittyflap = CONFIG['SIMULATE_KITTYFLAP'].lower() == "true"
+        global simulate_kittyflap
         success = systemctl("stop", "kwork", simulate_kittyflap)
         if success:            
             # update the database with the data from the dictionary

@@ -51,12 +51,12 @@ disable_and_mask_service() {
 
 # Full installation process
 install_full() {
-    echo -e "${CYAN}--- Step 1: Disable unwanted services ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 1: Disable unwanted services ---${NC}"
 
     disable_and_mask_service "remote-iot"
     disable_and_mask_service "manager"
 
-    echo -e "${CYAN}--- Step 2: Comment out unwanted crontab entries ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 2: Comment out unwanted crontab entries ---${NC}"
 
     # Backup and comment out specific crontab lines
     sudo crontab -l > /tmp/current_cron
@@ -92,7 +92,7 @@ install_full() {
 
     rm -f /tmp/current_cron
 
-    echo -e "${CYAN}--- Step 3: Rename remote-iot paths ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 3: Rename remote-iot paths ---${NC}"
     if [[ -d /etc/remote-iot ]]; then
         sudo mv /etc/remote-iot /etc/remote-iot-backup
         echo -e "${GREEN}Renamed /etc/remote-iot to /etc/remote-iot-backup.${NC}"
@@ -106,7 +106,7 @@ install_full() {
         echo -e "${GREY}suspicious file /etc/remote-iot.tar.gz not found. Great!"
     fi
 
-    echo -e "${CYAN}--- Step 4: Clean up old manager logs ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 4: Clean up old manager logs ---${NC}"
     if sudo rm -f /var/log/manager_start /var/log/manager_update; then
         echo -e "${GREEN}Manager logs cleaned up.${NC}"
     else
@@ -118,7 +118,7 @@ install_full() {
         echo -e "${GREY}No archived manager logs found. Skipping.${NC}"
     fi
 
-    echo -e "${CYAN}--- Step 5: Update kportal_url in values.json ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 5: Update kportal_url in values.json ---${NC}"
     current_url=$(grep -oP '"kportal_url": "\K[^"]+' /root/setup/values.json)
     if [[ "$current_url" == "http://127.0.0.1:9999" ]]; then
         echo -e "${GREY}kportal_url is already set to http://127.0.0.1:9999. Skipping.${NC}"
@@ -131,12 +131,40 @@ install_full() {
         echo -e "${GREEN}kportal_url updated successfully.${NC}"
     fi
 
+    echo -e "${CYAN}--- BASE INSTALL Step 6: Install gstreamer1.0 packages ---${NC}"
+    apt-get update
+    GSTREAMER_PACKAGES=(
+        gstreamer1.0-tools
+        gstreamer1.0-plugins-base
+        gstreamer1.0-plugins-good
+        gstreamer1.0-plugins-bad
+        gstreamer1.0-plugins-ugly
+        gstreamer1.0-libcamera
+    )
+    for pkg in "${GSTREAMER_PACKAGES[@]}"; do
+        if dpkg -l | grep -q "$pkg"; then
+            echo -e "${GREY}$pkg is already installed. Skipping.${NC}"
+        else
+            echo -e "${YELLOW}Installing $pkg...${NC}"
+            apt-get install -y "$pkg"
+        fi
+    done
+
+    echo -e "${CYAN}--- BASE INSTALL Step 7: Install python ---${NC}"
+    if ! python3.11 --version &>/dev/null; then
+        echo -e "${YELLOW}Python 3.11 is not installed. Installing...${NC}"
+        apt-get install -y python3.11 python3.11-venv python3.11-dev
+        echo -e "${GREEN}Python 3.11 installed successfully.${NC}"
+    else
+        echo -e "${GREEN}Python 3.11 is already installed.${NC}"
+    fi
+
     install_kittyhack
 }
 
 # Install or update KittyHack
 install_kittyhack() {
-    echo -e "${CYAN}--- Step 6: Set up KittyHack ---${NC}"
+    echo -e "${CYAN}--- KITTYHACK UPDATE Step 1: Set up KittyHack ---${NC}"
     if systemctl is-active --quiet kittyhack.service; then
         echo -e "${YELLOW}Stopping existing KittyHack service...${NC}"
         systemctl stop kittyhack.service
@@ -172,14 +200,14 @@ install_kittyhack() {
         fi
     fi
 
-    echo -e "${CYAN}--- Step 7: Set up Python virtual environment ---${NC}"
-    python3 -m venv /root/kittyhack/.venv
+    echo -e "${CYAN}--- KITTYHACK UPDATE Step 2: Set up Python virtual environment ---${NC}"
+    python3.11 -m venv /root/kittyhack/.venv
     source /root/kittyhack/.venv/bin/activate
     pip install -r /root/kittyhack/requirements.txt
     deactivate
     echo -e "${GREEN}Python dependencies installed/updated.${NC}"
 
-    echo -e "${CYAN}--- Step 8: Install and start KittyHack service ---${NC}"
+    echo -e "${CYAN}--- KITTYHACK UPDATE Step 3: Install and start KittyHack service ---${NC}"
     cp /root/kittyhack/setup/kittyhack.service /etc/systemd/system/kittyhack.service
     systemctl daemon-reload
     systemctl enable kittyhack.service

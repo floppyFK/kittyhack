@@ -52,12 +52,25 @@ disable_and_mask_service() {
 # Full installation process
 install_full() {
     echo -e "${CYAN}--- BASE INSTALL Step 1: Disable unwanted services ---${NC}"
-
     disable_and_mask_service "remote-iot"
     disable_and_mask_service "manager"
 
-    echo -e "${CYAN}--- BASE INSTALL Step 2: Comment out unwanted crontab entries ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 2: Check and resize swapfile if necessary ---${NC}"
+    swapfile_size=$(stat -c%s /swapfile)
+    if (( swapfile_size > 2147483648 )); then
+        echo -e "${GREEN}Swapfile size is greater than 2GB. Resizing...${NC}"
+        sudo swapoff /swapfile
+        sudo rm /swapfile
+        sudo fallocate -l 2G /swapfile
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+        echo -e "${GREEN}Swapfile resized to 2GB.${NC}"
+    else
+        echo -e "${GREY}Swapfile size is 2GB or less. No action needed.${NC}"
+    fi
 
+    echo -e "${CYAN}--- BASE INSTALL Step 3: Comment out unwanted crontab entries ---${NC}"
     # Backup and comment out specific crontab lines
     sudo crontab -l > /tmp/current_cron
     update_crontab=false
@@ -92,7 +105,7 @@ install_full() {
 
     rm -f /tmp/current_cron
 
-    echo -e "${CYAN}--- BASE INSTALL Step 3: Rename remote-iot paths ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 4: Rename remote-iot paths ---${NC}"
     if [[ -d /etc/remote-iot ]]; then
         sudo mv /etc/remote-iot /etc/remote-iot-backup
         echo -e "${GREEN}Renamed /etc/remote-iot to /etc/remote-iot-backup.${NC}"
@@ -101,12 +114,12 @@ install_full() {
     fi
     if [[ -f /etc/remote-iot.tar.gz ]]; then
         sudo mv /etc/remote-iot.tar.gz /etc/remote-iot-backup.tar.gz
-        echo -e "${GREEN}Renamed /etc/remote-iot.tar.gz to /etc/remote-iot-backup.tar.gz.${NC}"^
+        echo -e "${GREEN}Renamed /etc/remote-iot.tar.gz to /etc/remote-iot-backup.tar.gz.${NC}"
     else
         echo -e "${GREY}suspicious file /etc/remote-iot.tar.gz not found. Great!"
     fi
 
-    echo -e "${CYAN}--- BASE INSTALL Step 4: Clean up old manager logs ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 5: Clean up old manager logs ---${NC}"
     if sudo rm -f /var/log/manager_start /var/log/manager_update; then
         echo -e "${GREEN}Manager logs cleaned up.${NC}"
     else
@@ -118,7 +131,7 @@ install_full() {
         echo -e "${GREY}No archived manager logs found. Skipping.${NC}"
     fi
 
-    echo -e "${CYAN}--- BASE INSTALL Step 5: Update kportal_url in values.json ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 6: Update kportal_url in values.json ---${NC}"
     current_url=$(grep -oP '"kportal_url": "\K[^"]+' /root/setup/values.json)
     if [[ "$current_url" == "http://127.0.0.1:9999" ]]; then
         echo -e "${GREY}kportal_url is already set to http://127.0.0.1:9999. Skipping.${NC}"
@@ -131,7 +144,7 @@ install_full() {
         echo -e "${GREEN}kportal_url updated successfully.${NC}"
     fi
 
-    echo -e "${CYAN}--- BASE INSTALL Step 6: Install gstreamer1.0 packages ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 7: Install gstreamer1.0 packages ---${NC}"
     apt-get update
     GSTREAMER_PACKAGES=(
         gstreamer1.0-tools
@@ -150,7 +163,7 @@ install_full() {
         fi
     done
 
-    echo -e "${CYAN}--- BASE INSTALL Step 7: Install python ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 8: Install python ---${NC}"
     if ! python3.11 --version &>/dev/null; then
         echo -e "${YELLOW}Python 3.11 is not installed. Installing...${NC}"
         apt-get install -y python3.11 python3.11-venv python3.11-dev

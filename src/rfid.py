@@ -181,7 +181,7 @@ class Rfid:
 
     def time_delta_to_last_read(self):
         """
-        Returns the time delta in seconds to the last RFID read operation.
+        Returns the time delta in seconds to the last successful RFID read operation.
         """
         with self.thread_lock:
             return tm.time() - self.timestamp

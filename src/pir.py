@@ -4,6 +4,7 @@ import time as tm
 import logging
 import random
 from src.system import Gpio
+from src.helper import sigterm_monitor
 
 # GPIO pin numbers and directions
 OUTSIDE_PIR_GPIO_NUM = 536
@@ -47,7 +48,10 @@ class Pir:
 
     def read(self):
         """Continuously read the state of both PIRs and update shared states."""
-        while True:
+        # Register task in the sigterm_monitor object
+        sigterm_monitor.register_task()
+
+        while not sigterm_monitor.stop_now:
             try:
                 if self.simulate_kittyflap:
                     # Simulate motion detection with 5% chance and keep the state active for 5-10 seconds
@@ -92,6 +96,9 @@ class Pir:
                 logging.error(f"[PIR] Error reading PIR states: {e}")
 
             tm.sleep(0.2)
+
+        logging.info("[PIR] Stopped PIR monitoring thread.")
+        sigterm_monitor.signal_task_done()
 
     def update_state(self, pir, state):
         """

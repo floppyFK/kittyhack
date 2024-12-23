@@ -5,8 +5,10 @@ from enum import Enum
 from threading import Lock
 import logging
 import sys
+import cv2
 import time as tm
 from src.helper import *
+from src.camera import image_buffer
 
 # database actions
 class db_action(Enum):
@@ -50,10 +52,10 @@ def lock_database(timeout: int = 30, check_interval: float = 0.1) -> Result:
     start_time = tm.time()
     while tm.time() - start_time < timeout:
         if db_write_lock.acquire(blocking=False):
-            logging.info("Database lock acquired.")
+            logging.info("[DATABASE] Database lock acquired.")
             return Result(True, None)
         tm.sleep(check_interval)
-    error_message = f"Database lock not released within the given timeout ({timeout}s)."
+    error_message = f"[DATABASE] Database lock not released within the given timeout ({timeout}s)."
     logging.error(error_message)
     return Result(False, error_message)
 
@@ -63,9 +65,9 @@ def release_database():
     """
     if db_write_lock.locked():
         db_write_lock.release()
-        logging.info("Database lock released.")
+        logging.info("[DATABASE] Database lock released.")
     else:
-        logging.warning("Database lock is not acquired. Nothing to release.")
+        logging.warning("[DATABASE] Database lock is not acquired. Nothing to release.")
 
 ###### General database operations ######
 
@@ -75,10 +77,10 @@ def read_df_from_database(database: str, stmt: str) -> pd.DataFrame:
         df = pd.read_sql_query(stmt, conn)
         conn.close()
     except Exception as e:
-        logging.error(f"Failed to read from database '{database}': {e}")
+        logging.error(f"[DATABASE] Failed to read from database '{database}': {e}")
         df = pd.DataFrame.empty
     else:
-        logging.debug(f"Read from database '{database}': {df}")
+        logging.debug(f"[DATABASE] Read from database '{database}': {df}")
         
     return df
 
@@ -90,10 +92,10 @@ def read_column_info_from_database(database: str, table: str):
         columns_info = cursor.fetchall()
         conn.close()
     except Exception as e:
-        logging.error(f"Failed to read column information from database '{database}': {e}")
+        logging.error(f"[DATABASE] Failed to read column information from database '{database}': {e}")
         columns_info = []
     else:
-        logging.debug(f"Read column information from database '{database}': {columns_info}")
+        logging.debug(f"[DATABASE] Read column information from database '{database}': {columns_info}")
 
     return columns_info
     
@@ -114,12 +116,12 @@ def write_stmt_to_database(database: str, stmt: str) -> Result:
         conn.commit()
         conn.close()
     except Exception as e:
-        error_message = f"An error occurred while updating the database '{database}': {e}"
+        error_message = f"[DATABASE] An error occurred while updating the database '{database}': {e}"
         logging.error(error_message)
         return Result(False, error_message)
     else:
         # success
-        logging.debug(f"Successfully executed statement to database '{database}': {stmt}")
+        logging.debug(f"[DATABASE] Successfully executed statement to database '{database}': {stmt}")
         return Result(True, None)
     finally:
         release_database()
@@ -207,16 +209,16 @@ def db_set_config(database: str,
     this function writes the configuration data to the database.
     """
     data = f"updated_at = '{updated_at}', acceptance_rate = {acceptance_rate}, accept_all_cats = {int(accept_all_cats)}, detect_prey = {int(detect_prey)}, cat_prob_threshold = {cat_prob_threshold}"
-    logging.info(f"Writing new kittyflap configuration to 'config' table in database '{database}': {data}")
+    logging.info(f"[DATABASE] Writing new kittyflap configuration to 'config' table in database '{database}': {data}")
     stmt = f"UPDATE config SET {data} WHERE id = (SELECT id FROM config LIMIT 1)"
     result = write_stmt_to_database(database, stmt)
     if result.success == True:
-        logging.info("Kittyflap configuration updated successfully.")
+        logging.info("[DATABASE] Kittyflap configuration updated successfully.")
     return result
 
-def create_kittyhack_photo_table(database: str):
+def create_kittyhack_events_table(database: str):
     """
-    This function creates the 'photo' table (kittyhack specific style) in 
+    This function creates the 'events' table in 
     the destination database if it does not exist.
     """
     result = lock_database()
@@ -227,27 +229,27 @@ def create_kittyhack_photo_table(database: str):
         conn = sqlite3.connect(database, timeout=30)
         cursor = conn.cursor()
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS photo (
+            CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY,
+                block_id INTEGER,
                 created_at DATETIME,
-                blob_picture BLOB,
-                no_mouse_probability REAL,
+                event_type TEXT,
+                original_image BLOB,
+                modified_image BLOB,
                 mouse_probability REAL,
-                kittyflap_id INTEGER,
-                cat_id INTEGER,
+                no_mouse_probability REAL,
                 rfid TEXT,
-                false_accept_probability REAL,
-                deleted INTEGER DEFAULT 0
+                event_text TEXT
             )
         """)
         conn.commit()
         conn.close()
     except Exception as e:
-        error_message = f"An error occurred while creating the 'photo' table in the database '{database}': {e}"
+        error_message = f"[DATABASE] An error occurred while creating the 'photo' table in the database '{database}': {e}"
         logging.error(error_message)
         return Result(False, error_message)
     else:
-        logging.info(f"Successfully created the 'photo' table in the database '{database}'.")
+        logging.info(f"[DATABASE] Successfully created the 'photo' table in the database '{database}'.")
         return Result(True, None)
     finally:
         release_database()
@@ -260,9 +262,9 @@ def db_duplicate_photos(src_database: str, dst_database: str, dst_max_photos: in
     Dataframes with the value 'deleted = 1' will not be considered.
     """
     src_photos = db_get_photos(src_database, ReturnDataPhotosDB.only_ids, ignore_deleted=False)
-    logging.info("Reading photos from source database done.")
+    logging.info("[DATABASE] Reading photos from source database done.")
     dst_photos = db_get_photos(dst_database, ReturnDataPhotosDB.only_ids, ignore_deleted=False)
-    logging.info("Reading photos from destination database done.")
+    logging.info("[DATABASE] Reading photos from destination database done.")
 
     src_ids = src_photos['id'].tolist() if not src_photos.empty else []
     dst_ids = dst_photos['id'].tolist() if not dst_photos.empty else []
@@ -270,10 +272,10 @@ def db_duplicate_photos(src_database: str, dst_database: str, dst_max_photos: in
     new_ids = set(src_ids) - set(dst_ids)
 
     if not new_ids:
-        logging.info("No new photos to add to the destination database.")
+        logging.info("[DATABASE] No new photos to add to the destination database.")
         return Result(True, None)
     
-    logging.info(f"Number of new photos to be added to the destination database: {len(new_ids)}")
+    logging.info(f"[DATABASE] Number of new photos to be added to the destination database: {len(new_ids)}")
 
     result = lock_database()
     if not result.success:
@@ -286,7 +288,7 @@ def db_duplicate_photos(src_database: str, dst_database: str, dst_max_photos: in
         for photo_id in new_ids:
             photo_df = read_photo_by_id(src_database, photo_id)
             if not photo_df.empty:
-                logging.info(f"Adding photo with ID '{photo_id}' to the destination database.")
+                logging.info(f"[DATABASE] Adding photo with ID '{photo_id}' to the destination database.")
                 photo_df['deleted'] = 0
                 columns = ', '.join(photo_df.columns)
                 values = ', '.join(['?' for _ in photo_df.columns])
@@ -312,16 +314,16 @@ def db_duplicate_photos(src_database: str, dst_database: str, dst_max_photos: in
 
         if total_photos > dst_max_photos:
             excess_photos = total_photos - dst_max_photos
-            logging.info(f"Number of photos in the destination database exceeds the limit. Deleting {excess_photos} oldest photos.")
+            logging.info(f"[DATABASE] Number of photos in the destination database exceeds the limit. Deleting {excess_photos} oldest photos.")
             cursor_dst.execute(f"DELETE FROM photo WHERE id IN (SELECT id FROM photo WHERE deleted != 1 ORDER BY created_at ASC LIMIT {excess_photos})")
 
         conn_dst.commit()
     except Exception as e:
-        error_message = f"An error occurred while duplicating photos to the database '{dst_database}': {e}"
+        error_message = f"[DATABASE] An error occurred while duplicating photos to the database '{dst_database}': {e}"
         logging.error(error_message)
         return Result(False, error_message)
     else:
-        logging.info(f"Successfully duplicated photos to the database '{dst_database}'.")
+        logging.info(f"[DATABASE] Successfully duplicated photos to the database '{dst_database}'.")
         return Result(True, None)
     finally:
         release_database()
@@ -341,5 +343,84 @@ def delete_photo_by_id(database: str, photo_id: int) -> Result:
     stmt = f"UPDATE photo SET blob_picture = NULL, deleted = 1 WHERE id = {photo_id}"
     result = write_stmt_to_database(database, stmt)
     if result.success == True:
-        logging.info(f"Photo with ID '{photo_id}' deleted successfully.")
+        logging.info(f"[DATABASE] Photo with ID '{photo_id}' deleted successfully.")
     return result
+
+def write_motion_block_to_db(database: str, buffer_block_id: int, delete_from_buffer: bool = True):
+    """
+    This function writes an image block from the image buffer to the database.
+    """
+    result = lock_database()
+    if not result.success:
+        return result
+
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+
+        # Read the max value of the column 'id' and increment it
+        cursor.execute("SELECT MAX(id) FROM events")
+        id = cursor.fetchone()[0]
+        if id is None:
+            id = 0
+        else:
+            id += 1        
+        
+        # Read the max value of the coumn 'block_id' and increment it
+        cursor.execute("SELECT MAX(block_id) FROM events")
+        db_block_id = cursor.fetchone()[0]
+        if db_block_id is None:
+            db_block_id = 0
+        else:
+            db_block_id += 1
+
+        elements = image_buffer.get_by_block_id(buffer_block_id)
+        logging.info(f"[DATABASE] Writing {len(elements)} images from buffer image block '{buffer_block_id}' as database block '{db_block_id}' to '{database}'.")
+
+        for element in elements:        
+            # Write the image to the database
+            columns = "block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, rfid, event_text"
+            values = ', '.join(['?' for _ in columns.split(', ')])
+            values_list = [
+                db_block_id,
+                get_utc_date_string(element.timestamp),
+                "image",
+                element.original_image,
+                element.modified_image,
+                element.mouse_probability,
+                element.no_mouse_probability,
+                element.tag_id,
+                ""
+            ]
+            cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
+
+            # Delete the image from the buffer
+            if delete_from_buffer:
+                image_buffer.delete_by_id(element.id)
+
+            id += 1
+
+        conn.commit()
+    except Exception as e:
+        error_message = f"[DATABASE] An error occurred while writing images to the database '{database}': {e}"
+        logging.error(error_message)
+    else:
+        logging.info(f"[DATABASE] Successfully wrote images to the database '{database}'.")
+    finally:
+        release_database()
+
+def check_if_table_exists(database: str, table: str) -> bool:
+    """
+    This function checks if the given table exists in the database.
+    """
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'")
+        result = cursor.fetchone()
+        conn.close()
+    except Exception as e:
+        logging.error(f"[DATABASE] Failed to check if table '{table}' exists in the database '{database}': {e}")
+        return False
+    else:
+        return True if result else False

@@ -42,30 +42,28 @@ logging.info("Configuration values:")
 for key, value in CONFIG.items():
     logging.info(f"{key}={value}")
 
-# Validate timezone
-try:
-    local_timezone = ZoneInfo(CONFIG['TIMEZONE'])
-except Exception:
-    logging.error(f"Unknown timezone '{CONFIG['TIMEZONE']}'. Falling back to UTC.")
-    local_timezone = ZoneInfo('UTC')
-
 # Check, if the kittyhack database file exists. If not, create it.
 if not os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
     logging.info(f"Database '{CONFIG['KITTYHACK_DATABASE_PATH']}' not found. Creating it...")
-    create_kittyhack_photo_table(CONFIG['KITTYHACK_DATABASE_PATH'])
+    create_kittyhack_events_table(CONFIG['KITTYHACK_DATABASE_PATH'])
 
-simulate_kittyflap = CONFIG['SIMULATE_KITTYFLAP'].lower() == "true"
+if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events"):
+    logging.error(f"Table 'events' not found in the kittyhack database. Creating it...")
+    create_kittyhack_events_table(CONFIG['KITTYHACK_DATABASE_PATH'])
 
 logging.info("Starting backend...")
-backend_thread = threading.Thread(target=backend_main, args=(CONFIG['DATABASE_PATH'], simulate_kittyflap,), daemon=True)
+backend_thread = threading.Thread(target=backend_main, args=(CONFIG['SIMULATE_KITTYFLAP'],), daemon=True)
 backend_thread.start()
 
 logging.info("Starting frontend...")
 
 # Frontend background task in a separate thread
 def start_background_task():
+    # Register task in the sigterm_monitor object
+    sigterm_monitor.register_task()
+
     def run_periodically():
-        while True:
+        while not sigterm_monitor.stop_now:
             sync_photos("background task")
 
             # Perform VACUUM only once a day
@@ -75,7 +73,14 @@ def start_background_task():
                 write_stmt_to_database(CONFIG['KITTYHACK_DATABASE_PATH'], "VACUUM")
                 logging.info("[TRIGGER: background task] VACUUM done")
                 run_periodically.last_vacuum_date = last_vacuum_date
-            tm.sleep(CONFIG['PERIODIC_JOBS_INTERVAL'])
+            # Use a shorter sleep interval and check for sigterm_monitor.stop_now to allow graceful shutdown
+            for _ in range(int(CONFIG['PERIODIC_JOBS_INTERVAL'])):
+                if sigterm_monitor.stop_now:
+                    break
+                tm.sleep(1.0)
+        
+        logging.info("[TRIGGER: background task] Stopped background task scheduler.")
+        sigterm_monitor.signal_task_done()
 
     frontend_bg_thread = threading.Thread(target=run_periodically, daemon=True)
     frontend_bg_thread.start()
@@ -83,10 +88,12 @@ def start_background_task():
 # Immediate sync of photos from kittyflap to kittyhack
 def sync_photos(trigger = "reload"):
     logging.info(f"[TRIGGER: {trigger}] Check and transfer new photos from kittyflap db to kittyhack db")
-    db_duplicate_photos(src_database=CONFIG['DATABASE_PATH'],
-                        dst_database=CONFIG['KITTYHACK_DATABASE_PATH'],
-                        dst_max_photos=CONFIG['MAX_PHOTOS_COUNT']
-    )
+    #db_duplicate_photos(src_database=CONFIG['DATABASE_PATH'],
+    #                    dst_database=CONFIG['KITTYHACK_DATABASE_PATH'],
+    #                    dst_max_photos=CONFIG['MAX_PHOTOS_COUNT']
+    #)
+    # FIXME: This function is deprecated and should be removed.
+    logging.error("sync_photos() is deprecated and should be removed.")
     logging.info(f"[TRIGGER: {trigger}] Check and transfer done")
 
 # Start the background task
@@ -117,7 +124,6 @@ def server(input, output, session):
     @reactive.event(input.button_today)
     def sync_photos_reload_button():
         sync_photos("today button")
-
 
     @output
     @render.ui
@@ -254,7 +260,7 @@ def server(input, output, session):
             return ui.help_text(_("No pictures for the selected filter criteria found."), class_="no-images-found")
         
         else:
-            df_photos["created_at"] = pd.to_datetime(df_photos["created_at"]).dt.tz_convert(local_timezone)
+            df_photos["created_at"] = get_local_date_from_utc_date(df_photos["created_at"])
             df_cats = db_get_cats(CONFIG['DATABASE_PATH'], ReturnDataCatDB.all)
 
             for index, data_row in df_photos.iterrows():
@@ -347,8 +353,7 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.bRestartKittyflap)
     def on_action_restart_system():
-        global simulate_kittyflap
-        success = systemcmd(["/sbin/reboot"], simulate_kittyflap)
+        success = systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
         if success:
             ui.notification_show(_("Kittyflap is rebooting now..."), duration=5, type="message")
         else:
@@ -357,6 +362,10 @@ def server(input, output, session):
     @output
     @render.ui
     def ui_configuration():
+        # TODO: Add configuration element for:
+        # - Allowed to enter (already prepared in config: CONFIG['ALLOWED_TO_ENTER'])
+        # - Mouse check enabled (already prepared in config: CONFIG['MOUSE_CHECK_ENABLED'])
+
         df_config = db_get_config(CONFIG['DATABASE_PATH'], ReturnDataConfigDB.all)
         if not df_config.empty:
             accept_all_cats = bool(df_config.iloc[0]["accept_all_cats"])
@@ -402,8 +411,7 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.bSaveKittyflapConfig)
     def on_save_kittyflap_config():
-        global simulate_kittyflap
-        success = systemctl("stop", "kwork", simulate_kittyflap)
+        success = systemctl("stop", "kwork", CONFIG['SIMULATE_KITTYFLAP'])
         if success:            
             # update the database with the data from the dictionary
             result = db_set_config(CONFIG['DATABASE_PATH'], 
@@ -422,7 +430,7 @@ def server(input, output, session):
             ui.notification_show(_("An error occurred while stopping the Kittyflap service. The changed configuration was not saved."), duration=5, type="error")
 
         # Start the kwork process again
-        success = systemctl("start", "kwork", simulate_kittyflap)
+        success = systemctl("start", "kwork", CONFIG['SIMULATE_KITTYFLAP'])
         if success != True:
             ui.notification_show(_("An error occurred while starting the Kittyflap service. Please restart the Kittyflap manually by unplugging the power cable and plugging it back in."), duration=None, type="error")
 

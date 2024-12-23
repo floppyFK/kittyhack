@@ -1,12 +1,15 @@
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 import gettext
 import configparser
+from enum import Enum
 from configupdater import ConfigUpdater
 import subprocess
 import logging
+import signal
 import os
+import threading
 
 
 ###### CONSTANT DEFINITIONS ######
@@ -31,11 +34,13 @@ DEFAULT_CONFIG = {
         "database_path": "../kittyflap.db",
         "kittyhack_database_path": "./kittyhack.db",
         "max_photos_count": "2000",
-        "simulate_kittyflap": "false",
+        "simulate_kittyflap": False,
         "mouse_threshold": "70.0",
         "elements_per_page": "20",
         "loglevel": "INFO",
-        "periodic_jobs_interval": "900"
+        "periodic_jobs_interval": "900",
+        "allowed_to_enter": "all",
+        "mouse_check_enabled": True
     }
 }
 
@@ -44,6 +49,62 @@ DEFAULT_CONFIG = {
 class Result:
     success: bool
     message: str
+
+class AllowedToEnter(Enum):
+    ALL = 'all'
+    ALL_RFIDS = 'all_rfids'
+    KNOWN = 'known'
+    NONE = 'none'
+
+class GracefulKiller:
+    stop_now = False
+
+    def __init__(self):
+        signal.signal(signal.SIGINT, self.exit_gracefully)
+        signal.signal(signal.SIGTERM, self.exit_gracefully)
+        self.tasks_done = threading.Event()
+        self.tasks_count = 0
+        self.lock = threading.Lock()
+
+    def exit_gracefully(self, signum, frame):
+        """
+        Handles graceful shutdown (except for the shiny process itself) of the process upon 
+        receiving a termination signal.
+
+        This method sets a flag to indicate that the process should terminate, logs the
+        intention to wait for all tasks to finish, and waits for the tasks to complete
+        before forcefully killing the process.
+        """
+        self.stop_now = True
+        logging.info("Waiting for all tasks to finish...")
+        with self.lock:
+            if self.tasks_count == 0:
+                self.tasks_done.set()
+        self.tasks_done.wait()  # Wait until all tasks signal they are done
+        logging.info("All tasks finished. Exiting now.")
+        # FIXME: do a explicit SIGKILL on processes of "shiny" do not use os.gepid() here. Use "pkill -f shiny" instead
+        subprocess.run(["/usr/bin/pkill", "-9", "-f", "shiny"])  # Send SIGKILL to "shiny" process
+
+    def signal_task_done(self):
+        """
+        Signals that a task has been completed.
+
+        This method decrements the tasks_count by 1. If the tasks_count reaches 0,
+        it sets the tasks_done event to indicate that all tasks have been completed.
+        """
+        with self.lock:
+            self.tasks_count -= 1
+            if self.tasks_count == 0:
+                self.tasks_done.set()
+
+    def register_task(self):
+        """
+        Registers a new task by incrementing the tasks_count attribute.
+        """
+        with self.lock:
+            self.tasks_count += 1
+
+sigterm_monitor = GracefulKiller()
 
 def create_default_config():
     """
@@ -66,7 +127,7 @@ def load_config():
     
     parser = configparser.ConfigParser()
     parser.read(CONFIGFILE)
-
+    
     CONFIG = {
         "TIMEZONE": parser.get('Settings', 'timezone', fallback=DEFAULT_CONFIG['Settings']['timezone']),
         "LANGUAGE": parser.get('Settings', 'language', fallback=DEFAULT_CONFIG['Settings']['language']),
@@ -74,11 +135,13 @@ def load_config():
         "DATABASE_PATH": parser.get('Settings', 'database_path', fallback=DEFAULT_CONFIG['Settings']['database_path']),
         "KITTYHACK_DATABASE_PATH": parser.get('Settings', 'kittyhack_database_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_path']),
         "MAX_PHOTOS_COUNT": int(parser.get('Settings', 'max_photos_count', fallback=DEFAULT_CONFIG['Settings']['max_photos_count'])),
-        "SIMULATE_KITTYFLAP": parser.get('Settings', 'simulate_kittyflap', fallback=DEFAULT_CONFIG['Settings']['simulate_kittyflap']),
+        "SIMULATE_KITTYFLAP": parser.getboolean('Settings', 'simulate_kittyflap', fallback=DEFAULT_CONFIG['Settings']['simulate_kittyflap']),
         "MOUSE_THRESHOLD": float(parser.get('Settings', 'mouse_threshold', fallback=DEFAULT_CONFIG['Settings']['mouse_threshold'])),
         "ELEMENTS_PER_PAGE": int(parser.get('Settings', 'elements_per_page', fallback=DEFAULT_CONFIG['Settings']['elements_per_page'])),
         "LOGLEVEL": parser.get('Settings', 'loglevel', fallback=DEFAULT_CONFIG['Settings']['loglevel']),
-        "PERIODIC_JOBS_INTERVAL": int(parser.get('Settings', 'periodic_jobs_interval', fallback=DEFAULT_CONFIG['Settings']['periodic_jobs_interval']))
+        "PERIODIC_JOBS_INTERVAL": int(parser.get('Settings', 'periodic_jobs_interval', fallback=DEFAULT_CONFIG['Settings']['periodic_jobs_interval'])),
+        "ALLOWED_TO_ENTER": AllowedToEnter(parser.get('Settings', 'allowed_to_enter', fallback=DEFAULT_CONFIG['Settings']['allowed_to_enter'])),
+        "MOUSE_CHECK_ENABLED": parser.getboolean('Settings', 'mouse_check_enabled', fallback=DEFAULT_CONFIG['Settings']['mouse_check_enabled'])
     }
 
 def save_config():
@@ -97,11 +160,13 @@ def save_config():
     settings['database_path'] = CONFIG['DATABASE_PATH']
     settings['kittyhack_database_path'] = CONFIG['KITTYHACK_DATABASE_PATH']
     settings['max_photos_count'] = str(CONFIG['MAX_PHOTOS_COUNT'])
-    settings['simulate_kittyflap'] = CONFIG['SIMULATE_KITTYFLAP']
+    settings['simulate_kittyflap'] = str(CONFIG['SIMULATE_KITTYFLAP']).lower()
     settings['mouse_threshold'] = str(CONFIG['MOUSE_THRESHOLD'])
     settings['elements_per_page'] = str(CONFIG['ELEMENTS_PER_PAGE'])
     settings['loglevel'] = CONFIG['LOGLEVEL']
     settings['periodic_jobs_interval'] = str(CONFIG['PERIODIC_JOBS_INTERVAL'])
+    settings['allowed_to_enter'] = str(CONFIG['ALLOWED_TO_ENTER']),
+    settings['mouse_check_enabled'] = str(CONFIG['MOUSE_CHECK_ENABLED']).lower()
 
     # Write updated configuration back to the file
     try:
@@ -170,3 +235,49 @@ def get_git_version():
             text=True
         ).strip()
         return commit_hash
+    
+def get_timezone():
+    """
+    Returns the timezone object from the configuration.
+    Falls back to UTC if the timezone is unknown.
+    """
+    try:
+        timezone = ZoneInfo(CONFIG['TIMEZONE'])
+    except Exception:
+        logging.error(f"Unknown timezone '{CONFIG['TIMEZONE']}'. Falling back to UTC.")
+        timezone = ZoneInfo('UTC')
+    return timezone
+
+def get_utc_date_string(time: float):
+    # Convert the time to a datetime object in UTC
+    utc_datetime = datetime.fromtimestamp(time, tz=timezone.utc)
+    
+    # Format the datetime object to the specified string format with UTC offset
+    utc_date_string = utc_datetime.strftime('%Y-%m-%d %H:%M:%S.%f')[:-2] + "+00:00"
+    
+    return utc_date_string
+
+def get_local_date_from_utc_date(utc_date_string: str):
+    """
+    Converts a UTC date string to a local date string in the specified format.
+    Args:
+        utc_date_string (str): The UTC date string in the format '%Y-%m-%d %H:%M:%S.%f'.
+    Returns:
+        str: The local date string in the format '%Y-%m-%d %H:%M:%S.%f' (without the last two microseconds digits).
+    """
+    # Truncate the microseconds to 4 decimal places if necessary
+    if '.' in utc_date_string:
+        date_part, microseconds_part = utc_date_string.split('.')
+        microseconds_part = microseconds_part[:4]
+        utc_date_string = f"{date_part}.{microseconds_part}"
+
+    # Convert the UTC date string to a datetime object
+    utc_datetime = datetime.strptime(utc_date_string, '%Y-%m-%d %H:%M:%S.%f')
+    
+    # Convert the UTC datetime object to the local timezone
+    local_datetime = utc_datetime.astimezone(get_timezone())
+    
+    # Format the local datetime object to the specified string format
+    local_date_string = local_datetime.strftime('%Y-%m-%d %H:%M:%S.%f')[:-2]
+    
+    return local_date_string

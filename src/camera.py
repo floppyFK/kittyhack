@@ -13,6 +13,7 @@ import threading
 import importlib.util
 import logging
 from typing import List, Optional
+from src.helper import sigterm_monitor
 
 class VideoStream:
     """Camera object that controls video streaming from the Picamera"""
@@ -72,39 +73,41 @@ class VideoStream:
         self.stopped = True
         if self.process:
             self.process.terminate()
+            logging.info("[CAMERA] Video stream stopped.")
+        else:
+            logging.error("[CAMERA] Video stream not yet started. Nothing to stop.")
 
 class ImageBufferElement:
-    def __init__(self, timestamp: float, original_image: cv2.typing.MatLike, modified_image: cv2.typing.MatLike, 
-                 mouse_probability: float, no_mouse_probability: float):
+    def __init__(self, id: int, block_id: int, timestamp: float, original_image: bytes, modified_image: bytes, 
+                 mouse_probability: float, no_mouse_probability: float, tag_id: str = ""):
+        self.id = id
+        self.block_id = block_id
         self.timestamp = timestamp
         self.original_image = original_image
         self.modified_image = modified_image
         self.mouse_probability = mouse_probability
         self.no_mouse_probability = no_mouse_probability
+        self.tag_id = tag_id
 
     def __repr__(self):
-        return (f"ImageBufferElement(timestamp={self.timestamp}, mouse_probability={self.mouse_probability}, "
-                f"no_mouse_probability={self.no_mouse_probability})")
+        return (f"ImageBufferElement(id={self.id}, block_id={self.block_id}, timestamp={self.timestamp}, mouse_probability={self.mouse_probability}, "
+                f"no_mouse_probability={self.no_mouse_probability}, tag_id={self.tag_id})")
 
 class ImageBuffer:
     def __init__(self):
         """Initialize an empty buffer."""
         self._buffer: List[ImageBufferElement] = []
+        self._next_id = 0
 
-    def append(self, timestamp: float, original_image: cv2.typing.MatLike, modified_image: cv2.typing.MatLike, 
+    def append(self, timestamp: float, original_image: bytes, modified_image: bytes, 
                mouse_probability: float, no_mouse_probability: float):
         """
         Append a new element to the buffer.
-
-        Args:
-            timestamp (float): Timestamp of the element.
-            original_image (cv2.typing.MatLike): The original image.
-            modified_image (cv2.typing.MatLike): The modified image.
-            mouse_probability (float): Probability of mouse presence.
-            no_mouse_probability (float): Probability of no mouse presence.
         """
-        element = ImageBufferElement(timestamp, original_image, modified_image, mouse_probability, no_mouse_probability)
+        element = ImageBufferElement(self._next_id, 0, timestamp, original_image, modified_image, mouse_probability, no_mouse_probability)
         self._buffer.append(element)
+        logging.info(f"[IMAGEBUFFER] Appended new element with ID {self._next_id}, timestamp: {timestamp}, Mouse probability: {mouse_probability}, No mouse probability: {no_mouse_probability} to the buffer.")
+        self._next_id += 1
 
     def pop(self) -> Optional[ImageBufferElement]:
         """
@@ -114,6 +117,7 @@ class ImageBuffer:
             Optional[ImageBufferElement]: The last element if the buffer is not empty, else None.
         """
         if self._buffer:
+            logging.info(f"[IMAGEBUFFER] Popped element with ID {self._buffer[-1].id} from the buffer.")
             return self._buffer.pop()
         return None
 
@@ -138,6 +142,110 @@ class ImageBuffer:
             List[ImageBufferElement]: A list of all elements in the buffer.
         """
         return self._buffer[:]
+    
+    def get_by_id(self, id: int) -> Optional[ImageBufferElement]:
+        """
+        Return the element with the given ID.
+
+        Args:
+            id (int): The ID to search for.
+
+        Returns:
+            Optional[ImageBufferElement]: The element with the given ID if found, else None.
+        """
+        for element in self._buffer:
+            if element.id == id:
+                return element
+        return None
+    
+    def delete_by_id(self, id: int) -> bool:
+        """
+        Delete the element with the given ID.
+
+        Args:
+            id (int): The ID to search for.
+
+        Returns:
+            bool: True if the element was deleted, else False.
+        """
+        for i, element in enumerate(self._buffer):
+            if element.id == id:
+                self._buffer.pop(i)
+                logging.info(f"[IMAGEBUFFER] Deleted element with ID {id} from the buffer.")
+                return True
+        logging.warning(f"[IMAGEBUFFER] Element with ID {id} not found in the buffer. Nothing was deleted.")
+        return False
+    
+    def get_filtered_ids(self, min_timestamp=0.0, 
+                         max_timestamp=float('inf'), 
+                         min_mouse_probability=0.0, 
+                         max_mouse_probability=100.0,
+                         min_no_mouse_probability=0.0,
+                         max_no_mouse_probability=100.0) -> List[int]:
+        """
+        Return the IDs of elements that match the given filter criteria.
+
+        Args:
+            min_timestamp (float): The minimum timestamp.
+            max_timestamp (float): The maximum timestamp.
+            min_mouse_probability (float): The minimum mouse probability.
+            max_mouse_probability (float): The maximum mouse probability.
+            min_no_mouse_probability (float): The minimum no mouse probability.
+            max_no_mouse_probability (float): The maximum no mouse probability.
+
+        Returns:
+            List[int]: A list of IDs that match the filter criteria.
+        """
+        return [element.id for element in self._buffer if 
+                (min_timestamp <= element.timestamp <= max_timestamp) and 
+                (min_mouse_probability <= element.mouse_probability <= max_mouse_probability) and 
+                (min_no_mouse_probability <= element.no_mouse_probability <= max_no_mouse_probability)]
+    
+    def update_block_id(self, id: int, block_id: int) -> bool:
+        """
+        Update the block ID of the element with the given ID.
+
+        Args:
+            id (int): The ID of the element to update.
+            block_id (int): The new block ID.
+
+        Returns:
+            bool: True if the element was updated, else False.
+        """
+        for element in self._buffer:
+            if element.id == id:
+                element.block_id = block_id
+                return True
+        return False
+    
+    def update_tag_id(self, id: int, tag_id: str) -> bool:
+        """
+        Update the tag ID of the element with the given ID.
+
+        Args:
+            id (int): The ID of the element to update.
+            tag_id (str): The new tag ID.
+
+        Returns:
+            bool: True if the element was updated, else False.
+        """
+        for element in self._buffer:
+            if element.id == id:
+                element.tag_id = tag_id
+                return True
+        return False
+    
+    def get_by_block_id(self, block_id: int) -> List[ImageBufferElement]:
+        """
+        Return all elements with the given block ID.
+
+        Args:
+            block_id (int): The block ID to search for.
+
+        Returns:
+            List[ImageBufferElement]: A list of elements with the given block ID.
+        """
+        return [element for element in self._buffer if element.block_id == block_id]
 
 # Initialize the image buffer
 image_buffer = ImageBuffer()
@@ -173,21 +281,25 @@ class TfLite:
         resW, resH = self.resolution.split('x')
         imW, imH = int(resW), int(resH)
 
+        # Register task in the sigterm_monitor object
+        sigterm_monitor.register_task()
+
         # Check if we are running in simulation mode
         if self.simulate_kittyflap:
             logging.info("[CAMERA] Running in simulation mode. No camera stream available.")
-            while True:
+            while not sigterm_monitor.stop_now:
                 if not self.paused:
                     save_image = np.random.rand() < 0.05  # set save_image randomly to True with a 5% chance
                     if save_image:
-                        # Simulate a cv2.typing.MatLike image
+                        # Simulate a image
                         timestamp = tm.time()
                         frame = np.zeros((imH, imW, 3), dtype=np.uint8)
                         frame_with_overlay = frame.copy()
                         mouse_probability = np.random.uniform(self.threshold, 1.0)
                         no_mouse_probability = np.random.uniform(self.threshold, 1.0)
-                        image_buffer.append(timestamp, frame, frame_with_overlay, mouse_probability, no_mouse_probability)
+                        image_buffer.append(timestamp, self.encode_jpg_image(frame), self.encode_jpg_image(frame_with_overlay), mouse_probability, no_mouse_probability)
                 tm.sleep(0.1)
+            return
 
         # Import TensorFlow libraries
         # If tflite_runtime is installed, import interpreter from tflite_runtime, else import from regular tensorflow
@@ -259,7 +371,7 @@ class TfLite:
         if frame is not None:
             logging.info("[CAMERA] Camera stream started successfully.")
 
-        while True:
+        while not sigterm_monitor.stop_now:
             # Start timer (for calculating frame rate)
             t1 = cv2.getTickCount()
 
@@ -334,7 +446,7 @@ class TfLite:
                                 no_mouse_probability = probability
 
                     if save_image:
-                        image_buffer.append(timestamp, frame, frame_with_overlay, mouse_probability, no_mouse_probability)
+                        image_buffer.append(timestamp, self.encode_jpg_image(frame), self.encode_jpg_image(frame_with_overlay), mouse_probability, no_mouse_probability)
 
                 # To avoid intensive CPU load, wait here until we reached the desired framerate
                 elapsed_time = (cv2.getTickCount() - t1) / freq
@@ -353,6 +465,11 @@ class TfLite:
                 if current_time - self.last_log_time > 10:
                     logging.warning("[CAMERA] No frame received!")
                     self.last_log_time = current_time
+            
+        # Stop the video stream
+        videostream.stop()
+
+        sigterm_monitor.signal_task_done()
 
     def pause(self):
         logging.info("[CAMERA] Pausing the TFLite processing.")
@@ -365,14 +482,23 @@ class TfLite:
     def get_run_state(self):
         return not self.paused
 
-    def stop(self):
-        logging.info("[CAMERA] Stopping the video stream.")
-        # Stop the video stream
-        VideoStream.stop()
-
     def get_camera_frame(self):
         if videostream is not None:
             return videostream.read()
         else:
             logging.error("[CAMERA] 'Get Frame' failed. Video stream is not yet initialized.")
             return None
+        
+    def encode_jpg_image(self, decoded_image: cv2.typing.MatLike) -> bytes:
+        """
+        Encodes a decoded image into JPG format.
+        Args:
+            decoded_image (cv2.typing.MatLike): The image to be encoded, represented as a matrix.
+        Returns:
+            bytes: The encoded image in JPG format as a byte array.
+        """
+        # Encode the image as JPG
+        _, buffer = cv2.imencode('.jpg', decoded_image)
+        blob_data = buffer.tobytes()
+        
+        return blob_data

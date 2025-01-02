@@ -40,7 +40,9 @@ DEFAULT_CONFIG = {
         "loglevel": "INFO",
         "periodic_jobs_interval": "900",
         "allowed_to_enter": "all",
-        "mouse_check_enabled": True
+        "mouse_check_enabled": True,
+        "min_pictures_to_analyze": 5,
+        "show_images_with_overlay": True
     }
 }
 
@@ -141,7 +143,9 @@ def load_config():
         "LOGLEVEL": parser.get('Settings', 'loglevel', fallback=DEFAULT_CONFIG['Settings']['loglevel']),
         "PERIODIC_JOBS_INTERVAL": int(parser.get('Settings', 'periodic_jobs_interval', fallback=DEFAULT_CONFIG['Settings']['periodic_jobs_interval'])),
         "ALLOWED_TO_ENTER": AllowedToEnter(parser.get('Settings', 'allowed_to_enter', fallback=DEFAULT_CONFIG['Settings']['allowed_to_enter'])),
-        "MOUSE_CHECK_ENABLED": parser.getboolean('Settings', 'mouse_check_enabled', fallback=DEFAULT_CONFIG['Settings']['mouse_check_enabled'])
+        "MOUSE_CHECK_ENABLED": parser.getboolean('Settings', 'mouse_check_enabled', fallback=DEFAULT_CONFIG['Settings']['mouse_check_enabled']),
+        "MIN_PICTURES_TO_ANALYZE": parser.getint('Settings', 'min_pictures_to_analyze', fallback=DEFAULT_CONFIG['Settings']['min_pictures_to_analyze']),
+        "SHOW_IMAGES_WITH_OVERLAY": parser.getboolean('Settings', 'show_images_with_overlay', fallback=DEFAULT_CONFIG['Settings']['show_images_with_overlay'])
     }
 
 def save_config():
@@ -166,7 +170,9 @@ def save_config():
     settings['loglevel'] = CONFIG['LOGLEVEL']
     settings['periodic_jobs_interval'] = str(CONFIG['PERIODIC_JOBS_INTERVAL'])
     settings['allowed_to_enter'] = str(CONFIG['ALLOWED_TO_ENTER']),
-    settings['mouse_check_enabled'] = str(CONFIG['MOUSE_CHECK_ENABLED']).lower()
+    settings['mouse_check_enabled'] = str(CONFIG['MOUSE_CHECK_ENABLED']).lower(),
+    settings['min_pictures_to_analyze'] = str(CONFIG['MIN_PICTURES_TO_ANALYZE']),
+    settings['show_images_with_overlay'] = str(CONFIG['SHOW_IMAGES_WITH_OVERLAY']).lower()
 
     # Write updated configuration back to the file
     try:

@@ -23,8 +23,21 @@ loglevel = logging._nameToLevel.get(CONFIG['LOGLEVEL'], logging.INFO)
 # This handler will create log files with a maximum size of 10 MB each and keep up to 5 backup files
 handler = RotatingFileHandler(LOGFILE, maxBytes=10*1024*1024, backupCount=5)
 
+# Custom formatter with timezone-aware local time
+class TimeZoneFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        # Get current time in local timezone
+        local_time = datetime.fromtimestamp(record.created, tz=ZoneInfo(CONFIG['TIMEZONE']))
+        
+        # Build the timestamp with milliseconds and timezone offset
+        timestamp = local_time.strftime('%Y-%m-%d %H:%M:%S')
+        milliseconds = f"{local_time.microsecond // 1000:03d}"
+        timezone = local_time.strftime('%z (%Z)')
+
+        return f"{timestamp}.{milliseconds} {timezone}"
+
 # Define the format for log messages
-formatter = logging.Formatter('%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+formatter = TimeZoneFormatter('%(asctime)s [%(levelname)s] %(message)s')
 handler.setFormatter(formatter)
 
 # Get the root logger and set its level and handler
@@ -48,8 +61,18 @@ if not os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
     create_kittyhack_events_table(CONFIG['KITTYHACK_DATABASE_PATH'])
 
 if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events"):
-    logging.error(f"Table 'events' not found in the kittyhack database. Creating it...")
+    logging.warning(f"Table 'events' not found in the kittyhack database. Creating it...")
     create_kittyhack_events_table(CONFIG['KITTYHACK_DATABASE_PATH'])
+
+# Check if table "cats" exist in the kittyhack database. If not, create it.
+if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "cats"):
+    logging.warning(f"Table 'cats' not found in the kittyhack database. Creating it...")
+    create_kittyhack_cats_table(CONFIG['KITTYHACK_DATABASE_PATH'])
+    # Migrate the cats from the kittyflap database to the kittyhack database
+    if check_if_table_exists(CONFIG['DATABASE_PATH'], "cat"):
+        migrate_cats_to_kittyhack(kittyflap_db=CONFIG['DATABASE_PATH'], kittyhack_db=CONFIG['KITTYHACK_DATABASE_PATH'])
+    else:
+        logging.warning("Table 'cat' not found in the kittyflap database. No cats migrated to the kittyhack database.")
 
 logging.info("Starting backend...")
 backend_thread = threading.Thread(target=backend_main, args=(CONFIG['SIMULATE_KITTYFLAP'],), daemon=True)
@@ -64,7 +87,7 @@ def start_background_task():
 
     def run_periodically():
         while not sigterm_monitor.stop_now:
-            sync_photos("background task")
+            immediate_bg_task("background task")
 
             # Perform VACUUM only once a day
             last_vacuum_date = datetime.now().date()
@@ -86,15 +109,11 @@ def start_background_task():
     frontend_bg_thread.start()
 
 # Immediate sync of photos from kittyflap to kittyhack
-def sync_photos(trigger = "reload"):
-    logging.info(f"[TRIGGER: {trigger}] Check and transfer new photos from kittyflap db to kittyhack db")
-    #db_duplicate_photos(src_database=CONFIG['DATABASE_PATH'],
-    #                    dst_database=CONFIG['KITTYHACK_DATABASE_PATH'],
-    #                    dst_max_photos=CONFIG['MAX_PHOTOS_COUNT']
-    #)
-    # FIXME: This function is deprecated and should be removed.
-    logging.error("sync_photos() is deprecated and should be removed.")
-    logging.info(f"[TRIGGER: {trigger}] Check and transfer done")
+def immediate_bg_task(trigger = "reload"):
+    logging.info(f"[TRIGGER: {trigger}] Start immediate background task")
+    # TODO: immediate background task
+    logging.info(f"[TRIGGER: {trigger}] Currently nothing to do here - keep for future usage")
+    logging.info(f"[TRIGGER: {trigger}] End immediate background task")
 
 # Start the background task
 start_background_task()
@@ -112,18 +131,18 @@ def server(input, output, session):
     deleted_ids = []
 
     @reactive.Effect
-    def sync_photos_site_load():
-        sync_photos("site load")
+    def immediate_bg_task_site_load():
+        immediate_bg_task("site load")
 
     @reactive.Effect
     @reactive.event(input.button_reload)
-    def sync_photos_reload_button():
-        sync_photos("reload button")
+    def immediate_bg_task_reload_button():
+        immediate_bg_task("reload button")
 
     @reactive.Effect
     @reactive.event(input.button_today)
-    def sync_photos_reload_button():
-        sync_photos("today button")
+    def immediate_bg_task_reload_button():
+        immediate_bg_task("today button")
 
     @output
     @render.ui

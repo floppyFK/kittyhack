@@ -221,35 +221,80 @@ def create_kittyhack_events_table(database: str):
     This function creates the 'events' table in 
     the destination database if it does not exist.
     """
+    stmt = """
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY,
+            block_id INTEGER,
+            created_at DATETIME,
+            event_type TEXT,
+            original_image BLOB,
+            modified_image BLOB,
+            mouse_probability REAL,
+            no_mouse_probability REAL,
+            rfid TEXT,
+            event_text TEXT
+        )
+    """
+    result = write_stmt_to_database(database, stmt)
+    if result.success:
+        logging.info(f"[DATABASE] Successfully created the 'events' table in the database '{database}'.")
+    return result
+
+def create_kittyhack_cats_table(database: str):
+    """
+    This function creates the 'cats' table in 
+    the destination database if it does not exist.
+    """
+    stmt = """
+        CREATE TABLE IF NOT EXISTS cats (
+            id INTEGER PRIMARY KEY,
+            created_at DATETIME,
+            name TEXT,
+            rfid TEXT,
+            cat_image BLOB
+        )
+    """
+    result = write_stmt_to_database(database, stmt)
+    if result.success:
+        logging.info(f"[DATABASE] Successfully created the 'cats' table in the database '{database}'.")
+    return result
+
+def migrate_cats_to_kittyhack(kittyflap_db: str, kittyhack_db: str) -> Result:
+    """
+    This function migrates the 'cats' table from the kittyflap database to the kittyhack database.
+    """
     result = lock_database()
     if not result.success:
         return result
 
     try:
-        conn = sqlite3.connect(database, timeout=30)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY,
-                block_id INTEGER,
-                created_at DATETIME,
-                event_type TEXT,
-                original_image BLOB,
-                modified_image BLOB,
-                mouse_probability REAL,
-                no_mouse_probability REAL,
-                rfid TEXT,
-                event_text TEXT
+        conn_src = sqlite3.connect(kittyflap_db, timeout=30)
+        cursor_src = conn_src.cursor()
+        conn_dst = sqlite3.connect(kittyhack_db, timeout=30)
+        cursor_dst = conn_dst.cursor()
+
+        cursor_src.execute("SELECT * FROM cat")
+        src_db_rows = cursor_src.fetchall()
+        # FIXME: Check if the conversion of the profile photo is correct
+        for row in src_db_rows:
+            # Source database columns: id, created_at, updated_at, deleted_at, last_updated_uuid, kittyflap_id, name, registered_at, rfid, profile_photo, registered_by_user_id, cat_config_id
+            id, created_at, name, rfid, profile_photo = row[0], row[1], row[6], row[8], row[9]
+            # Convert the 'profile_photo' text column to a BLOB
+            # Decode the Base64 encoded profile photo to binary data
+            import base64
+            cat_image = sqlite3.Binary(base64.b64decode(profile_photo)) if profile_photo else None
+            cursor_dst.execute(
+                "INSERT INTO cats (id, created_at, name, rfid, cat_image) VALUES (?, ?, ?, ?, ?)",
+                (id, created_at, name, rfid, cat_image)
             )
-        """)
-        conn.commit()
-        conn.close()
+
+        conn_dst.commit()
     except Exception as e:
-        error_message = f"[DATABASE] An error occurred while creating the 'photo' table in the database '{database}': {e}"
+        error_message = f"[DATABASE] An error occurred while migrating the 'cats' table from the database '{kittyflap_db}' to '{kittyhack_db}': {e}"
         logging.error(error_message)
         return Result(False, error_message)
     else:
-        logging.info(f"[DATABASE] Successfully created the 'photo' table in the database '{database}'.")
+        logging.info(f"[DATABASE] Successfully migrated the 'cats' table from the database '{kittyflap_db}' to '{kittyhack_db}'.")
         return Result(True, None)
     finally:
         release_database()

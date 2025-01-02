@@ -1,11 +1,19 @@
 import logging
 from src.system import Gpio
+from src.helper import sigterm_monitor
+import threading
+import time as tm
+from queue import Queue
 
 # GPIO pin numbers and directions
 MAG_LOCK_TO_OUTSIDE_NUM = 524
 MAG_LOCK_TO_OUTSIDE_DIR = "out"
 MAG_LOCK_TO_INSIDE_NUM = 525
 MAG_LOCK_TO_INSIDE_DIR = "out"
+
+# Safety delay for the magnet command queue
+# WARNING: TOO LOW VALUES MAY DAMAGE THE HARDWARE!
+MAGNET_COMMAND_DELAY = 1.0
 
 # Create a Gpio instance
 gpio = Gpio()
@@ -37,7 +45,6 @@ class Magnets:
         self.simulate_kittyflap = simulate_kittyflap
 
     def init(self):
-
         if self.simulate_kittyflap:
             logging.info("[MAGNETS] Simulation mode enabled. Magnets would be now initialized.")
         else:
@@ -47,14 +54,15 @@ class Magnets:
                 gpio.configure(MAG_LOCK_TO_INSIDE_NUM, MAG_LOCK_TO_INSIDE_DIR)
 
                 # Ensure both magnets are powered off
-                self.lock_inside()
-                self.lock_outside()
+                self._lock_inside()
+                tm.sleep(MAGNET_COMMAND_DELAY)
+                self._lock_outside()
             except Exception as e:
                 logging.error(f"[MAGNETS] Error initializing Magnets: {e}")
             else:
                 logging.info("[MAGNETS] Magnets initialized and released.")
 
-    def unlock_inside(self):
+    def _unlock_inside(self):
         """
         Unlocks the magnet lock to the inside direction.
         """
@@ -71,7 +79,7 @@ class Magnets:
         else:
             logging.info("[MAGNETS] Inside direction is now unlocked.")
 
-    def lock_inside(self):
+    def _lock_inside(self):
         """
         Locks the magnet lock to the inside direction.
         """
@@ -88,7 +96,7 @@ class Magnets:
         else:
             logging.info("[MAGNETS] Inside direction is now locked.")
 
-    def unlock_outside(self):
+    def _unlock_outside(self):
         """
         Unlocks the magnet lock to the outside direction.
         """
@@ -105,7 +113,7 @@ class Magnets:
         else:
             logging.info("[MAGNETS] Outside direction is now unlocked.")
 
-    def lock_outside(self):
+    def _lock_outside(self):
         """
         Locks the magnet lock to the outside direction.
         """
@@ -139,3 +147,55 @@ class Magnets:
             bool: True if the inside direction is unlocked, False if the inside direction is locked.
         """
         return self.magnet_controller.magnet_state_inside
+    
+    def start_magnet_control(self):
+        """
+        Initializes and starts the magnet control thread.
+        """
+        self.command_queue = Queue()
+        self.control_thread = threading.Thread(target=self._process_commands)
+        self.control_thread.daemon = True
+        self.control_thread.start()
+
+    def _process_commands(self):
+        last_command_time = tm.time() - MAGNET_COMMAND_DELAY  # Initialize to allow immediate first command
+
+        # Register task in the sigterm_monitor object
+        sigterm_monitor.register_task()
+
+        while not sigterm_monitor.stop_now:
+            if not self.command_queue.empty():
+                current_time = tm.time()
+                if current_time - last_command_time < MAGNET_COMMAND_DELAY:
+                    magnet_delay = MAGNET_COMMAND_DELAY - (current_time - last_command_time)
+                    logging.info(f"[MAGNETS] Waiting {magnet_delay:.1f} seconds before processing next command.")
+                    tm.sleep(magnet_delay)
+
+                command = self.command_queue.get()
+                if command == "unlock_inside":
+                    self._unlock_inside()
+                elif command == "lock_inside":
+                    self._lock_inside()
+                elif command == "unlock_outside":
+                    self._unlock_outside()
+                elif command == "lock_outside":
+                    self._lock_outside()
+                last_command_time = current_time
+            tm.sleep(0.05)
+
+        logging.info("[MAGNETS] Stopped magnet command queue thread.")
+        sigterm_monitor.signal_task_done()
+
+    def queue_command(self, command):
+        """
+        Adds a command to the command queue.
+
+        Args:
+            command (str): The command to be added to the queue:
+                - "unlock_inside": Unlocks the magnet lock to the inside direction.
+                - "lock_inside": Locks the magnet lock to the inside direction.
+                - "unlock_outside": Unlocks the magnet lock to the outside direction.
+                - "lock_outside": Locks the magnet lock to the outside direction.
+        """
+        self.command_queue.put(command)
+        logging.info(f"[MAGNETS] Command '{command}' added to queue.")

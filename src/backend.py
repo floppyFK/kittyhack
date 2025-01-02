@@ -60,6 +60,9 @@ def backend_main(simulate_kittyflap = False):
     tm.sleep(1.0)
     rfid.stop_read(wait_for_stop=True)
 
+    # Start the magnet control thread
+    magnets.start_magnet_control()
+
     # Start PIR monitoring thread
     pir_thread = threading.Thread(target=pir.read, args=(), daemon=True)
     pir_thread.start()
@@ -99,7 +102,7 @@ def backend_main(simulate_kittyflap = False):
             last_motion_outside_tm = motion_outside_tm
             logging.info(f"[BACKEND] Motion stopped OUTSIDE (Block ID: '{motion_block_id}')")
             if (magnets.get_inside_state() == True):
-                magnets.lock_inside()
+                magnets.queue_command("lock_inside")
 
             # Update the motion_block_id and the tag_id for for all elements between first_motion_outside_tm and last_motion_outside_tm
             img_ids_for_motion_block = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm)
@@ -127,7 +130,7 @@ def backend_main(simulate_kittyflap = False):
         
         if last_inside == 0 and motion_inside == 1: # Inside motion detected
             logging.info("[BACKEND] Motion detected INSIDE")
-            magnets.unlock_outside()
+            magnets.queue_command("unlock_outside")
 
         # Turn off the RFID reader if no motion outside and pause the TFLite model
         if ( (motion_outside == 0) and 
@@ -150,7 +153,7 @@ def backend_main(simulate_kittyflap = False):
         if ( (motion_inside == 0) and
              (magnets.get_outside_state() == True) and
              ((tm.time() - last_motion_inside_tm) > OPEN_OUTSIDE_TIMEOUT) ):
-                magnets.lock_outside()
+                magnets.queue_command("lock_outside")
             
         # Check for a valid RFID tag
         if ( (tag_id) and 
@@ -189,7 +192,7 @@ def backend_main(simulate_kittyflap = False):
 
         if unlock_inside:
             logging.info(f"[BACKEND] All checks are passed. Unlock the inside")
-            magnets.unlock_inside()
+            magnets.queue_command("unlock_inside")
             
         tm.sleep(0.1)
 

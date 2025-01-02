@@ -74,6 +74,12 @@ if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "cats"):
     else:
         logging.warning("Table 'cat' not found in the kittyflap database. No cats migrated to the kittyhack database.")
 
+if check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
+    logging.info("Table 'photo' found in the kittyhack database. Migrating it to 'events'...")
+    migrate_photos_to_events(CONFIG['KITTYHACK_DATABASE_PATH'])
+
+# TODO: Change all occurences of 'write config to database' to a write of the configfile
+
 logging.info("Starting backend...")
 backend_thread = threading.Thread(target=backend_main, args=(CONFIG['SIMULATE_KITTYFLAP'],), daemon=True)
 backend_thread.start()
@@ -144,6 +150,11 @@ def server(input, output, session):
     def immediate_bg_task_reload_button():
         immediate_bg_task("today button")
 
+    @reactive.Effect
+    @reactive.event(input.button_detection_overlay)
+    def update_config_images_with_overlay():
+        CONFIG['IMAGES_WITH_OVERLAY'] = input.button_detection_overlay()
+
     @output
     @render.ui
     def ui_photos_date():
@@ -174,6 +185,7 @@ def server(input, output, session):
             ui.row(
                 ui.div(button_cat_only := ui.input_switch("button_cat_only", _("Show detected cats only")), class_="col-auto btn-date-filter px-1"),
                 ui.div(button_mouse_only := ui.input_switch("button_mouse_only", _("Show detected mice only")), class_="col-auto btn-date-filter px-1"),
+                ui.div(button_detection_overlay := ui.input_switch("button_detection_overlay", _("Show detection overlay"), CONFIG['SHOW_IMAGES_WITH_OVERLAY']), class_="col-auto btn-date-filter px-1"),
                 class_="d-flex justify-content-center align-items-center"  # Centers elements horizontally
             ),
             class_="container"  # Adds centering within a smaller container
@@ -252,7 +264,7 @@ def server(input, output, session):
 
     @output
     @render.ui
-    @reactive.event(input.button_reload, input.date_selector, input.ui_photos_cards_tabs, input.button_mouse_only, input.button_cat_only, reload_trigger, ignore_none=True)
+    @reactive.event(input.button_reload, input.date_selector, input.ui_photos_cards_tabs, input.button_mouse_only, input.button_cat_only, input.button_detection_overlay, reload_trigger, ignore_none=True)
     def ui_photos_cards():
         ui_cards = []
 
@@ -279,22 +291,29 @@ def server(input, output, session):
             return ui.help_text(_("No pictures for the selected filter criteria found."), class_="no-images-found")
         
         else:
-            df_photos["created_at"] = get_local_date_from_utc_date(df_photos["created_at"])
-            df_cats = db_get_cats(CONFIG['DATABASE_PATH'], ReturnDataCatDB.all)
+            df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all)
 
             for index, data_row in df_photos.iterrows():
-                blob_picture = base64.b64encode(data_row["blob_picture"]).decode('utf-8')
+                if input.button_detection_overlay():
+                    blob_picture = data_row["modified_image"]
+                else:
+                    blob_picture = data_row["original_image"]
+                try:
+                    decoded_picture = base64.b64encode(blob_picture).decode('utf-8')
+                except:
+                    decoded_picture = None
+                
                 mouse_probability = data_row["mouse_probability"]
 
                 try:
-                    photo_timestamp = data_row["created_at"].strftime('%H:%M:%S')
+                    photo_timestamp = pd.to_datetime(get_local_date_from_utc_date(data_row["created_at"])).strftime('%H:%M:%S')
                 except ValueError:
                     photo_timestamp = "Unknown date"
                 
                 if data_row["rfid"]:
                     try:
                         cat_name = df_cats.loc[df_cats["rfid"] == data_row["rfid"], "name"].values[0]
-                    except ValueError:
+                    except:
                         cat_name = data_row["rfid"]
                 else:
                     cat_name = ""
@@ -306,9 +325,8 @@ def server(input, output, session):
                     card_footer_cat = ""
                 
 
-                data_uri = f"data:image/jpeg;base64,{blob_picture}"
-                if blob_picture:
-                    img_html = f'<img src="{data_uri}" />'
+                if decoded_picture:
+                    img_html = f'<img src="data:image/jpeg;base64,{decoded_picture}" />'
                 else:
                     img_html = _('No picture found!')
                     logging.warning(f"No blob_picture found for entry {photo_timestamp}")
@@ -505,7 +523,7 @@ def server(input, output, session):
     @output
     @render.table
     def ui_table_cat():
-        df = db_get_cats(CONFIG['DATABASE_PATH'], ReturnDataCatDB.all_except_photos)
+        df = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all_except_photos)
         return df.style.set_table_attributes('class="dataframe table shiny-table w-auto table_nobgcolor"')
     
     @output

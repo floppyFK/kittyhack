@@ -140,32 +140,32 @@ def db_get_photos(database: str,
                   elements_per_page = sys.maxsize,
                   ignore_deleted = True):
     """
-    this function returns all dataframes from the 'photo' table, based on the
+    this function returns all dataframes from the 'events' table, based on the
     specified filter.
     If no filters are specified, this function returns all avaliable dataframes.
     The newest data are at the top of the dataframe.
     """
     if return_data == ReturnDataPhotosDB.all:
-         columns = "id, created_at, blob_picture, no_mouse_probability, mouse_probability, kittyflap_id, cat_id, rfid, false_accept_probability"
+         columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, rfid, event_text"
     elif return_data == ReturnDataPhotosDB.all_except_photos:
-         columns = "id, created_at, no_mouse_probability, mouse_probability, kittyflap_id, cat_id, rfid, false_accept_probability"
+         columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, rfid, event_text"
     elif return_data == ReturnDataPhotosDB.only_ids:
          columns = "id"
     else:
          columns = "*"
     
     # Check if 'deleted' column exists (this column exists only in the kittyhack database)
-    columns_info = read_column_info_from_database(database, "photo")
+    columns_info = read_column_info_from_database(database, "events")
     column_names = [info[1] for info in columns_info]
     if 'deleted' in column_names and ignore_deleted == True:
-        stmt = f"SELECT {columns} FROM photo WHERE created_at BETWEEN '{date_start}' AND '{date_end}' AND deleted != 1"
+        stmt = f"SELECT {columns} FROM events WHERE created_at BETWEEN '{date_start}' AND '{date_end}' AND deleted != 1"
     else:
-        stmt = f"SELECT {columns} FROM photo WHERE created_at BETWEEN '{date_start}' AND '{date_end}'"
+        stmt = f"SELECT {columns} FROM events WHERE created_at BETWEEN '{date_start}' AND '{date_end}'"
     if mouse_only:
         stmt = f"{stmt} AND mouse_probability >= {mouse_probability}"
     if cats_only:
         stmt = f"{stmt} AND rfid != ''"
-    # reverse the row order, based on column 'id', so that the newest photos are at the top
+    # reverse the row order, based on column 'id', so that the newest events are at the top
     stmt = f"{stmt} ORDER BY id DESC"
 
     if elements_per_page != sys.maxsize:
@@ -177,14 +177,14 @@ def db_get_photos(database: str,
 
 def db_get_cats(database: str, return_data: ReturnDataCatDB):
     """
-    this function returns all dataframes from the 'cat' table.
+    this function returns all dataframes from the 'cats' table.
     """
     if return_data == ReturnDataCatDB.all:
          columns = "*"
     elif return_data == ReturnDataCatDB.all_except_photos:
-        columns = "id, created_at, kittyflap_id, name, rfid, cat_config_id"
+        columns = "id, created_at, name, rfid"
 
-    stmt = f"SELECT {columns} FROM cat"
+    stmt = f"SELECT {columns} FROM cats"
     return read_df_from_database(database, stmt)
 
 def db_get_config(database: str, return_data: ReturnDataConfigDB):
@@ -232,7 +232,8 @@ def create_kittyhack_events_table(database: str):
             mouse_probability REAL,
             no_mouse_probability REAL,
             rfid TEXT,
-            event_text TEXT
+            event_text TEXT,
+            deleted BOOLEAN DEFAULT 0
         )
     """
     result = write_stmt_to_database(database, stmt)
@@ -377,15 +378,15 @@ def read_photo_by_id(database: str, photo_id: int) -> pd.DataFrame:
     """
     This function reads a specific dataframe based on the ID from the source database.
     """
-    columns = "id, created_at, blob_picture, no_mouse_probability, mouse_probability, kittyflap_id, cat_id, rfid, false_accept_probability"
-    stmt = f"SELECT {columns} FROM photo WHERE id = {photo_id}"
+    columns = "id, block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, rfid, event_text"
+    stmt = f"SELECT {columns} FROM events WHERE id = {photo_id}"
     return read_df_from_database(database, stmt)
 
 def delete_photo_by_id(database: str, photo_id: int) -> Result:
     """
     This function deletes a specific dataframe based on the ID from the source database.
     """
-    stmt = f"UPDATE photo SET blob_picture = NULL, deleted = 1 WHERE id = {photo_id}"
+    stmt = f"UPDATE events SET original_image = NULL, modified_image = NULL, deleted = 1 WHERE id = {photo_id}"
     result = write_stmt_to_database(database, stmt)
     if result.success == True:
         logging.info(f"[DATABASE] Photo with ID '{photo_id}' deleted successfully.")
@@ -469,3 +470,57 @@ def check_if_table_exists(database: str, table: str) -> bool:
         return False
     else:
         return True if result else False
+    
+def migrate_photos_to_events(database: str) -> Result:    
+    """
+    Migrates all records from the 'photo' table to the 'events' table.
+    NOTE: the 'photo' table is deprecated and was only used in older versions of kittyhack (<= v1.1.0), which relied on co-existence of the kittyflap service.
+    """
+    result = lock_database()
+    if not result.success:
+        return result
+    
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM photo")
+        photo_ids = cursor.fetchall()
+        if not photo_ids:
+            logging.info(f"[DATABASE] No photos to migrate from 'photo' table to 'events' table in the database '{database}'.")
+            return Result(True, None)
+
+        for photo_id in photo_ids:
+            cursor.execute("SELECT * FROM photo WHERE id = ?", (photo_id[0],))
+            photo = cursor.fetchone()
+            if photo:
+                id, created_at, blob_picture, no_mouse_probability, mouse_probability, kittyflap_id, cat_id, rfid, false_accept_probability, deleted = photo
+                columns = "id, block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, rfid, event_text"
+                values = ', '.join(['?' for _ in columns.split(', ')])
+                values_list = [
+                    id,
+                    0,  # block_id is unknown, set to 0
+                    created_at,
+                    "image",
+                    blob_picture,
+                    None,  # modified_image does not exist in the 'photo' table
+                    mouse_probability,
+                    no_mouse_probability,
+                    rfid,
+                    ""  # event_text
+                ]
+                cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
+                cursor.execute(f"DELETE FROM photo WHERE id = ?", (id,))
+
+        # now delete the 'photo' table
+        cursor.execute("DROP TABLE photo")
+
+        conn.commit()
+    except Exception as e:
+        error_message = f"[DATABASE] An error occurred while migrating photos from 'photo' table to 'events' table in the database '{database}': {e}"
+        logging.error(error_message)
+        return Result(False, error_message)
+    else:
+        logging.info(f"[DATABASE] Successfully migrated photos from 'photo' table to 'events' table in the database '{database}'.")
+        return Result(True, None)
+    finally:
+        release_database()

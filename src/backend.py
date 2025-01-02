@@ -99,7 +99,10 @@ def backend_main(simulate_kittyflap = False):
         last_rfid_read = rfid.time_delta_to_last_read()
 
         if last_outside == 1 and motion_outside == 0: # Outside motion stopped
-            last_motion_outside_tm = motion_outside_tm
+            if tflite.get_run_state() == True:
+                tflite.pause()
+                tm.sleep(0.5)  # Wait for the last image to be processed
+            last_motion_outside_tm = tm.time()
             logging.info(f"[BACKEND] Motion stopped OUTSIDE (Block ID: '{motion_block_id}')")
             if (magnets.get_inside_state() == True):
                 magnets.queue_command("lock_inside")
@@ -138,8 +141,6 @@ def backend_main(simulate_kittyflap = False):
             if rfid.get_run_state() == RfidRunState.running:
                 logging.info(f"[BACKEND] No motion outside since {RFID_READER_OFF_DELAY} seconds after the last motion. Stopping RFID reader.")
                 rfid.stop_read(wait_for_stop=False)
-            if tflite.get_run_state() == True:
-                tflite.pause()
         
         if motion_outside == 1:
             # Motion detected outside, enable RFID and check for tag
@@ -188,10 +189,11 @@ def backend_main(simulate_kittyflap = False):
         unlock_inside =  (motion_outside == 1)
         unlock_inside &= (tag_id_valid or CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.ALL)
         unlock_inside &= (magnets.get_inside_state() == False)
-        unlock_inside &= ( ((len(ids_with_mouse) == 0) and (len(ids_of_current_motion_block) > 0)) or (CONFIG['MOUSE_CHECK_ENABLED'] == True) )
+        unlock_inside &= ( ((len(ids_with_mouse) == 0) and (len(ids_of_current_motion_block) >= CONFIG['MIN_PICTURES_TO_ANALYZE'])) or (CONFIG['MOUSE_CHECK_ENABLED'] == False) )
 
         if unlock_inside:
             logging.info(f"[BACKEND] All checks are passed. Unlock the inside")
+            logging.debug(f"[BACKEND] Motion outside: {motion_outside}, Motion inside: {motion_inside}, Tag ID: {tag_id}, Tag valid: {tag_id_valid}, Motion block ID: {motion_block_id}, Images with mouse: {len(ids_with_mouse)}, Images in current block: {len(ids_of_current_motion_block)}")
             magnets.queue_command("unlock_inside")
             
         tm.sleep(0.1)

@@ -10,6 +10,10 @@ app_ui = ui.page_fillable(
     ui.include_css("styles.css"),
     ui.navset_bar(
         ui.nav_panel(
+            _("Live view"),
+            ui.output_ui("ui_live_view")
+        ),
+        ui.nav_panel(
             _("Pictures"),
             ui.output_ui("ui_photos_date"),
             ui.output_ui("ui_photos_cards_nav"),
@@ -27,10 +31,6 @@ app_ui = ui.page_fillable(
         ui.nav_panel(
             _("Info"),
             ui.output_ui("ui_info")
-        ),
-        ui.nav_panel(
-            _("Debug details"),
-            ui.output_ui("ui_debuginfo"),
         ),
         title=ui.HTML("<span style='font-weight: bold;'>KITTY " + str(icon_svg("shield-cat")) + "HACK</span>"),
         position="fixed-top",

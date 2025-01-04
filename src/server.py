@@ -10,6 +10,7 @@ from faicons import icon_svg
 import math
 import threading
 import requests
+import random
 from src.helper import *
 from src.database import *
 from src.system import *
@@ -78,7 +79,20 @@ if check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
     logging.info("Table 'photo' found in the kittyhack database. Migrating it to 'events'...")
     migrate_photos_to_events(CONFIG['KITTYHACK_DATABASE_PATH'])
 
-# TODO: Change all occurences of 'write config to database' to a write of the configfile
+# Migrate the kittyflap config database table into the config.ini:
+if check_if_table_exists(CONFIG['DATABASE_PATH'], "config") and CONFIG['KITTYFLAP_CONFIG_MIGRATED'] == False:
+    logging.info("Table 'config' found in the kittyflap database. Migrating it to the config.ini...")
+    df_config = db_get_config(CONFIG['DATABASE_PATH'], ReturnDataConfigDB.all)
+    if not df_config.empty:
+        CONFIG['MOUSE_CHECK_ENABLED'] = bool(df_config.iloc[0]["detect_prey"])
+        CONFIG['ALLOWED_TO_ENTER'] = AllowedToEnter.ALL if bool(df_config.iloc[0]["accept_all_cats"]) else AllowedToEnter.KNOWN
+        CONFIG['KITTYFLAP_CONFIG_MIGRATED'] = True
+        if save_config():
+            logging.info("Kittyflap configuration migrated successfully.")
+        else:
+            logging.error("Failed to save the migrated kittyflap configuration.")
+    else:
+        logging.error("Failed to read the configuration from the kittyflap database.")
 
 logging.info("Starting backend...")
 backend_thread = threading.Thread(target=backend_main, args=(CONFIG['SIMULATE_KITTYFLAP'],), daemon=True)
@@ -127,14 +141,29 @@ start_background_task()
 # Read the GIT version
 git_version = get_git_version()
 
+# Initialize the frame count for the live view
+frame_count = 0
+
 # The main server application
 def server(input, output, session):
+
+    reactive_frame_count = reactive.value(0)
 
     # Create a reactive trigger
     reload_trigger = reactive.Value(0)
 
     # List of deleted photo IDs
     deleted_ids = []
+
+    @reactive.effect
+    def framecount():
+        """
+        This effect is used to trigger an update of a ui.output every n seconds (based on CONFIG['LIVE_VIEW_REFRESH_INTERVAL']).
+        """
+        global frame_count
+        reactive.invalidate_later(CONFIG['LIVE_VIEW_REFRESH_INTERVAL'])
+        frame_count = (frame_count + 1) % 1000000 # reset the frame count after 1000000
+        reactive_frame_count.set(frame_count)
 
     @reactive.Effect
     def immediate_bg_task_site_load():
@@ -154,6 +183,7 @@ def server(input, output, session):
     @reactive.event(input.button_detection_overlay)
     def update_config_images_with_overlay():
         CONFIG['IMAGES_WITH_OVERLAY'] = input.button_detection_overlay()
+        update_config_images_overlay(input.button_detection_overlay())
 
     @output
     @render.ui
@@ -211,7 +241,6 @@ def server(input, output, session):
             new_date = pd.to_datetime(current_date).date() - timedelta(days=1)
             # Update the date input using session.send_input_message
             session.send_input_message("date_selector", {"value": new_date.strftime("%Y-%m-%d")})
-            #reload_trigger.set(reload_trigger.get() + 1)
 
     @reactive.Effect
     @reactive.event(input.button_increment, ignore_none=True)
@@ -232,7 +261,6 @@ def server(input, output, session):
             new_date = pd.to_datetime(current_date).date() + timedelta(days=1)
             # Update the date input using session.send_input_message
             session.send_input_message("date_selector", {"value": new_date.strftime("%Y-%m-%d")})
-            #reload_trigger.set(reload_trigger.get() + 1)
 
     @reactive.Effect
     @reactive.event(input.button_today, ignore_none=True)
@@ -240,7 +268,6 @@ def server(input, output, session):
         # Get the current date
         now = datetime.now()
         session.send_input_message("date_selector", {"value": now.strftime("%Y-%m-%d")})
-        #reload_trigger.set(reload_trigger.get() + 1)
     
     @output
     @render.ui
@@ -376,6 +403,36 @@ def server(input, output, session):
 
     @output
     @render.ui
+    def ui_live_view():
+        tmp = reactive_frame_count.get() # keep this to allow a periodic update of the live view
+
+        frame = tflite.get_camera_frame()
+        if frame is None:
+            img_html = _('Connection to the camera failed.')
+        else:
+            frame_jpg = tflite.encode_jpg_image(frame)
+            if frame_jpg:
+                frame_b64 = base64.b64encode(frame_jpg).decode('utf-8')
+                img_html = f'<img src="data:image/jpeg;base64,{frame_b64}" />'
+            else:
+                img_html = _('Could not read the picture from the camera.')
+
+        
+        return ui.div(
+            ui.card(
+                ui.card_header(
+                    ui.div(
+                        ui.HTML(f"{tmp} | {datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S')}"),
+                    )
+                ),
+                ui.HTML(img_html),
+                full_screen=False,
+                class_="image-container"
+            )
+        )
+
+    @output
+    @render.ui
     def ui_system():
             return ui.div(
                 ui.column(12, ui.h3(_("Kittyflap System Actions"))),
@@ -399,81 +456,75 @@ def server(input, output, session):
     @output
     @render.ui
     def ui_configuration():
-        # TODO: Add configuration element for:
-        # - Allowed to enter (already prepared in config: CONFIG['ALLOWED_TO_ENTER'])
-        # - Mouse check enabled (already prepared in config: CONFIG['MOUSE_CHECK_ENABLED'])
+        ui_config =  ui.div(
+            ui.column(12, ui.h3(_("Kittyhack configuration"))),
+            ui.column(12, ui.help_text(_("In this section you can change the behaviour of the Kittyhack user interface"))),
+            ui.br(),
 
-        df_config = db_get_config(CONFIG['DATABASE_PATH'], ReturnDataConfigDB.all)
-        if not df_config.empty:
-            accept_all_cats = bool(df_config.iloc[0]["accept_all_cats"])
-            detect_prey = bool(df_config.iloc[0]["detect_prey"])
-            acceptance_rate = float(df_config.iloc[0]["acceptance_rate"])
-            cat_prob_threshold = float(df_config.iloc[0]["cat_prob_threshold"])
-            ui_config =  ui.div(
-                ui.column(12, ui.h3(_("Kittyflap configuration"))),
-                ui.column(12, ui.help_text(_("Change the configuration of the Kittyflap"))),
-                ui.br(),
-                ui.column(12, btnAcceptAllCats := ui.input_switch("btnAcceptAllCats", _("Accept all cats"), accept_all_cats)),
-                ui.column(12, btnDetectPrey := ui.input_switch("btnDetectPrey", _("Detect prey"), detect_prey)),
-                ui.column(12, sldAcceptanceRate := ui.input_slider("sldAcceptanceRate", _("Acceptance rate"), min=0, max=100, value=acceptance_rate)),
-                ui.column(12, sldCatProbThreshold := ui.input_slider("sldCatProbThreshold", _("Cat probability threshold"), min=0, max=100, value=cat_prob_threshold)),
-                ui.input_action_button("bSaveKittyflapConfig", _("Save Kittyflap Config")),
-                ui.hr(),
-                ui.column(12, ui.h3(_("Kittyhack configuration"))),
-                ui.column(12, ui.help_text(_("In this section you can change the behaviour of the Kittyhack user interface"))),
-                ui.br(),
-                ui.column(12, txtLanguage := ui.input_select("txtLanguage", "Language", {"en":"English", "de":"Deutsch"}, selected=CONFIG['LANGUAGE'])),
-                ui.column(12, txtConfigTimezone := ui.input_text("txtConfigTimezone", _("Timezone"), CONFIG['TIMEZONE'])),
-                ui.column(12, ui.HTML('<span class="help-block">' + _('See') +  ' <a href="https://en.wikipedia.org/wiki/List_of_tz_database_time_zones" target="_blank">Wikipedia</a> ' + _('for valid timezone strings') + '</span>')),
-                ui.br(),
-                ui.column(12, txtConfigDateformat := ui.input_text("txtConfigDateformat", _("Date format"), CONFIG['DATE_FORMAT'])),
-                ui.column(12, sldMouseThreshold := ui.input_slider("sldMouseThreshold", _("Mouse filter threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
-                ui.column(12, ui.help_text(_("NOTE: This value has no impact on the mouse detection of the Kittyflap! It is only used for the filter function of the 'Show detected mouse only' button in the pictures view."))),
-                ui.br(),
-                ui.column(12, numElementsPerPage := ui.input_numeric("numElementsPerPage", _("Maximum pictures per page"), CONFIG['ELEMENTS_PER_PAGE'], min=1)),
-                ui.column(12, ui.help_text(_("NOTE: Too many pictures per page could slow down the performance drastically!"))),
-                ui.br(),
-                ui.column(12, numMaxPhotosCount := ui.input_numeric("numMaxPhotosCount", _("Maximum number of photos to retain in the database"), CONFIG['MAX_PHOTOS_COUNT'], min=100)),
-                ui.br(),
-                ui.column(12, txtLoglevel := ui.input_select("txtLoglevel", "Loglevel", {"DEBUG": "DEBUG", "INFO": "INFO", "WARN": "WARN", "ERROR": "ERROR", "CRITICAL": "CRITICAL"}, selected=CONFIG['LOGLEVEL'])),
-                ui.input_action_button("bSaveKittyhackConfig", _("Save Kittyhack Config")),
-                ui.br(),
-                ui.br(),
-            )
-            return ui_config
-        else:
-            logging.error("Failed to read the configuration from the kittyflap")
-            return ui.help_text(_("ERROR: Failed to read the configuration from the kittyflap."))
+            ui.column(12, ui.h5(_("General settings"))),
+            ui.column(12, txtLanguage := ui.input_select("txtLanguage", "Language", {"en":"English", "de":"Deutsch"}, selected=CONFIG['LANGUAGE'])),
+            ui.column(12, txtConfigTimezone := ui.input_text("txtConfigTimezone", _("Timezone"), CONFIG['TIMEZONE'])),
+            ui.column(12, ui.HTML('<span class="help-block">' + _('See') +  ' <a href="https://en.wikipedia.org/wiki/List_of_tz_database_time_zones" target="_blank">Wikipedia</a> ' + _('for valid timezone strings') + '</span>')),
+            ui.br(),
+            ui.column(12, txtConfigDateformat := ui.input_text("txtConfigDateformat", _("Date format"), CONFIG['DATE_FORMAT'])),
+            ui.br(),
+            ui.column(12, numElementsPerPage := ui.input_numeric("numElementsPerPage", _("Maximum pictures per page"), CONFIG['ELEMENTS_PER_PAGE'], min=1)),
+            ui.column(12, ui.help_text(_("NOTE: Too many pictures per page could slow down the performance drastically!"))),
+            ui.hr(),
 
-    @reactive.Effect
-    @reactive.event(input.bSaveKittyflapConfig)
-    def on_save_kittyflap_config():
-        success = systemctl("stop", "kwork", CONFIG['SIMULATE_KITTYFLAP'])
-        if success:            
-            # update the database with the data from the dictionary
-            result = db_set_config(CONFIG['DATABASE_PATH'], 
-                                   datetime.now(ZoneInfo("UTC")), 
-                                   input.sldAcceptanceRate(), 
-                                   input.btnAcceptAllCats(), 
-                                   input.btnDetectPrey(), 
-                                   input.sldCatProbThreshold())
-            if result.success:
-                ui.notification_show(_("Kittyflap configuration updated successfully."), duration=5, type="message")
-            else:
-                ui.notification_show(_("An error occurred while updating the database: {}").format(result.message), duration=5, type="error")
+            ui.column(12, ui.h5(_("Door control settings"))),
+            ui.column(12, sldMouseThreshold := ui.input_slider("sldMouseThreshold", _("Mouse filter threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
+            ui.column(12, ui.help_text(_("NOTE: Kittyhack decides based on this value, if a picture contains a mouse or not. A higher value means more strict filtering."))),
+            ui.br(),
+            ui.column(12, btnDetectPrey := ui.input_switch("btnDetectPrey", _("Detect prey"), CONFIG['MOUSE_CHECK_ENABLED'])),
+            ui.br(),
+            ui.column(12, txtAllowedToEnter := ui.input_select(
+                "txtAllowedToEnter",
+                _("Open inside direction for:"),
+                {
+                    AllowedToEnter.ALL.value: _("All cats"), AllowedToEnter.ALL_RFIDS.value: _("All cats with a RFID chip"), AllowedToEnter.KNOWN.value: _("Only registered cats"), AllowedToEnter.NONE.value: _("No cats"),
+                },
+                selected=str(CONFIG['ALLOWED_TO_ENTER'].value),
+            )),
+            ui.hr(),
 
-        else:
-            # Stop kwork service failed
-            ui.notification_show(_("An error occurred while stopping the Kittyflap service. The changed configuration was not saved."), duration=5, type="error")
+            ui.column(12, ui.h5(_("Live view settings"))),
+            ui.column(12, numLiveViewUpdateInterval := ui.input_select(
+                "numLiveViewUpdateInterval",
+                _("Live-View update interval:"),
+                {
+                    _("Refresh the live view every..."):
+                    {
+                        0.1: "100ms", 0.2: "200ms", 0.5: "500ms", 1.0: "1s", 2.0: "2s", 3.0: "3s", 5.0: "5s", 10.0: "10s"
+                    },
+                },
+                selected=CONFIG['LIVE_VIEW_REFRESH_INTERVAL'],
+            )),
+            ui.column(12, ui.help_text(_("NOTE: A high refresh rate could slow down the performance, especially if several users are connected at the same time. Values below 1s require a fast and stable WiFi connection."))),
+            ui.hr(),
 
-        # Start the kwork process again
-        success = systemctl("start", "kwork", CONFIG['SIMULATE_KITTYFLAP'])
-        if success != True:
-            ui.notification_show(_("An error occurred while starting the Kittyflap service. Please restart the Kittyflap manually by unplugging the power cable and plugging it back in."), duration=None, type="error")
+            ui.column(12, ui.h5(_("Pictures view settings"))),
+            ui.column(12, numMaxPhotosCount := ui.input_numeric("numMaxPhotosCount", _("Maximum number of photos to retain in the database"), CONFIG['MAX_PHOTOS_COUNT'], min=100)),
+            ui.hr(),
+
+            ui.column(12, ui.h5(_("Advanced settings"))),
+            ui.column(12, txtLoglevel := ui.input_select("txtLoglevel", "Loglevel", {"DEBUG": "DEBUG", "INFO": "INFO", "WARN": "WARN", "ERROR": "ERROR", "CRITICAL": "CRITICAL"}, selected=CONFIG['LOGLEVEL'])),
+            ui.hr(),
+
+            ui.column(12, ui.h5(_("Manage cats"))),
+            # TODO: Add cat configuration here
+            ui.column(12, ui.help_text("TODO: Add cat configuration here")),
+            ui.br(),
+
+            ui.input_action_button("bSaveKittyhackConfig", _("Save Kittyhack Config")),
+            ui.br(),
+            ui.br(),
+        )
+        return ui_config
 
     @reactive.Effect
     @reactive.event(input.bSaveKittyhackConfig)
-    def on_save_kittyhack_config():        
+    def on_save_kittyhack_config():
         # override the variable with the data from the configuration page
         language_changed = CONFIG['LANGUAGE'] != input.txtLanguage()
         CONFIG['LANGUAGE'] = input.txtLanguage()
@@ -483,6 +534,9 @@ def server(input, output, session):
         CONFIG['ELEMENTS_PER_PAGE'] = int(input.numElementsPerPage())
         CONFIG['MAX_PHOTOS_COUNT'] = int(input.numMaxPhotosCount())
         CONFIG['LOGLEVEL'] = input.txtLoglevel()
+        CONFIG['MOUSE_CHECK_ENABLED'] = input.btnDetectPrey()
+        CONFIG['ALLOWED_TO_ENTER'] = AllowedToEnter(input.txtAllowedToEnter())
+        CONFIG['LIVE_VIEW_REFRESH_INTERVAL'] = float(input.numLiveViewUpdateInterval())
 
         loglevel = logging._nameToLevel.get(input.txtLoglevel(), logging.INFO)
         logger.setLevel(loglevel)
@@ -494,43 +548,6 @@ def server(input, output, session):
                 ui.notification_show(_("Reload this website to apply the new language."), duration=5, type="message")
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=5, type="error")
-
-    @output
-    @render.ui
-    def ui_debuginfo():
-        uiDebuginfos = ui.row(
-            ui.card(
-                ui.card_header("Table 'cat'"),
-                ui.div(ui.output_table("ui_table_cat"), style="overflow-x: auto; width: 100%;")
-            ),
-            ui.card(
-                ui.card_header("Table 'config'"),
-                ui.div(ui.output_table("ui_table_config"), style="overflow-x: auto; width: 100%;")
-            ),
-            ui.card(
-                ui.card_header("Table 'photo'"),
-                ui.div(ui.output_table("ui_table_photo"), style="overflow-x: auto; width: 100%;")
-            ),
-        )
-        return uiDebuginfos
-
-    @output
-    @render.table
-    def ui_table_photo():
-        df = db_get_photos(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataPhotosDB.all_except_photos)
-        return df.style.set_table_attributes('class="dataframe table shiny-table w-auto table_nobgcolor"')
-    
-    @output
-    @render.table
-    def ui_table_cat():
-        df = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all_except_photos)
-        return df.style.set_table_attributes('class="dataframe table shiny-table w-auto table_nobgcolor"')
-    
-    @output
-    @render.table
-    def ui_table_config():
-        df = db_get_config(CONFIG['DATABASE_PATH'], ReturnDataConfigDB.all_except_password)
-        return df.style.set_table_attributes('class="dataframe table shiny-table w-auto table_nobgcolor"')
     
     @render.download()
     def download_logfile():

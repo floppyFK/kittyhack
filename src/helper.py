@@ -33,16 +33,18 @@ DEFAULT_CONFIG = {
         "date_format": "yyyy-mm-dd",
         "database_path": "../kittyflap.db",
         "kittyhack_database_path": "./kittyhack.db",
-        "max_photos_count": "2000",
+        "max_photos_count": 2000,
         "simulate_kittyflap": False,
-        "mouse_threshold": "70.0",
-        "elements_per_page": "20",
+        "mouse_threshold": 70.0,
+        "elements_per_page": 20,
         "loglevel": "INFO",
-        "periodic_jobs_interval": "900",
+        "periodic_jobs_interval": 900,
         "allowed_to_enter": "all",
         "mouse_check_enabled": True,
         "min_pictures_to_analyze": 5,
-        "show_images_with_overlay": True
+        "show_images_with_overlay": True,
+        "live_view_refresh_interval": 5.0,
+        "kittyflap_config_migrated": False
     }
 }
 
@@ -136,16 +138,18 @@ def load_config():
         "DATE_FORMAT": parser.get('Settings', 'date_format', fallback=DEFAULT_CONFIG['Settings']['date_format']),
         "DATABASE_PATH": parser.get('Settings', 'database_path', fallback=DEFAULT_CONFIG['Settings']['database_path']),
         "KITTYHACK_DATABASE_PATH": parser.get('Settings', 'kittyhack_database_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_path']),
-        "MAX_PHOTOS_COUNT": int(parser.get('Settings', 'max_photos_count', fallback=DEFAULT_CONFIG['Settings']['max_photos_count'])),
+        "MAX_PHOTOS_COUNT": parser.getint('Settings', 'max_photos_count', fallback=DEFAULT_CONFIG['Settings']['max_photos_count']),
         "SIMULATE_KITTYFLAP": parser.getboolean('Settings', 'simulate_kittyflap', fallback=DEFAULT_CONFIG['Settings']['simulate_kittyflap']),
-        "MOUSE_THRESHOLD": float(parser.get('Settings', 'mouse_threshold', fallback=DEFAULT_CONFIG['Settings']['mouse_threshold'])),
-        "ELEMENTS_PER_PAGE": int(parser.get('Settings', 'elements_per_page', fallback=DEFAULT_CONFIG['Settings']['elements_per_page'])),
+        "MOUSE_THRESHOLD": parser.getfloat('Settings', 'mouse_threshold', fallback=DEFAULT_CONFIG['Settings']['mouse_threshold']),
+        "ELEMENTS_PER_PAGE": parser.getint('Settings', 'elements_per_page', fallback=DEFAULT_CONFIG['Settings']['elements_per_page']),
         "LOGLEVEL": parser.get('Settings', 'loglevel', fallback=DEFAULT_CONFIG['Settings']['loglevel']),
-        "PERIODIC_JOBS_INTERVAL": int(parser.get('Settings', 'periodic_jobs_interval', fallback=DEFAULT_CONFIG['Settings']['periodic_jobs_interval'])),
+        "PERIODIC_JOBS_INTERVAL": parser.getint('Settings', 'periodic_jobs_interval', fallback=DEFAULT_CONFIG['Settings']['periodic_jobs_interval']),
         "ALLOWED_TO_ENTER": AllowedToEnter(parser.get('Settings', 'allowed_to_enter', fallback=DEFAULT_CONFIG['Settings']['allowed_to_enter'])),
         "MOUSE_CHECK_ENABLED": parser.getboolean('Settings', 'mouse_check_enabled', fallback=DEFAULT_CONFIG['Settings']['mouse_check_enabled']),
         "MIN_PICTURES_TO_ANALYZE": parser.getint('Settings', 'min_pictures_to_analyze', fallback=DEFAULT_CONFIG['Settings']['min_pictures_to_analyze']),
-        "SHOW_IMAGES_WITH_OVERLAY": parser.getboolean('Settings', 'show_images_with_overlay', fallback=DEFAULT_CONFIG['Settings']['show_images_with_overlay'])
+        "SHOW_IMAGES_WITH_OVERLAY": parser.getboolean('Settings', 'show_images_with_overlay', fallback=DEFAULT_CONFIG['Settings']['show_images_with_overlay']),
+        "LIVE_VIEW_REFRESH_INTERVAL": parser.getfloat('Settings', 'live_view_refresh_interval', fallback=DEFAULT_CONFIG['Settings']['live_view_refresh_interval']),
+        "KITTYFLAP_CONFIG_MIGRATED": parser.getboolean('Settings', 'kittyflap_config_migrated', fallback=DEFAULT_CONFIG['Settings']['kittyflap_config_migrated'])
     }
 
 def save_config():
@@ -163,16 +167,18 @@ def save_config():
     settings['date_format'] = CONFIG['DATE_FORMAT']
     settings['database_path'] = CONFIG['DATABASE_PATH']
     settings['kittyhack_database_path'] = CONFIG['KITTYHACK_DATABASE_PATH']
-    settings['max_photos_count'] = str(CONFIG['MAX_PHOTOS_COUNT'])
-    settings['simulate_kittyflap'] = str(CONFIG['SIMULATE_KITTYFLAP']).lower()
-    settings['mouse_threshold'] = str(CONFIG['MOUSE_THRESHOLD'])
-    settings['elements_per_page'] = str(CONFIG['ELEMENTS_PER_PAGE'])
+    settings['max_photos_count'] = CONFIG['MAX_PHOTOS_COUNT']
+    settings['simulate_kittyflap'] = CONFIG['SIMULATE_KITTYFLAP']
+    settings['mouse_threshold'] = CONFIG['MOUSE_THRESHOLD']
+    settings['elements_per_page'] = CONFIG['ELEMENTS_PER_PAGE']
     settings['loglevel'] = CONFIG['LOGLEVEL']
-    settings['periodic_jobs_interval'] = str(CONFIG['PERIODIC_JOBS_INTERVAL'])
-    settings['allowed_to_enter'] = str(CONFIG['ALLOWED_TO_ENTER']),
-    settings['mouse_check_enabled'] = str(CONFIG['MOUSE_CHECK_ENABLED']).lower(),
-    settings['min_pictures_to_analyze'] = str(CONFIG['MIN_PICTURES_TO_ANALYZE']),
-    settings['show_images_with_overlay'] = str(CONFIG['SHOW_IMAGES_WITH_OVERLAY']).lower()
+    settings['periodic_jobs_interval'] = CONFIG['PERIODIC_JOBS_INTERVAL']
+    settings['allowed_to_enter'] = CONFIG['ALLOWED_TO_ENTER'].value
+    settings['mouse_check_enabled'] = str(CONFIG['MOUSE_CHECK_ENABLED']).lower()
+    settings['min_pictures_to_analyze'] = CONFIG['MIN_PICTURES_TO_ANALYZE']
+    settings['show_images_with_overlay'] = CONFIG['SHOW_IMAGES_WITH_OVERLAY']
+    settings['live_view_refresh_interval'] = CONFIG['LIVE_VIEW_REFRESH_INTERVAL']
+    settings['kittyflap_config_migrated'] = CONFIG['KITTYFLAP_CONFIG_MIGRATED']
 
     # Write updated configuration back to the file
     try:
@@ -184,6 +190,25 @@ def save_config():
     
     logging.info("Updated the values in the configfile")
     return True
+
+def update_config_images_overlay(value: bool):
+    """
+    Updates only the SHOW_IMAGES_WITH_OVERLAY setting in the configuration file.
+
+    Args:
+        value (bool): The new value for the SHOW_IMAGES_WITH_OVERLAY setting.
+    """
+    updater = ConfigUpdater()
+    updater.read(CONFIGFILE)
+    updater['Settings']['show_images_with_overlay'] = str(value).lower()
+
+    # Write updated configuration back to the file
+    try:
+        with open(CONFIGFILE, 'w') as configfile:
+            updater.write(configfile)
+        logging.info("Updated SHOW_IMAGES_WITH_OVERLAY in the configfile")
+    except Exception as e:
+        logging.error(f"Failed to update SHOW_IMAGES_WITH_OVERLAY in the configfile: {e}")
 
 # Initial load of the configuration
 load_config()

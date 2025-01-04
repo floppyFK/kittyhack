@@ -14,6 +14,16 @@ TAG_TIMEOUT = 30.0               # after 30 seconds, a detected tag is considere
 RFID_READER_OFF_DELAY = 15.0     # Turn the RFID reader off 15 seconds after the last detected motion outside
 OPEN_OUTSIDE_TIMEOUT = 5.0       # Keep the magnet to the outside open for 5 seconds after the last motion on the inside
 
+# Initialize TfLite
+tflite = TfLite(modeldir = "/root/AIContainer/app/",
+                graph = "cv-lite-model.tflite",
+                labelfile = "labels.txt",
+                threshold = 0.3,
+                resolution = "800x600",
+                framerate = 10,
+                jpeg_quality = 75,
+                simulate_kittyflap = CONFIG['SIMULATE_KITTYFLAP'])
+
 def backend_main(simulate_kittyflap = False):
 
     tag_id = None
@@ -42,16 +52,6 @@ def backend_main(simulate_kittyflap = False):
     
     logging.info("[BACKEND] Wait for the sensors to stabilize...")
     tm.sleep(5.0)
-
-    # Initialize TfLite
-    tflite = TfLite(modeldir = "/root/AIContainer/app/",
-                   graph = "cv-lite-model.tflite",
-                   labelfile = "labels.txt",
-                   threshold = 0.3,
-                   resolution = "800x600",
-                   framerate = 10,
-                   jpeg_quality = 75,
-                   simulate_kittyflap = simulate_kittyflap)
 
     # Start RFID reader to clear the buffer
     rfid.set_power(True)
@@ -184,16 +184,19 @@ def backend_main(simulate_kittyflap = False):
             # Process all elements in the buffer
             ids_of_current_motion_block = image_buffer.get_filtered_ids(min_timestamp=first_motion_outside_tm)
             ids_with_mouse = image_buffer.get_filtered_ids(min_timestamp=first_motion_outside_tm, min_mouse_probability=CONFIG['MOUSE_THRESHOLD'])
+        else:
+            ids_of_current_motion_block = []
+            ids_with_mouse = []
 
         # Now collect the sensor data and decide if we unlock the inside
         unlock_inside =  (motion_outside == 1)
         unlock_inside &= (tag_id_valid or CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.ALL)
         unlock_inside &= (magnets.get_inside_state() == False)
-        unlock_inside &= ( ((len(ids_with_mouse) == 0) and (len(ids_of_current_motion_block) >= CONFIG['MIN_PICTURES_TO_ANALYZE'])) or (CONFIG['MOUSE_CHECK_ENABLED'] == False) )
+        unlock_inside &= ( (CONFIG['MOUSE_CHECK_ENABLED'] == False) or ((len(ids_with_mouse) == 0) and (len(ids_of_current_motion_block) >= CONFIG['MIN_PICTURES_TO_ANALYZE'])) )
 
         if unlock_inside:
             logging.info(f"[BACKEND] All checks are passed. Unlock the inside")
-            logging.debug(f"[BACKEND] Motion outside: {motion_outside}, Motion inside: {motion_inside}, Tag ID: {tag_id}, Tag valid: {tag_id_valid}, Motion block ID: {motion_block_id}, Images with mouse: {len(ids_with_mouse)}, Images in current block: {len(ids_of_current_motion_block)}")
+            logging.debug(f"[BACKEND] Motion outside: {motion_outside}, Motion inside: {motion_inside}, Tag ID: {tag_id}, Tag valid: {tag_id_valid}, Motion block ID: {motion_block_id}, Images with mouse: {len(ids_with_mouse)}, Images in current block: {len(ids_of_current_motion_block)} ({ids_of_current_motion_block})")
             magnets.queue_command("unlock_inside")
             
         tm.sleep(0.1)

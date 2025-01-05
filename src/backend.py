@@ -38,6 +38,7 @@ def backend_main(simulate_kittyflap = False):
     motion_block_id = 0
     ids_with_mouse = []
     ids_of_current_motion_block = []
+    known_rfid_tags = []
 
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
@@ -130,10 +131,14 @@ def backend_main(simulate_kittyflap = False):
             logging.info(f"[BACKEND] Motion detected OUTSIDE (Block ID: {motion_block_id})")
             first_motion_outside_tm = tm.time()
             tflite.resume()
+            known_rfid_tags = db_get_all_rfid_tags(CONFIG['KITTYHACK_DATABASE_PATH'])
         
         if last_inside == 0 and motion_inside == 1: # Inside motion detected
             logging.info("[BACKEND] Motion detected INSIDE")
-            magnets.queue_command("unlock_outside")
+            if CONFIG['ALLOWED_TO_EXIT'] == True:
+                magnets.queue_command("unlock_outside")
+            else:
+                logging.info("[BACKEND] No cats are allowed to exit. YOU SHALL NOT PASS!")
 
         # Turn off the RFID reader if no motion outside and pause the TFLite model
         if ( (motion_outside == 0) and 
@@ -162,8 +167,9 @@ def backend_main(simulate_kittyflap = False):
              (rfid.get_run_state() == RfidRunState.running) ):
             logging.info(f"[BACKEND] RFID tag detected: '{tag_id}'. Stopping RFID reader.")
             if CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.KNOWN:
-                # TODO: Check if the read tag is in the database
-                tag_id_valid = True
+                if tag_id in known_rfid_tags:
+                    tag_id_valid = True
+                    logging.info("[BACKEND] Detected RFID tag is in the database. Kitty is allowed to enter...")
             elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.ALL_RFIDS:
                 tag_id_valid = True
                 logging.info("[BACKEND] All RFID tags are allowed. Kitty is allowed to enter...")

@@ -10,6 +10,7 @@ import logging
 import signal
 import os
 import threading
+import requests
 
 
 ###### CONSTANT DEFINITIONS ######
@@ -44,7 +45,10 @@ DEFAULT_CONFIG = {
         "min_pictures_to_analyze": 5,
         "show_images_with_overlay": True,
         "live_view_refresh_interval": 5.0,
-        "kittyflap_config_migrated": False
+        "kittyflap_config_migrated": False,
+        "allowed_to_exit": True,
+        "last_vacuum_date": "",
+        "periodic_version_check": True
     }
 }
 
@@ -149,7 +153,10 @@ def load_config():
         "MIN_PICTURES_TO_ANALYZE": parser.getint('Settings', 'min_pictures_to_analyze', fallback=DEFAULT_CONFIG['Settings']['min_pictures_to_analyze']),
         "SHOW_IMAGES_WITH_OVERLAY": parser.getboolean('Settings', 'show_images_with_overlay', fallback=DEFAULT_CONFIG['Settings']['show_images_with_overlay']),
         "LIVE_VIEW_REFRESH_INTERVAL": parser.getfloat('Settings', 'live_view_refresh_interval', fallback=DEFAULT_CONFIG['Settings']['live_view_refresh_interval']),
-        "KITTYFLAP_CONFIG_MIGRATED": parser.getboolean('Settings', 'kittyflap_config_migrated', fallback=DEFAULT_CONFIG['Settings']['kittyflap_config_migrated'])
+        "KITTYFLAP_CONFIG_MIGRATED": parser.getboolean('Settings', 'kittyflap_config_migrated', fallback=DEFAULT_CONFIG['Settings']['kittyflap_config_migrated']),
+        "ALLOWED_TO_EXIT": parser.getboolean('Settings', 'allowed_to_exit', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit']),
+        "LAST_VACUUM_DATE": parser.get('Settings', 'last_vacuum_date', fallback=DEFAULT_CONFIG['Settings']['last_vacuum_date']),
+        "PERIODIC_VERSION_CHECK": parser.getboolean('Settings', 'periodic_version_check', fallback=DEFAULT_CONFIG['Settings']['periodic_version_check'])
     }
 
 def save_config():
@@ -174,11 +181,14 @@ def save_config():
     settings['loglevel'] = CONFIG['LOGLEVEL']
     settings['periodic_jobs_interval'] = CONFIG['PERIODIC_JOBS_INTERVAL']
     settings['allowed_to_enter'] = CONFIG['ALLOWED_TO_ENTER'].value
-    settings['mouse_check_enabled'] = str(CONFIG['MOUSE_CHECK_ENABLED']).lower()
+    settings['mouse_check_enabled'] = str(CONFIG['MOUSE_CHECK_ENABLED'])
     settings['min_pictures_to_analyze'] = CONFIG['MIN_PICTURES_TO_ANALYZE']
     settings['show_images_with_overlay'] = CONFIG['SHOW_IMAGES_WITH_OVERLAY']
     settings['live_view_refresh_interval'] = CONFIG['LIVE_VIEW_REFRESH_INTERVAL']
     settings['kittyflap_config_migrated'] = CONFIG['KITTYFLAP_CONFIG_MIGRATED']
+    settings['allowed_to_exit'] = CONFIG['ALLOWED_TO_EXIT']
+    settings['last_vacuum_date'] = CONFIG['LAST_VACUUM_DATE']
+    settings['periodic_version_check'] = CONFIG['PERIODIC_VERSION_CHECK']
 
     # Write updated configuration back to the file
     try:
@@ -191,16 +201,13 @@ def save_config():
     logging.info("Updated the values in the configfile")
     return True
 
-def update_config_images_overlay(value: bool):
+def update_config_images_overlay():
     """
     Updates only the SHOW_IMAGES_WITH_OVERLAY setting in the configuration file.
-
-    Args:
-        value (bool): The new value for the SHOW_IMAGES_WITH_OVERLAY setting.
     """
     updater = ConfigUpdater()
     updater.read(CONFIGFILE)
-    updater['Settings']['show_images_with_overlay'] = str(value).lower()
+    updater['Settings']['show_images_with_overlay'] = CONFIG['SHOW_IMAGES_WITH_OVERLAY']
 
     # Write updated configuration back to the file
     try:
@@ -209,6 +216,25 @@ def update_config_images_overlay(value: bool):
         logging.info("Updated SHOW_IMAGES_WITH_OVERLAY in the configfile")
     except Exception as e:
         logging.error(f"Failed to update SHOW_IMAGES_WITH_OVERLAY in the configfile: {e}")
+
+def update_single_config_parameter(parameter: str):
+    """
+    Updates only a single config parameter in the configuration file.
+
+    Args:
+        parameter (str): The parameter name, which shall be updated.
+    """
+    updater = ConfigUpdater()
+    updater.read(CONFIGFILE)
+    updater['Settings'][parameter.lower()] = CONFIG[parameter.upper()]
+
+    # Write updated configuration back to the file
+    try:
+        with open(CONFIGFILE, 'w') as configfile:
+            updater.write(configfile)
+        logging.info(f"Updated {parameter.upper()} in the configfile")
+    except Exception as e:
+        logging.error(f"Failed to update {parameter.upper()} in the configfile: {e}")
 
 # Initial load of the configuration
 load_config()
@@ -312,3 +338,53 @@ def get_local_date_from_utc_date(utc_date_string: str):
     local_date_string = local_datetime.strftime('%Y-%m-%d %H:%M:%S.%f')[:-2]
     
     return local_date_string
+
+def read_latest_kittyhack_version():
+    """
+    Reads the latest version of Kittyhack from the GitHub repository.
+    If the version cannot be fetched, it returns 'unknown'.
+    """    
+    try:
+        response = requests.get("https://api.github.com/repos/floppyFK/kittyhack/releases/latest", timeout=10)
+        latest_version = str(response.json().get("tag_name", "unknown"))
+        return latest_version
+    except Exception as e:
+        logging.error(f"Failed to fetch the latest version from GitHub: {e}")
+        return "unknown"
+    
+def get_free_disk_space():
+    """
+    Returns the remaining disk space on the filesystem in MB.
+    """
+    try:
+        stat = os.statvfs('/')
+        return (stat.f_bavail * stat.f_frsize) / (1024 * 1024)
+    except Exception as e:
+        logging.error(f"Failed to get the remaining disk space: {e}")
+        return 0
+    
+def get_total_disk_space():
+    """
+    Returns the total disk space on the filesystem in MB.
+    """
+    try:
+        stat = os.statvfs('/')
+        return (stat.f_blocks * stat.f_frsize) / (1024 * 1024)
+    except Exception as e:
+        logging.error(f"Failed to get the total disk space: {e}")
+        return 0
+    
+def get_database_size():
+    """
+    Returns the size of the Kittyhack database in MB.
+    """
+    try:
+        db_path = CONFIG['KITTYHACK_DATABASE_PATH']
+        if os.path.exists(db_path):
+            return os.path.getsize(db_path) / (1024 * 1024)  # size in MB
+        else:
+            logging.error(f"Database file '{db_path}' does not exist.")
+            return 0
+    except Exception as e:
+        logging.error(f"Failed to get the size of the Kittyhack database: {e}")
+        return 0

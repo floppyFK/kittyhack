@@ -2,6 +2,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import time as tm
 from shiny import render, ui, reactive
+from shiny.types import FileInfo
 import logging
 from logging.handlers import RotatingFileHandler
 import base64
@@ -100,6 +101,10 @@ backend_thread.start()
 
 logging.info("Starting frontend...")
 
+# Read the GIT version
+git_version = get_git_version()
+latest_version = "unknown"
+
 # Frontend background task in a separate thread
 def start_background_task():
     # Register task in the sigterm_monitor object
@@ -107,15 +112,28 @@ def start_background_task():
 
     def run_periodically():
         while not sigterm_monitor.stop_now:
+            global latest_version
+            
             immediate_bg_task("background task")
+            
+            # Check the latest version of kittyhack on GitHub, if the periodic version check is enabled
+            if CONFIG['PERIODIC_VERSION_CHECK']:
+                latest_version = read_latest_kittyhack_version()
 
-            # Perform VACUUM only once a day
-            last_vacuum_date = datetime.now().date()
-            if last_vacuum_date != getattr(run_periodically, 'last_vacuum_date', None):
+            # Check if the last vacuum date is stored in the configuration
+            if CONFIG['LAST_VACUUM_DATE']:
+                last_vacuum_date = datetime.strptime(CONFIG['LAST_VACUUM_DATE'], '%Y-%m-%d %H:%M:%S')
+            else:
+                last_vacuum_date = datetime.min
+
+            # Perform VACUUM only if the last vacuum date is older than 24 hours
+            if (datetime.now() - last_vacuum_date) > timedelta(days=1):
                 logging.info("[TRIGGER: background task] Start VACUUM of the kittyhack database...")
                 write_stmt_to_database(CONFIG['KITTYHACK_DATABASE_PATH'], "VACUUM")
                 logging.info("[TRIGGER: background task] VACUUM done")
-                run_periodically.last_vacuum_date = last_vacuum_date
+                CONFIG['LAST_VACUUM_DATE'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                update_single_config_parameter("LAST_VACUUM_DATE")
+
             # Use a shorter sleep interval and check for sigterm_monitor.stop_now to allow graceful shutdown
             for _ in range(int(CONFIG['PERIODIC_JOBS_INTERVAL'])):
                 if sigterm_monitor.stop_now:
@@ -138,9 +156,6 @@ def immediate_bg_task(trigger = "reload"):
 # Start the background task
 start_background_task()
 
-# Read the GIT version
-git_version = get_git_version()
-
 # Initialize the frame count for the live view
 frame_count = 0
 
@@ -149,11 +164,21 @@ def server(input, output, session):
 
     reactive_frame_count = reactive.value(0)
 
-    # Create a reactive trigger
-    reload_trigger = reactive.Value(0)
+    # Create reactive triggers
+    reload_trigger_photos = reactive.Value(0)
+    reload_trigger_cats = reactive.Value(0)
 
     # List of deleted photo IDs
-    deleted_ids = []
+    tmp_deleted_ids = []
+
+    # List of uploaded (temporary) files - required to prevent a re-upload of the same file in the cat management section
+    tmp_uploaded_files = []
+
+    # Dictionary to store the last processed click count for each save button
+    tmp_cat_save_button_clicks = {}
+
+    if latest_version != "unknown" and latest_version != git_version:
+        ui.notification_show(_("A new version of Kittyhack is available: {}. Go to the 'Info' section for update instructions.").format(latest_version), duration=10, type="message")
 
     @reactive.effect
     def framecount():
@@ -182,8 +207,8 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.button_detection_overlay)
     def update_config_images_with_overlay():
-        CONFIG['IMAGES_WITH_OVERLAY'] = input.button_detection_overlay()
-        update_config_images_overlay(input.button_detection_overlay())
+        CONFIG['SHOW_IMAGES_WITH_OVERLAY'] = input.button_detection_overlay()
+        update_single_config_parameter("SHOW_IMAGES_WITH_OVERLAY")
 
     @output
     @render.ui
@@ -291,7 +316,7 @@ def server(input, output, session):
 
     @output
     @render.ui
-    @reactive.event(input.button_reload, input.date_selector, input.ui_photos_cards_tabs, input.button_mouse_only, input.button_cat_only, input.button_detection_overlay, reload_trigger, ignore_none=True)
+    @reactive.event(input.button_reload, input.date_selector, input.ui_photos_cards_tabs, input.button_mouse_only, input.button_cat_only, input.button_detection_overlay, reload_trigger_photos, ignore_none=True)
     def ui_photos_cards():
         ui_cards = []
 
@@ -384,9 +409,9 @@ def server(input, output, session):
             @reactive.event(*[input[btn] for btn in delete_buttons], ignore_none=True)
             def delete_photo():
                 for btn in delete_buttons:
-                    if input[btn]() and btn not in deleted_ids:
+                    if input[btn]() and btn not in tmp_deleted_ids:
                         # Add the ID to the list of deleted IDs
-                        deleted_ids.append(btn)
+                        tmp_deleted_ids.append(btn)
 
                         photo_id = int(btn.replace("delete_photo_", ""))
                         result = delete_photo_by_id(CONFIG['KITTYHACK_DATABASE_PATH'], photo_id)
@@ -395,8 +420,8 @@ def server(input, output, session):
                         else:
                             ui.notification_show(_("An error occurred while deleting the photo: {}").format(result.message), duration=5, type="error")
 
-                        # Reload the images by updating button_reload
-                        reload_trigger.set(reload_trigger.get() + 1)
+                        # Reload the dataset
+                        reload_trigger_photos.set(reload_trigger_photos.get() + 1)
                         break
 
             return ui.layout_columns(*ui_cards)
@@ -422,7 +447,7 @@ def server(input, output, session):
             ui.card(
                 ui.card_header(
                     ui.div(
-                        ui.HTML(f"{tmp} | {datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S')}"),
+                        ui.HTML(f"{datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S')}"),
                     )
                 ),
                 ui.HTML(img_html),
@@ -455,6 +480,156 @@ def server(input, output, session):
 
     @output
     @render.ui
+    @reactive.event(reload_trigger_cats, ignore_none=True)
+    def ui_manage_cats():
+        ui_cards = []
+        df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all)
+        if not df_cats.empty:
+            for index, data_row in df_cats.iterrows():
+                if data_row["cat_image"]:
+                    try:
+                        decoded_picture = base64.b64encode(data_row["cat_image"]).decode('utf-8')
+                    except:
+                        decoded_picture = None
+                else:
+                    decoded_picture = None
+
+                if decoded_picture:
+                    img_html = f'<img src="data:image/jpeg;base64,{decoded_picture}" />'
+                else:
+                    img_html = _('No picture found!')
+
+                ui_cards.append(
+                    ui.card(
+                        ui.card_header(
+                            ui.div(
+                                ui.column(12, ui.input_text(id=f"mng_cat_name_{data_row['id']}", label=_("Name"), value=data_row['name'], width="100%")),
+                                ui.br(),
+                                ui.column(12, ui.input_text(id=f"mng_cat_rfid_{data_row['id']}", label=_("RFID"), value=data_row['rfid'], width="100%")),
+                                ui.br(),
+                                ui.column(12, ui.input_file(id=f"mng_cat_pic_{data_row['id']}", label=_("Change Picture"), accept=".jpg", width="100%")),
+                                ui.hr(),
+                                ui.column(12, ui.input_action_button(id=f"mng_cat_save_{data_row['id']}", label=_("Save changes"), icon=icon_svg("floppy-disk"))),
+                            )
+                        ),
+                        ui.HTML(img_html),
+                        ui.card_footer(
+                            ui.div(
+                                ui.column(12, ui.input_action_button(id=f"mng_cat_del_{data_row['id']}", label=_("Delete Cat"), icon=icon_svg("trash"), style_="border-color: #830000;")),
+                            )
+                        ),
+                        full_screen=False,
+                        class_="image-container"
+                    )
+                )
+
+
+            manage_cat_del_buttons = [f"mng_cat_del_{id}" for id in df_cats['id']]
+            manage_cat_save_buttons = [f"mng_cat_save_{id}" for id in df_cats['id']]
+
+            @reactive.Effect
+            @reactive.event(*[input[btn] for btn in manage_cat_save_buttons])
+            def change_cat():
+                for btn in manage_cat_save_buttons:
+                    current_clicks = input[btn]()
+                    last_clicks = tmp_cat_save_button_clicks.get(btn, 0)
+                    
+                    # Process only if the button was clicked and hasn't been processed yet
+                    if current_clicks != last_clicks:
+                        tmp_cat_save_button_clicks[btn] = current_clicks
+                        cat_id = btn.replace("mng_cat_save_", "")
+                        cat_name = input[f"mng_cat_name_{cat_id}"]()
+                        cat_rfid = input[f"mng_cat_rfid_{cat_id}"]()
+                        cat_pic: list[FileInfo] | None = input[f"mng_cat_pic_{cat_id}"]()
+                        
+                        # Process new image if uploaded
+                        if ( (cat_pic is not None) and (cat_pic[0]['datapath'] not in tmp_uploaded_files) ):
+                            cat_pic_path = cat_pic[0]['datapath']
+                            tmp_uploaded_files.append(cat_pic_path)
+                        else:
+                            cat_pic_path = None
+
+                        result = db_update_cat_data_by_id(CONFIG['KITTYHACK_DATABASE_PATH'], cat_id, cat_name, cat_rfid, cat_pic_path)
+                        if result.success:
+                            ui.notification_show(_("Data for {} updated successfully.").format(cat_name), duration=5, type="message")
+                        else:
+                            ui.notification_show(_("Failed to update cat details: {}").format(result.message), duration=5, type="error")
+
+                        reload_trigger_cats.set(reload_trigger_cats.get() + 1)
+                        break
+
+            @reactive.Effect
+            @reactive.event(*[input[btn] for btn in manage_cat_del_buttons], ignore_none=True)
+            def delete_cat():
+                for btn in manage_cat_del_buttons:
+                    if input[btn]() and btn not in tmp_deleted_ids:
+                        # Add the ID to the list of deleted IDs
+                        tmp_deleted_ids.append(btn)
+
+                        cat_id = btn.replace("mng_cat_del_", "")
+                        result = db_delete_cat_by_id(CONFIG['KITTYHACK_DATABASE_PATH'], cat_id)
+                        if result.success:
+                            ui.notification_show(_("Cat {} deleted successfully.").format(cat_id), duration=5, type="message")
+                        else:
+                            ui.notification_show(_("An error occurred while deleting the cat: {}").format(result.message), duration=5, type="error")
+
+                        # Reload the dataset
+                        reload_trigger_cats.set(reload_trigger_cats.get() + 1)
+                        break
+
+            return ui.layout_columns(*ui_cards)
+        
+    @output
+    @render.ui
+    @reactive.event(reload_trigger_cats, ignore_none=True)
+    def ui_add_new_cat():
+        ui_cards = []
+        ui_cards.append(
+            ui.card(
+                ui.card_header(
+                    ui.div(
+                        ui.h5(_("Add new cat")),
+                        ui.column(12, ui.input_text(id=f"add_new_cat_name", label=_("Name"), value="", width="100%")),
+                        ui.br(),
+                        ui.column(12, ui.input_text(id=f"add_new_cat_rfid", label=_("RFID"), value="", width="100%")),
+                        ui.br(),
+                        ui.column(12, ui.input_file(id=f"add_new_cat_pic", label=_("Upload Picture"), accept=".jpg", width="100%")),
+                        ui.hr(),
+                        ui.column(12, ui.input_action_button(id=f"add_new_cat_save", label=_("Save"), icon=icon_svg("floppy-disk"))),
+                    )
+                ),
+                full_screen=False,
+                class_="image-container"
+            )
+        )
+
+        return ui.layout_columns(*ui_cards)
+    
+    @reactive.Effect
+    @reactive.event(input.add_new_cat_save)
+    def add_new_cat_save():
+        cat_name = input.add_new_cat_name()
+        cat_rfid = input.add_new_cat_rfid()
+        cat_pic: list[FileInfo] | None = input.add_new_cat_pic()
+        
+        # Get image path, if a file was uploaded
+        if ( (cat_pic is not None) and (cat_pic[0]['datapath'] not in tmp_uploaded_files) ):
+            cat_pic_path = cat_pic[0]['datapath']
+            tmp_uploaded_files.append(cat_pic_path)
+        else:
+            cat_pic_path = None
+
+        result = db_add_new_cat(CONFIG['KITTYHACK_DATABASE_PATH'], cat_name, cat_rfid, cat_pic_path)
+        if result.success:
+            ui.notification_show(_("New cat {} added successfully.").format(cat_name), duration=5, type="message")
+            ui.update_text(id="add_new_cat_name", value="")
+            ui.update_text(id="add_new_cat_rfid", value="")
+            reload_trigger_cats.set(reload_trigger_cats.get() + 1)
+        else:
+            ui.notification_show(_("An error occurred while adding the new cat: {}").format(result.message), duration=5, type="error") 
+
+    @output
+    @render.ui
     def ui_configuration():
         ui_config =  ui.div(
             ui.column(12, ui.h3(_("Kittyhack configuration"))),
@@ -470,10 +645,13 @@ def server(input, output, session):
             ui.br(),
             ui.column(12, numElementsPerPage := ui.input_numeric("numElementsPerPage", _("Maximum pictures per page"), CONFIG['ELEMENTS_PER_PAGE'], min=1)),
             ui.column(12, ui.help_text(_("NOTE: Too many pictures per page could slow down the performance drastically!"))),
+            ui.br(),
+            ui.column(12, btnPeriodicVersionCheck := ui.input_switch("btnPeriodicVersionCheck", _("Periodic version check"), CONFIG['PERIODIC_VERSION_CHECK'])),
+            ui.column(12, ui.help_text(_("Automatically check for new versions of Kittyhack."))),
             ui.hr(),
 
             ui.column(12, ui.h5(_("Door control settings"))),
-            ui.column(12, sldMouseThreshold := ui.input_slider("sldMouseThreshold", _("Mouse filter threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
+            ui.column(12, sldMouseThreshold := ui.input_slider("sldMouseThreshold", _("Mouse detection threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
             ui.column(12, ui.help_text(_("NOTE: Kittyhack decides based on this value, if a picture contains a mouse or not. A higher value means more strict filtering."))),
             ui.br(),
             ui.column(12, btnDetectPrey := ui.input_switch("btnDetectPrey", _("Detect prey"), CONFIG['MOUSE_CHECK_ENABLED'])),
@@ -486,6 +664,9 @@ def server(input, output, session):
                 },
                 selected=str(CONFIG['ALLOWED_TO_ENTER'].value),
             )),
+            ui.br(),
+            ui.column(12, btnAllowedToExit := ui.input_switch("btnAllowedToExit", _("Allow cats to exit"), CONFIG['ALLOWED_TO_EXIT'])),
+            ui.column(12, ui.help_text(_("If this is set to 'No', the direction to the outside remains closed. Useful for e.g. new year's eve or an upcoming vet visit."))),
             ui.hr(),
 
             ui.column(12, ui.h5(_("Live view settings"))),
@@ -509,14 +690,10 @@ def server(input, output, session):
 
             ui.column(12, ui.h5(_("Advanced settings"))),
             ui.column(12, txtLoglevel := ui.input_select("txtLoglevel", "Loglevel", {"DEBUG": "DEBUG", "INFO": "INFO", "WARN": "WARN", "ERROR": "ERROR", "CRITICAL": "CRITICAL"}, selected=CONFIG['LOGLEVEL'])),
-            ui.hr(),
-
-            ui.column(12, ui.h5(_("Manage cats"))),
-            # TODO: Add cat configuration here
-            ui.column(12, ui.help_text("TODO: Add cat configuration here")),
             ui.br(),
 
             ui.input_action_button("bSaveKittyhackConfig", _("Save Kittyhack Config")),
+            ui.br(),
             ui.br(),
             ui.br(),
         )
@@ -537,6 +714,8 @@ def server(input, output, session):
         CONFIG['MOUSE_CHECK_ENABLED'] = input.btnDetectPrey()
         CONFIG['ALLOWED_TO_ENTER'] = AllowedToEnter(input.txtAllowedToEnter())
         CONFIG['LIVE_VIEW_REFRESH_INTERVAL'] = float(input.numLiveViewUpdateInterval())
+        CONFIG['ALLOWED_TO_EXIT'] = input.btnAllowedToExit()
+        CONFIG['PERIODIC_VERSION_CHECK'] = input.btnPeriodicVersionCheck()
 
         loglevel = logging._nameToLevel.get(input.txtLoglevel(), logging.INFO)
         logger.setLevel(loglevel)
@@ -557,29 +736,45 @@ def server(input, output, session):
     @render.ui
     def ui_info():
         # Fetch the latest kittyhack version via the GitHub API
-        try:
-            response = requests.get("https://api.github.com/repos/floppyFK/kittyhack/releases/latest")
-            latest_version = response.json().get("tag_name", "unknown")
-        except Exception as e:
-            logging.error(f"Failed to fetch the latest version from GitHub: {e}")
-            latest_version = "unknown"
+        latest_version = read_latest_kittyhack_version()
 
         return ui.div(
             ui.h3("Information"),
             ui.p("Kittyhack is an open-source project that enables offline use of the Kittyflap cat door—completely without internet access. It was created after the manufacturer of Kittyflap filed for bankruptcy, rendering the associated app non-functional."),
             ui.h5("Important Notes"),
             ui.p("I have no connection to the manufacturer of Kittyflap. This project was developed on my own initiative to continue using my Kittyflap."),
-            ui.p("Additionally, this project is in a very early stage! The planned features are not fully implemented yet, and bugs are to be expected!"),
+            ui.p("Additionally, this project is in a early stage! The planned features are not fully implemented yet, and bugs are to be expected!"),
             ui.br(),
             ui.HTML(f"<center><p><a href='https://github.com/floppyFK/kittyhack' target='_blank'>{icon_svg('square-github')} GitHub Repository</a></p></center>"),
-            ui.br(),
-            ui.br(),
+            ui.hr(),
+            ui.h5("Version Information"),
             ui.HTML(f"<center><p>Current Version: <code>{git_version}</code></p></center>"),            
             ui.HTML(f"<center><p>Latest Version: <code>{latest_version}</code></p></center>"),
-            ui.hr(),
             ui.br(),
+            ui.markdown(
+                """
+                The update of kittyhack is currently a semi-automatic process. To run the update, just log in to your Kittyflap via SSH and run the following command:
+            
+                ```bash
+                curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh && rm /tmp/kittyhack-setup.sh
+                ```
+                """
+            ),
+            ui.hr(),
+            ui.h5("System Information"),
+            ui.markdown(
+                f"""
+                - **Free disk space:** {get_free_disk_space():.1f} MB / {get_total_disk_space():.1f} MB
+                - **Database size:** {get_database_size():.1f} MB
+                """
+            ),
+            ui.hr(),
+            ui.h5("Logfile"),
             ui.div(
                 ui.download_button("download_logfile", "Download Logfile"),
                 class_="d-flex justify-content-center"
-            )
+            ),
+            ui.br(),
+            ui.br(),
+            ui.br(),
         )

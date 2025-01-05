@@ -21,6 +21,16 @@ app_ui = ui.page_fillable(
             ui.br(),
         ),
         ui.nav_panel(
+            _("Manage cats"),
+            ui.output_ui("ui_manage_cats"),
+            ui.br(),
+        ),
+        ui.nav_panel(
+            _("Add new cat"),
+            ui.output_ui("ui_add_new_cat"),
+            ui.br(),
+        ),
+        ui.nav_panel(
             _("System"),
             ui.output_ui("ui_system")
         ),

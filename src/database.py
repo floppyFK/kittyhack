@@ -187,6 +187,14 @@ def db_get_cats(database: str, return_data: ReturnDataCatDB):
     stmt = f"SELECT {columns} FROM cats"
     return read_df_from_database(database, stmt)
 
+def db_get_all_rfid_tags(database: str):
+    """
+    This function returns all RFID tags from the 'cats' table as an array.
+    """
+    stmt = "SELECT rfid FROM cats"
+    df = read_df_from_database(database, stmt)
+    return df['rfid'].tolist()
+
 def db_get_config(database: str, return_data: ReturnDataConfigDB):
     """
     this function returns all dataframes from the 'config' table.
@@ -276,7 +284,6 @@ def migrate_cats_to_kittyhack(kittyflap_db: str, kittyhack_db: str) -> Result:
 
         cursor_src.execute("SELECT * FROM cat")
         src_db_rows = cursor_src.fetchall()
-        # FIXME: Check if the conversion of the profile photo is correct
         for row in src_db_rows:
             # Source database columns: id, created_at, updated_at, deleted_at, last_updated_uuid, kittyflap_id, name, registered_at, rfid, profile_photo, registered_by_user_id, cat_config_id
             id, created_at, name, rfid, profile_photo = row[0], row[1], row[6], row[8], row[9]
@@ -296,6 +303,97 @@ def migrate_cats_to_kittyhack(kittyflap_db: str, kittyhack_db: str) -> Result:
         return Result(False, error_message)
     else:
         logging.info(f"[DATABASE] Successfully migrated the 'cats' table from the database '{kittyflap_db}' to '{kittyhack_db}'.")
+        return Result(True, None)
+    finally:
+        release_database()
+
+def db_delete_cat_by_id(database: str, cat_id: int) -> Result:
+    """
+    This function deletes a specific cat based on the ID from the source database.
+    """
+    stmt = f"DELETE FROM cats WHERE id = {cat_id}"
+    result = write_stmt_to_database(database, stmt)
+    if result.success == True:
+        logging.info(f"[DATABASE] Cat with ID '{cat_id}' deleted successfully.")
+    return result
+
+def db_update_cat_data_by_id(database: str, cat_id: int, name: str, rfid: str, cat_image_path: str) -> Result:
+    """
+    This function updates the cat data based on the ID from the source database.
+    If the image should not be updated, set cat_image_path to None.
+    """
+    if cat_image_path:
+        try:
+            with open(cat_image_path, 'rb') as file:
+                cat_image_blob = file.read()
+        except Exception as e:
+            error_message = f"[DATABASE] Failed to read image file '{cat_image_path}': {e}"
+            logging.error(error_message)
+            return Result(False, error_message)
+    else:
+        cat_image_blob = None
+
+    result = lock_database()
+    if not result.success:
+        return result
+
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        if cat_image_blob is None:
+            cursor.execute("UPDATE cats SET name = ?, rfid = ? WHERE id = ?", (name, rfid, cat_id))
+        else:
+            cursor.execute("UPDATE cats SET name = ?, rfid = ?, cat_image = ? WHERE id = ?", (name, rfid, cat_image_blob, cat_id))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        error_message = f"[DATABASE] An error occurred while updating the cat data in the database '{database}': {e}"
+        logging.error(error_message)
+        return Result(False, error_message)
+    else:
+        logging.info(f"[DATABASE] Cat data with ID '{cat_id}' updated successfully.")
+        return Result(True, None)
+    finally:
+        release_database()
+
+def db_add_new_cat(database: str, name: str, rfid: str, cat_image_path: str) -> Result: 
+    """
+    This function adds a new cat to the database.
+    The cat_image_path should be the path to the image file (jpg).
+    """
+    if cat_image_path:
+        try:
+            with open(cat_image_path, 'rb') as file:
+                cat_image_blob = file.read()
+        except Exception as e:
+            error_message = f"[DATABASE] Failed to read image file '{cat_image_path}': {e}"
+            logging.error(error_message)
+            return Result(False, error_message)
+    else:
+        cat_image_blob = None
+
+    result = lock_database()
+    if not result.success:
+        return result
+
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("SELECT MAX(id) FROM cats")
+        id = cursor.fetchone()[0]
+        if id is None:
+            id = 0
+        else:
+            id += 1
+        cursor.execute("INSERT INTO cats (id, created_at, name, rfid, cat_image) VALUES (?, ?, ?, ?, ?)", (id, get_utc_date_string(tm.time()), name, rfid, cat_image_blob))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        error_message = f"[DATABASE] An error occurred while adding a new cat to the database '{database}': {e}"
+        logging.error(error_message)
+        return Result(False, error_message)
+    else:
+        logging.info(f"[DATABASE] New cat added successfully to the database '{database}' with ID '{id}'.")
         return Result(True, None)
     finally:
         release_database()

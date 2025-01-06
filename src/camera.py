@@ -457,7 +457,7 @@ class TfLite:
                 t2 = cv2.getTickCount()
                 time1 = (t2 - t1) / freq
                 frame_rate_calc = 1 / time1
-                logging.debug(f"[CAMERA] Frame rate: {frame_rate_calc:.2f}")
+                #logging.debug(f"[CAMERA] Frame rate: {frame_rate_calc:.2f}")
 
             else:
                 # Log warning only once every 10 seconds to avoid flooding the log

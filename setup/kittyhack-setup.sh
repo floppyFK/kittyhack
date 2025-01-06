@@ -216,7 +216,7 @@ install_kittyhack() {
     echo -e "${CYAN}--- KITTYHACK UPDATE Step 2: Set up Python virtual environment ---${NC}"
     python3.11 -m venv /root/kittyhack/.venv
     source /root/kittyhack/.venv/bin/activate
-    pip install -r /root/kittyhack/requirements.txt
+    pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt
     deactivate
     echo -e "${GREEN}Python dependencies installed/updated.${NC}"
 

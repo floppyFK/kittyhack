@@ -11,6 +11,7 @@ import signal
 import os
 import threading
 import requests
+import shlex
 
 
 ###### CONSTANT DEFINITIONS ######
@@ -18,6 +19,7 @@ import requests
 # Files
 CONFIGFILE = 'config.ini'
 LOGFILE = "kittyhack.log"
+JOURNAL_LOG = "/tmp/kittyhack-journal.log"
 
 # Gettext constants
 LOCALE_DIR = "locales"
@@ -48,7 +50,8 @@ DEFAULT_CONFIG = {
         "kittyflap_config_migrated": False,
         "allowed_to_exit": True,
         "last_vacuum_date": "",
-        "periodic_version_check": True
+        "periodic_version_check": True,
+        "kittyflap_db_nagscreen": True
     }
 }
 
@@ -156,7 +159,8 @@ def load_config():
         "KITTYFLAP_CONFIG_MIGRATED": parser.getboolean('Settings', 'kittyflap_config_migrated', fallback=DEFAULT_CONFIG['Settings']['kittyflap_config_migrated']),
         "ALLOWED_TO_EXIT": parser.getboolean('Settings', 'allowed_to_exit', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit']),
         "LAST_VACUUM_DATE": parser.get('Settings', 'last_vacuum_date', fallback=DEFAULT_CONFIG['Settings']['last_vacuum_date']),
-        "PERIODIC_VERSION_CHECK": parser.getboolean('Settings', 'periodic_version_check', fallback=DEFAULT_CONFIG['Settings']['periodic_version_check'])
+        "PERIODIC_VERSION_CHECK": parser.getboolean('Settings', 'periodic_version_check', fallback=DEFAULT_CONFIG['Settings']['periodic_version_check']),
+        "KITTYFLAP_DB_NAGSCREEN": parser.getboolean('Settings', 'kittyflap_db_nagscreen', fallback=DEFAULT_CONFIG['Settings']['kittyflap_db_nagscreen'])
     }
 
 def save_config():
@@ -189,6 +193,7 @@ def save_config():
     settings['allowed_to_exit'] = CONFIG['ALLOWED_TO_EXIT']
     settings['last_vacuum_date'] = CONFIG['LAST_VACUUM_DATE']
     settings['periodic_version_check'] = CONFIG['PERIODIC_VERSION_CHECK']
+    settings['kittyflap_db_nagscreen'] = CONFIG['KITTYFLAP_DB_NAGSCREEN']
 
     # Write updated configuration back to the file
     try:
@@ -388,3 +393,32 @@ def get_database_size():
     except Exception as e:
         logging.error(f"Failed to get the size of the Kittyhack database: {e}")
         return 0
+    
+def get_file_size(file_path):
+    """
+    Returns the size of a file in MB.
+    """
+    try:
+        if os.path.exists(file_path):
+            return os.path.getsize(file_path) / (1024 * 1024)  # size in MB
+        else:
+            logging.error(f"File '{file_path}' does not exist.")
+            return 0
+    except Exception as e:
+        logging.error(f"Failed to get the size of the file '{file_path}': {e}")
+        return 0
+    
+def execute_update_step(command: str, step_description: str) -> bool:
+    """Execute a shell command and log its output."""
+    try:
+        cmd_list = shlex.split(command)
+        result = subprocess.run(cmd_list, check=True, capture_output=True, text=True)
+        if result.stdout:
+            logging.info(f"[{step_description}] {result.stdout}")
+        if result.stderr:
+            logging.warning(f"[{step_description}] {result.stderr}")
+        return True
+    except subprocess.CalledProcessError as e:
+        error_msg = f"[{step_description}] {str(e)}"
+        logging.error(error_msg)
+        return False

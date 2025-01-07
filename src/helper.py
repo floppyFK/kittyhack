@@ -39,6 +39,8 @@ DEFAULT_CONFIG = {
         "max_photos_count": 2000,
         "simulate_kittyflap": False,
         "mouse_threshold": 70.0,
+        "no_mouse_threshold": 70.0,
+        "min_threshold": 30.0,
         "elements_per_page": 20,
         "loglevel": "INFO",
         "periodic_jobs_interval": 900,
@@ -93,7 +95,6 @@ class GracefulKiller:
                 self.tasks_done.set()
         self.tasks_done.wait()  # Wait until all tasks signal they are done
         logging.info("All tasks finished. Exiting now.")
-        # FIXME: do a explicit SIGKILL on processes of "shiny" do not use os.gepid() here. Use "pkill -f shiny" instead
         subprocess.run(["/usr/bin/pkill", "-9", "-f", "shiny"])  # Send SIGKILL to "shiny" process
 
     def signal_task_done(self):
@@ -147,7 +148,9 @@ def load_config():
         "KITTYHACK_DATABASE_PATH": parser.get('Settings', 'kittyhack_database_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_path']),
         "MAX_PHOTOS_COUNT": parser.getint('Settings', 'max_photos_count', fallback=DEFAULT_CONFIG['Settings']['max_photos_count']),
         "SIMULATE_KITTYFLAP": parser.getboolean('Settings', 'simulate_kittyflap', fallback=DEFAULT_CONFIG['Settings']['simulate_kittyflap']),
-        "MOUSE_THRESHOLD": parser.getfloat('Settings', 'mouse_threshold', fallback=DEFAULT_CONFIG['Settings']['mouse_threshold']),
+        "MOUSE_THRESHOLD": parser.getfloat('Settings', 'mouse_threshold', fallback=DEFAULT_CONFIG['Settings']['mouse_threshold']), # Currently not used
+        "NO_MOUSE_THRESHOLD": parser.getfloat('Settings', 'no_mouse_threshold', fallback=DEFAULT_CONFIG['Settings']['no_mouse_threshold']),
+        "MIN_THRESHOLD": parser.getfloat('Settings', 'min_threshold', fallback=DEFAULT_CONFIG['Settings']['min_threshold']),
         "ELEMENTS_PER_PAGE": parser.getint('Settings', 'elements_per_page', fallback=DEFAULT_CONFIG['Settings']['elements_per_page']),
         "LOGLEVEL": parser.get('Settings', 'loglevel', fallback=DEFAULT_CONFIG['Settings']['loglevel']),
         "PERIODIC_JOBS_INTERVAL": parser.getint('Settings', 'periodic_jobs_interval', fallback=DEFAULT_CONFIG['Settings']['periodic_jobs_interval']),
@@ -160,7 +163,8 @@ def load_config():
         "ALLOWED_TO_EXIT": parser.getboolean('Settings', 'allowed_to_exit', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit']),
         "LAST_VACUUM_DATE": parser.get('Settings', 'last_vacuum_date', fallback=DEFAULT_CONFIG['Settings']['last_vacuum_date']),
         "PERIODIC_VERSION_CHECK": parser.getboolean('Settings', 'periodic_version_check', fallback=DEFAULT_CONFIG['Settings']['periodic_version_check']),
-        "KITTYFLAP_DB_NAGSCREEN": parser.getboolean('Settings', 'kittyflap_db_nagscreen', fallback=DEFAULT_CONFIG['Settings']['kittyflap_db_nagscreen'])
+        "KITTYFLAP_DB_NAGSCREEN": parser.getboolean('Settings', 'kittyflap_db_nagscreen', fallback=DEFAULT_CONFIG['Settings']['kittyflap_db_nagscreen']),
+        "LATEST_VERSION": "unknown" # This value will not be written to the config file
     }
 
 def save_config():
@@ -181,6 +185,8 @@ def save_config():
     settings['max_photos_count'] = CONFIG['MAX_PHOTOS_COUNT']
     settings['simulate_kittyflap'] = CONFIG['SIMULATE_KITTYFLAP']
     settings['mouse_threshold'] = CONFIG['MOUSE_THRESHOLD']
+    settings['no_mouse_threshold'] = CONFIG['NO_MOUSE_THRESHOLD']
+    settings['min_threshold'] = CONFIG['MIN_THRESHOLD']
     settings['elements_per_page'] = CONFIG['ELEMENTS_PER_PAGE']
     settings['loglevel'] = CONFIG['LOGLEVEL']
     settings['periodic_jobs_interval'] = CONFIG['PERIODIC_JOBS_INTERVAL']

@@ -102,7 +102,6 @@ logging.info("Starting frontend...")
 
 # Read the GIT version
 git_version = get_git_version()
-latest_version = "unknown"
 
 # Global for the free disk space:
 free_disk_space = get_free_disk_space()
@@ -114,7 +113,6 @@ def start_background_task():
 
     def run_periodically():
         while not sigterm_monitor.stop_now:
-            global latest_version
             global free_disk_space
             
             immediate_bg_task("background task")
@@ -124,7 +122,7 @@ def start_background_task():
             
             # Check the latest version of kittyhack on GitHub, if the periodic version check is enabled
             if CONFIG['PERIODIC_VERSION_CHECK']:
-                latest_version = read_latest_kittyhack_version()
+                CONFIG['LATEST_VERSION'] = read_latest_kittyhack_version()
 
             # Check if the last vacuum date is stored in the configuration
             if CONFIG['LAST_VACUUM_DATE']:
@@ -175,8 +173,8 @@ def server(input, output, session):
     reload_trigger_cats = reactive.Value(0)
 
     # Show a notification if a new version of Kittyhack is available
-    if latest_version != "unknown" and latest_version != git_version:
-        ui.notification_show(_("A new version of Kittyhack is available: {}. Go to the 'Info' section for update instructions.").format(latest_version), duration=10, type="message")
+    if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
+        ui.notification_show(_("A new version of Kittyhack is available: {}. Go to the 'Info' section for update instructions.").format(CONFIG['LATEST_VERSION']), duration=10, type="message")
 
     # Show a nag screen if the kittyflap database file still exists
     kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
@@ -702,7 +700,13 @@ def server(input, output, session):
 
             ui.column(12, ui.h5(_("Door control settings"))),
             ui.column(12, ui.input_slider("sldMouseThreshold", _("Mouse detection threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
-            ui.column(12, ui.help_text(_("NOTE: Kittyhack decides based on this value, if a picture contains a mouse or not. A higher value means more strict filtering."))),
+            ui.column(12, ui.help_text(_("Kittyhack decides based on this value, if a picture contains a mouse."))),
+            ui.br(),
+            ui.column(12, ui.input_slider("sldMinThreshold", _("Minimum detection threshold"), min=0, max=80, value=CONFIG['MIN_THRESHOLD'])),
+            ui.column(12, ui.help_text(_("Pictures with a detection probability below this value (for both 'Mouse' and 'No Mouse' check) are not saved in the database."))),
+            ui.br(),
+            ui.column(12, ui.input_numeric("numMinPicturesToAnalyze", _("Minimum pictures before unlock decision"), CONFIG['MIN_PICTURES_TO_ANALYZE'], min=1)),
+            ui.column(12, ui.help_text(_("Number of pictures that must be analyzed before deciding to unlock the flap. If a picture exceeds the mouse threshold, the flap will remain closed."))),
             ui.br(),
             ui.column(12, ui.input_switch("btnDetectPrey", _("Detect prey"), CONFIG['MOUSE_CHECK_ENABLED'])),
             ui.br(),
@@ -755,6 +759,15 @@ def server(input, output, session):
             ),
         )
         return ui_config
+    
+    @reactive.effect
+    def update_mouse_threshold_limit():
+        # You can update the value, min, max, and step.
+        ui.update_slider(
+            "sldMouseThreshold",
+            value=max(input.sldMouseThreshold(), input.sldMinThreshold()),
+            min=input.sldMinThreshold(),
+        )
 
     @reactive.Effect
     @reactive.event(input.bSaveKittyhackConfig)
@@ -765,6 +778,8 @@ def server(input, output, session):
         CONFIG['TIMEZONE'] = input.txtConfigTimezone()
         CONFIG['DATE_FORMAT'] = input.txtConfigDateformat()
         CONFIG['MOUSE_THRESHOLD'] = float(input.sldMouseThreshold())
+        CONFIG['MIN_THRESHOLD'] = float(input.sldMinThreshold())
+        CONFIG['MIN_PICTURES_TO_ANALYZE'] = int(input.numMinPicturesToAnalyze())
         CONFIG['ELEMENTS_PER_PAGE'] = int(input.numElementsPerPage())
         CONFIG['MAX_PHOTOS_COUNT'] = int(input.numMaxPhotosCount())
         CONFIG['LOGLEVEL'] = input.txtLoglevel()
@@ -803,32 +818,44 @@ def server(input, output, session):
     @output
     @render.ui
     def ui_info():
-        # Fetch the latest kittyhack version via the GitHub API
-        latest_version = read_latest_kittyhack_version()
-
         # Check if the current version is different from the latest version
-        if git_version != latest_version and latest_version != "unknown":
+        latest_version = CONFIG['LATEST_VERSION']
+        if latest_version == "unknown":
+            ui_update_kittyhack = ui.markdown("Unable to fetch the latest version from github. Please try it again later or check your internet connection.")
+        elif git_version != latest_version:
             # Check for local changes in the git repository
             try:
+                ui_update_kittyhack = ui.div(
+                    ui.markdown(f"Automatic update to **{latest_version}**:"),
+                    ui.input_task_button("update_kittyhack", "Update Kittyhack", icon=icon_svg("download"), class_="btn-primary"),
+                    ui.br(),
+                    ui.help_text("Please note: A stable WLAN connection is required for the update process."),
+                )
+
+                # Check for local changes in the git repository and warn the user
                 result = subprocess.run(["/bin/git", "status", "--porcelain"], capture_output=True, text=True, check=True)
                 if result.stdout.strip():
+                    # Local changes detected
                     result = subprocess.run(["/bin/git", "status"], capture_output=True, text=True, check=True)
-                    ui_update_kittyhack = ui.div(
-                        ui.markdown("⚠️ Local changes detected in the git repository in `/root/kittyhack`. Automatic update is disabled. Please commit or stash your changes manually before updating."),
+                    ui_update_kittyhack = ui_update_kittyhack, ui.div(
+                        ui.br(),
+                        ui.markdown(
+                            """
+                            ⚠️ WARNING: Local changes detected in the git repository in `/root/kittyhack`.
+                            If you proceed with the update, these changes will be lost (the database and configuration will not be affected).
+                            Please commit or stash your changes manually before updating, if you want to keep them.
+                            """
+                        ),
                         ui.h6("Local changes:"),
                         ui.tags.pre(result.stdout)
                     )
-                else:
-                    ui_update_kittyhack = ui.div(
-                ui.markdown(f"Automatic update to **{latest_version}**:"),
-                ui.input_task_button("update_kittyhack", "Update Kittyhack", icon=icon_svg("download"), class_="btn-primary"),
-                ui.help_text("Please note: A stable WLAN connection is required for the update process."),
-            )
+                    
             except Exception as e:
-                ui_update_kittyhack = ui.markdown(f"An error occurred while checking for local changes in the git repository: {e}")
+                ui_update_kittyhack = ui.markdown(f"An error occurred while checking for local changes in the git repository: {e}\n\nNo automatic update possible.")
         else:
             ui_update_kittyhack = ui.markdown("You are already using the latest version of Kittyhack.")
 
+        # Check if the original kittyflap database file still exists
         kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
         if kittyflap_db_file_exists:
             ui_kittyflap_db = ui.div(
@@ -844,6 +871,7 @@ def server(input, output, session):
         else:
             ui_kittyflap_db = ui.markdown("The original kittyflap database file does not exist anymore. It was either deleted manually or by Kittyhack.")
 
+        # Render the UI
         return ui.div(
             ui.h3("Information"),
             ui.p("Kittyhack is an open-source project that enables offline use of the Kittyflap cat door—completely without internet access. It was created after the manufacturer of Kittyflap filed for bankruptcy, rendering the associated app non-functional."),
@@ -920,46 +948,56 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.update_kittyhack)
     def update_kittyhack_process():        
-        with ui.Progress(min=1, max=6) as p:
+        with ui.Progress(min=1, max=7) as p:
             p.set(message="Update in progress", detail="This may take a while...")
             i = 0
-            # Fetch the latest kittyhack version via the GitHub API
-            latest_version = read_latest_kittyhack_version()
+
+            latest_version = CONFIG['LATEST_VERSION']
             try:
-                # Step 1: Update the git repository to the latest tagged version
-                msg = f"Updating Kittyhack to the latest version {latest_version}..."
+                # Step 1: Revert local changes, if there are any
+                msg = "Reverting local changes"
+                i += 1
+                p.set(i, message=msg)
+                logging.info(msg)
+                if not execute_update_step("/bin/git restore .", msg):
+                    raise subprocess.CalledProcessError(1, "git restore .")
+                if not execute_update_step("/bin/git clean -fd", msg):
+                    raise subprocess.CalledProcessError(1, "git clean -fd")
+
+                # Step 2: Update the git repository to the latest tagged version
+                msg = f"Updating Kittyhack to the latest version {latest_version}"
                 i += 1
                 p.set(i, message=msg)
                 logging.info(msg)
                 if not execute_update_step("/bin/git fetch --all --tags", msg):
                     raise subprocess.CalledProcessError(1, "git fetch")
                 
-                # Step 2: Check out the latest version
-                msg = f"Checking out the latest version {latest_version}..."
+                # Step 3: Check out the latest version
+                msg = f"Checking out the latest version {latest_version}"
                 i += 1
                 p.set(i, message=msg)
                 logging.info(msg)
                 if not execute_update_step(f"/bin/git checkout {latest_version}", msg):
                     raise subprocess.CalledProcessError(1, f"git checkout {latest_version}")
                 
-                # Step 3: Update the python dependencies
-                msg = "Updating the python dependencies..."
+                # Step 4: Update the python dependencies
+                msg = "Updating the python dependencies"
                 i += 1
                 p.set(i, message=msg)
                 logging.info(msg)
                 if not execute_update_step("/bin/bash -c 'source /root/kittyhack/.venv/bin/activate && pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt'", msg):
                     raise subprocess.CalledProcessError(1, "pip install")
                 
-                # Step 4: Update the systemd service file
-                msg = "Updating the systemd service file..."
+                # Step 5: Update the systemd service file
+                msg = "Updating the systemd service file"
                 i += 1
                 p.set(i, message=msg)
                 logging.info(msg)
                 if not execute_update_step("/bin/cp /root/kittyhack/setup/kittyhack.service /etc/systemd/system/kittyhack.service", msg):
                     raise subprocess.CalledProcessError(1, "cp kittyhack.service")
                 
-                # Step 5: Reload the systemd daemon
-                msg = "Reloading the systemd daemon..."
+                # Step 6: Reload the systemd daemon
+                msg = "Reloading the systemd daemon"
                 i += 1
                 p.set(i, message=msg)
                 logging.info(msg)
@@ -969,31 +1007,31 @@ def server(input, output, session):
             except subprocess.CalledProcessError as e:
                 msg = f"An error occurred during the update process: {e}"
                 logging.error(msg)
-                ui.notification_show(msg, duration=5, type="error")
+                ui.notification_show(msg, duration=None, type="error")
 
                 # Rollback Step 1: Go back to the previous version
-                msg = f"Rolling back to the previous version {git_version}..."
+                msg = f"Rolling back to the previous version {git_version}"
                 i = max(i - 1, 1)
                 p.set(i, message=msg)
                 logging.info(msg)
                 execute_update_step(f"/bin/git checkout {git_version}", msg)
 
                 # Rollback Step 2: Update the python dependencies
-                msg = "Rolling back the python dependencies..."
+                msg = "Rolling back the python dependencies"
                 i = max(i - 1, 1)
                 p.set(i, message=msg)
                 logging.info(msg)
                 execute_update_step("/bin/bash -c 'source /root/kittyhack/.venv/bin/activate && pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt'", msg)
 
                 # Rollback Step 3: Update the systemd service file
-                msg = "Rolling back the systemd service file..."
+                msg = "Rolling back the systemd service file"
                 i = max(i - 1, 1)
                 p.set(i, message=msg)
                 logging.info(msg)
                 execute_update_step("/bin/cp /root/kittyhack/setup/kittyhack.service /etc/systemd/system/kittyhack.service", msg)
 
                 # Rollback Step 4: Reload the systemd daemon
-                msg = "Rolling back the systemd daemon..."
+                msg = "Rolling back the systemd daemon"
                 i = max(i - 1, 1)
                 p.set(i, message=msg)
                 logging.info(msg)
@@ -1004,11 +1042,10 @@ def server(input, output, session):
 
             else:
                 # Restart the service
-                msg = "Kittyhack updated successfully. The service is now restarting... Please reload the website in a few seconds."
+                msg = "Kittyhack updated successfully. The service is now restarting. Please reload the website in a few seconds."
                 i += 1
-                p.set(i, message=msg)
+                p.set(i, message=msg, detail="")
                 logging.info(msg)
-                ui.notification_show(msg, duration=None, type="message", close_button=False)
                 subprocess.run(["/bin/systemctl", "restart", "kittyhack"], check=True, capture_output=True, text=True)
 
 

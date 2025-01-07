@@ -18,7 +18,6 @@ OPEN_OUTSIDE_TIMEOUT = 5.0       # Keep the magnet to the outside open for 5 sec
 tflite = TfLite(modeldir = "/root/AIContainer/app/",
                 graph = "cv-lite-model.tflite",
                 labelfile = "labels.txt",
-                threshold = 0.3,
                 resolution = "800x600",
                 framerate = 10,
                 jpeg_quality = 75,

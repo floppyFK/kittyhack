@@ -13,7 +13,7 @@ import threading
 import importlib.util
 import logging
 from typing import List, Optional
-from src.helper import sigterm_monitor
+from src.helper import CONFIG, sigterm_monitor
 
 class VideoStream:
     """Camera object that controls video streaming from the Picamera"""
@@ -257,7 +257,6 @@ class TfLite:
     def __init__(self, modeldir="/root/AIContainer/app/",
                  graph="cv-lite-model.tflite",
                  labelfile="labels.txt",
-                 threshold=0.5,
                  resolution="800x600",
                  framerate=10,
                  jpeg_quality=75,
@@ -265,7 +264,6 @@ class TfLite:
         self.modeldir = modeldir
         self.graph = graph
         self.labelfile = labelfile
-        self.threshold = threshold
         self.resolution = resolution
         self.framerate = framerate
         self.jpeg_quality = jpeg_quality
@@ -295,8 +293,8 @@ class TfLite:
                         timestamp = tm.time()
                         frame = np.zeros((imH, imW, 3), dtype=np.uint8)
                         frame_with_overlay = frame.copy()
-                        mouse_probability = np.random.uniform(self.threshold, 1.0)
-                        no_mouse_probability = np.random.uniform(self.threshold, 1.0)
+                        mouse_probability = np.random.uniform(CONFIG['MIN_THRESHOLD']/100, 1.0)
+                        no_mouse_probability = np.random.uniform(CONFIG['MIN_THRESHOLD']/100, 1.0)
                         image_buffer.append(timestamp, self.encode_jpg_image(frame), self.encode_jpg_image(frame_with_overlay), mouse_probability, no_mouse_probability)
                 tm.sleep(0.1)
             return
@@ -419,7 +417,7 @@ class TfLite:
                     no_mouse_probability = 0.0
                     mouse_probability = 0.0
                     for i in range(len(scores)):
-                        if ((scores[i] > self.threshold) and (scores[i] <= 1.0)):
+                        if ((scores[i] > (CONFIG['MIN_THRESHOLD']/100)) and (scores[i] <= 1.0)):
                             save_image = True
 
                             # Get bounding box coordinates and draw box

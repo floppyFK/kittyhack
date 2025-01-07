@@ -9,27 +9,29 @@ Kittyhack is an open-source project that enables offline use of the Kittyflap ca
 ⚠️ **Important Notes**  
 I have no connection to the manufacturer of Kittyflap. This project was developed on my own initiative to continue using my Kittyflap.
 
-Additionally, this project is in a **very early stage**! The planned features are not fully implemented yet, and bugs are to be expected!
+Additionally, this project is in a **early stage**! The planned features are not fully implemented yet, and bugs are to be expected!
 
 ---
 
 ## Features
 
-The Kittyflap has minimal password protection, which made it possible to gain access to the system. Kittyhack currently offers the following features, familiar from the original app:
+Until version `v1.1.0`, Kittyhack was merely a frontend for visualizing camera images and changing some settings.  
+From version `v1.2.0`, Kittyhack replaces the complete original Kittyflap software with extended functionality.
 
-- **Enable/Disable prey detection**
-- **Enable/Disable "Accept all cats" mode**
-- **View captured images** (filterable by date, prey, and cat detection)
-- **Adjust thresholds for prey and cat detection** (details about how these thresholds work are not yet fully clear)
+Current features:  
+- **Toggle prey detection**
+- **Configure thresholds for mouse detection**
+- **Switch entry direction** between "All cats", "All chipped cats", "my cats only" or "no cats"
+- **Block exit direction**
+- **Display captured images** (filterable by date, prey, and cat detection)
+- **Show overlay with detected objects**
+- **Live camera feed**
+- **Manage cats and add new cats**
 
 ### Planned Features
-The following features will be implemented soon:
-- **Image Database**: Currently, images are only stored for about one day. In the next version, it will be possible to set the maximum number of stored images yourself — regardless of the age of the images.
-- **Wi-Fi Configuration**: Currently not supported.
-- **Teach new cats**: This feature is also planned.
-- **Automatic Updates**: At the moment, there is no option for automatic updates of Kittyhack via the web interface.
-- **Event Display**: A journal showing when the flap opened in which direction, when it locked, and so on.
-- ...
+- **WiFi configuration**: Currently needs to be set up manually. Will be implemented in the WebGUI in a future version
+- **Display of events**: A journal showing when the flap was opened in which direction, when it was locked, etc.
+- **Additional filters for image display**: e.g., grouping all images of an event (cat entering / cat exiting)
 
 ---
 
@@ -52,7 +54,40 @@ The setup is quite simple:
    ```
    Default password: `kittyflap`  
 
-2. **Run the setup script on the Kittyflap**
+2. **Check available disk space**
+   If your cat flap was still active for an extended period after the Kittyflap servers were shut down, the file system might be full.
+   In this case, you need to free up space before installing Kittyhack.
+
+   Check available disk space:
+   ```bash
+   df -h
+   ```
+   For `/dev/mmcblk0p2`, there should be **at least** 1 GB of free space available.  
+   
+   If less space is available, perform the following steps:
+
+   Login as root:
+   ```bash
+   sudo su
+   ```
+   
+   Stop Kittyflap processes and delete the database (Warning: This will delete your cat's configuration. You can easily re-train it after the installation):
+   ```bash
+   systemctl stop kwork
+   systemctl stop manager
+   rm /root/kittyflap.db
+   ```
+
+   After this, `/dev/mmcblk0p2` should have significantly more free space available.
+
+3. **Run the setup script on the Kittyflap**
+    > **IMPORTANT:** Before starting the installation, please ensure that the WiFi connection of the cat flap is stable. During installation, several hundred MB of data will be downloaded!  
+    > Since the antenna is mounted on the outside of the flap, the signal strength can be significantly weakened by e.g. a metal door.  
+    You can check the strength of the WiFi signal with this command:
+    ```bash
+    iwconfig wlan0
+    ```
+    Run the installation:
    ```bash
    curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh && rm /tmp/kittyhack-setup.sh
    ```
@@ -94,27 +129,29 @@ Kittyhack ist ein Open-Source-Projekt, das die Offline-Nutzung der Kittyflap-Kat
 ⚠️ **Wichtige Hinweise**  
 Ich stehe in keinerlei Verbindung mit dem Hersteller der Kittyflap. Dieses Projekt wurde aus eigenem Antrieb erstellt, um meine eigene Katzenklappe weiterhin nutzen zu können.
 
-Zudem befindet sich das Projekt noch in einem **sehr frühen Stadium**! Die geplanten Funktionen sind noch nicht alle umgesetzt und mit Bugs ist zu rechnen!
+Zudem befindet sich das Projekt noch in einem **frühen Stadium**! Die geplanten Funktionen sind noch nicht alle umgesetzt und mit Bugs ist zu rechnen!
 
 ---
 
 ## Funktionsumfang
 
-Die Kittyflap ist mit einem minimalen Passwortschutz versehen, sodass es möglich war, Zugang zum System zu erhalten. Kittyhack bietet derzeit die folgenden Funktionen, die auch von der originalen App bekannt sind:
+Bis Version `v1.1.0` war Kittyhack lediglich ein Frontend zur Visualisierung der Kamerabilder und zum Ändern einiger Einstellungen.  
+Ab Version `v1.2.0` ersetzt Kittyhack die komplette Originalsoftware der Kittyflap mit einem erweiterten Funktionsumfang.
 
+Aktuelle Features:  
 - **Beuteerkennung ein-/ausschalten**
-- **"Alle Katzen akzeptieren" ein-/ausschalten**
+- **Schwellwerte für Mauserkennung konfigurieren**
+- **Eingangsrichtung umschalten** zwischen "Alle Katzen", "Alle gechippten Katzen", "nur meine Katzen" oder "keine Katzen"
+- **Ausgangsrichtung blockieren**
 - **Aufgenommene Bilder anzeigen** (filterbar nach Datum, Beute und Katzenerkennung)
-- **Schwellwerte für Beute- und Katzenerkennung anpassen** (die Details zur Funktionsweise der Schwellwerte sind noch nicht vollständig klar)
+- **Overlay mit erkannten Objekten anzeigen**
+- **Live-Bild der Kamera**
+- **Katzen verwalten und neue Katzen hinzufügen**
 
 ### Geplante Features
-Folgende Features werden demnächst implementiert:
-- **Bilddatenbank**: Aktuell werden die Bilder nur für ca. einen Tag vorgehalten. Mit der nächsten Version wird es möglich sein, die maximale Anzahl der gespeicherten Bilder selbst festzulegen - unabhängig vom Alter der Bilder
-- **WLAN-Konfiguration**: Derzeit noch nicht unterstützt.
-- **Neue Katzen anlernen**: Diese Funktion ist ebenfalls in Planung.
-- **Automatische Updates**: Momentan gibt es noch keine Möglichkeit für automatische Updates von Kittyhack über das Webinterface.
+- **WLAN-Konfiguration**: Muss aktuell noch manuell eingerichtet werden. Wird in einer zukünftigen Version in der WebGUI implementiert
 - **Anzeige von Events**: Ein Journal darüber, wann die Klappe in welche Richtung geöffnet wurde, wann sie gesperrt hat usw.
-- ...
+- **Weitere Filter für die Bildanzeige**: z.B. alle Bilder eines Events (Katze kommt rein / Katze geht raus) zusammenfassen
 
 ---
 
@@ -137,7 +174,41 @@ Die Installation ist kinderleicht:
    ```
    Standardpasswort: `kittyflap`  
 
-2. **Das Setup Script auf der Kittyflap ausführen**
+2. **Freien Speicherplatz überprüfen**
+   Falls deine Katzenklappe nach der Abschaltung der Kittyflap-Server noch längere Zeit aktiv war, kann es sein, dass das Dateisystem vollgeschrieben ist.
+   In diesem Fall musst du vor der Installation von Kittyhack erst Platz schaffen.
+
+   Vorhandenen Speicherplatz überprüfen:
+   ```bash
+   df -h
+   ```
+   Für `/dev/mmcblk0p2` sollte **mindestens** 1 GB freier Speicherplatz zur Verfügung stehen.  
+   
+   Falls weniger Speicherplatz verfügbar ist, führe folgende Schritte aus:
+
+   Als root einloggen:
+   ```bash
+   sudo su
+   ```
+   
+   Kittyflap-Prozesse stoppen und die Datenbank löschen (Achtung: Dabei geht die Konfiguration deiner Katze verloren. Du kannst sie nach der Installation aber einfach wieder neu anlernen):
+   ```bash
+   systemctl stop kwork
+   systemctl stop manager
+   rm /root/kittyflap.db
+   ```
+
+   Danach sollte für `/dev/mmcblk0p2` deutlich mehr freier Speicherplatz verfügbar sein.
+
+
+3. **Das Setup Script auf der Kittyflap ausführen**
+   > **WICHTIG:** Bitte stelle vor dem Start der Installation sicher, dass die WLAN-Verbindung der Katzenklappe stabil ist. Während der Installation werden mehrere hundert MB an Daten heruntergeladen!  
+   > Da die Antenne auf der Außenseite der Klappe angebracht ist, kann die Signalstärke durch z.B. eine Metalltür stark abgeschwächt werden.  
+   Mit diesem Befehl kannst du die Stärke des WLAN-Signals überprüfen:
+   ```bash
+   iwconfig wlan0
+   ```
+   Installation ausführen:
    ```bash
    curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh && rm /tmp/kittyhack-setup.sh
    ```

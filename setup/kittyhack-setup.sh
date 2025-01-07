@@ -274,6 +274,14 @@ EOF
         echo -e "|   is no longer required.                                                 |"
         echo -e "+--------------------------------------------------------------------------+"
 
+        # Version dependency note
+        echo -e "+--------------------------- IMPORTANT NOTE -------------------------------+"
+        echo -e "| If you have KittyHack v1.1.0 or lower installed, you MUST run the full   |"
+        echo -e "| installation (option 'i') to install new dependencies. After that,       |"
+        echo -e "| future updates can be installed directly via the web interface.          |"
+        echo -e "+--------------------------------------------------------------------------+"
+        
+
         echo -e "${ERRMSG}" 
         echo -e "${CYAN}Please enter your choice:${NC} (${BLUE}${FMTBOLD}i${FMTDEF}${NC})nstall | (${BLUE}${FMTBOLD}u${FMTDEF}${NC})pdate | (${BLUE}${FMTBOLD}q${FMTDEF}${NC})uit"
         read -r MODE

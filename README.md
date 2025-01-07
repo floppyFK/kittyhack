@@ -83,6 +83,7 @@ The setup is quite simple:
 3. **Run the setup script on the Kittyflap**
     > **IMPORTANT:** Before starting the installation, please ensure that the WiFi connection of the cat flap is stable. During installation, several hundred MB of data will be downloaded!  
     > Since the antenna is mounted on the outside of the flap, the signal strength can be significantly weakened by e.g. a metal door.  
+
     You can check the strength of the WiFi signal with this command:
     ```bash
     iwconfig wlan0
@@ -204,6 +205,7 @@ Die Installation ist kinderleicht:
 3. **Das Setup Script auf der Kittyflap ausführen**
    > **WICHTIG:** Bitte stelle vor dem Start der Installation sicher, dass die WLAN-Verbindung der Katzenklappe stabil ist. Während der Installation werden mehrere hundert MB an Daten heruntergeladen!  
    > Da die Antenne auf der Außenseite der Klappe angebracht ist, kann die Signalstärke durch z.B. eine Metalltür stark abgeschwächt werden.  
+   
    Mit diesem Befehl kannst du die Stärke des WLAN-Signals überprüfen:
    ```bash
    iwconfig wlan0

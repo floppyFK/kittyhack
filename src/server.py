@@ -731,7 +731,7 @@ def server(input, output, session):
                 },
                 selected=CONFIG['LIVE_VIEW_REFRESH_INTERVAL'],
             )),
-            ui.column(12, ui.help_text(_("NOTE: A high refresh rate could slow down the performance, especially if several users are connected at the same time. Values below 1s require a fast and stable WiFi connection."))),
+            ui.column(12, ui.help_text(_("NOTE: A high refresh rate could slow down the performance, especially if several users are connected at the same time. Values below 1s require a fast and stable WLAN connection."))),
             ui.hr(),
 
             ui.column(12, ui.h5(_("Pictures view settings"))),
@@ -792,7 +792,6 @@ def server(input, output, session):
     
     @render.download()
     def download_journal():
-        # FIXME: Check if this ensures, that the 
         try:
             with open(JOURNAL_LOG, 'w') as f:
                 subprocess.run(["/usr/bin/journalctl", "-u", "kittyhack", "-n", "10000", "--quiet"], stdout=f, check=True)
@@ -813,15 +812,17 @@ def server(input, output, session):
             try:
                 result = subprocess.run(["/bin/git", "status", "--porcelain"], capture_output=True, text=True, check=True)
                 if result.stdout.strip():
+                    result = subprocess.run(["/bin/git", "status"], capture_output=True, text=True, check=True)
                     ui_update_kittyhack = ui.div(
-                        ui.markdown("⚠️ Local changes detected in the git repository. Automatic update is disabled. Please commit or stash your changes manually before updating."),
+                        ui.markdown("⚠️ Local changes detected in the git repository in `/root/kittyhack`. Automatic update is disabled. Please commit or stash your changes manually before updating."),
                         ui.h6("Local changes:"),
-                        ui.panel_well(result.stdout)
+                        ui.tags.pre(result.stdout)
                     )
                 else:
                     ui_update_kittyhack = ui.div(
                 ui.markdown(f"Automatic update to **{latest_version}**:"),
-                ui.input_action_button("update_kittyhack", "Update Kittyhack", icon=icon_svg("download"), class_="btn-primary"),
+                ui.input_task_button("update_kittyhack", "Update Kittyhack", icon=icon_svg("download"), class_="btn-primary"),
+                ui.help_text("Please note: A stable WLAN connection is required for the update process."),
             )
             except Exception as e:
                 ui_update_kittyhack = ui.markdown(f"An error occurred while checking for local changes in the git repository: {e}")
@@ -849,6 +850,7 @@ def server(input, output, session):
             ui.h5("Important Notes"),
             ui.p("I have no connection to the manufacturer of Kittyflap. This project was developed on my own initiative to continue using my Kittyflap."),
             ui.p("Additionally, this project is in a early stage! The planned features are not fully implemented yet, and bugs are to be expected!"),
+            ui.p("Please report any bugs or feature requests on the GitHub repository."),
             ui.br(),
             ui.HTML(f"<center><p><a href='https://github.com/floppyFK/kittyhack' target='_blank'>{icon_svg('square-github')} GitHub Repository</a></p></center>"),
             ui.hr(),
@@ -860,10 +862,12 @@ def server(input, output, session):
             ui.h5("System Information"),
             ui.markdown(
                 f"""
+                ###### Filesystem:
                 - **Free disk space:** {get_free_disk_space():.1f} MB / {get_total_disk_space():.1f} MB
                 - **Database size:** {get_database_size():.1f} MB
                 """
             ),
+            ui.output_ui("wlan_info"),
             ui.hr(),
             ui.h5("Original Kittyflap Database"),
             ui_kittyflap_db,
@@ -877,6 +881,29 @@ def server(input, output, session):
             ui.br(),
             ui.br(),
         )
+    
+    @render.text
+    def wlan_info():
+        # Get WLAN connection status
+        reactive.invalidate_later(5.0)
+        try:
+            wlan = subprocess.run(["/sbin/iwconfig", "wlan0"], capture_output=True, text=True, check=True)
+            if "Link Quality=" in wlan.stdout:
+                quality = wlan.stdout.split("Link Quality=")[1].split(" ")[0]
+                signal = wlan.stdout.split("Signal level=")[1].split(" ")[0]
+                quality_value = float(quality.split('/')[0]) / float(quality.split('/')[1])
+                
+                # Choose appropriate icon based on signal quality
+                if quality_value >= 0.8:
+                    wlan_icon = "🟢"
+                elif quality_value >= 0.4:
+                    wlan_icon = "🟡"
+                else:
+                    wlan_icon = "🔴"
+                
+                return ui.markdown(f"###### WLAN Connection Status:\n- **Link Quality:** {wlan_icon} {quality}\n- **Signal Level:** {signal} dBm")
+        except:
+            return ui.markdown("###### WLAN Connection Status:\n Unable to determine")
     
     @reactive.Effect
     @reactive.event(input.delete_kittyflap_db)
@@ -892,7 +919,7 @@ def server(input, output, session):
 
     @reactive.Effect
     @reactive.event(input.update_kittyhack)
-    def update_kittyhack_process():
+    def update_kittyhack_process():        
         with ui.Progress(min=1, max=6) as p:
             p.set(message="Update in progress", detail="This may take a while...")
             i = 0
@@ -944,13 +971,37 @@ def server(input, output, session):
                 logging.error(msg)
                 ui.notification_show(msg, duration=5, type="error")
 
-                # Rollback to the previous version if something goes wrong
-                msg = "Rolling back to the previous version..."
-                i += 1
+                # Rollback Step 1: Go back to the previous version
+                msg = f"Rolling back to the previous version {git_version}..."
+                i = max(i - 1, 1)
                 p.set(i, message=msg)
                 logging.info(msg)
-                execute_update_step("/bin/git checkout HEAD~1", "Rollback to previous version")
-                ui.notification_show("Rolled back to the previous version. Please check the logs.", duration=None, type="warning")
+                execute_update_step(f"/bin/git checkout {git_version}", msg)
+
+                # Rollback Step 2: Update the python dependencies
+                msg = "Rolling back the python dependencies..."
+                i = max(i - 1, 1)
+                p.set(i, message=msg)
+                logging.info(msg)
+                execute_update_step("/bin/bash -c 'source /root/kittyhack/.venv/bin/activate && pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt'", msg)
+
+                # Rollback Step 3: Update the systemd service file
+                msg = "Rolling back the systemd service file..."
+                i = max(i - 1, 1)
+                p.set(i, message=msg)
+                logging.info(msg)
+                execute_update_step("/bin/cp /root/kittyhack/setup/kittyhack.service /etc/systemd/system/kittyhack.service", msg)
+
+                # Rollback Step 4: Reload the systemd daemon
+                msg = "Rolling back the systemd daemon..."
+                i = max(i - 1, 1)
+                p.set(i, message=msg)
+                logging.info(msg)
+                execute_update_step("/bin/systemctl daemon-reload", msg)
+
+                # Notify the user about the error
+                ui.notification_show(f"Rollback to {git_version} complete. Please check the logs for details.", duration=None, type="warning")
+
             else:
                 # Restart the service
                 msg = "Kittyhack updated successfully. The service is now restarting... Please reload the website in a few seconds."

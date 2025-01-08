@@ -491,10 +491,16 @@ def server(input, output, session):
                 ui.column(12, ui.h3(_("Kittyflap System Actions"))),
                 ui.column(12, ui.help_text(_("Start tasks/actions on the Kittyflap"))),
                 ui.br(),
+                ui.br(),
                 ui.column(12, ui.input_action_button("bRestartKittyflap", _("Restart Kittyflap"))),
+                ui.br(),
                 ui.br(),
                 ui.column(12, ui.input_action_button("bShutdownKittyflap", _("Shutdown Kittyflap"))),
                 ui.column(12, ui.help_text(_("To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again."))),
+                ui.br(),
+                ui.br(),
+                ui.column(12, ui.input_action_button("bRestartKittyhackService", _("Restart Kittyhack Service"))),
+                ui.column(12, ui.help_text(_("Only restart the Kittyhack service (e.g. to apply a changed language setting)."))),
                 ui.hr(),
                 ui.br(),
                 ui.br()
@@ -503,20 +509,26 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.bRestartKittyflap)
     def on_action_restart_system():
+        ui.notification_show(_("Kittyflap is rebooting now..."), duration=60, type="message")
         success = systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
-        if success:
-            ui.notification_show(_("Kittyflap is rebooting now..."), duration=5, type="message")
-        else:
+        if not success:
             ui.notification_show(_("An error occurred while rebooting Kittyflap."), duration=5, type="error")
 
     @reactive.Effect
     @reactive.event(input.bShutdownKittyflap)
     def on_action_shutdown_system():
+        ui.notification_show(_("Kittyflap is shutting down now... Please wait 30 seconds before unplugging the power."), duration=60, type="message")
         success = systemcmd(["/usr/sbin/shutdown", "-H", "now"], CONFIG['SIMULATE_KITTYFLAP'])
-        if success:
-            ui.notification_show(_("Kittyflap is shutting down now... Please wait 30 seconds before unplugging the power."), duration=60, type="message")
-        else:
+        if not success:
             ui.notification_show(_("An error occurred while rebooting Kittyflap."), duration=5, type="error")
+
+    @reactive.Effect
+    @reactive.event(input.bRestartKittyhackService)
+    def on_action_restart_kittyhack_service():
+        ui.notification_show(_("Kittyhack service is restarting now... Please reload the page in a few seconds."), duration=60, type="message")
+        success = systemcmd(["/bin/systemctl", "restart", "kittyhack"], CONFIG['SIMULATE_KITTYFLAP'])
+        if not success:
+            ui.notification_show(_("An error occurred while restarting the Kittyhack service."), duration=5, type="error")
 
     @output
     @render.ui
@@ -547,7 +559,7 @@ def server(input, output, session):
                                 ui.br(),
                                 ui.column(12, ui.input_text(id=f"mng_cat_rfid_{data_row['id']}", label=_("RFID"), value=data_row['rfid'], width="100%")),
                                 ui.br(),
-                                ui.column(12, ui.input_file(id=f"mng_cat_pic_{data_row['id']}", label=_("Change Picture"), accept=".jpg", width="100%")),
+                                ui.column(12, ui.input_file(id=f"mng_cat_pic_{data_row['id']}", label=_("Change Picture"), accept=[".jpg", ".png"], width="100%")),
                             )
                         ),
                         ui.HTML(img_html),
@@ -683,7 +695,7 @@ def server(input, output, session):
             ui.br(),
 
             ui.column(12, ui.h5(_("General settings"))),
-            ui.column(12, ui.input_select("txtLanguage", "Language", {"en":"English", "de":"Deutsch"}, selected=CONFIG['LANGUAGE'])),
+            ui.column(12, ui.input_select("txtLanguage", _("Language"), {"en":"English", "de":"Deutsch"}, selected=CONFIG['LANGUAGE'])),
             ui.column(12, ui.input_text("txtConfigTimezone", _("Timezone"), CONFIG['TIMEZONE'])),
             ui.column(12, ui.HTML('<span class="help-block">' + _('See') +  ' <a href="https://en.wikipedia.org/wiki/List_of_tz_database_time_zones" target="_blank">Wikipedia</a> ' + _('for valid timezone strings') + '</span>')),
             ui.br(),
@@ -736,6 +748,7 @@ def server(input, output, session):
                 selected=CONFIG['LIVE_VIEW_REFRESH_INTERVAL'],
             )),
             ui.column(12, ui.help_text(_("NOTE: A high refresh rate could slow down the performance, especially if several users are connected at the same time. Values below 1s require a fast and stable WLAN connection."))),
+            ui.column(12, ui.help_text(_("This setting affects only the view in the WebUI and has no impact on the detection process."))),
             ui.hr(),
 
             ui.column(12, ui.h5(_("Pictures view settings"))),
@@ -797,7 +810,7 @@ def server(input, output, session):
         if save_config():
             ui.notification_show(_("Kittyhack configuration updated successfully."), duration=5, type="message")
             if language_changed:
-                ui.notification_show(_("Reload this website to apply the new language."), duration=5, type="message")
+                ui.notification_show(_("Please restart the kittyhack service in the 'System' section, to apply the new language."), duration=15, type="message")
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=5, type="error")
     
@@ -830,6 +843,7 @@ def server(input, output, session):
                     ui.input_task_button("update_kittyhack", "Update Kittyhack", icon=icon_svg("download"), class_="btn-primary"),
                     ui.br(),
                     ui.help_text("Please note: A stable WLAN connection is required for the update process."),
+                    ui.markdown("Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to see what's new in the latest version."),
                 )
 
                 # Check for local changes in the git repository and warn the user

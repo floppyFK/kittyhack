@@ -44,6 +44,26 @@ Current features:
   - The MAC address should start with `d8:3a:dd`.
   ![kittyflap router configuration](doc/kittyflap-hostname.png)
 
+### If your Kittyflap hasn't been set up yet
+If you never configured your Kittyflap with the official app, it is preset to a default WiFi network.
+To establish a connection, you need to temporarily adjust your router's WiFi settings.
+
+Use one of these combinations:
+- SSID: `Graewer factory`, Password: `Graewer2023`
+- SSID: `Graewer Factory`, Password: `Graewer2023`
+- SSID: `GEG-Gast`, Password: `GEG-1234`
+
+After changing the router SSID:
+1. Restart the Kittyflap
+2. Wait until it appears as a client in your router
+3. Connect via SSH (User: `pi`, Password: `kittyflap`)
+
+Configuration of your own WiFi:
+```bash
+nmcli dev wifi connect "YourSSID" "YourPassword" "YourPasswordAgain"
+nmcli dev set wlan0 autoconnect yes
+```
+
 ### Instructions
 The setup is quite simple:
 
@@ -52,6 +72,7 @@ The setup is quite simple:
    ```bash
    ssh pi@<IP-address-of-Kittyflap>
    ```
+   Username: `pi`
    Default password: `kittyflap`  
 
 2. **Check available disk space**
@@ -165,6 +186,26 @@ Aktuelle Features:
   - Die MAC-Adresse sollte mit `d8:3a:dd` beginnen.
   ![kittyflap router configuration](doc/kittyflap-hostname.png)
 
+### Wenn deine Kittyflap noch nicht eingerichtet wurde
+Falls du deine Kittyflap nie mit der offiziellen App konfiguriert hast, ist sie auf ein Standard-WLAN voreingestellt.
+Um eine Verbindung herzustellen, musst du vorübergehend die WLAN-Einstellungen deines Routers anpassen.
+
+Verwende eine dieser Kombinationen:
+- SSID: `Graewer factory`, Passwort: `Graewer2023`
+- SSID: `Graewer Factory`, Passwort: `Graewer2023`
+- SSID: `GEG-Gast`, Passwort: `GEG-1234`
+
+Nach Änderung der Router-SSID:
+1. Starte die Kittyflap neu
+2. Warte bis sie im Router als Client erscheint
+3. Verbinde dich per SSH (Benutzer: `pi`, Passwort: `kittyflap`)
+
+Konfiguration deines eigenen WLANs:
+```bash
+nmcli dev wifi connect "DeinSSID" "DeinPasswort" "DeinPasswortNochmal"
+nmcli dev set wlan0 autoconnect yes
+```
+
 ### Anleitung
 Die Installation ist kinderleicht:
 
@@ -173,6 +214,7 @@ Die Installation ist kinderleicht:
    ```bash
    ssh pi@<IP-Adresse-der-Kittyflap>
    ```
+   Benutzername: `pi`
    Standardpasswort: `kittyflap`  
 
 2. **Freien Speicherplatz überprüfen**

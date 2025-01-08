@@ -7,6 +7,8 @@ import logging
 import sys
 import cv2
 import time as tm
+import base64
+import numpy as np
 from src.helper import *
 from src.camera import image_buffer
 
@@ -289,8 +291,11 @@ def migrate_cats_to_kittyhack(kittyflap_db: str, kittyhack_db: str) -> Result:
             id, created_at, name, rfid, profile_photo = row[0], row[1], row[6], row[8], row[9]
             # Convert the 'profile_photo' text column to a BLOB
             # Decode the Base64 encoded profile photo to binary data
-            import base64
-            cat_image = sqlite3.Binary(base64.b64decode(profile_photo)) if profile_photo else None
+            cat_image = base64.b64decode(profile_photo) if profile_photo else None
+            if cat_image is not None:
+                img_array = np.frombuffer(cat_image, np.uint8)
+                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                cat_image = resize_image_to_square(img, 800, 85)
             cursor_dst.execute(
                 "INSERT INTO cats (id, created_at, name, rfid, cat_image) VALUES (?, ?, ?, ?, ?)",
                 (id, created_at, name, rfid, cat_image)
@@ -324,8 +329,8 @@ def db_update_cat_data_by_id(database: str, cat_id: int, name: str, rfid: str, c
     """
     if cat_image_path:
         try:
-            with open(cat_image_path, 'rb') as file:
-                cat_image_blob = file.read()
+            img = cv2.imread(cat_image_path)
+            cat_image_blob = resize_image_to_square(img, 800, 85)
         except Exception as e:
             error_message = f"[DATABASE] Failed to read image file '{cat_image_path}': {e}"
             logging.error(error_message)

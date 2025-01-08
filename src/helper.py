@@ -12,6 +12,7 @@ import os
 import threading
 import requests
 import shlex
+import cv2
 
 
 ###### CONSTANT DEFINITIONS ######
@@ -428,3 +429,31 @@ def execute_update_step(command: str, step_description: str) -> bool:
         error_msg = f"[{step_description}] {str(e)}"
         logging.error(error_msg)
         return False
+
+def resize_image_to_square(img: cv2.typing.MatLike, size: int = 800, quality: int = 85) -> bytes:
+    """
+    This function resizes an image to a square of the given size and returns the image as a byte array.
+    
+    :param img: Image array from cv2.imread().
+    :param size: Size of the square image (default is 800).
+    :param quality: Quality of the output image (default is 85).
+    :return: Resized image as a byte array or None an error occurs.
+    """
+    try:
+        if img is not None:
+            # Crop and resize the image to the specified size
+            height, width, _ = img.shape
+            if height > width:
+                diff = (height - width) // 2
+                img_cropped = img[diff:diff + width, :]
+            else:
+                diff = (width - height) // 2
+                img_cropped = img[:, diff:diff + height]
+            
+            img_resized = cv2.resize(img_cropped, (size, size))
+            # Encode the image to jpg format
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+            _, img_blob = cv2.imencode('.jpg', img_resized, encode_param)
+            return img_blob.tobytes()
+    except:
+        return None

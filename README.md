@@ -60,7 +60,7 @@ After changing the router SSID:
 
 Configuration of your own WiFi:
 ```bash
-nmcli dev wifi connect "YourSSID" "YourPassword" "YourPasswordAgain"
+nmcli dev wifi connect YourSSID password "YourPassword"
 nmcli dev set wlan0 autoconnect yes
 ```
 
@@ -135,11 +135,7 @@ Open the Kittyflap's IP address in your browser:
 >⚠️ To ensure Kittyhack is always reachable at the same IP address, it is recommended to assign a static IP address in your router.
 
 ### Updates
-To check for updates just run the setup script again, as described above.  
-You can also start it with the argument `update` to directly run the update:
-```bash
-curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | sudo bash -s update
-```
+Updates for Kittyhack can be performed directly in the web GUI under the 'Info' section.
 
 ---
 
@@ -202,7 +198,7 @@ Nach Änderung der Router-SSID:
 
 Konfiguration deines eigenen WLANs:
 ```bash
-nmcli dev wifi connect "DeinSSID" "DeinPasswort" "DeinPasswortNochmal"
+nmcli dev wifi connect DeinSSID password "DeinPasswort"
 nmcli dev set wlan0 autoconnect yes
 ```
 
@@ -278,8 +274,4 @@ Rufe die IP-Adresse der Kittyflap in deinem Browser auf:
 >⚠️ Damit Kittyhack immer unter der selben IP Adresse erreichbar ist, empfiehlt es sich, im Router eine statische IP Adresse zu vergeben.
 
 ### Updates
-Um nach Updates zu suchen, führe einfach das Setup Script wie oben beschrieben nochmal aus.  
-Du kannst das Script auch mit dem Argument `update` starten, um direkt das Update auszuführen:
-```bash
-curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh | sudo bash -s update
-```
+Updates von Kittyhack sind direkt in der WebGUI in der Sektion 'Info' möglich.

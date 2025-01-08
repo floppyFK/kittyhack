@@ -111,7 +111,7 @@ The setup is quite simple:
     ```
     Run the installation:
    ```bash
-   curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh && rm /tmp/kittyhack-setup.sh
+   sudo curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && sudo chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh && sudo rm /tmp/kittyhack-setup.sh
    ```
    You can choose between two options:
    - **install**: Runs the full setup and disables unwanted services on the kittyflap (recommended)
@@ -254,7 +254,7 @@ Die Installation ist kinderleicht:
    ```
    Installation ausführen:
    ```bash
-   curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh && rm /tmp/kittyhack-setup.sh
+   sudo curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && sudo chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh && sudo rm /tmp/kittyhack-setup.sh
    ```
    Du hast die Auswahl zwischen zwei Optionen:
    - **install**: Führt das komplette Setup aus, inklusive stoppen und entfernen von ungewollten Services auf der Kittyflap (empfohlen)

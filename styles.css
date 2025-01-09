@@ -27,11 +27,6 @@
     outline: 4px solid rgb(255 251 223) !important;
 }
 
-.html-fill-container {
-    padding-left: 0.2rem !important;
-    padding-right: 0.2rem !important;
-}
-
 .no-images-found {
     text-align: center;
     width: 100%;
@@ -105,17 +100,4 @@
 .table_horscrollbar {
     overflow-x: auto;
     width: 100%;
-}
-
-.placeholder-image {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100%;
-    width: 100%;
-    min-height: 250px;
-    background-color: #f8f9fa;
-    color: #6c757d;
-    border: 2px dashed #dee2e6;
-    border-radius: 4px;
 }

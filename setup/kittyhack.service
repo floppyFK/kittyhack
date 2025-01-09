@@ -11,11 +11,5 @@ Environment="PATH=/root/kittyhack/.venv/bin:$PATH"
 Restart=always
 RestartSec=5
 
-# Process handling
-KillSignal=SIGTERM
-KillMode=mixed
-TimeoutStopSec=30
-SuccessExitStatus=SIGKILL
-
 [Install]
 WantedBy=multi-user.target

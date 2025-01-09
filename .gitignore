@@ -4,4 +4,3 @@ kittyhack.log
 .venv/
 *.po~
 config.ini
-sync-to-kittyflap.sh

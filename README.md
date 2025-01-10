@@ -1,6 +1,6 @@
 # Kittyhack
 
-### German version below / Deutsche Version weiter unten!
+### [German version below / Deutsche Version weiter unten!](#deutsch)
 
 ---
 
@@ -135,7 +135,8 @@ Open the Kittyflap's IP address in your browser:
 >⚠️ To ensure Kittyhack is always reachable at the same IP address, it is recommended to assign a static IP address in your router.
 
 ### Updates
-Updates for Kittyhack can be performed directly in the web GUI under the 'Info' section.
+Updates for Kittyhack are available directly in the WebGUI in the 'Info' section starting from version v1.2.0.  
+If you are using Kittyhack version v1.1.0, simply run the [setup script](#instructions) on the Kittyflap again to perform an update.
 
 ---
 
@@ -274,4 +275,5 @@ Rufe die IP-Adresse der Kittyflap in deinem Browser auf:
 >⚠️ Damit Kittyhack immer unter der selben IP Adresse erreichbar ist, empfiehlt es sich, im Router eine statische IP Adresse zu vergeben.
 
 ### Updates
-Updates von Kittyhack sind direkt in der WebGUI in der Sektion 'Info' möglich.
+Updates von Kittyhack sind ab der Version v1.2.0 direkt in der WebGUI in der Sektion 'Info' möglich.
+Wenn du die Version v1.1.0 verwendest, führe für ein Update einfach das [Setup Script](#anleitung) auf der Kittyflap nochmal aus.

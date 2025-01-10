@@ -54,7 +54,7 @@ DEFAULT_CONFIG = {
         "allowed_to_exit": True,
         "last_vacuum_date": "",
         "periodic_version_check": True,
-        "kittyflap_db_nagscreen": True
+        "kittyflap_db_nagscreen": False
     }
 }
 

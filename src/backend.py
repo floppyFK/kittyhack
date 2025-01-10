@@ -77,7 +77,18 @@ def backend_main(simulate_kittyflap = False):
     camera_thread.start()
     tflite.pause()
 
+    def lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm):
+        # Lazy cat workaround: Keep the outside PIR active for 5 further seconds after the last detected motion outside
+        if ( (motion_outside == 0) and 
+             (last_outside == 1) and
+             ((tm.time() - motion_outside_tm) < 5.0) ):
+            motion_outside = 1
+            logging.debug(f"[BACKEND] Lazy cat workaround: Keep the outside PIR active for {5.0-(tm.time()-motion_outside_tm):.1f} seconds.")
+        return motion_outside
+
     while not sigterm_monitor.stop_now:
+        tm.sleep(0.1)  # sleep to reduce CPU load
+
         last_outside = motion_outside
         last_inside = motion_inside
         motion_outside, motion_inside = pir.get_states()
@@ -88,12 +99,7 @@ def backend_main(simulate_kittyflap = False):
         if motion_inside == 1:
             motion_inside_tm = tm.time()
 
-        # Lazy cat workaround: Keep the outside PIR active for 5 further seconds after the last detected motion outside
-        if ( (motion_outside == 0) and 
-             (last_outside == 1) and
-             ((tm.time() - motion_outside_tm) < 5.0) ):
-            motion_outside = 1
-            logging.debug(f"[BACKEND] Lazy cat workaround: Keep the outside PIR active for {5.0-(tm.time()-motion_outside_tm):.1f} seconds.")
+        motion_outside = lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm)
 
         tag_id, tag_timestamp = rfid.get_tag()
         last_rfid_read = rfid.time_delta_to_last_read()
@@ -119,6 +125,10 @@ def backend_main(simulate_kittyflap = False):
                 # Write to the database in a separate thread
                 db_thread = threading.Thread(target=write_motion_block_to_db, args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id), daemon=True)
                 db_thread.start()
+
+        # Just double check that the inside magnet is released ( == inside locked) if no motion is detected outside
+        if (motion_outside == 0 and magnets.get_inside_state() == True):
+                magnets.queue_command("lock_inside")
                 
         
         if last_inside == 1 and motion_inside == 0: # Inside motion stopped
@@ -135,7 +145,11 @@ def backend_main(simulate_kittyflap = False):
         if last_inside == 0 and motion_inside == 1: # Inside motion detected
             logging.info("[BACKEND] Motion detected INSIDE")
             if CONFIG['ALLOWED_TO_EXIT'] == True:
-                magnets.queue_command("unlock_outside")
+                if magnets.get_inside_state() == True:
+                    logging.info("[BACKEND] Inside magnet is already unlocked. Only one magnet is allowed. --> Outside magnet will not be unlocked.")
+                else:
+                    logging.info("[BACKEND] Allow cats to exit.")
+                    magnets.queue_command("unlock_outside")
             else:
                 logging.info("[BACKEND] No cats are allowed to exit. YOU SHALL NOT PASS!")
 
@@ -198,13 +212,14 @@ def backend_main(simulate_kittyflap = False):
         unlock_inside &= (tag_id_valid or CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.ALL)
         unlock_inside &= (magnets.get_inside_state() == False)
         unlock_inside &= ( (CONFIG['MOUSE_CHECK_ENABLED'] == False) or ((len(ids_with_mouse) == 0) and (len(ids_of_current_motion_block) >= CONFIG['MIN_PICTURES_TO_ANALYZE'])) )
+        # If the outside magnet is already unlocked, we are not allowed to unlock the inside (only one magnet is allowed to be open at the same time to avoid a potential overload of the electronics)
+        unlock_inside &= (magnets.get_outside_state() == False)
 
         if unlock_inside:
             logging.info(f"[BACKEND] All checks are passed. Unlock the inside")
             logging.debug(f"[BACKEND] Motion outside: {motion_outside}, Motion inside: {motion_inside}, Tag ID: {tag_id}, Tag valid: {tag_id_valid}, Motion block ID: {motion_block_id}, Images with mouse: {len(ids_with_mouse)}, Images in current block: {len(ids_of_current_motion_block)} ({ids_of_current_motion_block})")
             magnets.queue_command("unlock_inside")
             
-        tm.sleep(0.1)
 
     logging.info("[BACKEND] Stopped backend.")
     sigterm_monitor.signal_task_done()

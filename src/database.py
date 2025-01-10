@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 import pandas as pd
 import sqlite3
@@ -562,6 +563,9 @@ def check_if_table_exists(database: str, table: str) -> bool:
     """
     This function checks if the given table exists in the database.
     """
+    if not os.path.exists(database):
+        return False
+        
     try:
         conn = sqlite3.connect(database, timeout=30)
         cursor = conn.cursor()

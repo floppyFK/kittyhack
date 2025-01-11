@@ -53,6 +53,10 @@ if not os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
     logging.info(f"Database '{CONFIG['KITTYHACK_DATABASE_PATH']}' not found. Creating it...")
     create_kittyhack_photo_table(CONFIG['KITTYHACK_DATABASE_PATH'])
 
+if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
+    logging.warning(f"Table 'photo' not found in the kittyhack database. Creating it...")
+    create_kittyhack_photo_table(CONFIG['KITTYHACK_DATABASE_PATH'])
+
 # Background task in a separate thread
 def start_background_task():
     def run_periodically():

@@ -343,3 +343,22 @@ def delete_photo_by_id(database: str, photo_id: int) -> Result:
     if result.success == True:
         logging.info(f"Photo with ID '{photo_id}' deleted successfully.")
     return result
+
+def check_if_table_exists(database: str, table: str) -> bool:
+    """
+    This function checks if the given table exists in the database.
+    """
+    if not os.path.exists(database):
+        return False
+        
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'")
+        result = cursor.fetchone()
+        conn.close()
+    except Exception as e:
+        logging.error(f"[DATABASE] Failed to check if table '{table}' exists in the database '{database}': {e}")
+        return False
+    else:
+        return True if result else False

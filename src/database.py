@@ -631,3 +631,29 @@ def migrate_photos_to_events(database: str) -> Result:
         return Result(True, None)
     finally:
         release_database()
+
+def clear_original_kittyflap_database(database: str) -> Result:
+    """
+    This function clears the 'photo' and 'kportal_request' tables in the database.
+    """
+    result = lock_database()
+    if not result.success:
+        return result
+
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM photo")
+        cursor.execute("DELETE FROM kportal_request")
+        conn.commit()
+        cursor.execute("VACUUM")
+        conn.close()
+    except Exception as e:
+        error_message = f"[DATABASE] An error occurred while clearing the database '{database}': {e}"
+        logging.error(error_message)
+        return Result(False, error_message)
+    else:
+        logging.info(f"[DATABASE] Successfully cleared the database '{database}'.")
+        return Result(True, None)
+    finally:
+        release_database()

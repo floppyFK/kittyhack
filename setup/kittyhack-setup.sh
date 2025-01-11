@@ -133,7 +133,8 @@ request_log_report() {
     # Loop until a valid input (y/n) is received
     while true; do
         if [ "$LANGUAGE" == "de" ]; then
-            echo -e "${CYAN}Möchtest du die Installationsprotokolle mit dem Entwickler von Kittyhack teilen? Dies würde sehr dabei helfen, den Installer zu verbessern!${NC}"
+            echo -e "${CYAN}Möchtest du die Installationsprotokolle dem Entwickler von Kittyhack zur Verfügung stellen?${NC}"
+            echo -e "${CYAN}Damit würdest du sehr dabei helfen, den Installer für alle Kittyflap Nutzer zu verbessern!${NC}"
             echo -e "(${BLUE}${FMTBOLD}j${FMTDEF}${NC})a | (${BLUE}${FMTBOLD}n${FMTDEF}${NC})ein"
             read -r SHARE_LOGS
             case $SHARE_LOGS in
@@ -142,7 +143,8 @@ request_log_report() {
                 *) echo -e "${RED}Bitte 'j' für ja oder 'n' für nein eingeben.${NC}" ;;
             esac
         else
-            echo -e "${CYAN}Do you want to share the install logs with the developer of kittyhack? This would be very helpful to improve the installer!${NC}"
+            echo -e "${CYAN}Do you want to share the install logs with the developer of kittyhack?!${NC}"
+            echo -e "${CYAN}This would be very helpful to improve the installer for all Kittyflap users!${NC}"
             echo -e "(${BLUE}${FMTBOLD}y${FMTDEF}${NC})es | (${BLUE}${FMTBOLD}n${FMTDEF}${NC})o"
             read -r SHARE_LOGS
             case $SHARE_LOGS in
@@ -156,12 +158,50 @@ request_log_report() {
 
 # Full installation process
 install_full() {
-    echo -e "${CYAN}--- BASE INSTALL Step 1: Disable unwanted services ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL: Check internet connection ---${NC}"
+    if ! ping -c 1 google.com &>/dev/null; then
+        echo -e "${RED}No internet connection detected. Please check your connection and try again.${NC}"
+        exit 1
+    else
+        echo -e "${GREEN}Internet connection is active.${NC}"
+    fi
+
+    echo -e "${CYAN}--- BASE INSTALL Step 1: Stop kittyhack service ---${NC}"
+    if systemctl is-active --quiet kittyhack.service; then
+        systemctl stop kittyhack.service
+        if systemctl is-active --quiet kittyhack.service; then
+            ((FAIL_COUNT++))
+            echo -e "${RED}Failed to stop KittyHack service.${NC}"
+        else
+            echo -e "${GREEN}KittyHack service stopped successfully.${NC}"
+        fi
+    else
+        echo -e "${GREY}KittyHack service is already inactive.${NC}"
+    }
+
+    echo -e "${CYAN}--- BASE INSTALL Step 2: Disable unwanted services ---${NC}"
     disable_service "remote-iot"
     disable_service "manager"
     disable_service "kwork"
 
-    echo -e "${CYAN}--- BASE INSTALL Step 2: Check and resize swapfile if necessary ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 3: Release the magnets, if they are active ---${NC}"
+    # Export GPIOs
+    echo 525 > /sys/class/gpio/export 2>/dev/null
+    echo 524 > /sys/class/gpio/export 2>/dev/null
+
+    # Configure GPIO directions
+    echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/direction
+    echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/direction
+
+    # Set default output values for GPIOs
+    echo -e "${GREY}Releasing the magnet at GPIO525...${NC}"
+    sleep 1
+    echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/value
+    echo -e "${GREY}Releasing the magnet at GPIO524...${NC}"
+    sleep 1
+    echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/value
+
+    echo -e "${CYAN}--- BASE INSTALL Step 4: Check and resize swapfile if necessary ---${NC}"
     swapfile_size=$(stat -c%s /swapfile)
     if (( swapfile_size > 2147483648 )); then
         echo -e "${GREEN}Swapfile size is greater than 2GB. Resizing...${NC}"
@@ -183,7 +223,7 @@ install_full() {
         echo -e "${GREY}Swapfile size is 2GB or less. No action needed.${NC}"
     fi
 
-    echo -e "${CYAN}--- BASE INSTALL Step 3: Comment out unwanted crontab entries ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 5: Comment out unwanted crontab entries ---${NC}"
     # Backup and comment out specific crontab lines
     sudo crontab -l > /tmp/current_cron
     update_crontab=false
@@ -218,7 +258,7 @@ install_full() {
 
     rm -f /tmp/current_cron
 
-    echo -e "${CYAN}--- BASE INSTALL Step 4: Rename remote-iot paths ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 6: Rename remote-iot paths ---${NC}"
     if [[ -d /etc/remote-iot ]]; then
         sudo mv /etc/remote-iot /etc/remote-iot-backup
         echo -e "${GREEN}Renamed /etc/remote-iot to /etc/remote-iot-backup.${NC}"
@@ -232,7 +272,7 @@ install_full() {
         echo -e "${GREY}suspicious file /etc/remote-iot.tar.gz not found. Great!"
     fi
 
-    echo -e "${CYAN}--- BASE INSTALL Step 5: Clean up old manager logs ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 7: Clean up old manager logs ---${NC}"
     if sudo rm -f /var/log/manager_start /var/log/manager_update; then
         echo -e "${GREEN}Manager logs cleaned up.${NC}"
     else
@@ -264,7 +304,7 @@ install_full() {
     done
 
 
-    echo -e "${CYAN}--- BASE INSTALL Step 7: Install python ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 8: Install python ---${NC}"
     PYTHON_PACKAGES=(
         python3.11
         python3.11-venv
@@ -294,7 +334,7 @@ install_full() {
         echo -e "${GREEN}Python 3.11 pip is already installed.${NC}"
     fi
 
-    echo -e "${CYAN}--- BASE INSTALL Step 8: Install git ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 9: Install git ---${NC}"
     if ! git --version &>/dev/null; then
         echo -e "${GREY}Git is not installed. Installing...${NC}"
         apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y git
@@ -308,7 +348,7 @@ install_full() {
         echo -e "${GREEN}Git is already installed.${NC}"
     fi
 
-    echo -e "${CYAN}--- BASE INSTALL Step 9: Install curl and tar ---${NC}"
+    echo -e "${CYAN}--- BASE INSTALL Step 10: Install curl and tar ---${NC}"
     if ! curl --version &>/dev/null; then
         echo -e "${GREY}Curl is not installed. Installing...${NC}"
         apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y curl
@@ -339,12 +379,7 @@ install_full() {
 }
 
 install_kittyhack() {
-    echo -e "${CYAN}--- KITTYHACK UPDATE Step 1: Set up KittyHack ---${NC}"
-    if systemctl is-active --quiet kittyhack.service; then
-        echo -e "${GREY}Stopping existing KittyHack service...${NC}"
-        systemctl stop kittyhack.service
-    fi
-    
+    echo -e "${CYAN}--- KITTYHACK INSTALL Step 1: Clone KittyHack repository ---${NC}"
     if [[ -d /root/kittyhack ]]; then
         echo -e "${GREY}Existing KittyHack repository found. Backing up database and config.ini...${NC}"
         
@@ -396,7 +431,7 @@ install_kittyhack() {
         cp /tmp/kittyhack.db.bak /root/kittyhack/kittyhack.db && rm -f /tmp/kittyhack.db.bak
     fi
 
-    echo -e "${CYAN}--- KITTYHACK UPDATE Step 2: Set up Python virtual environment ---${NC}"
+    echo -e "${CYAN}--- KITTYHACK INSTALL Step 2: Set up Python virtual environment ---${NC}"
     python3.11 -m venv /root/kittyhack/.venv
     source /root/kittyhack/.venv/bin/activate
     pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt
@@ -408,7 +443,7 @@ install_kittyhack() {
     fi
     deactivate
 
-    echo -e "${CYAN}--- KITTYHACK UPDATE Step 3: Start kwork process ---${NC}"
+    echo -e "${CYAN}--- KITTYHACK INSTALL Step 3: Start kwork process ---${NC}"
     if [ $INSTALL_LEGACY_KITTYHACK -eq 1 ]; then
         write_kwork_service
         enable_service "kwork"
@@ -424,7 +459,7 @@ install_kittyhack() {
     fi
 
 
-    echo -e "${CYAN}--- KITTYHACK UPDATE Step 4: Install and start KittyHack service ---${NC}"
+    echo -e "${CYAN}--- KITTYHACK INSTALL Step 4: Install and start KittyHack service ---${NC}"
     cp /root/kittyhack/setup/kittyhack.service /etc/systemd/system/kittyhack.service
     systemctl daemon-reload
     systemctl enable kittyhack.service
@@ -556,16 +591,16 @@ EOF
     
     echo -e "${ERRMSG}" 
     if [ "$LANGUAGE" == "de" ]; then
-        echo -e "${CYAN}Bitte wähle:${NC}"
-        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) installiere v1.1.1"
-        echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) installiere die neueste Version (Warnung oben beachten!)"
-        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Kameratreiber erneut installieren (nur ausführen, wenn du keine Bilder siehst)"
+        echo -e "${CYAN}Bitte die gewünschte Option auswählen:${NC}"
+        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Kittyhack v1.1.1 installieren"
+        echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Neueste Kittyhack Version installieren (Warnung oben beachten!)"
+        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Kameratreiber erneut installieren (bitte nur ausführen, wenn du keine Live-Bilder siehst)"
         echo -e "(${BLUE}${FMTBOLD}b${FMTDEF}${NC})eenden"
     else
-        echo -e "${CYAN}Please choose:${NC}"
+        echo -e "${CYAN}Please choose the desired option:${NC}"
         echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) install v1.1.1"
         echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) install the latest version (see the warning above!)"
-        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Reinstall camera drivers (only run if you don't see any images)"
+        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Reinstall camera drivers (only run if you don't see live images)"
         echo -e "(${BLUE}${FMTBOLD}b${FMTDEF}${NC})ack"
     fi
     read -r MODE

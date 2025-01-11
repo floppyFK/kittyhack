@@ -48,7 +48,7 @@ DEFAULT_CONFIG = {
         "allowed_to_enter": "all",
         "mouse_check_enabled": True,
         "min_pictures_to_analyze": 5,
-        "show_images_with_overlay": True,
+        "show_images_with_overlay": False,
         "live_view_refresh_interval": 5.0,
         "kittyflap_config_migrated": False,
         "allowed_to_exit": True,

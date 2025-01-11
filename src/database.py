@@ -252,6 +252,44 @@ def create_kittyhack_events_table(database: str):
         logging.info(f"[DATABASE] Successfully created the 'events' table in the database '{database}'.")
     return result
 
+def create_kittyhack_photo_table(database: str):
+    """
+    This function creates the 'photo' table (kittyhack specific style) in 
+    the destination database if it does not exist.
+    """
+    result = lock_database()
+    if not result.success:
+        return result
+
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS photo (
+                id INTEGER PRIMARY KEY,
+                created_at DATETIME,
+                blob_picture BLOB,
+                no_mouse_probability REAL,
+                mouse_probability REAL,
+                kittyflap_id INTEGER,
+                cat_id INTEGER,
+                rfid TEXT,
+                false_accept_probability REAL,
+                deleted INTEGER DEFAULT 0
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        error_message = f"An error occurred while creating the 'photo' table in the database '{database}': {e}"
+        logging.error(error_message)
+        return Result(False, error_message)
+    else:
+        logging.info(f"Successfully created the 'photo' table in the database '{database}'.")
+        return Result(True, None)
+    finally:
+        release_database()
+
 def create_kittyhack_cats_table(database: str):
     """
     This function creates the 'cats' table in 
@@ -617,9 +655,6 @@ def migrate_photos_to_events(database: str) -> Result:
                 ]
                 cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
                 cursor.execute(f"DELETE FROM photo WHERE id = ?", (id,))
-
-        # now delete the 'photo' table
-        cursor.execute("DROP TABLE photo")
 
         conn.commit()
     except Exception as e:

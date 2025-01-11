@@ -13,16 +13,35 @@ NC='\e[39m\e[49m' # No color
 FMTBOLD='\e[1m'
 FMTDEF='\e[0m' # default format
 
+# Set up logging to both terminal and file
+LOGPATH="/var/log/kittyhack-setup-$(date +%Y%m%d-%H%M%S)"
+LOGFILE="${LOGPATH}/kittyhack-setup.log"
+LOG_SERVER="https://kittyhack-development.fk-cloud.de"
+mkdir -p "$LOGPATH"
+exec > >(tee -a ${LOGFILE}) 2>&1
+
 # Ensure the script is running as root
 if [ "$EUID" -ne 0 ]; then
   echo "This script must be run as root. Switching to root now..."
   exec sudo bash "$0" "$@"
 fi
 
+# Log apt package information
+zgrep "install\|remove" /var/log/dpkg.log* > "${LOGPATH}/apt_changes.log"
+dpkg-query -W > "${LOGPATH}/installed_packages_before_kittyhack_setup.log"
+cat /var/log/apt/history.log > "${LOGPATH}/apt_history.log"
+
+# Log kernel information
+dmesg > "${LOGPATH}/kernel.log"
+uname -r > "${LOGPATH}/kernel_version.log"
+systemctl list-units --type=service --all > "${LOGPATH}/systemd-services.log"
+
 # Get the current IP address
 CURRENT_IP=$(hostname -I | awk '{print $1}')
 
 FAIL_COUNT=0
+
+INSTALL_LEGACY_KITTYHACK=1
 
 
 # Function to check if a service is active
@@ -36,33 +55,99 @@ is_cron_line_commented() {
     sudo crontab -l 2>/dev/null | grep -E "^#.*${pattern}" > /dev/null
 }
 
-# Function to disable and mask services
-disable_and_mask_service() {
+# Function to disable services
+disable_service() {
     local SERVICE="$1"
     if is_service_active "$SERVICE"; then
         echo -e "${GREY}Stopping and disabling ${SERVICE} service...${NC}"
         systemctl stop "$SERVICE"
         systemctl disable "$SERVICE"
-        systemctl mask "$SERVICE"
         systemctl daemon-reload
         
         if is_service_active "$SERVICE"; then
             ((FAIL_COUNT++))
-            echo -e "${RED}Failed to disable and mask ${SERVICE} service.${NC}"
+            echo -e "${RED}Failed to disable ${SERVICE} service.${NC}"
             echo -e "${RED}WARNING: This would lead to an interference with the KittyHack service!${NC}"
         fi
-        echo -e "${GREEN}${SERVICE} service disabled and masked.${NC}"
+        echo -e "${GREEN}${SERVICE} service disabled.${NC}"
     else
         echo -e "${GREY}${SERVICE} service is already disabled or inactive.${NC}"
     fi
 }
 
+# Function to enable and start services
+enable_service() {
+    local SERVICE="$1"
+    if ! is_service_active "$SERVICE"; then
+        echo -e "${GREY}Enabling and starting ${SERVICE} service...${NC}"
+        systemctl daemon-reload
+        systemctl enable "$SERVICE"
+        systemctl start "$SERVICE"
+        if is_service_active "$SERVICE"; then
+            echo -e "${GREEN}${SERVICE} service enabled and started successfully.${NC}"
+        else
+            ((FAIL_COUNT++))
+            echo -e "${RED}Failed to start ${SERVICE} service.${NC}"
+        fi
+    else
+        echo -e "${GREY}${SERVICE} service is already enabled and running.${NC}"
+    fi
+}
+
+# Write the kwork service file
+write_kwork_service() {
+    cat << EOF > /etc/systemd/system/kwork.service
+[Unit]
+Description=Main Kittyflap program: Run main server and main program for managing the kittyflap components
+
+[Service]
+ExecStart=/root/kittyflap_versions/latest/main
+WorkingDirectory=/root/kittyflap_versions/latest/
+Environment="HOME=/root/"
+Restart=always
+RestartSec=1
+RuntimeMaxSec=3600s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+# Function to upload logs to developer server
+upload_logs() {
+    local archive="/tmp/kittyhack-logs-$(date +%Y%m%d-%H%M%S).tar.gz"
+    
+    # Create tar archive of logs
+    if [ -d "${LOGPATH}" ]; then
+        tar -czf "$archive" -C "$(dirname "${LOGPATH}")" "$(basename "${LOGPATH}")"
+    else
+        echo -e "${RED}Log directory ${LOGPATH} does not exist. Cannot create archive.${NC}"
+        return 1
+    fi
+
+    # Upload logs if tar was successful
+    response=$(curl -s -o /dev/null -w "%{http_code}" -X POST -F "file=@${archive}" "${LOG_SERVER}/kittyhack/upload/logs/$(basename ${archive})")
+    rm -f "$archive"
+}
+
 # Full installation process
 install_full() {
+    # Loop until a valid input (y/n) is received
+    while true; do
+        echo -e "${CYAN}Do you want to share the install logs with the developer of kittyhack? This would be very helpful to improve the installer!${NC}"
+        echo -e "(${BLUE}${FMTBOLD}y${FMTDEF}${NC})es | (${BLUE}${FMTBOLD}n${FMTDEF}${NC})o"
+        read -r SHARE_LOGS
+        case $SHARE_LOGS in
+            [Yy]) SHARE_LOGS="y"; break ;;
+            [Nn]) SHARE_LOGS="n"; break ;;
+            *) echo -e "${RED}Please enter 'y' for yes or 'n' for no.${NC}" ;;
+        esac
+    done
+
     echo -e "${CYAN}--- BASE INSTALL Step 1: Disable unwanted services ---${NC}"
-    disable_and_mask_service "remote-iot"
-    disable_and_mask_service "manager"
-    disable_and_mask_service "kwork"
+    disable_service "remote-iot"
+    disable_service "manager"
+    disable_service "kwork"
 
     echo -e "${CYAN}--- BASE INSTALL Step 2: Check and resize swapfile if necessary ---${NC}"
     swapfile_size=$(stat -c%s /swapfile)
@@ -153,44 +238,94 @@ install_full() {
         gstreamer1.0-tools
         gstreamer1.0-plugins-base
         gstreamer1.0-plugins-good
-        gstreamer1.0-plugins-bad
-        gstreamer1.0-plugins-ugly
         gstreamer1.0-libcamera
     )
+    echo -e "${GREY}Installing all GStreamer packages...${NC}"
+    apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y "${GSTREAMER_PACKAGES[@]}"
     for pkg in "${GSTREAMER_PACKAGES[@]}"; do
         if dpkg -l | grep -q "$pkg"; then
-            echo -e "${GREY}$pkg is already installed. Skipping.${NC}"
+            echo -e "${GREEN}$pkg installed successfully.${NC}"
         else
-            echo -e "${GREY}Installing $pkg...${NC}"
-            apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y "$pkg"
-            if dpkg -l | grep -q "$pkg"; then
-                echo -e "${GREEN}$pkg installed successfully.${NC}"
-            else
-                ((FAIL_COUNT++))
-                echo -e "${RED}Failed to install $pkg.${NC}"
-            fi
+            ((FAIL_COUNT++))
+            echo -e "${RED}Failed to install $pkg.${NC}"
         fi
     done
 
 
     echo -e "${CYAN}--- BASE INSTALL Step 7: Install python ---${NC}"
-    if ! python3.11 --version &>/dev/null; then
-        echo -e "${GREY}Python 3.11 is not installed. Installing...${NC}"
-        apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y python3.11 python3.11-venv python3.11-dev
-        if python3.11 --version &>/dev/null; then
-            echo -e "${GREEN}Python 3.11 installed successfully.${NC}"
+    PYTHON_PACKAGES=(
+        python3.11
+        python3.11-venv
+        python3.11-dev
+    )
+    echo -e "${GREY}Installing all Python packages...${NC}"
+    apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y "${PYTHON_PACKAGES[@]}"
+    for pkg in "${PYTHON_PACKAGES[@]}"; do
+        if dpkg -l | grep -q "$pkg"; then
+            echo -e "${GREEN}$pkg installed successfully.${NC}"
         else
             ((FAIL_COUNT++))
-            echo -e "${RED}Failed to install Python 3.11.${NC}"
+            echo -e "${RED}Failed to install $pkg.${NC}"
+        fi
+    done
+
+    if ! python3.11 -m pip --version &>/dev/null; then
+        echo -e "${GREY}Python pip is not installed. Installing...${NC}"
+        apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y python3-pip
+        if python3.11 -m pip --version &>/dev/null; then
+            echo -e "${GREEN}Python 3.11 pip installed successfully.${NC}"
+        else
+            ((FAIL_COUNT++))
+            echo -e "${RED}Failed to install Python 3.11 pip.${NC}"
         fi
     else
-        echo -e "${GREEN}Python 3.11 is already installed.${NC}"
+        echo -e "${GREEN}Python 3.11 pip is already installed.${NC}"
+    fi
+
+    echo -e "${CYAN}--- BASE INSTALL Step 8: Install git ---${NC}"
+    if ! git --version &>/dev/null; then
+        echo -e "${GREY}Git is not installed. Installing...${NC}"
+        apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y git
+        if git --version &>/dev/null; then
+            echo -e "${GREEN}Git installed successfully.${NC}"
+        else
+            ((FAIL_COUNT++))
+            echo -e "${RED}Failed to install Git.${NC}"
+        fi
+    else
+        echo -e "${GREEN}Git is already installed.${NC}"
+    fi
+
+    echo -e "${CYAN}--- BASE INSTALL Step 9: Install curl and tar ---${NC}"
+    if ! curl --version &>/dev/null; then
+        echo -e "${GREY}Curl is not installed. Installing...${NC}"
+        apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y curl
+        if curl --version &>/dev/null; then
+            echo -e "${GREEN}Curl installed successfully.${NC}"
+        else
+            ((FAIL_COUNT++))
+            echo -e "${RED}Failed to install Curl.${NC}"
+        fi
+    else
+        echo -e "${GREEN}Curl is already installed.${NC}"
+    fi
+
+    if ! tar --version &>/dev/null; then
+        echo -e "${GREY}Tar is not installed. Installing...${NC}"
+        apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y tar
+        if tar --version &>/dev/null; then
+            echo -e "${GREEN}Tar installed successfully.${NC}"
+        else
+            ((FAIL_COUNT++))
+            echo -e "${RED}Failed to install Tar.${NC}"
+        fi
+    else
+        echo -e "${GREEN}Tar is already installed.${NC}"
     fi
 
     install_kittyhack
 }
 
-# Install or update KittyHack
 install_kittyhack() {
     echo -e "${CYAN}--- KITTYHACK UPDATE Step 1: Set up KittyHack ---${NC}"
     if systemctl is-active --quiet kittyhack.service; then
@@ -199,53 +334,54 @@ install_kittyhack() {
     fi
     
     if [[ -d /root/kittyhack ]]; then
-        echo -e "${GREY}Existing KittyHack repository found. Checking for updates...${NC}"
-
-        echo -e "${GREY}Cleaning the repository...${NC}"
-        git -C /root/kittyhack restore .
-        git -C /root/kittyhack clean -fd
+        echo -e "${GREY}Existing KittyHack repository found. Backing up database and config.ini...${NC}"
         
-        echo -e "${GREY}Fetching latest tags...${NC}"
+        # Backup important files if they exist
+        [ -f /root/kittyhack/config.ini ] && cp /root/kittyhack/config.ini /tmp/config.ini.bak
+        [ -f /root/kittyhack/kittyhack.db ] && cp /root/kittyhack/kittyhack.db /tmp/kittyhack.db.bak
+        
+        # Remove old repository
+        echo -e "${GREY}removing kittyhack installation...${NC}"
+        rm -rf /root/kittyhack
+    fi
+
+    echo -e "${GREY}Cloning KittyHack repository...${NC}"
+    git clone https://github.com/floppyFK/kittyhack.git /root/kittyhack --quiet
+    if [[ $? -eq 0 ]]; then
+        echo -e "${GREEN}Repository cloned successfully.${NC}"
+    else
+        ((FAIL_COUNT++))
+        echo -e "${RED}Failed to clone the repository. Please check your internet connection.${NC}"
+    fi
+
+    if [ $INSTALL_LEGACY_KITTYHACK -eq 0 ]; then
+        echo -e "${GREY}Fetching latest release...${NC}"    
+        GIT_TAG=$(curl -s https://api.github.com/repos/floppyFK/kittyhack/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
+    else
+        GIT_TAG="v1.1.0"
+    fi
+
+    if [[ -n "$GIT_TAG" ]]; then
+        echo -e "${GREY}Checking out ${GIT_TAG}...${NC}"
         git -C /root/kittyhack fetch --tags --quiet
+        git -C /root/kittyhack checkout ${GIT_TAG} --quiet
         if [[ $? -eq 0 ]]; then
-            LATEST_TAG=$(git -C /root/kittyhack describe --tags `git -C /root/kittyhack rev-list --tags --max-count=1`)
-            echo -e "${GREY}Checking out latest tag: ${LATEST_TAG}${NC}"
-            git -C /root/kittyhack checkout ${LATEST_TAG} --quiet
-            if [[ $? -eq 0 ]]; then
-                echo -e "${GREEN}Repository updated to latest tag: ${LATEST_TAG}${NC}"
-            else
-                ((FAIL_COUNT++))
-                echo -e "${RED}Failed to checkout the latest tag. Please check your internet connection.${NC}"
-            fi
+            echo -e "${GREEN}Repository updated to ${GIT_TAG}${NC}"
         else
             ((FAIL_COUNT++))
-            echo -e "${RED}Failed to fetch tags. Please check your internet connection.${NC}"
+            echo -e "${RED}Failed to checkout ${GIT_TAG}. Please check your internet connection.${NC}"
         fi
     else
-        echo -e "${GREY}Cloning KittyHack repository...${NC}"
-        git clone https://github.com/floppyFK/kittyhack.git /root/kittyhack --quiet
-        echo -e "${GREY}Fetching latest tags...${NC}"
-        git -C /root/kittyhack fetch --tags --quiet
-        if [[ $? -eq 0 ]]; then
-            LATEST_TAG=$(git -C /root/kittyhack describe --tags `git -C /root/kittyhack rev-list --tags --max-count=1`)
-            echo -e "${GREY}Checking out latest tag: ${LATEST_TAG}${NC}"
-            git -C /root/kittyhack checkout ${LATEST_TAG} --quiet
-            if [[ $? -eq 0 ]]; then
-                echo -e "${GREEN}Repository updated to latest tag: ${LATEST_TAG}${NC}"
-            else
-                ((FAIL_COUNT++))
-                echo -e "${RED}Failed to checkout the latest tag. Please check your internet connection.${NC}"
-            fi
-        else
-            ((FAIL_COUNT++))
-            echo -e "${RED}Failed to fetch tags. Please check your internet connection.${NC}"
-        fi
-        if [[ $? -eq 0 ]]; then
-            echo -e "${GREEN}Repository cloned successfully.${NC}"
-        else
-            ((FAIL_COUNT++))
-            echo -e "${RED}Failed to clone the repository. Please check your internet connection.${NC}"
-        fi
+        ((FAIL_COUNT++))
+        echo -e "${RED}Failed to fetch tags. Please check your internet connection.${NC}"
+    fi
+    
+    # Restore backed up files if they exist
+    if [ -f /tmp/config.ini.bak ]; then
+        cp /tmp/config.ini.bak /root/kittyhack/config.ini && rm -f /tmp/config.ini.bak
+    fi
+    if [ -f /tmp/kittyhack.db.bak ]; then
+        cp /tmp/kittyhack.db.bak /root/kittyhack/kittyhack.db && rm -f /tmp/kittyhack.db.bak
     fi
 
     echo -e "${CYAN}--- KITTYHACK UPDATE Step 2: Set up Python virtual environment ---${NC}"
@@ -260,7 +396,23 @@ install_kittyhack() {
     fi
     deactivate
 
-    echo -e "${CYAN}--- KITTYHACK UPDATE Step 3: Install and start KittyHack service ---${NC}"
+    echo -e "${CYAN}--- KITTYHACK UPDATE Step 3: Start kwork process ---${NC}"
+    if [ $INSTALL_LEGACY_KITTYHACK -eq 1 ]; then
+        write_kwork_service
+        enable_service "kwork"
+        # check if kwork is running
+        if is_service_active "kwork"; then
+            echo -e "${GREEN}Kwork service started successfully.${NC}"
+        else
+            ((FAIL_COUNT++))
+            echo -e "${RED}Failed to start kwork service.${NC}"
+        fi
+    else
+        echo -e "${GREY}Skipping kwork service start for the latest version.${NC}"
+    fi
+
+
+    echo -e "${CYAN}--- KITTYHACK UPDATE Step 4: Install and start KittyHack service ---${NC}"
     cp /root/kittyhack/setup/kittyhack.service /etc/systemd/system/kittyhack.service
     systemctl daemon-reload
     systemctl enable kittyhack.service
@@ -270,6 +422,18 @@ install_kittyhack() {
     else
         echo -e "${RED}Failed to start KittyHack service.${NC}"
     fi
+
+    # Log system journal information
+    for i in {1..5}; do
+        echo -n "."
+        sleep 1
+    done
+    echo # move to the next line after the loop
+    journalctl -n 20000 > "${LOGPATH}/journal.log"
+    journalctl -n 1000 -u kwork > "${LOGPATH}/journal_kwork.log"
+    journalctl -n 1000 -u kittyhack > "${LOGPATH}/journal_kittyhack.log"
+    cp /root/kittyhack/kittyhack.log "${LOGPATH}/kittyhack.log"
+    dpkg-query -W > "${LOGPATH}/installed_packages_after_kittyhack_setup.log"
 }
 
 # Main script logic
@@ -300,59 +464,50 @@ EOF
         # Menu
         echo
         echo -e "${CYAN}Welcome to the KittyHack Setup Script!${NC}"
-        # echo -e "This script provides the following options:\n"
-        # echo -e "${BLUE}${FMTBOLD}install${FMTDEF}${NC}: Run the full setup (disable unwanted services 'remote-iot'"
-        # echo -e "         and 'manager', install KittyHack)."
-        # echo -e "${BLUE}${FMTBOLD}update${FMTDEF}${NC}:  Runs only the update (or initial installation, if not yet done) of"
-        # echo -e "         the KittyHack application. No system configuration will be changed.\n"
+        echo -e "Please select one of the following options:\n"
+        echo -e "${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Install v1.1.0 of Kittyhack"
+        echo -e "${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Install the latest version of Kittyhack (see the warning below!)"
 
         # NOTE textbox
-        echo -e "+---------------------------------- NOTE ----------------------------------+"
-        echo -e "| The ${BLUE}${FMTBOLD}install${FMTDEF}${NC} option will disable and remove these services:               |"
-        echo -e "| - ${FMTBOLD}remote-iot${FMTDEF}: A potentially risky service that could allow unauthorized  |"
-        echo -e "|   access to your device from the internet. With the manufacturer of the  |"
-        echo -e "|   KittyFlap now bankrupt, this service is obsolete and unnecessary. See  |"
-        echo -e "|   ${CYAN}https://remoteiot.com${NC} for details.                                     |"
-        echo -e "| - ${FMTBOLD}manager${FMTDEF}: Previously used for update checks of the original KittyFlap   |"
-        echo -e "|   software. As the manufacturer is no longer operational, this service   |"
-        echo -e "|   is no longer required.                                                 |"
-        echo -e "| - ${FMTBOLD}kwork${FMTDEF}: The original KittyFlap software. This service is no longer      |"
-        echo -e "|   required and must be disabled for KittyHack to work properly.          |"
-        echo -e "+--------------------------------------------------------------------------+"
-
-        # Version dependency note
-        echo -e "+------------------------------- NOTE#2 -----------------------------------+"
-        echo -e "| Even if you have KittyHack v1.1.0 or lower installed already once in the |"
-        echo -e "| past, you must run the full installation once again, to install the      |"
-        echo -e "| required dependencies. After that, future updates can be installed       |"
-        echo -e "| directly via the web interface of Kittyhack.                             |"
+        echo -e "+--------------------------------- ${CYAN}WARNING${NC} --------------------------------+"
+        echo -e "| There have been reports of issues when installing the latest version of  |"
+        echo -e "| Kittyhack. If you have not made any changes on the Kittyflap system      |"
+        echo -e "| (especially if you have not run the '${CYAN}apt upgrade${NC}' command), you should be|"
+        echo -e "| able to install the latest version - but installation errors may still   |"
+        echo -e "| occur. If you have run 'apt upgrade' or made other changes, it is        |"
+        echo -e "| recommended to install version 1.1.0.                                    |"
+        echo -e "|         ${CYAN}${FMTBOLD}!!! If you are unsure, please install version 1.1.0 !!!${FMTDEF}${NC}          |"
+        echo -e "| Additionally, the installer will ask if you want to share the install    |"
+        echo -e "| logs with the developer. ${FMTBOLD}Sharing the logs will help a lot to improve the${FMTDEF} |"
+        echo -e "| ${FMTBOLD}installer and fix any issues!${FMTDEF}                                            |"
         echo -e "+--------------------------------------------------------------------------+"
         
-
         echo -e "${ERRMSG}" 
-        echo -e "${CYAN}Please enter your choice:${NC} (${BLUE}${FMTBOLD}i${FMTDEF}${NC})nstall | (${BLUE}${FMTBOLD}q${FMTDEF}${NC})uit"
+        echo -e "${CYAN}Please enter your choice:${NC}"
+        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) install v1.1.0 | (${BLUE}${FMTBOLD}2${FMTDEF}${NC}) install latest version | (${BLUE}${FMTBOLD}q${FMTDEF}${NC})uit"
         read -r MODE
     fi
 
     # Handle the input
     case "$MODE" in
-        install|i)
-            echo -e "${CYAN}Running full installation...${NC}"
+        1)
+            echo -e "${CYAN}Installing Kittyhack v1.1.0...${NC}"
+            INSTALL_LEGACY_KITTYHACK=1
             install_full
             break
             ;;
-        # update|u)
-        #     echo -e "Skipping installation steps..."
-        #     echo -e "${CYAN}Running update process...${NC}"
-        #     install_kittyhack
-        #     break
-        #     ;;
+        2)
+            echo -e "${CYAN}Installing the latest version of Kittyhack...${NC}"
+            INSTALL_LEGACY_KITTYHACK=0
+            install_full
+            break
+            ;;
         q|"")
             echo -e "${YELLOW}Quitting installation.${NC}"
             exit 0
             ;;
         *)
-            ERRMSG="${RED}Invalid choice. Please enter 'i' or 'q'.${NC}\n"
+            ERRMSG="${RED}Invalid choice. Please enter '1', '2' or 'q'.${NC}\n"
             MODE=""
             ;;
     esac
@@ -363,9 +518,15 @@ if systemctl is-active --quiet kittyhack.service; then
         echo -e "\n${GREEN}Setup complete!${NC}\n"
         echo -e "Open ${CYAN}http://${CURRENT_IP}${NC} in your browser to start with KittyHack!\n"
     else
-        echo -e "\n${YELLOW}Setup complete with warnings. Please check the logs for more details.${NC}\n"
+        echo -e "\n${YELLOW}Setup complete with warnings. Please check the logs in ${LOGFILE} for more details.${NC}\n"
         echo -e "You could still try to open ${CYAN}http://${CURRENT_IP}${NC} in your browser to start with KittyHack.\n"
     fi
 else
-    echo -e "\n${RED}Setup failed. Please check the logs for more details.${NC}\n"
+    echo -e "\n${RED}Setup failed. Please check the logs in ${LOGFILE} for more details.${NC}\n"
+fi
+
+if [[ "$SHARE_LOGS" == "n" ]]; then
+    echo -e "${GREY}Skipping log upload.${NC}"
+else
+    upload_logs
 fi

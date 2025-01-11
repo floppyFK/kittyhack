@@ -129,8 +129,7 @@ upload_logs() {
     rm -f "$archive"
 }
 
-# Full installation process
-install_full() {
+request_log_report() {
     # Loop until a valid input (y/n) is received
     while true; do
         if [ "$LANGUAGE" == "de" ]; then
@@ -153,7 +152,10 @@ install_full() {
             esac
         fi
     done
+}
 
+# Full installation process
+install_full() {
     echo -e "${CYAN}--- BASE INSTALL Step 1: Disable unwanted services ---${NC}"
     disable_service "remote-iot"
     disable_service "manager"
@@ -368,7 +370,7 @@ install_kittyhack() {
         echo -e "${GREY}Fetching latest release...${NC}"    
         GIT_TAG=$(curl -s https://api.github.com/repos/floppyFK/kittyhack/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
     else
-        GIT_TAG="v1.1.0"
+        GIT_TAG="v1.1.1"
     fi
 
     if [[ -n "$GIT_TAG" ]]; then
@@ -446,6 +448,32 @@ install_kittyhack() {
     dpkg-query -W > "${LOGPATH}/installed_packages_after_kittyhack_setup.log"
 }
 
+reinstall_camera_drivers() {
+    echo -e "${CYAN}--- CAMERA DRIVER REINSTALL ---${NC}"
+    local files=(
+        "/root/libcamera-ipa-libs/libcamera0.2_0.2.0+rpt20240418-1_arm64.deb"
+        "/root/libcamera-ipa-libs/libcamera-ipa_0.2.0+rpt20240418-1_arm64.deb"
+        "/root/libcamera-dependencies/rpicam-apps.deb"
+        "/root/libcamera-dependencies/libcamera0.2.deb"
+        "/root/libcamera-dependencies/libcamera-ipa.deb"
+    )
+
+    for file in "${files[@]}"; do
+        if [[ -f "$file" ]]; then
+            echo -e "${GREY}Installing $file...${NC}"
+            dpkg -i "$file"
+            if [[ $? -ne 0 ]]; then
+                ((FAIL_COUNT++))
+                echo -e "${RED}Failed to install $file.${NC}"
+            else
+                echo -e "${GREEN}$file installed successfully.${NC}"
+            fi
+        else
+            echo -e "${RED}File $file not found. Please report this in the GitHub repository.${NC}"
+        fi
+    done
+}
+
 # Main script logic
 
 # Default language
@@ -481,42 +509,45 @@ EOF
     echo
     if [ "$LANGUAGE" == "de" ]; then
         echo -e "Willkommen zum KittyHack-Setup!"
-        echo -e "Bitte wähle eine der folgenden Optionen:"
-        echo -e "${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Installiere Kittyhack v1.1.0"
-        echo -e "${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Installiere die neueste Version von Kittyhack (Warnung unten beachten!)"
         echo
-        echo -e "+--------------------------------- ${CYAN}WARNUNG${NC} --------------------------------+"
+        echo -e "+--------------------------------- ${CYAN}WARNUNG${NC} ---------------------------------+"
         echo -e "| Es gibt Berichte über Probleme bei der Installation der neuesten Version  |"
         echo -e "| von Kittyhack. Wenn du keine Änderungen am Kittyflap-System vorgenommen   |"
         echo -e "| hast (insbesondere wenn du selbst bisher kein '${CYAN}apt upgrade${NC}' ausgeführt    |"
-        echo -e "| hast), sollte die Installation der neuesten Version funktionieren         |"
-        echo -e "| Wenn du schon ein 'apt upgrade' ausgeführt hast oder andere Änderungen    |"
-        echo -e "| hast, wird empfohlen, die Version 1.1.0 zu installieren.                  |"
+        echo -e "| hast), sollte die Installation der neuesten Version funktionieren.        |"
         echo -e "| Du musst dich nicht endgültig entscheiden - ein nachträglicher Wechsel    |"
         echo -e "| zwischen den Versionen ist möglich, indem du das setup einfach nochmal    |"
-        echo -e "| ausführst.                                                                |"
-        echo -e "|     ${CYAN}${FMTBOLD}!!! Wenn du dir unsicher bist, installiere die Version 1.1.0 !!!${FMTDEF}${NC}      |"
+        echo -e "| ausführst!                                                                |"
+        echo -e "|         ${CYAN}${FMTBOLD}Wenn du dir unsicher bist, installiere die Version 1.1.1${FMTDEF}${NC}          |"
+        echo -e "| Was ist der Unterschied zwischen den Versionen?                           |"
+        echo -e "| - Die v1.1.x basiert auf der originalen Kittyflap Software und fungiert   |"
+        echo -e "|   nur als 'Client' zur Anzeige der Bilder und zur Steuerung einger        |"
+        echo -e "|   weniger Funktionen.                                                     |"
+        echo -e "| - Ab v1.2.0 wird die originale Kittyflap Software komplett durch eine neu |"
+        echo -e "|   entwickelte Software ersetzt, die mehr Funktionen und eine bessere      |"
+        echo -e "|   Kontrolle über die Katzenklappe bietet.                                 |"
         echo -e "| Zusätzlich wird der Installer fragen, ob du die Installationsprotokolle   |"
         echo -e "| mit dem Entwickler teilen möchten. ${FMTBOLD}Das Teilen der Protokolle würde mir${FMTDEF}    |"
         echo -e "| ${FMTBOLD}unglaublich helfen, den Installer zu verbessern und eventuelle${FMTDEF}            |"
         echo -e "| ${FMTBOLD}Probleme zu beheben!${FMTDEF}                                                      |"
-        echo -e "+--------------------------------------------------------------------------+"
+        echo -e "+---------------------------------------------------------------------------+"
     else
         echo -e "Welcome to the KittyHack setup!"
-        echo -e "Please choose one of the following options:"
-        echo -e "${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Install v1.1.0 of Kittyhack"
-        echo -e "${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Install the latest version of Kittyhack (see the warning below!)"
         echo
         echo -e "+--------------------------------- ${CYAN}WARNING${NC} --------------------------------+"
         echo -e "| There have been reports of issues when installing the latest version of  |"
         echo -e "| Kittyhack. If you have not made any changes on the Kittyflap system      |"
         echo -e "| (especially if you have not run the '${CYAN}apt upgrade${NC}' command), you should be|"
-        echo -e "| able to install the latest version - but installation errors may still   |"
-        echo -e "| occur. If you have run 'apt upgrade' or made other changes, it is        |"
-        echo -e "| recommended to install version 1.1.0.                                    |"
+        echo -e "| able to install the latest version.                                      |"
         echo -e "| Note that you do not have to make a final decision - you can switch      |"
-        echo -e "| between versions by running the setup again.                             |"
-        echo -e "|         ${CYAN}${FMTBOLD}!!! If you are unsure, please install version 1.1.0 !!!${FMTDEF}${NC}          |"
+        echo -e "| between versions by running the setup again!                             |"
+        echo -e "|             ${CYAN}${FMTBOLD}If you are unsure, please install version 1.1.1${FMTDEF}${NC}              |"
+        echo -e "| What is the difference between the versions?                             |"
+        echo -e "| - The v1.1.x is based on the original Kittyflap software and acts as a   |"
+        echo -e "|   'client' to display images and control a few functions.                |"
+        echo -e "| - From v1.2.0 onwards, the original Kittyflap software is completely     |"
+        echo -e "|   replaced by a newly developed software that offers more functions and  |"
+        echo -e "|   better control over the cat flap.                                      |"
         echo -e "| Additionally, the installer will ask if you want to share the install    |"
         echo -e "| logs with the developer. ${FMTBOLD}Sharing the logs will help a lot to improve the${FMTDEF} |"
         echo -e "| ${FMTBOLD}installer and fix any issues!${FMTDEF}                                            |"
@@ -524,30 +555,53 @@ EOF
     fi
     
     echo -e "${ERRMSG}" 
-    echo -e "${CYAN}Please enter your choice:${NC}"
-    echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) install v1.1.0 | (${BLUE}${FMTBOLD}2${FMTDEF}${NC}) install latest version | (${BLUE}${FMTBOLD}q${FMTDEF}${NC})uit"
+    if [ "$LANGUAGE" == "de" ]; then
+        echo -e "${CYAN}Bitte wähle:${NC}"
+        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) installiere v1.1.1"
+        echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) installiere die neueste Version (Warnung oben beachten!)"
+        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Kameratreiber erneut installieren (nur ausführen, wenn du keine Bilder siehst)"
+        echo -e "(${BLUE}${FMTBOLD}b${FMTDEF}${NC})eenden"
+    else
+        echo -e "${CYAN}Please choose:${NC}"
+        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) install v1.1.1"
+        echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) install the latest version (see the warning above!)"
+        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Reinstall camera drivers (only run if you don't see any images)"
+        echo -e "(${BLUE}${FMTBOLD}b${FMTDEF}${NC})ack"
+    fi
     read -r MODE
 
     # Handle the input
     case "$MODE" in
         1)
-            echo -e "${CYAN}Installing Kittyhack v1.1.0...${NC}"
+            echo -e "${CYAN}Installing Kittyhack v1.1.1...${NC}"
             INSTALL_LEGACY_KITTYHACK=1
+            request_log_report
             install_full
             break
             ;;
         2)
             echo -e "${CYAN}Installing the latest version of Kittyhack...${NC}"
             INSTALL_LEGACY_KITTYHACK=0
+            request_log_report
             install_full
             break
             ;;
-        q|"")
+        3)
+            echo -e "${CYAN}Reinstalling camera drivers...${NC}"
+            request_log_report
+            reinstall_camera_drivers
+            break
+            ;;
+        q|b)
             echo -e "${YELLOW}Quitting installation.${NC}"
             exit 0
             ;;
         *)
-            ERRMSG="${RED}Invalid choice. Please enter '1', '2' or 'q'.${NC}\n"
+            if [ "$LANGUAGE" == "de" ]; then
+                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2' oder 'q' eingeben.${NC}\n"
+            else
+                ERRMSG="${RED}Invalid choice. Please enter '1', '2' or 'b'.${NC}\n"
+            fi
             MODE=""
             ;;
     esac

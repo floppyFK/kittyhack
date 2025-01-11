@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-01-08 14:26+0000\n"
+"POT-Creation-Date: 2025-01-11 11:59+0000\n"
 "PO-Revision-Date: 2024-11-14 20:14+0000\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -25,24 +25,13 @@ msgstr ""
 "Eine neue Version von Kittyhack ist verfügbar: {}. Gehe zur 'Info' Sektion "
 "für Update-Anweisungen."
 
-#: src/server.py:182
-msgid ""
-"The original kittyflap database file still exists. Please consider deleting "
-"it to free up disk space. For more details, see the 'Info' section (NOTE: "
-"You can disable this message in the 'Configuration' section.)"
-msgstr ""
-"Die originale Kittyflap Datenbank existiert noch. Du kannst sie löschen, um "
-"Speicherplatz freizugeben. Weitere Details findest du in der 'Info' Sektion "
-"(HINWEIS: Du kannst diese Meldung in der 'Konfiguration' Sektion "
-"deaktivieren.)"
-
 #: src/server.py:187
 msgid ""
-" or consider deleting the old kittyflap database file. For more details, see "
-"the 'Info' section."
+" or consider deleting pictures from the original kittyflap database file. "
+"For more details, see the 'Info' section."
 msgstr ""
-" oder lösche die alte Kittyflap Datenbank. Weitere Details findest du in der "
-"'Info' Sektion."
+" oder lösche die Bilder aus der alten Kittyflap Datenbank. Weitere Details "
+"findest du in der 'Info' Sektion."
 
 #: src/server.py:190
 msgid ""
@@ -300,11 +289,6 @@ msgstr "Nach updates suchen"
 msgid "Automatically check for new versions of Kittyhack."
 msgstr "Automatisch nach neuen Versionen von Kittyhack suchen."
 
-#: src/server.py:710
-msgid "Show nag screen, if the original kittyflap database file still exists"
-msgstr ""
-"Zeige einen Hinweis, wenn die originale Kittyflap Datenbank noch existiert"
-
 #: src/server.py:713
 msgid "Door control settings"
 msgstr "Einstellungen für die Klappensteuerung"
@@ -442,17 +426,20 @@ msgstr "Kittyhack Konfiguration konnte nicht gespeichert werden."
 msgid "Failed to create the journal file: {}"
 msgstr "Feher beim erstellen der Journal-Datei: {}"
 
-#: src/server.py:956
-msgid "The original kittyflap database file was deleted successfully."
-msgstr "Die originale Kittyflap Datenbank wurde erfolgreich gelöscht."
-
-#: src/server.py:958
+#: src/server.py:961
 msgid ""
-"An error occurred while deleting the original kittyflap database file: {}"
-msgstr ""
-"Beim löschen der originalen Kittyflap Datenbank-Datei trat ein Fehler auf: {}"
+"The pictures from the original kittyflap database were removed successfully."
+msgstr "Die Bilder aus der originalen Kittyflap Datenbank wurde erfolgreich gelöscht."
 
-#: src/server.py:960
+#: src/server.py:963
+msgid ""
+"An error occurred while deleting the pictures from the original kittyflap "
+"database: {}"
+msgstr ""
+"Beim löschen der Bilder aus der originalen Kittyflap Datenbank-Datei trat "
+"ein Fehler auf: {}"
+
+#: src/server.py:965
 msgid "The original kittyflap database file does not exist anymore."
 msgstr "Die originale Kittyflap Datenbank-Datei existiert nicht mehr."
 
@@ -479,6 +466,22 @@ msgstr "Konfiguration"
 #: src/ui.py:42
 msgid "Info"
 msgstr "Info"
+
+#~ msgid ""
+#~ "The original kittyflap database file still exists. Please consider "
+#~ "deleting it to free up disk space. For more details, see the 'Info' "
+#~ "section (NOTE: You can disable this message in the 'Configuration' "
+#~ "section.)"
+#~ msgstr ""
+#~ "Die originale Kittyflap Datenbank existiert noch. Du kannst sie löschen, "
+#~ "um Speicherplatz freizugeben. Weitere Details findest du in der 'Info' "
+#~ "Sektion (HINWEIS: Du kannst diese Meldung in der 'Konfiguration' Sektion "
+#~ "deaktivieren.)"
+
+#~ msgid ""
+#~ "Show nag screen, if the original kittyflap database file still exists"
+#~ msgstr ""
+#~ "Zeige einen Hinweis, wenn die originale Kittyflap Datenbank noch existiert"
 
 #~ msgid "Reload this website to apply the new language."
 #~ msgstr "Seite neu laden um die geänderte Sprache anzuwenden."

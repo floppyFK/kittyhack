@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-01-08 14:26+0000\n"
+"POT-Creation-Date: 2025-01-11 11:59+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -23,17 +23,10 @@ msgid ""
 "update instructions."
 msgstr ""
 
-#: src/server.py:182
-msgid ""
-"The original kittyflap database file still exists. Please consider deleting "
-"it to free up disk space. For more details, see the 'Info' section (NOTE: "
-"You can disable this message in the 'Configuration' section.)"
-msgstr ""
-
 #: src/server.py:187
 msgid ""
-" or consider deleting the old kittyflap database file. For more details, see "
-"the 'Info' section."
+" or consider deleting pictures from the original kittyflap database file. "
+"For more details, see the 'Info' section."
 msgstr ""
 
 #: src/server.py:190
@@ -273,10 +266,6 @@ msgstr ""
 msgid "Automatically check for new versions of Kittyhack."
 msgstr ""
 
-#: src/server.py:710
-msgid "Show nag screen, if the original kittyflap database file still exists"
-msgstr ""
-
 #: src/server.py:713
 msgid "Door control settings"
 msgstr ""
@@ -398,16 +387,18 @@ msgstr ""
 msgid "Failed to create the journal file: {}"
 msgstr ""
 
-#: src/server.py:956
-msgid "The original kittyflap database file was deleted successfully."
-msgstr ""
-
-#: src/server.py:958
+#: src/server.py:961
 msgid ""
-"An error occurred while deleting the original kittyflap database file: {}"
+"The pictures from the original kittyflap database were removed successfully."
 msgstr ""
 
-#: src/server.py:960
+#: src/server.py:963
+msgid ""
+"An error occurred while deleting the pictures from the original kittyflap "
+"database: {}"
+msgstr ""
+
+#: src/server.py:965
 msgid "The original kittyflap database file does not exist anymore."
 msgstr ""
 

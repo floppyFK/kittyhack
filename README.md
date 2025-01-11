@@ -15,7 +15,7 @@ Additionally, this project is in a **early stage**! The planned features are not
 
 ## Features
 
-Until version `v1.1.0`, Kittyhack was merely a frontend for visualizing camera images and changing some settings.  
+Until version `v1.1.x`, Kittyhack was merely a frontend for visualizing camera images and changing some settings.  
 From version `v1.2.0`, Kittyhack replaces the complete original Kittyflap software with extended functionality.
 
 Current features:  
@@ -56,7 +56,7 @@ Use one of these combinations:
 After changing the router SSID:
 1. Restart the Kittyflap
 2. Wait until it appears as a client in your router
-3. Connect via SSH (User: `pi`, Password: `kittyflap`)
+3. Connect [via SSH](#ssh_access_en) (User: `pi`, Password: `kittyflap`)
 
 Configuration of your own WiFi:
 ```bash
@@ -66,9 +66,10 @@ nmcli dev set wlan0 autoconnect yes
 
 ### Instructions
 The setup is quite simple:
+<a id="ssh_access_en"></a>
 
 1. **Establish SSH Access**  
-   Open a terminal and connect via SSH:
+   Open a terminal (on Windows, for example, with the key combination `[WIN]`+`[R]`, then enter `cmd` and execute) and connect to your Kittyflap via SSH with the following command:
    ```bash
    ssh pi@<IP-address-of-Kittyflap>
    ```
@@ -83,23 +84,53 @@ The setup is quite simple:
    ```bash
    df -h
    ```
-   For `/dev/mmcblk0p2`, there should be **at least** 1 GB of free space available.  
+   For `/dev/mmcblk0p2`, there should be **at least** 1 GB of free space available:  
+   ![free disk space](doc/free-disk-space-example.jpg)
    
    If less space is available, perform the following steps:
-
-   Login as root:
-   ```bash
-   sudo su
-   ```
    
-   Stop Kittyflap processes and delete the database (Warning: This will delete your cat's configuration. You can easily re-train it after the installation):
+   Stop Kittyflap processes:
    ```bash
-   systemctl stop kwork
-   systemctl stop manager
-   rm /root/kittyflap.db
+   sudo systemctl stop kwork
+   sudo systemctl stop manager
    ```
+
+   **ATTENTION:** If one of the magnetic switches is still active at this point (i.e., the flap is unlocked), they will not be automatically deactivated until the end of the installation.  
+      Please make sure to deactivate them now with these commands to avoid overloading the electromagnets:
+   ```bash
+   # Export GPIOs
+   echo 525 > /sys/class/gpio/export 2>/dev/null
+   echo 524 > /sys/class/gpio/export 2>/dev/null
+   
+   # Configure GPIO directions
+   echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/direction
+   echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/direction
+   
+   # Set default output values for GPIOs
+   echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/value
+   sleep 1
+   echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/value
+   ```
+
+   Reduce the size of the swap file (by default, 6GB are reserved for this):
+   ```bash
+   # Turn off and remove the current swapfile
+   sudo swapoff /swapfile
+   sudo rm /swapfile
+
+   # Create a new 2GB swapfile
+   sudo fallocate -l 2G /swapfile
+   sudo chmod 600 /swapfile
+   sudo mkswap /swapfile
+   sudo swapon /swapfile
+   ```
+
+   As confirmation, you will receive the size of the new swap file. The result should look something like this:
+   ![free disk space](doc/swap-resize.jpg)
 
    After this, `/dev/mmcblk0p2` should have significantly more free space available.
+
+<a id="setup_de"></a>
 
 3. **Run the setup script on the Kittyflap**
     > **IMPORTANT:** Before starting the installation, please ensure that the WiFi connection of the cat flap is stable. During installation, several hundred MB of data will be downloaded!  
@@ -136,7 +167,18 @@ Open the Kittyflap's IP address in your browser:
 
 ### Updates
 Updates for Kittyhack are available directly in the WebGUI in the 'Info' section starting from version v1.2.0.  
-If you are using Kittyhack version v1.1.0, simply run the [setup script](#instructions) on the Kittyflap again to perform an update.
+If you are using Kittyhack version v1.1.x, simply run the [setup script](#setup_en) on the Kittyflap again to perform an update.
+
+### Switching between v1.1.x and newer versions
+The [setup script](#setup_en) allows you to switch between versions. Simply run it again and choose the appropriate option.
+
+
+## FAQ
+
+### My Kittyflap disappears from my WLAN after a few hours
+The WLAN signal is probably too weak because the WLAN antenna is mounted on the outside of the Kittyflap and has to pass therefore an additional wall or door to reach your router.  
+Make sure the distance to the router is not too great. If the WLAN signal is too weak, the Kittyflap will eventually disconnect and will only reconnect after being restarted by unplugging and plugging it back in (I am still investigating why this happens - I am trying to find a solution!).  
+In Kittyhack version 1.2.0 and later, you can check the strength of the WLAN signal in the 'Info' section.
 
 ---
 
@@ -154,7 +196,7 @@ Zudem befindet sich das Projekt noch in einem **frühen Stadium**! Die geplanten
 
 ## Funktionsumfang
 
-Bis Version `v1.1.0` war Kittyhack lediglich ein Frontend zur Visualisierung der Kamerabilder und zum Ändern einiger Einstellungen.  
+Bis Version `v1.1.x` war Kittyhack lediglich ein Frontend zur Visualisierung der Kamerabilder und zum Ändern einiger Einstellungen.  
 Ab Version `v1.2.0` ersetzt Kittyhack die komplette Originalsoftware der Kittyflap mit einem erweiterten Funktionsumfang.
 
 Aktuelle Features:  
@@ -195,7 +237,7 @@ Verwende eine dieser Kombinationen:
 Nach Änderung der Router-SSID:
 1. Starte die Kittyflap neu
 2. Warte bis sie im Router als Client erscheint
-3. Verbinde dich per SSH (Benutzer: `pi`, Passwort: `kittyflap`)
+3. Verbinde dich [per SSH](#ssh_access_de) (Benutzer: `pi`, Passwort: `kittyflap`)
 
 Konfiguration deines eigenen WLANs:
 ```bash
@@ -205,9 +247,10 @@ nmcli dev set wlan0 autoconnect yes
 
 ### Anleitung
 Die Installation ist kinderleicht:
+<a id="ssh_access_de"></a>
 
 1. **SSH-Zugriff herstellen**  
-   Öffne ein Terminal und verbinde dich per SSH:
+   Öffne ein Terminal (unter Windows z.B. mit der Tastenkombination `[WIN]`+`[R]`, dann `cmd` eingeben und ausführen) und verbinde dich mit dem folgenden Kommando per SSH zu deiner Kittyflap:
    ```bash
    ssh pi@<IP-Adresse-der-Kittyflap>
    ```
@@ -222,24 +265,54 @@ Die Installation ist kinderleicht:
    ```bash
    df -h
    ```
-   Für `/dev/mmcblk0p2` sollte **mindestens** 1 GB freier Speicherplatz zur Verfügung stehen.  
+   Für `/dev/mmcblk0p2` sollte **mindestens** 1 GB freier Speicherplatz zur Verfügung stehen:  
+   ![free disk space](doc/free-disk-space-example.jpg)
    
    Falls weniger Speicherplatz verfügbar ist, führe folgende Schritte aus:
-
-   Als root einloggen:
-   ```bash
-   sudo su
-   ```
    
-   Kittyflap-Prozesse stoppen und die Datenbank löschen (Achtung: Dabei geht die Konfiguration deiner Katze verloren. Du kannst sie nach der Installation aber einfach wieder neu anlernen):
+   Kittyflap-Prozesse stoppen:
    ```bash
-   systemctl stop kwork
-   systemctl stop manager
-   rm /root/kittyflap.db
+   sudo systemctl stop kwork
+   sudo systemctl stop manager
    ```
+
+   **ACHTUNG:** Falls zu diesem Zeitpunkt noch einer der Magnetschalter aktiv ist (also die Klappe entriegelt ist), werden diese bis zum Ende der Installation nicht mehr automatisch deaktiviert.  
+   Bitte deaktiviere sie unbedingt jetzt mit diesen Kommandos, um die Elektromagneten nicht zu überlasten:
+   ```bash
+   # Export GPIOs
+   echo 525 > /sys/class/gpio/export 2>/dev/null
+   echo 524 > /sys/class/gpio/export 2>/dev/null
+   
+   # Configure GPIO directions
+   echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/direction
+   echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/direction
+   
+   # Set default output values for GPIOs
+   echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/value
+   sleep 1
+   echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/value
+   ```
+
+
+   Größe der Swap-Datei reduzieren (standardmäßig sind hierfür 6GB reserviert):
+   ```bash
+   # Turn off and remove the current swapfile
+   sudo swapoff /swapfile
+   sudo rm /swapfile
+
+   # Create a new 2GB swapfile
+   sudo fallocate -l 2G /swapfile
+   sudo chmod 600 /swapfile
+   sudo mkswap /swapfile
+   sudo swapon /swapfile
+   ```
+
+   Als Bestätigung bekommst du die Größe des neuen Swap-Datei zurückgemeldet. Das Ergebnis sollte etwa so aussehen:
+   ![free disk space](doc/swap-resize.jpg)  
 
    Danach sollte für `/dev/mmcblk0p2` deutlich mehr freier Speicherplatz verfügbar sein.
 
+<a id="setup_de"></a>
 
 3. **Das Setup Script auf der Kittyflap ausführen**
    > **WICHTIG:** Bitte stelle vor dem Start der Installation sicher, dass die WLAN-Verbindung der Katzenklappe stabil ist. Während der Installation werden mehrere hundert MB an Daten heruntergeladen!  
@@ -276,4 +349,16 @@ Rufe die IP-Adresse der Kittyflap in deinem Browser auf:
 
 ### Updates
 Updates von Kittyhack sind ab der Version v1.2.0 direkt in der WebGUI in der Sektion 'Info' möglich.
-Wenn du die Version v1.1.0 verwendest, führe für ein Update einfach das [Setup Script](#anleitung) auf der Kittyflap nochmal aus.
+Wenn du die Version v1.1.x verwendest, führe für ein Update einfach das [Setup Script](#setup_de) auf der Kittyflap nochmal aus.
+
+### Wechsel zwischen v1.1.x und neueren Version
+Das [Setup Script](#setup_de) bietet die Möglichkeit zwischen den Versionen zu wechseln. Führe es dazu einfach erneut aus und wähle die entsprechende Option. 
+
+
+## FAQ
+
+### Meine Kittyflap verschwindet nach einigen Stunden immer wieder aus meinem WLAN
+Wahrscheinlich ist das WLAN Signal zu schwach, da die WLAN-Antenne auf der Außenseite der Kittyflap angebracht ist und bis zu deinem Router somit eine zusätzliche Wand bzw. Türe durchdringen muss.  
+Achte darauf, dass die Entfernung zum Router nicht zu groß ist. Wenn das WLAN-Signal zu schwach ist, meldet sich die Kittyflap irgendwann ab und wählt sich erst wieder ein,
+wenn sie durch Aus- und Wiedereinstecken neu gestartet wurde (warum das so ist untersuche ich noch - ich versuche, eine Lösung dafür zu finden!)  
+In Kittyhack Version ab v1.2.0 kannst du die Stärke des WLAN-Signals übrigens in der 'Info'-Sektion auslesen.  

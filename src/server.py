@@ -171,6 +171,7 @@ def server(input, output, session):
     # Create reactive triggers
     reload_trigger_photos = reactive.Value(0)
     reload_trigger_cats = reactive.Value(0)
+    reload_trigger_info = reactive.Value(0)
 
     # Show a notification if a new version of Kittyhack is available
     if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
@@ -178,13 +179,13 @@ def server(input, output, session):
 
     # Show a nag screen if the kittyflap database file still exists
     kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
-    if kittyflap_db_file_exists and CONFIG['KITTYFLAP_DB_NAGSCREEN']:
-        ui.notification_show(_("The original kittyflap database file still exists. Please consider deleting it to free up disk space. For more details, see the 'Info' section (NOTE: You can disable this message in the 'Configuration' section.)"), duration=10, type="warning")
+    #if kittyflap_db_file_exists and CONFIG['KITTYFLAP_DB_NAGSCREEN']:
+    #    ui.notification_show(_("The original kittyflap database file still exists. Please consider deleting the photos in it to free up disk space. For more details, see the 'Info' section (NOTE: You can disable this message in the 'Configuration' section.)"), duration=10, type="warning")
 
     # Show a warning if the remaining disk space is below the critical threshold
     if free_disk_space < 500:
         if kittyflap_db_file_exists:
-            additional_info = _(" or consider deleting the old kittyflap database file. For more details, see the 'Info' section.")
+            additional_info = _(" or consider deleting pictures from the original kittyflap database file. For more details, see the 'Info' section.")
         else:
             additional_info = ""
         ui.notification_show(_("Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{}).").format(free_disk_space, additional_info), duration=20, type="warning")
@@ -707,8 +708,8 @@ def server(input, output, session):
             ui.column(12, ui.input_switch("btnPeriodicVersionCheck", _("Periodic version check"), CONFIG['PERIODIC_VERSION_CHECK'])),
             ui.column(12, ui.help_text(_("Automatically check for new versions of Kittyhack."))),
             ui.br(),
-            ui.column(12, ui.input_switch("btnShowKittyflapDbNagscreen", _("Show nag screen, if the original kittyflap database file still exists"), CONFIG['KITTYFLAP_DB_NAGSCREEN'])),
-            ui.hr(),
+            #ui.column(12, ui.input_switch("btnShowKittyflapDbNagscreen", _("Show nag screen, if the original kittyflap database file exists and has a very large size"), CONFIG['KITTYFLAP_DB_NAGSCREEN'])),
+            #ui.hr(),
 
             ui.column(12, ui.h5(_("Door control settings"))),
             ui.column(12, ui.input_slider("sldMouseThreshold", _("Mouse detection threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
@@ -801,7 +802,7 @@ def server(input, output, session):
         CONFIG['LIVE_VIEW_REFRESH_INTERVAL'] = float(input.numLiveViewUpdateInterval())
         CONFIG['ALLOWED_TO_EXIT'] = input.btnAllowedToExit()
         CONFIG['PERIODIC_VERSION_CHECK'] = input.btnPeriodicVersionCheck()
-        CONFIG['KITTYFLAP_DB_NAGSCREEN'] = input.btnShowKittyflapDbNagscreen()
+        #CONFIG['KITTYFLAP_DB_NAGSCREEN'] = input.btnShowKittyflapDbNagscreen()
 
         loglevel = logging._nameToLevel.get(input.txtLoglevel(), logging.INFO)
         logger.setLevel(loglevel)
@@ -830,6 +831,7 @@ def server(input, output, session):
     
     @output
     @render.ui
+    @reactive.event(reload_trigger_info, ignore_none=True)
     def ui_info():
         # Check if the current version is different from the latest version
         latest_version = CONFIG['LATEST_VERSION']
@@ -872,18 +874,23 @@ def server(input, output, session):
         # Check if the original kittyflap database file still exists
         kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
         if kittyflap_db_file_exists:
-            ui_kittyflap_db = ui.div(
-                ui.markdown(
-                    f"""
-                    The original kittyflap database file still exists. This file consumes currently **{get_file_size(CONFIG['DATABASE_PATH']):.1f} MB** of disk space.  
-                    It is not required for the operation of Kittyhack since version v1.2 and above and can be deleted to free up disk space.  
-                    > **NOTE: If you plan to go ever back to Kittyhack v1.1 (which relied on the original kittyflap software to control the door), you should keep this file!**
-                    """
-                ),
-                ui.input_action_button("delete_kittyflap_db", "Delete Kittyflap Database", icon=icon_svg("trash"), class_="btn-danger"),
-            )
+            if get_file_size(CONFIG['DATABASE_PATH']) > 100:
+                ui_kittyflap_db = ui.div(
+                    ui.markdown(
+                        f"""
+                        The original kittyflap database file consumes currently **{get_file_size(CONFIG['DATABASE_PATH']):.1f} MB** of disk space.  
+                        The file contains a lot pictures which could not be uploaded to the original kittyflap servers anymore.
+                        You could delete the pictures from it to free up disk space.  
+                        """
+                    ),
+                    ui.input_task_button("clear_kittyflap_db", "Remove pictures from original Kittyflap Database", icon=icon_svg("trash")),
+                )
+            elif get_file_size(CONFIG['DATABASE_PATH']) > 0:
+                ui_kittyflap_db = ui.markdown(f"The original kittyflap database file exists and has a regular size of **{get_file_size(CONFIG['DATABASE_PATH']):.1f} MB**. Nothing to do here.")
+            else:
+                ui_kittyflap_db = ui.markdown("The original kittyflap database seems to be empty. **WARNING:** A downgrade to Kittyhack v1.1.0 will probably not work!")
         else:
-            ui_kittyflap_db = ui.markdown("The original kittyflap database file does not exist anymore. It was either deleted manually or by Kittyhack.")
+            ui_kittyflap_db = ui.markdown("The original kittyflap database file does not exist anymore.\n **WARNING:** A downgrade to Kittyhack v1.1.0 is not possible without the original database file!")
 
         # Render the UI
         return ui.div(
@@ -946,18 +953,22 @@ def server(input, output, session):
                 return ui.markdown(f"###### WLAN Connection Status:\n- **Link Quality:** {wlan_icon} {quality}\n- **Signal Level:** {signal} dBm")
         except:
             return ui.markdown("###### WLAN Connection Status:\n Unable to determine")
-    
+
     @reactive.Effect
-    @reactive.event(input.delete_kittyflap_db)
-    def delete_original_kittyflap_db():
-        if os.path.exists(CONFIG['DATABASE_PATH']):
-            try:
-                os.remove(CONFIG['DATABASE_PATH'])
-                ui.notification_show(_("The original kittyflap database file was deleted successfully."), duration=5, type="message")
-            except Exception as e:
-                ui.notification_show(_("An error occurred while deleting the original kittyflap database file: {}").format(e), duration=5, type="error")
-        else:
-            ui.notification_show(_("The original kittyflap database file does not exist anymore."), duration=5, type="message")
+    @reactive.event(input.clear_kittyflap_db)
+    def clear_original_kittyflap_db():
+        with ui.Progress(min=1, max=2) as p:
+            p.set(1, message="Deleting the pictures", detail="This may take a while...")
+            if os.path.exists(CONFIG['DATABASE_PATH']):
+                try:
+                    clear_original_kittyflap_database(CONFIG['DATABASE_PATH'])
+                    ui.notification_show(_("The pictures from the original kittyflap database were removed successfully."), duration=5, type="message")
+                    p.set(2)
+                except Exception as e:
+                    ui.notification_show(_("An error occurred while deleting the pictures from the original kittyflap database: {}").format(e), duration=5, type="error")
+            else:
+                ui.notification_show(_("The original kittyflap database file does not exist anymore."), duration=5, type="message")
+        reload_trigger_info.set(reload_trigger_info.get() + 1)
 
     @reactive.Effect
     @reactive.event(input.update_kittyhack)

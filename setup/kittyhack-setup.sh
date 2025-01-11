@@ -22,8 +22,11 @@ exec > >(tee -a ${LOGFILE}) 2>&1
 
 # Ensure the script is running as root
 if [ "$EUID" -ne 0 ]; then
-  echo "This script must be run as root. Switching to root now..."
-  exec sudo bash "$0" "$@"
+    echo "This script must be run as root"
+    SCRIPT_PATH=$(realpath "$0")
+    SCRIPT_NAME=$(basename "$SCRIPT_PATH")
+    echo -e "Please start the script with '${CYAN}sudo $SCRIPT_PATH${NC}'"
+    exit 1
 fi
 
 # Log apt package information
@@ -176,8 +179,8 @@ install_full() {
             echo -e "${GREEN}KittyHack service stopped successfully.${NC}"
         fi
     else
-        echo -e "${GREY}KittyHack service is already inactive.${NC}"
-    }
+            echo -e "${GREY}KittyHack service is already inactive.${NC}"
+    fi
 
     echo -e "${CYAN}--- BASE INSTALL Step 2: Disable unwanted services ---${NC}"
     disable_service "remote-iot"

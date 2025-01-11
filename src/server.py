@@ -65,6 +65,10 @@ if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events"):
     logging.warning(f"Table 'events' not found in the kittyhack database. Creating it...")
     create_kittyhack_events_table(CONFIG['KITTYHACK_DATABASE_PATH'])
 
+if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
+    logging.warning(f"Legacy table 'photo' not found in the kittyhack database. Creating it...")
+    create_kittyhack_photo_table(CONFIG['KITTYHACK_DATABASE_PATH'])
+
 # Check if table "cats" exist in the kittyhack database. If not, create it.
 if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "cats"):
     logging.warning(f"Table 'cats' not found in the kittyhack database. Creating it...")

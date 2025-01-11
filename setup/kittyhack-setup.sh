@@ -43,7 +43,6 @@ FAIL_COUNT=0
 
 INSTALL_LEGACY_KITTYHACK=1
 
-
 # Function to check if a service is active
 is_service_active() {
     systemctl is-active --quiet "$1"
@@ -134,14 +133,25 @@ upload_logs() {
 install_full() {
     # Loop until a valid input (y/n) is received
     while true; do
-        echo -e "${CYAN}Do you want to share the install logs with the developer of kittyhack? This would be very helpful to improve the installer!${NC}"
-        echo -e "(${BLUE}${FMTBOLD}y${FMTDEF}${NC})es | (${BLUE}${FMTBOLD}n${FMTDEF}${NC})o"
-        read -r SHARE_LOGS
-        case $SHARE_LOGS in
-            [Yy]) SHARE_LOGS="y"; break ;;
-            [Nn]) SHARE_LOGS="n"; break ;;
-            *) echo -e "${RED}Please enter 'y' for yes or 'n' for no.${NC}" ;;
-        esac
+        if [ "$LANGUAGE" == "de" ]; then
+            echo -e "${CYAN}Möchtest du die Installationsprotokolle mit dem Entwickler von Kittyhack teilen? Dies würde sehr dabei helfen, den Installer zu verbessern!${NC}"
+            echo -e "(${BLUE}${FMTBOLD}j${FMTDEF}${NC})a | (${BLUE}${FMTBOLD}n${FMTDEF}${NC})ein"
+            read -r SHARE_LOGS
+            case $SHARE_LOGS in
+                [JjYy]) SHARE_LOGS="y"; break ;;
+                [Nn]) SHARE_LOGS="n"; break ;;
+                *) echo -e "${RED}Bitte 'j' für ja oder 'n' für nein eingeben.${NC}" ;;
+            esac
+        else
+            echo -e "${CYAN}Do you want to share the install logs with the developer of kittyhack? This would be very helpful to improve the installer!${NC}"
+            echo -e "(${BLUE}${FMTBOLD}y${FMTDEF}${NC})es | (${BLUE}${FMTBOLD}n${FMTDEF}${NC})o"
+            read -r SHARE_LOGS
+            case $SHARE_LOGS in
+                [Yy]) SHARE_LOGS="y"; break ;;
+                [Nn]) SHARE_LOGS="n"; break ;;
+                *) echo -e "${RED}Please enter 'y' for yes or 'n' for no.${NC}" ;;
+            esac
+        fi
     done
 
     echo -e "${CYAN}--- BASE INSTALL Step 1: Disable unwanted services ---${NC}"
@@ -438,18 +448,24 @@ install_kittyhack() {
 
 # Main script logic
 
+# Default language
+LANGUAGE="en"
+
+# Check for language argument or environment variable
+if [ -n "$1" ]; then
+  LANGUAGE="$1"
+elif [ -n "$SCRIPT_LANG" ]; then
+  LANGUAGE="$SCRIPT_LANG"
+fi
 
 # Check for command-line arguments or prompt for a choice 
-MODE=$1
 ERRMSG=""
 
 while true; do
-    if [[ -z "$MODE" ]]; then
+    # Clear the terminal
+    clear
 
-        # Clear the terminal
-        clear
-
-        # ASCII art
+    # ASCII art
 cat << "EOF"
  _   __ _  _    _           _   _               _    
 | | / /(_)| |  | |         | | | |             | |   
@@ -461,14 +477,36 @@ cat << "EOF"
                      |___/                           
 EOF
 
-        # Menu
+    # Menu
+    echo
+    if [ "$LANGUAGE" == "de" ]; then
+        echo -e "Willkommen zum KittyHack-Setup!"
+        echo -e "Bitte wähle eine der folgenden Optionen:"
+        echo -e "${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Installiere Kittyhack v1.1.0"
+        echo -e "${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Installiere die neueste Version von Kittyhack (Warnung unten beachten!)"
         echo
-        echo -e "${CYAN}Welcome to the KittyHack Setup Script!${NC}"
-        echo -e "Please select one of the following options:\n"
+        echo -e "+--------------------------------- ${CYAN}WARNUNG${NC} --------------------------------+"
+        echo -e "| Es gibt Berichte über Probleme bei der Installation der neuesten Version  |"
+        echo -e "| von Kittyhack. Wenn du keine Änderungen am Kittyflap-System vorgenommen   |"
+        echo -e "| hast (insbesondere wenn du selbst bisher kein '${CYAN}apt upgrade${NC}' ausgeführt    |"
+        echo -e "| hast), sollte die Installation der neuesten Version funktionieren         |"
+        echo -e "| Wenn du schon ein 'apt upgrade' ausgeführt hast oder andere Änderungen    |"
+        echo -e "| hast, wird empfohlen, die Version 1.1.0 zu installieren.                  |"
+        echo -e "| Du musst dich nicht endgültig entscheiden - ein nachträglicher Wechsel    |"
+        echo -e "| zwischen den Versionen ist möglich, indem du das setup einfach nochmal    |"
+        echo -e "| ausführst.                                                                |"
+        echo -e "|     ${CYAN}${FMTBOLD}!!! Wenn du dir unsicher bist, installiere die Version 1.1.0 !!!${FMTDEF}${NC}      |"
+        echo -e "| Zusätzlich wird der Installer fragen, ob du die Installationsprotokolle   |"
+        echo -e "| mit dem Entwickler teilen möchten. ${FMTBOLD}Das Teilen der Protokolle würde mir${FMTDEF}    |"
+        echo -e "| ${FMTBOLD}unglaublich helfen, den Installer zu verbessern und eventuelle${FMTDEF}            |"
+        echo -e "| ${FMTBOLD}Probleme zu beheben!${FMTDEF}                                                      |"
+        echo -e "+--------------------------------------------------------------------------+"
+    else
+        echo -e "Welcome to the KittyHack setup!"
+        echo -e "Please choose one of the following options:"
         echo -e "${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Install v1.1.0 of Kittyhack"
         echo -e "${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Install the latest version of Kittyhack (see the warning below!)"
-
-        # NOTE textbox
+        echo
         echo -e "+--------------------------------- ${CYAN}WARNING${NC} --------------------------------+"
         echo -e "| There have been reports of issues when installing the latest version of  |"
         echo -e "| Kittyhack. If you have not made any changes on the Kittyflap system      |"
@@ -476,17 +514,19 @@ EOF
         echo -e "| able to install the latest version - but installation errors may still   |"
         echo -e "| occur. If you have run 'apt upgrade' or made other changes, it is        |"
         echo -e "| recommended to install version 1.1.0.                                    |"
+        echo -e "| Note that you do not have to make a final decision - you can switch      |"
+        echo -e "| between versions by running the setup again.                             |"
         echo -e "|         ${CYAN}${FMTBOLD}!!! If you are unsure, please install version 1.1.0 !!!${FMTDEF}${NC}          |"
         echo -e "| Additionally, the installer will ask if you want to share the install    |"
         echo -e "| logs with the developer. ${FMTBOLD}Sharing the logs will help a lot to improve the${FMTDEF} |"
         echo -e "| ${FMTBOLD}installer and fix any issues!${FMTDEF}                                            |"
         echo -e "+--------------------------------------------------------------------------+"
-        
-        echo -e "${ERRMSG}" 
-        echo -e "${CYAN}Please enter your choice:${NC}"
-        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) install v1.1.0 | (${BLUE}${FMTBOLD}2${FMTDEF}${NC}) install latest version | (${BLUE}${FMTBOLD}q${FMTDEF}${NC})uit"
-        read -r MODE
     fi
+    
+    echo -e "${ERRMSG}" 
+    echo -e "${CYAN}Please enter your choice:${NC}"
+    echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) install v1.1.0 | (${BLUE}${FMTBOLD}2${FMTDEF}${NC}) install latest version | (${BLUE}${FMTBOLD}q${FMTDEF}${NC})uit"
+    read -r MODE
 
     # Handle the input
     case "$MODE" in

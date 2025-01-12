@@ -131,7 +131,7 @@ The setup is quite simple:
 
       After this, `/dev/mmcblk0p2` should have significantly more free space available.
 
-<a id="setup_de"></a>
+<a id="setup_en"></a>
 
 3. **Run the setup script on the Kittyflap**
     > **IMPORTANT:** Before starting the installation, please ensure that the WiFi connection of the cat flap is stable. During installation, several hundred MB of data will be downloaded!  

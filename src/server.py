@@ -369,6 +369,14 @@ def server(input, output, session):
                 except:
                     decoded_picture = None
                 
+                # Try to Fallback to the original image if the modified image is not available
+                if decoded_picture == None and input.button_detection_overlay():
+                    logging.warning(f"No modified_image found for entry {data_row['id']}. Falling back to original_image.")
+                    try:
+                        decoded_picture = base64.b64encode(data_row["original_image"]).decode('utf-8')
+                    except:
+                        decoded_picture = None
+                
                 mouse_probability = data_row["mouse_probability"]
 
                 try:

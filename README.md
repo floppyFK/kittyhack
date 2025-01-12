@@ -187,9 +187,8 @@ This issue is related to power-saving features on smartphones and tablets: When 
 with the Kittyhack page stops after a few seconds. I am still working on a solution for this problem.  
 In the meantime, you can simply reload the Kittyhack page (e.g., with the refresh gesture) to make it work normally again.
 
-### After updating Kittyhack from v1.1 to v1.2, I only see "no image found" in the image view. What can I do?
-Temporarily disable the switch "Show overlay in images" in the image view. In version 1.1, no overlays for the detected areas in the images were saved, which leads to this message. 
-For new images created with version 1.2, the detected area will be correctly drawn and displayed.
+### After updating Kittyhack from v1.1 to v1.2, the detection area for 'Mouse' or 'No Mouse' is not marked in the images in the image view, even though I have activated the *Show detection overlay* function
+For old images imported from version v1.1, these areas were not saved. This function is only available from version v1.2. For all newly captured images, this area will be saved correctly.
 
 ### I have successfully installed Kittyhack v1.2. Shouldn't the night light be activated when it gets too dark?
 Please restart the Kittyflap once after installation (in the 'System' section -> 'Restart Kittyflap'), then it should work.
@@ -383,9 +382,8 @@ Dieses Problem hat mit den Energiesparfunktionen auf Smartphones und Tablets zu 
 wird nach wenigen Sekunden die Kommunikation mit der Kittyhack Seite gestoppt. Ich versuche noch für dieses Problem eine Lösung zu finden.  
 In der Zwischenzeit kannst du die Kittyhack Seite aber einfach neu laden (z. B. mit der Aktualisieren-Geste), damit sie wieder normal funktioniert.
 
-### Nach dem Update von Kittyhack von v1.1 auf v1.2 sehe ich nur "kein Bild gefunden" in der Bilderansicht. Was kann ich tun?
-Schalte in der Bilderansicht vorübergehend den Schalter "Overlay in Bildern anzeigen" aus. In Version 1.1 wurden keine Overlays für die erkannten Bereiche in den Bildern gespeichert, was zu 
-dieser Meldung führt. Bei neuen Bildern, die mit Version 1.2 erstellt werden, wird der erkannte Bereich korrekt eingezeichnet und angezeigt.
+### Nach dem Update von Kittyhack von v1.1 auf v1.2 ist in den Bildern in der Bilderansicht kein Erkennungsbereich für 'Maus' bzw. 'Keine Maus' eingezeichnet, obwohl ich die Funktion *Overlay in Bildern anzeigen* aktiviert habe
+Bei alten Bildern, die aus der Version v1.1 importiert wurden, wurden diese Bereiche noch nicht abgespeichert. Diese Funktion ist erst ab Version v1.2 verfügbar. Bei allen neu aufgenommenen Bildern wird dieser Bereich korrekt gespeichert.
 
 ### Ich habe Kittyhack v1.2 erfolgreich installiert. Sollte damit nicht das Nachtlicht aktiviert werden, wenn es zu dunkel ist?
 Bitte starte die Kittyflap nach der Installation einmal neu (in der Sektion 'System' -> 'Kittyflap Neustarten'), dann sollte es funktionieren.

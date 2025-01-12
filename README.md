@@ -161,7 +161,8 @@ Open the Kittyflap's IP address in your browser:
 `http://<IP-address-of-Kittyflap>`
 
 >#### Note
->⚠️ Since the connection is unencrypted, the browser will display a warning. This connection is generally safe within the local network, as long as you don't enable remote access to the Kittyflap via your router. For a secure connection, additional measures like setting up a reverse proxy can be taken.
+>⚠️ Since the connection is unencrypted, the browser will display a warning. This connection is generally safe within the local network, as long as you don't enable remote access 
+to the Kittyflap via your router. For a secure connection, additional measures like setting up a reverse proxy can be taken.
 
 >⚠️ To ensure Kittyhack is always reachable at the same IP address, it is recommended to assign a static IP address in your router.
 
@@ -177,8 +178,21 @@ The [setup script](#setup_en) allows you to switch between versions. Simply run 
 
 ### My Kittyflap disappears from my WLAN after a few hours
 The WLAN signal is probably too weak because the WLAN antenna is mounted on the outside of the Kittyflap and has to pass therefore an additional wall or door to reach your router.  
-Make sure the distance to the router is not too great. If the WLAN signal is too weak, the Kittyflap will eventually disconnect and will only reconnect after being restarted by unplugging and plugging it back in (I am still investigating why this happens - I am trying to find a solution!).  
+Make sure the distance to the router is not too great. If the WLAN signal is too weak, the Kittyflap will eventually disconnect and will only reconnect after being restarted by 
+unplugging and plugging it back in (I am still investigating why this happens - I am trying to find a solution!).  
 In Kittyhack version 1.2.0 and later, you can check the strength of the WLAN signal in the 'Info' section.
+
+### Why is the website background grayed out and the content disappears when I try to switch sections?
+This issue is related to power-saving features on smartphones and tablets: When your browser on your smartphone loses focus (e.g., when you switch to the home screen), communication 
+with the Kittyhack page stops after a few seconds. I am still working on a solution for this problem.  
+In the meantime, you can simply reload the Kittyhack page (e.g., with the refresh gesture) to make it work normally again.
+
+### After updating Kittyhack from v1.1 to v1.2, I only see "no image found" in the image view. What can I do?
+Temporarily disable the switch "Show overlay in images" in the image view. In version 1.1, no overlays for the detected areas in the images were saved, which leads to this message. 
+For new images created with version 1.2, the detected area will be correctly drawn and displayed.
+
+### I have successfully installed Kittyhack v1.2. Shouldn't the night light be activated when it gets too dark?
+Please restart the Kittyflap once after installation (in the 'System' section -> 'Restart Kittyflap'), then it should work.
 
 ---
 
@@ -343,7 +357,8 @@ Rufe die IP-Adresse der Kittyflap in deinem Browser auf:
 `http://<IP-Adresse-der-Kittyflap>`
 
 >#### Hinweis
->⚠️ Da die Verbindung nicht verschlüsselt ist, wird der Browser eine Warnung anzeigen. Diese Verbindung ist innerhalb des lokalen Netzwerks in der Regel sicher, solange du keinen Fernzugriff auf die Kittyflap über deinen Router freigibst. Für eine sichere Verbindung können zusätzliche Maßnahmen wie ein Reverse-Proxy eingerichtet werden.
+>⚠️ Da die Verbindung nicht verschlüsselt ist, wird der Browser eine Warnung anzeigen. Diese Verbindung ist innerhalb des lokalen Netzwerks in der Regel sicher, solange du keinen Fernzugriff 
+auf die Kittyflap über deinen Router freigibst. Für eine sichere Verbindung können zusätzliche Maßnahmen wie ein Reverse-Proxy eingerichtet werden.
 
 >⚠️ Damit Kittyhack immer unter der selben IP Adresse erreichbar ist, empfiehlt es sich, im Router eine statische IP Adresse zu vergeben.
 
@@ -362,3 +377,15 @@ Wahrscheinlich ist das WLAN Signal zu schwach, da die WLAN-Antenne auf der Auße
 Achte darauf, dass die Entfernung zum Router nicht zu groß ist. Wenn das WLAN-Signal zu schwach ist, meldet sich die Kittyflap irgendwann ab und wählt sich erst wieder ein,
 wenn sie durch Aus- und Wiedereinstecken neu gestartet wurde (warum das so ist untersuche ich noch - ich versuche, eine Lösung dafür zu finden!)  
 In Kittyhack Version ab v1.2.0 kannst du die Stärke des WLAN-Signals übrigens in der 'Info'-Sektion auslesen.  
+
+### Warum ist der Hintergrund der Website ausgegraut und der Inhalt verschwindet, wenn ich versuche, die Sektion wechsle?
+Dieses Problem hat mit den Energiesparfunktionen auf Smartphones und Tablets zu tun: Wenn dein Browser auf deinem Smartphone den Fokus verliert (also wenn du z. B. auf den Homescreen wechselst), 
+wird nach wenigen Sekunden die Kommunikation mit der Kittyhack Seite gestoppt. Ich versuche noch für dieses Problem eine Lösung zu finden.  
+In der Zwischenzeit kannst du die Kittyhack Seite aber einfach neu laden (z. B. mit der Aktualisieren-Geste), damit sie wieder normal funktioniert.
+
+### Nach dem Update von Kittyhack von v1.1 auf v1.2 sehe ich nur "kein Bild gefunden" in der Bilderansicht. Was kann ich tun?
+Schalte in der Bilderansicht vorübergehend den Schalter "Overlay in Bildern anzeigen" aus. In Version 1.1 wurden keine Overlays für die erkannten Bereiche in den Bildern gespeichert, was zu 
+dieser Meldung führt. Bei neuen Bildern, die mit Version 1.2 erstellt werden, wird der erkannte Bereich korrekt eingezeichnet und angezeigt.
+
+### Ich habe Kittyhack v1.2 erfolgreich installiert. Sollte damit nicht das Nachtlicht aktiviert werden, wenn es zu dunkel ist?
+Bitte starte die Kittyflap nach der Installation einmal neu (in der Sektion 'System' -> 'Kittyflap Neustarten'), dann sollte es funktionieren.

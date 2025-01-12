@@ -87,48 +87,49 @@ The setup is quite simple:
    For `/dev/mmcblk0p2`, there should be **at least** 1 GB of free space available:  
    ![free disk space](doc/free-disk-space-example.jpg)
    
-   If less space is available, perform the following steps:
+   #### If less storage space is available, follow these steps - otherwise, proceed with the [Setup Script](#setup_en):
    
-   Stop Kittyflap processes:
-   ```bash
-   sudo systemctl stop kwork
-   sudo systemctl stop manager
-   ```
+      1. Stop Kittyflap processes:
+         ```bash
+         sudo systemctl stop kwork
+         sudo systemctl stop manager
+         ```
 
-   **ATTENTION:** If one of the magnetic switches is still active at this point (i.e., the flap is unlocked), they will not be automatically deactivated until the end of the installation.  
-      Please make sure to deactivate them now with these commands to avoid overloading the electromagnets:
-   ```bash
-   # Export GPIOs
-   echo 525 > /sys/class/gpio/export 2>/dev/null
-   echo 524 > /sys/class/gpio/export 2>/dev/null
-   
-   # Configure GPIO directions
-   echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/direction
-   echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/direction
-   
-   # Set default output values for GPIOs
-   echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/value
-   sleep 1
-   echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/value
-   ```
+      2. Release magnetic switches:
+         **ATTENTION:** If one of the magnetic switches is still active at this point (i.e., the flap is unlocked), they will not be automatically deactivated until the end of the installation.  
+            Please make sure to deactivate them now with these commands to avoid overloading the electromagnets:
+         ```bash
+         # Export GPIOs
+         echo 525 > /sys/class/gpio/export 2>/dev/null
+         echo 524 > /sys/class/gpio/export 2>/dev/null
+         
+         # Configure GPIO directions
+         echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/direction
+         echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/direction
+         
+         # Set default output values for GPIOs
+         echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/value
+         sleep 1
+         echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/value
+         ```
 
-   Reduce the size of the swap file (by default, 6GB are reserved for this):
-   ```bash
-   # Turn off and remove the current swapfile
-   sudo swapoff /swapfile
-   sudo rm /swapfile
+      3. Reduce the size of the swap file (by default, 6GB are reserved for this):
+         ```bash
+         # Turn off and remove the current swapfile
+         sudo swapoff /swapfile
+         sudo rm /swapfile
 
-   # Create a new 2GB swapfile
-   sudo fallocate -l 2G /swapfile
-   sudo chmod 600 /swapfile
-   sudo mkswap /swapfile
-   sudo swapon /swapfile
-   ```
+         # Create a new 2GB swapfile
+         sudo fallocate -l 2G /swapfile
+         sudo chmod 600 /swapfile
+         sudo mkswap /swapfile
+         sudo swapon /swapfile
+         ```
 
-   As confirmation, you will receive the size of the new swap file. The result should look something like this:
-   ![free disk space](doc/swap-resize.jpg)
+         As confirmation, you will receive the size of the new swap file. The result should look something like this:
+         ![free disk space](doc/swap-resize.jpg)
 
-   After this, `/dev/mmcblk0p2` should have significantly more free space available.
+      After this, `/dev/mmcblk0p2` should have significantly more free space available.
 
 <a id="setup_de"></a>
 
@@ -281,49 +282,50 @@ Die Installation ist kinderleicht:
    Für `/dev/mmcblk0p2` sollte **mindestens** 1 GB freier Speicherplatz zur Verfügung stehen:  
    ![free disk space](doc/free-disk-space-example.jpg)
    
-   Falls weniger Speicherplatz verfügbar ist, führe folgende Schritte aus:
+   #### Falls weniger Speicherplatz verfügbar ist, führe folgende Schritte aus - ansonsten fahre fort mit dem [Setup Script](#setup_de):
    
-   Kittyflap-Prozesse stoppen:
-   ```bash
-   sudo systemctl stop kwork
-   sudo systemctl stop manager
-   ```
+      1. Kittyflap-Prozesse stoppen:
+         ```bash
+         sudo systemctl stop kwork
+         sudo systemctl stop manager
+         ```
 
-   **ACHTUNG:** Falls zu diesem Zeitpunkt noch einer der Magnetschalter aktiv ist (also die Klappe entriegelt ist), werden diese bis zum Ende der Installation nicht mehr automatisch deaktiviert.  
-   Bitte deaktiviere sie unbedingt jetzt mit diesen Kommandos, um die Elektromagneten nicht zu überlasten:
-   ```bash
-   # Export GPIOs
-   echo 525 > /sys/class/gpio/export 2>/dev/null
-   echo 524 > /sys/class/gpio/export 2>/dev/null
-   
-   # Configure GPIO directions
-   echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/direction
-   echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/direction
-   
-   # Set default output values for GPIOs
-   echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/value
-   sleep 1
-   echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/value
-   ```
+      2. Magnetschalter deaktivieren:
+         **ACHTUNG:** Falls zu diesem Zeitpunkt noch einer der Magnetschalter aktiv ist (also die Klappe entriegelt ist), werden diese bis zum Ende der Installation nicht mehr automatisch deaktiviert.  
+         Bitte deaktiviere sie unbedingt jetzt mit diesen Kommandos, um die Elektromagneten nicht zu überlasten:
+         ```bash
+         # Export GPIOs
+         echo 525 > /sys/class/gpio/export 2>/dev/null
+         echo 524 > /sys/class/gpio/export 2>/dev/null
+         
+         # Configure GPIO directions
+         echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/direction
+         echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/direction
+         
+         # Set default output values for GPIOs
+         echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/value
+         sleep 1
+         echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/value
+         ```
 
 
-   Größe der Swap-Datei reduzieren (standardmäßig sind hierfür 6GB reserviert):
-   ```bash
-   # Turn off and remove the current swapfile
-   sudo swapoff /swapfile
-   sudo rm /swapfile
+      3. Größe der Swap-Datei reduzieren (standardmäßig sind hierfür 6GB reserviert):
+         ```bash
+         # Turn off and remove the current swapfile
+         sudo swapoff /swapfile
+         sudo rm /swapfile
 
-   # Create a new 2GB swapfile
-   sudo fallocate -l 2G /swapfile
-   sudo chmod 600 /swapfile
-   sudo mkswap /swapfile
-   sudo swapon /swapfile
-   ```
+         # Create a new 2GB swapfile
+         sudo fallocate -l 2G /swapfile
+         sudo chmod 600 /swapfile
+         sudo mkswap /swapfile
+         sudo swapon /swapfile
+         ```
 
-   Als Bestätigung bekommst du die Größe des neuen Swap-Datei zurückgemeldet. Das Ergebnis sollte etwa so aussehen:
-   ![free disk space](doc/swap-resize.jpg)  
+         Als Bestätigung bekommst du die Größe des neuen Swap-Datei zurückgemeldet. Das Ergebnis sollte etwa so aussehen:
+         ![free disk space](doc/swap-resize.jpg)  
 
-   Danach sollte für `/dev/mmcblk0p2` deutlich mehr freier Speicherplatz verfügbar sein.
+      Danach sollte für `/dev/mmcblk0p2` deutlich mehr freier Speicherplatz verfügbar sein.
 
 <a id="setup_de"></a>
 

@@ -647,14 +647,36 @@ done
 
 if systemctl is-active --quiet kittyhack.service; then
     if [ $FAIL_COUNT -eq 0 ]; then
-        echo -e "\n${GREEN}Setup complete!${NC}\n"
-        echo -e "Open ${CYAN}http://${CURRENT_IP}${NC} in your browser to start with KittyHack!\n"
+        if [ "$LANGUAGE" == "de" ]; then
+            echo -e "\n${GREEN}Setup abgeschlossen!${NC}\n"
+            echo -e "Öffne ${CYAN}http://${CURRENT_IP}${NC} in deinem Browser, um auf deine Kittyflap zuzugreifen!\n"
+            if [ $INSTALL_LEGACY_KITTYHACK -eq 0 ]; then
+                echo -e "${GREY}Falls auf deiner Kittyflap bereits viele Bilder gespeichert sind, kann es einige Zeit dauern, bis du die KittyHack Seite in deinem Browser aufrufen kannst. Bitte habe etwas Geduld.${NC}"
+                echo -e "${GREY}Wenn alle Bilder importiert wurden, starte bitte anschließend deine Kittyflap über die Weboberfläche in der Sektion 'System' einmal neu, um alle Änderungen zu übernehmen.${NC}"
+            fi
+        else
+            echo -e "\n${GREEN}Setup complete!${NC}\n"
+            echo -e "Open ${CYAN}http://${CURRENT_IP}${NC} in your browser to access your Kittyflap!\n"
+            if [ $INSTALL_LEGACY_KITTYHACK -eq 0 ]; then
+                echo -e "${GREY}If your Kittyflap already has many images stored, it may take some time before you can access the KittyHack page in your browser. Please be patient.${NC}"
+                echo -e "${GREY}Once all images have been imported, please restart your Kittyflap via the web interface in the 'System' section to apply all changes.${NC}"
+            fi
+        fi
     else
-        echo -e "\n${YELLOW}Setup complete with warnings. Please check the logs in ${LOGFILE} for more details.${NC}\n"
-        echo -e "You could still try to open ${CYAN}http://${CURRENT_IP}${NC} in your browser to start with KittyHack.\n"
+        if [ "$LANGUAGE" == "de" ]; then
+            echo -e "\n${YELLOW}Setup mit Warnungen abgeschlossen. Bitte überprüfe die Protokolle in ${LOGFILE} für weitere Details.${NC}\n"
+            echo -e "Du könntest trotzdem versuchen, ${CYAN}http://${CURRENT_IP}${NC} in deinem Browser zu öffnen, um auf deine Kittyflap zuzugreifen.\n"
+        else
+            echo -e "\n${YELLOW}Setup complete with warnings. Please check the logs in ${LOGFILE} for more details.${NC}\n"
+            echo -e "You could still try to open ${CYAN}http://${CURRENT_IP}${NC} in your browser to access your Kittyflap.\n"
+        fi
     fi
 else
-    echo -e "\n${RED}Setup failed. Please check the logs in ${LOGFILE} for more details.${NC}\n"
+    if [ "$LANGUAGE" == "de" ]; then
+        echo -e "\n${RED}Setup fehlgeschlagen. Bitte überprüfe die Protokolle in ${LOGFILE} für weitere Details.${NC}\n"
+    else
+        echo -e "\n${RED}Setup failed. Please check the logs in ${LOGFILE} for more details.${NC}\n"
+    fi
 fi
 
 if [[ "$SHARE_LOGS" == "n" ]]; then

@@ -683,9 +683,6 @@ def migrate_photos_to_events(database: str) -> Result:
                     
                     # Log the ID changes
                     cursor.execute("SELECT old_id, new_id FROM temp_events")
-                    id_changes = cursor.fetchall()
-                    for old_id, new_id in id_changes:
-                        logging.info(f"[DATABASE] Changed ID from {old_id} to {new_id}")
                     
                     # Update the original table with the new IDs
                     cursor.execute("UPDATE events SET id = (SELECT new_id FROM temp_events WHERE old_id = events.id)")

@@ -619,8 +619,9 @@ def check_if_table_exists(database: str, table: str) -> bool:
 def migrate_photos_to_events(database: str) -> Result:    
     """
     Migrates all records from the 'photo' table to the 'events' table.
-    NOTE: the 'photo' table is deprecated and was only used in older versions of kittyhack (<= v1.1.0), which relied on co-existence of the kittyflap service.
+    NOTE: the 'photo' table is deprecated and was only used in older versions of kittyhack (<= v1.1.x), which relied on co-existence of the kittyflap service.
     """
+    migrated_photos = 0
     result = lock_database()
     if not result.success:
         return result
@@ -639,22 +640,58 @@ def migrate_photos_to_events(database: str) -> Result:
             photo = cursor.fetchone()
             if photo:
                 id, created_at, blob_picture, no_mouse_probability, mouse_probability, kittyflap_id, cat_id, rfid, false_accept_probability, deleted = photo
-                columns = "id, block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, rfid, event_text"
-                values = ', '.join(['?' for _ in columns.split(', ')])
-                values_list = [
-                    id,
-                    0,  # block_id is unknown, set to 0
-                    created_at,
-                    "image",
-                    blob_picture,
-                    None,  # modified_image does not exist in the 'photo' table
-                    mouse_probability,
-                    no_mouse_probability,
-                    rfid,
-                    ""  # event_text
-                ]
-                cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
-                cursor.execute(f"DELETE FROM photo WHERE id = ?", (id,))
+                # Check if a photo with the same created_at timestamp already exists in the 'events' table
+                cursor.execute("SELECT id FROM events WHERE created_at = ?", (created_at,))
+                existing_event = cursor.fetchone()
+                if existing_event:
+                    # If it exists, skip the migration and just delete the photo from the 'photo' table
+                    cursor.execute("DELETE FROM photo WHERE id = ?", (id,))
+                else:
+                    # If it does not exist, migrate the photo to the 'events' table
+                    # Ensure that the 'id' is a unique identifier in the 'events' table. Set the 'id' to the max value of the 'events' table + 1.
+                    cursor.execute("SELECT MAX(id) FROM events")
+                    max_id = cursor.fetchone()[0]
+                    if max_id is None:
+                        max_id = 0
+                    else:
+                        max_id += 1
+
+                    columns = "id, block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, rfid, event_text"
+                    values = ', '.join(['?' for _ in columns.split(', ')])
+                    values_list = [
+                        max_id,
+                        0,  # block_id is unknown, set to 0
+                        created_at,
+                        "image",
+                        blob_picture,
+                        None,  # modified_image does not exist in the 'photo' table
+                        mouse_probability,
+                        no_mouse_probability,
+                        rfid,
+                        ""  # event_text
+                    ]
+                    cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
+                    cursor.execute(f"DELETE FROM photo WHERE id = ?", (id,))
+                    migrated_photos += 1
+                
+                if migrated_photos > 0:
+                    logging.info(f"[DATABASE] Migrated {migrated_photos} photos from 'photo' table to 'events' table in the database '{database}'.")
+                    # Rewrite the 'id' column in the 'events' table based on the ascending order of the 'created_at' column
+                    # Create a temporary table to store the new IDs
+                    cursor.execute("CREATE TEMPORARY TABLE temp_events (old_id INTEGER, new_id INTEGER)")
+                    cursor.execute("INSERT INTO temp_events (old_id, new_id) SELECT id, ROW_NUMBER() OVER (ORDER BY created_at) FROM events")
+                    
+                    # Log the ID changes
+                    cursor.execute("SELECT old_id, new_id FROM temp_events")
+                    id_changes = cursor.fetchall()
+                    for old_id, new_id in id_changes:
+                        logging.info(f"[DATABASE] Changed ID from {old_id} to {new_id}")
+                    
+                    # Update the original table with the new IDs
+                    cursor.execute("UPDATE events SET id = (SELECT new_id FROM temp_events WHERE old_id = events.id)")
+                    
+                    # Drop the temporary table
+                    cursor.execute("DROP TABLE temp_events")
 
         conn.commit()
     except Exception as e:

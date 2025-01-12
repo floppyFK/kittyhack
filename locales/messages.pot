@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-12-01 16:21+0000\n"
+"POT-Creation-Date: 2025-01-11 11:59+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,163 +17,411 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/server.py:132
+#: src/server.py:177
+msgid ""
+"A new version of Kittyhack is available: {}. Go to the 'Info' section for "
+"update instructions."
+msgstr ""
+
+#: src/server.py:187
+msgid ""
+" or consider deleting pictures from the original kittyflap database file. "
+"For more details, see the 'Info' section."
+msgstr ""
+
+#: src/server.py:190
+msgid ""
+"Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. "
+"reduce the max amount of pictures in the database{})."
+msgstr ""
+
+#: src/server.py:244
 msgid "Today"
 msgstr ""
 
-#: src/server.py:138
+#: src/server.py:250
 msgid "Show detected cats only"
 msgstr ""
 
-#: src/server.py:139
+#: src/server.py:251
 msgid "Show detected mice only"
 msgstr ""
 
-#: src/server.py:242
+#: src/server.py:252
+msgid "Show detection overlay"
+msgstr ""
+
+#: src/server.py:352
 msgid "No pictures for the selected filter criteria found."
 msgstr ""
 
-#: src/server.py:276
+#: src/server.py:392 src/server.py:552
 msgid "No picture found!"
 msgstr ""
 
-#: src/server.py:290
+#: src/server.py:406
 msgid "Mouse probability"
 msgstr ""
 
-#: src/server.py:312
+#: src/server.py:419
+msgid "Delete selected photos"
+msgstr ""
+
+#: src/server.py:447
 msgid "Photo {} deleted successfully."
 msgstr ""
 
-#: src/server.py:314
+#: src/server.py:449
 msgid "An error occurred while deleting the photo: {}"
 msgstr ""
 
-#: src/server.py:332
-msgid "Kittyflap configuration"
+#: src/server.py:455
+msgid "No photos selected for deletion."
 msgstr ""
 
-#: src/server.py:333
-msgid "Change the configuration of the Kittyflap"
+#: src/server.py:464
+msgid "Connection to the camera failed."
 msgstr ""
 
-#: src/server.py:335
-msgid "Accept all cats"
+#: src/server.py:471
+msgid "Could not read the picture from the camera."
 msgstr ""
 
-#: src/server.py:336
-msgid "Detect prey"
+#: src/server.py:491
+msgid "Kittyflap System Actions"
 msgstr ""
 
-#: src/server.py:337
-msgid "Acceptance rate"
+#: src/server.py:492
+msgid "Start tasks/actions on the Kittyflap"
 msgstr ""
 
-#: src/server.py:338
-msgid "Cat probability threshold"
+#: src/server.py:495
+msgid "Restart Kittyflap"
 msgstr ""
 
-#: src/server.py:339
-msgid "Save Kittyflap Config"
+#: src/server.py:498
+msgid "Shutdown Kittyflap"
 msgstr ""
 
-#: src/server.py:341
+#: src/server.py:499
+msgid ""
+"To avoid data loss, always shut down the Kittyflap properly before "
+"unplugging the power cable. After a shutdown, wait 30 seconds before "
+"unplugging the power cable. To start the Kittyflap again, just plug in the "
+"power again."
+msgstr ""
+
+#: src/server.py:502
+msgid "Restart Kittyhack Service"
+msgstr ""
+
+#: src/server.py:503
+msgid ""
+"Only restart the Kittyhack service (e.g. to apply a changed language "
+"setting)."
+msgstr ""
+
+#: src/server.py:512
+msgid "Kittyflap is rebooting now..."
+msgstr ""
+
+#: src/server.py:515 src/server.py:523
+msgid "An error occurred while rebooting Kittyflap."
+msgstr ""
+
+#: src/server.py:520
+msgid ""
+"Kittyflap is shutting down now... Please wait 30 seconds before unplugging "
+"the power."
+msgstr ""
+
+#: src/server.py:528
+msgid ""
+"Kittyhack service is restarting now... Please reload the page in a few "
+"seconds."
+msgstr ""
+
+#: src/server.py:531
+msgid "An error occurred while restarting the Kittyhack service."
+msgstr ""
+
+#: src/server.py:558 src/server.py:650
+msgid "Name"
+msgstr ""
+
+#: src/server.py:560 src/server.py:652
+msgid "RFID"
+msgstr ""
+
+#: src/server.py:562
+msgid "Change Picture"
+msgstr ""
+
+#: src/server.py:568
+msgid "Delete {} from the database"
+msgstr ""
+
+#: src/server.py:580 src/server.py:768
+msgid "Save all changes"
+msgstr ""
+
+#: src/server.py:587
+msgid ""
+"No cats found in the database. Please go to the 'Add new cat' section to add "
+"a new cat."
+msgstr ""
+
+#: src/server.py:613
+msgid "{} deleted successfully from the database."
+msgstr ""
+
+#: src/server.py:615
+msgid "Failed to delete {} from the database: {}"
+msgstr ""
+
+#: src/server.py:631
+msgid "Data for {} updated successfully."
+msgstr ""
+
+#: src/server.py:633
+msgid "Failed to update cat details: {}"
+msgstr ""
+
+#: src/server.py:636
+msgid "No changes detected. Nothing to save."
+msgstr ""
+
+#: src/server.py:649 src/ui.py:29
+msgid "Add new cat"
+msgstr ""
+
+#: src/server.py:653
+msgid ""
+"You can find the RFID in the 'Pictures' section, if the cat was detected."
+msgstr ""
+
+#: src/server.py:655
+msgid "Upload Picture"
+msgstr ""
+
+#: src/server.py:657
+msgid "Save"
+msgstr ""
+
+#: src/server.py:682
+msgid "New cat {} added successfully."
+msgstr ""
+
+#: src/server.py:687
+msgid "An error occurred while adding the new cat: {}"
+msgstr ""
+
+#: src/server.py:693
 msgid "Kittyhack configuration"
 msgstr ""
 
-#: src/server.py:342
+#: src/server.py:694
 msgid ""
 "In this section you can change the behaviour of the Kittyhack user interface"
 msgstr ""
 
-#: src/server.py:345
+#: src/server.py:697
+msgid "General settings"
+msgstr ""
+
+#: src/server.py:698
+msgid "Language"
+msgstr ""
+
+#: src/server.py:699
 msgid "Timezone"
 msgstr ""
 
-#: src/server.py:346
+#: src/server.py:700
 msgid "See"
 msgstr ""
 
-#: src/server.py:346
+#: src/server.py:700
 msgid "for valid timezone strings"
 msgstr ""
 
-#: src/server.py:348
+#: src/server.py:702
 msgid "Date format"
 msgstr ""
 
-#: src/server.py:349
-msgid "Mouse filter threshold"
-msgstr ""
-
-#: src/server.py:350
-msgid ""
-"NOTE: This value has no impact on the mouse detection of the Kittyflap! It "
-"is only used for the filter function of the 'Show detected mouse only' "
-"button in the pictures view."
-msgstr ""
-
-#: src/server.py:352
+#: src/server.py:704
 msgid "Maximum pictures per page"
 msgstr ""
 
-#: src/server.py:353
+#: src/server.py:705
 msgid ""
 "NOTE: Too many pictures per page could slow down the performance drastically!"
 msgstr ""
 
-#: src/server.py:355
+#: src/server.py:707
+msgid "Periodic version check"
+msgstr ""
+
+#: src/server.py:708
+msgid "Automatically check for new versions of Kittyhack."
+msgstr ""
+
+#: src/server.py:713
+msgid "Door control settings"
+msgstr ""
+
+#: src/server.py:714
+msgid "Mouse detection threshold"
+msgstr ""
+
+#: src/server.py:715
+msgid "Kittyhack decides based on this value, if a picture contains a mouse."
+msgstr ""
+
+#: src/server.py:717
+msgid "Minimum detection threshold"
+msgstr ""
+
+#: src/server.py:718
+msgid ""
+"Pictures with a detection probability below this value (for both 'Mouse' and "
+"'No Mouse' check) are not saved in the database."
+msgstr ""
+
+#: src/server.py:720
+msgid "Minimum pictures before unlock decision"
+msgstr ""
+
+#: src/server.py:721
+msgid ""
+"Number of pictures that must be analyzed before deciding to unlock the flap. "
+"If a picture exceeds the mouse threshold, the flap will remain closed."
+msgstr ""
+
+#: src/server.py:723
+msgid "Detect prey"
+msgstr ""
+
+#: src/server.py:727
+msgid "Open inside direction for:"
+msgstr ""
+
+#: src/server.py:729
+msgid "All cats"
+msgstr ""
+
+#: src/server.py:729
+msgid "All cats with a RFID chip"
+msgstr ""
+
+#: src/server.py:729
+msgid "Only registered cats"
+msgstr ""
+
+#: src/server.py:729
+msgid "No cats"
+msgstr ""
+
+#: src/server.py:734
+msgid "Allow cats to exit"
+msgstr ""
+
+#: src/server.py:735
+msgid ""
+"If this is set to 'No', the direction to the outside remains closed. Useful "
+"for e.g. new year's eve or an upcoming vet visit."
+msgstr ""
+
+#: src/server.py:738
+msgid "Live view settings"
+msgstr ""
+
+#: src/server.py:741
+msgid "Live-View update interval:"
+msgstr ""
+
+#: src/server.py:743
+msgid "Refresh the live view every..."
+msgstr ""
+
+#: src/server.py:750
+msgid ""
+"NOTE: A high refresh rate could slow down the performance, especially if "
+"several users are connected at the same time. Values below 1s require a fast "
+"and stable WLAN connection."
+msgstr ""
+
+#: src/server.py:751
+msgid ""
+"This setting affects only the view in the WebUI and has no impact on the "
+"detection process."
+msgstr ""
+
+#: src/server.py:754
+msgid "Pictures view settings"
+msgstr ""
+
+#: src/server.py:755
 msgid "Maximum number of photos to retain in the database"
 msgstr ""
 
-#: src/server.py:358
-msgid "Save Kittyhack Config"
+#: src/server.py:758
+msgid "Advanced settings"
 msgstr ""
 
-#: src/server.py:365
-msgid "ERROR: Failed to read the configuration from the kittyflap."
-msgstr ""
-
-#: src/server.py:381
-msgid "Kittyflap configuration updated successfully."
-msgstr ""
-
-#: src/server.py:383
-msgid "An error occurred while updating the database: {}"
-msgstr ""
-
-#: src/server.py:387
-msgid ""
-"An error occurred while stopping the Kittyflap service. The changed "
-"configuration was not saved."
-msgstr ""
-
-#: src/server.py:392
-msgid ""
-"An error occurred while starting the Kittyflap service. Please restart the "
-"Kittyflap manually by unplugging the power cable and plugging it back in."
-msgstr ""
-
-#: src/server.py:412
+#: src/server.py:811
 msgid "Kittyhack configuration updated successfully."
 msgstr ""
 
-#: src/server.py:414
-msgid "Reload this website to apply the new language."
+#: src/server.py:813
+msgid ""
+"Please restart the kittyhack service in the 'System' section, to apply the "
+"new language."
 msgstr ""
 
-#: src/server.py:416
+#: src/server.py:815
 msgid "Failed to save the Kittyhack configuration."
 msgstr ""
 
+#: src/server.py:828
+msgid "Failed to create the journal file: {}"
+msgstr ""
+
+#: src/server.py:961
+msgid ""
+"The pictures from the original kittyflap database were removed successfully."
+msgstr ""
+
+#: src/server.py:963
+msgid ""
+"An error occurred while deleting the pictures from the original kittyflap "
+"database: {}"
+msgstr ""
+
+#: src/server.py:965
+msgid "The original kittyflap database file does not exist anymore."
+msgstr ""
+
 #: src/ui.py:13
+msgid "Live view"
+msgstr ""
+
+#: src/ui.py:17
 msgid "Pictures"
 msgstr ""
 
-#: src/ui.py:20
+#: src/ui.py:24
+msgid "Manage cats"
+msgstr ""
+
+#: src/ui.py:34
+msgid "System"
+msgstr ""
+
+#: src/ui.py:38
 msgid "Configuration"
 msgstr ""
 
-#: src/ui.py:24
-msgid "Debug details"
+#: src/ui.py:42
+msgid "Info"
 msgstr ""

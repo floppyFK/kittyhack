@@ -604,7 +604,7 @@ EOF
         echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) install v1.1.1"
         echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) install the latest version (see the warning above!)"
         echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Reinstall camera drivers (only run if you don't see live images)"
-        echo -e "(${BLUE}${FMTBOLD}b${FMTDEF}${NC})ack"
+        echo -e "(${BLUE}${FMTBOLD}q${FMTDEF}${NC})uit"
     fi
     read -r MODE
 

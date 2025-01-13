@@ -46,7 +46,6 @@ def backend_main(simulate_kittyflap = False):
     pir = Pir(simulate_kittyflap=simulate_kittyflap)
     pir.init()
     rfid = Rfid(simulate_kittyflap=simulate_kittyflap)
-    rfid.init()
     magnets = Magnets(simulate_kittyflap=simulate_kittyflap)
     magnets.init()
     

@@ -67,6 +67,49 @@ def systemcmd(command: list[str], simulate_operations=False):
     
     return True
 
+class I2C:
+    # Fixed constants
+    I2C_PORT = "0"
+    PE_ADDR = "0x20"
+    PE_DIRREG = "0x03"
+    PE_OUTREG = "0x01"
+
+    def __init__(self, i2c_port=I2C_PORT, pe_addr=PE_ADDR, pe_dirreg=PE_DIRREG, pe_outreg=PE_OUTREG):
+        self.I2C_PORT = i2c_port
+        self.PE_ADDR = pe_addr
+        self.PE_DIRREG = pe_dirreg
+        self.PE_OUTREG = pe_outreg
+
+    def enable_gate(self, simulate_operations=False):
+        """
+        Enable the gate logic by configuring the PCA6408AHKX.
+        Sets the direction and output registers to open the logic gate.
+        """
+        commands = [
+            ["/usr/sbin/i2cset", "-y", self.I2C_PORT, self.PE_ADDR, self.PE_DIRREG, "0x00"],
+            ["/usr/sbin/i2cset", "-y", self.I2C_PORT, self.PE_ADDR, self.PE_OUTREG, "0x00"]
+        ]
+        for command in commands:
+            if not systemcmd(command, simulate_operations=simulate_operations):
+                logging.error("[I2C] Failed to enable gate")
+                return
+        logging.info("[I2C] Gate enabled: logic gate to periphery is open")
+
+    def disable_gate(self, simulate_operations=False):
+        """
+        Disable the gate logic by configuring the PCA6408AHKX.
+        Sets the direction and output registers to close the logic gate.
+        """
+        commands = [
+            ["/usr/sbin/i2cset", "-y", self.I2C_PORT, self.PE_ADDR, self.PE_DIRREG, "0x00"],
+            ["/usr/sbin/i2cset", "-y", self.I2C_PORT, self.PE_ADDR, self.PE_OUTREG, "0x01"]
+        ]
+        for command in commands:
+            if not systemcmd(command, simulate_operations=simulate_operations):
+                logging.error("[I2C] Failed to disable gate")
+                return
+        logging.info("[I2C] Gate disabled: logic gate to periphery is closed")
+
 class Gpio:
     BASE_PATH = "/sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/"
 

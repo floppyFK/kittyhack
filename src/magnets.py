@@ -214,3 +214,20 @@ class Magnets:
         """
         self.command_queue.put(command)
         logging.info(f"[MAGNETS] Command '{command}' added to queue.")
+
+    def check_queued(self, command):
+        """
+        Checks whether a command is already in the command queue.
+
+        Args:
+            command (str): The command to be checked:
+                - "unlock_inside": Unlocks the magnet lock to the inside direction.
+                - "lock_inside": Locks the magnet lock to the inside direction.
+                - "unlock_outside": Unlocks the magnet lock to the outside direction.
+                - "lock_outside": Locks the magnet lock to the outside direction.
+
+        Returns:
+            bool: True if the command is already in the queue, False otherwise.
+        """
+        return command in list(self.command_queue.queue)
+

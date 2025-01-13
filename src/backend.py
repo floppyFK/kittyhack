@@ -46,7 +46,6 @@ def backend_main(simulate_kittyflap = False):
     pir = Pir(simulate_kittyflap=simulate_kittyflap)
     pir.init()
     rfid = Rfid(simulate_kittyflap=simulate_kittyflap)
-    rfid.init()
     magnets = Magnets(simulate_kittyflap=simulate_kittyflap)
     magnets.init()
     
@@ -110,7 +109,7 @@ def backend_main(simulate_kittyflap = False):
                 tm.sleep(0.5)  # Wait for the last image to be processed
             last_motion_outside_tm = tm.time()
             logging.info(f"[BACKEND] Motion stopped OUTSIDE (Block ID: '{motion_block_id}')")
-            if (magnets.get_inside_state() == True):
+            if (magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False):
                 magnets.queue_command("lock_inside")
 
             # Update the motion_block_id and the tag_id for for all elements between first_motion_outside_tm and last_motion_outside_tm
@@ -127,7 +126,7 @@ def backend_main(simulate_kittyflap = False):
                 db_thread.start()
 
         # Just double check that the inside magnet is released ( == inside locked) if no motion is detected outside
-        if (motion_outside == 0 and magnets.get_inside_state() == True):
+        if (motion_outside == 0 and magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False):
                 magnets.queue_command("lock_inside")
                 
         
@@ -149,7 +148,8 @@ def backend_main(simulate_kittyflap = False):
                     logging.info("[BACKEND] Inside magnet is already unlocked. Only one magnet is allowed. --> Outside magnet will not be unlocked.")
                 else:
                     logging.info("[BACKEND] Allow cats to exit.")
-                    magnets.queue_command("unlock_outside")
+                    if magnets.check_queued("unlock_outside") == False:
+                        magnets.queue_command("unlock_outside")
             else:
                 logging.info("[BACKEND] No cats are allowed to exit. YOU SHALL NOT PASS!")
 
@@ -171,7 +171,8 @@ def backend_main(simulate_kittyflap = False):
         # Close the magnet to the outside after the timeout
         if ( (motion_inside == 0) and
              (magnets.get_outside_state() == True) and
-             ((tm.time() - last_motion_inside_tm) > OPEN_OUTSIDE_TIMEOUT) ):
+             ((tm.time() - last_motion_inside_tm) > OPEN_OUTSIDE_TIMEOUT) and
+             (magnets.check_queued("lock_outside") == False) ):
                 magnets.queue_command("lock_outside")
             
         # Check for a valid RFID tag
@@ -214,6 +215,7 @@ def backend_main(simulate_kittyflap = False):
         unlock_inside &= ( (CONFIG['MOUSE_CHECK_ENABLED'] == False) or ((len(ids_with_mouse) == 0) and (len(ids_of_current_motion_block) >= CONFIG['MIN_PICTURES_TO_ANALYZE'])) )
         # If the outside magnet is already unlocked, we are not allowed to unlock the inside (only one magnet is allowed to be open at the same time to avoid a potential overload of the electronics)
         unlock_inside &= (magnets.get_outside_state() == False)
+        unlock_inside &= (magnets.check_queued("unlock_inside") == False)
 
         if unlock_inside:
             logging.info(f"[BACKEND] All checks are passed. Unlock the inside")

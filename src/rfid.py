@@ -6,13 +6,18 @@ import logging
 import random
 import re
 from enum import Enum
-from src.system import Gpio
+from src.system import Gpio, I2C
 
 # GPIO pin numbers and directions
 RFID_FIELD_NUM = 529
 RFID_FIELD_DIR = "out"
 RFID_POWER_NUM = 515
 RFID_POWER_DIR = "out"
+
+I2CPORT=0
+PE_ADDR=0x20
+PE_DIRREG=0x03
+PE_OUTREG=0x01
 
 # Create a Gpio instance
 gpio = Gpio()
@@ -48,6 +53,11 @@ class Rfid:
                 # Ensure RFID is powered off to avoid unnecessary interference
                 gpio.set(RFID_POWER_NUM, 0)
                 gpio.set(RFID_FIELD_NUM, 0)
+
+                # PCA6408AHKX setup
+                i2c = I2C()
+                i2c.enable_gate(self)
+
             except Exception as e:
                 logging.error(f"[RFID] Error initializing RFID: {e}")
             else:

@@ -64,6 +64,8 @@ nmcli dev wifi connect YourSSID password "YourPassword"
 nmcli dev set wlan0 autoconnect yes
 ```
 
+If you have any special characters in your password like an exclamation mark ("!") or just like to use a graphical interface, you should use `nmtui` to add your WiFi.
+
 ### Instructions
 The setup is quite simple:
 <a id="ssh_access_en"></a>
@@ -258,6 +260,8 @@ Konfiguration deines eigenen WLANs:
 nmcli dev wifi connect DeinSSID password "DeinPasswort"
 nmcli dev set wlan0 autoconnect yes
 ```
+
+Wenn du Sonderzeichen wie ein Ausrufezeichen ("!") in deinem Passwort verwendest oder einfach ein grafisches Interface bevorzugst, dann kannst du auch `nmtui` verwenden, um dein WLAN hinzuzufügen.
 
 ### Anleitung
 Die Installation ist kinderleicht:

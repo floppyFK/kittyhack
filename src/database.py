@@ -316,7 +316,6 @@ def migrate_cats_to_kittyhack(kittyflap_db: str, kittyhack_db: str) -> Result:
     result = lock_database()
     if not result.success:
         return result
-
     try:
         conn_src = sqlite3.connect(kittyflap_db, timeout=30)
         cursor_src = conn_src.cursor()
@@ -330,11 +329,24 @@ def migrate_cats_to_kittyhack(kittyflap_db: str, kittyhack_db: str) -> Result:
             id, created_at, name, rfid, profile_photo = row[0], row[1], row[6], row[8], row[9]
             # Convert the 'profile_photo' text column to a BLOB
             # Decode the Base64 encoded profile photo to binary data
-            cat_image = base64.b64decode(profile_photo) if profile_photo else None
-            if cat_image is not None:
-                img_array = np.frombuffer(cat_image, np.uint8)
-                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-                cat_image = resize_image_to_square(img, 800, 85)
+            try:
+                if profile_photo:
+                    # Add padding if needed
+                    missing_padding = len(profile_photo) % 4
+                    if missing_padding:
+                        profile_photo += '=' * (4 - missing_padding)
+                    cat_image = base64.b64decode(profile_photo)
+                    img_array = np.frombuffer(cat_image, np.uint8)
+                    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                    if img is not None:
+                        cat_image = resize_image_to_square(img, 800, 85)
+                    else:
+                        cat_image = None
+                else:
+                    cat_image = None
+            except Exception as e:
+                logging.warning(f"[DATABASE] Failed to decode profile photo: {e}")
+                cat_image = None
             cursor_dst.execute(
                 "INSERT INTO cats (id, created_at, name, rfid, cat_image) VALUES (?, ?, ?, ?, ?)",
                 (id, created_at, name, rfid, cat_image)

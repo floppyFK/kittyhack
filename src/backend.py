@@ -11,7 +11,6 @@ from src.camera import image_buffer, TfLite
 from src.helper import CONFIG, sigterm_monitor
 
 TAG_TIMEOUT = 30.0               # after 30 seconds, a detected tag is considered invalid
-RFID_READER_OFF_DELAY = 15.0     # Turn the RFID reader off 15 seconds after the last detected motion outside
 OPEN_OUTSIDE_TIMEOUT = 5.0       # Keep the magnet to the outside open for 5 seconds after the last motion on the inside
 
 # Initialize TfLite
@@ -38,6 +37,7 @@ def backend_main(simulate_kittyflap = False):
     ids_with_mouse = []
     ids_of_current_motion_block = []
     known_rfid_tags = []
+    last_tag_id = None
 
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
@@ -57,7 +57,7 @@ def backend_main(simulate_kittyflap = False):
     rfid_thread = threading.Thread(target=rfid.run, args=(), daemon=True)
     rfid_thread.start()
     tm.sleep(1.0)
-    rfid.stop_read(wait_for_stop=True)
+    #rfid.stop_read(wait_for_stop=True)
 
     # Start the magnet control thread
     magnets.start_magnet_control()
@@ -99,6 +99,11 @@ def backend_main(simulate_kittyflap = False):
             motion_inside_tm = tm.time()
 
         motion_outside = lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm)
+
+        # Keep the RFID reader always running
+        if (rfid.get_run_state() == RfidRunState.stopped):
+            rfid_thread = threading.Thread(target=rfid.run, args=(), daemon=True)
+            rfid_thread.start()
 
         tag_id, tag_timestamp = rfid.get_tag()
         last_rfid_read = rfid.time_delta_to_last_read()
@@ -152,21 +157,6 @@ def backend_main(simulate_kittyflap = False):
                         magnets.queue_command("unlock_outside")
             else:
                 logging.info("[BACKEND] No cats are allowed to exit. YOU SHALL NOT PASS!")
-
-        # Turn off the RFID reader if no motion outside and pause the TFLite model
-        if ( (motion_outside == 0) and 
-             ((tm.time() - last_motion_outside_tm) > RFID_READER_OFF_DELAY) ):
-            if rfid.get_run_state() == RfidRunState.running:
-                logging.info(f"[BACKEND] No motion outside since {RFID_READER_OFF_DELAY} seconds after the last motion. Stopping RFID reader.")
-                rfid.stop_read(wait_for_stop=False)
-        
-        if motion_outside == 1:
-            # Motion detected outside, enable RFID and check for tag
-            # Start the RFID thread with infinite read cycles, if it is not running
-            if ( (last_rfid_read > TAG_TIMEOUT) and 
-                 (rfid.get_run_state() == RfidRunState.stopped) ):
-                rfid_thread = threading.Thread(target=rfid.run, args=(), daemon=True)
-                rfid_thread.start()
         
         # Close the magnet to the outside after the timeout
         if ( (motion_inside == 0) and
@@ -178,7 +168,8 @@ def backend_main(simulate_kittyflap = False):
         # Check for a valid RFID tag
         if ( (tag_id) and 
              (last_rfid_read <= TAG_TIMEOUT) and 
-             (rfid.get_run_state() == RfidRunState.running) ):
+             (rfid.get_run_state() == RfidRunState.running) and
+             (tag_id != last_tag_id) ):
             logging.info(f"[BACKEND] RFID tag detected: '{tag_id}'. Stopping RFID reader.")
             if CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.KNOWN:
                 if tag_id in known_rfid_tags:
@@ -190,7 +181,7 @@ def backend_main(simulate_kittyflap = False):
             elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.NONE:
                 tag_id_valid = False
                 logging.info("[BACKEND] No cats are allowed to enter. The door stays closed.")
-            rfid.stop_read(wait_for_stop=False)
+            #rfid.stop_read(wait_for_stop=False)
 
         # Forget the tag after the tag timeout and no motion outside:
         if ( (tag_id is not None) and 
@@ -198,6 +189,7 @@ def backend_main(simulate_kittyflap = False):
              (motion_outside == 0) ):
             rfid.set_tag(None, 0.0)
             tag_id_valid = False
+            tag_id = None
             logging.info("[BACKEND] Tag timeout reached. Forget the tag.")
 
         if image_buffer.size() > 0:
@@ -221,7 +213,11 @@ def backend_main(simulate_kittyflap = False):
             logging.info(f"[BACKEND] All checks are passed. Unlock the inside")
             logging.debug(f"[BACKEND] Motion outside: {motion_outside}, Motion inside: {motion_inside}, Tag ID: {tag_id}, Tag valid: {tag_id_valid}, Motion block ID: {motion_block_id}, Images with mouse: {len(ids_with_mouse)}, Images in current block: {len(ids_of_current_motion_block)} ({ids_of_current_motion_block})")
             magnets.queue_command("unlock_inside")
+        
+        last_tag_id = tag_id
             
-
+    # Sigtterm received, stop the backend
+    rfid.stop_read(wait_for_stop=True)
+    rfid.set_power(False)
     logging.info("[BACKEND] Stopped backend.")
     sigterm_monitor.signal_task_done()

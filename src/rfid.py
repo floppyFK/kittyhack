@@ -145,7 +145,7 @@ class Rfid:
 
             logging.info(f"[RFID] Waiting for RFID tag... (max {read_cycles if read_cycles != 0 else '∞'} cycles)")
             try:
-                with open(RFID_READ_PATH, "r") as f:
+                with open(RFID_READ_PATH, "rb") as f:
                     cycle = 0
                     while read_cycles == 0 or cycle < read_cycles:
                         logging.debug(f"[RFID] Cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'} | RFID run state: {self.get_run_state()}")
@@ -153,13 +153,18 @@ class Rfid:
                             break
                         ready, _, _ = select.select([f], [], [], 1.0)
                         if ready:
-                            tag_id = f.readline().strip()
-                            if tag_id:
-                                # Remove non-hex characters from the tag ID
-                                tag_id = re.sub(r'[^0-9A-Fa-f]', '', tag_id)
-                                timestamp = tm.time()
-                                self.set_tag(tag_id, tm.time())
-                                logging.info(f"[RFID] Tag ID: '{tag_id}' detected at {timestamp} (read cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'})")
+                            line = f.readline().decode('utf-8', errors='ignore').strip()
+                            if not line:
+                                continue
+                            # Remove non-hex characters from the tag ID
+                            # FIXME: For testing purposes, do not remove non-hex characters. Return the whole string.
+                            #tag_id = re.sub(r'[^0-9A-Fa-f]', '', line)
+                            tag_id = line
+                            timestamp = tm.time()
+                            self.set_tag(tag_id, timestamp)
+                            logging.info(f"[RFID] Tag ID: '{tag_id}' detected at {timestamp} (read cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'})")
+                            # Write for debug reasons the tag ID to the log file with only hex characters (only 0-9, a-f and A-F) (strip it from the variable tag_id)
+                            logging.info(f"[RFID] [DEBUG-DEBUG-DEBUG] Tag ID only with hexadecimal values: '{re.sub(r'[^0-9A-Fa-f]', '', tag_id)}' detected at {timestamp} (read cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'})")
 
                         tm.sleep(0.1)
                         cycle += 1

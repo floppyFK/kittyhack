@@ -330,17 +330,20 @@ def migrate_cats_to_kittyhack(kittyflap_db: str, kittyhack_db: str) -> Result:
             # Convert the 'profile_photo' text column to a BLOB
             # Decode the Base64 encoded profile photo to binary data
             try:
-                if profile_photo:
+                if profile_photo and not profile_photo.startswith(('http://', 'https://', '/')):
                     # Add padding if needed
                     missing_padding = len(profile_photo) % 4
                     if missing_padding:
                         profile_photo += '=' * (4 - missing_padding)
-                    cat_image = base64.b64decode(profile_photo)
-                    img_array = np.frombuffer(cat_image, np.uint8)
-                    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-                    if img is not None:
-                        cat_image = resize_image_to_square(img, 800, 85)
-                    else:
+                    try:
+                        cat_image = base64.b64decode(profile_photo)
+                        img_array = np.frombuffer(cat_image, np.uint8)
+                        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                        if img is not None:
+                            cat_image = resize_image_to_square(img, 800, 85)
+                        else:
+                            cat_image = None
+                    except:
                         cat_image = None
                 else:
                     cat_image = None

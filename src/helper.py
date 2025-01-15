@@ -54,7 +54,9 @@ DEFAULT_CONFIG = {
         "allowed_to_exit": True,
         "last_vacuum_date": "",
         "periodic_version_check": True,
-        "kittyflap_db_nagscreen": False
+        "kittyflap_db_nagscreen": False,
+        "last_db_backup_date": "",
+        "kittyhack_database_backup_path": "../kittyhack_backup.db"
     }
 }
 
@@ -165,7 +167,9 @@ def load_config():
         "LAST_VACUUM_DATE": parser.get('Settings', 'last_vacuum_date', fallback=DEFAULT_CONFIG['Settings']['last_vacuum_date']),
         "PERIODIC_VERSION_CHECK": parser.getboolean('Settings', 'periodic_version_check', fallback=DEFAULT_CONFIG['Settings']['periodic_version_check']),
         "KITTYFLAP_DB_NAGSCREEN": parser.getboolean('Settings', 'kittyflap_db_nagscreen', fallback=DEFAULT_CONFIG['Settings']['kittyflap_db_nagscreen']),
-        "LATEST_VERSION": "unknown" # This value will not be written to the config file
+        "LATEST_VERSION": "unknown", # This value will not be written to the config file
+        "LAST_DB_BACKUP_DATE": parser.get('Settings', 'last_db_backup_date', fallback=DEFAULT_CONFIG['Settings']['last_db_backup_date']),
+        "KITTYHACK_DATABASE_BACKUP_PATH": parser.get('Settings', 'kittyhack_database_backup_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_backup_path'])
     }
 
 def save_config():
@@ -201,6 +205,8 @@ def save_config():
     settings['last_vacuum_date'] = CONFIG['LAST_VACUUM_DATE']
     settings['periodic_version_check'] = CONFIG['PERIODIC_VERSION_CHECK']
     settings['kittyflap_db_nagscreen'] = CONFIG['KITTYFLAP_DB_NAGSCREEN']
+    settings['last_db_backup_date'] = CONFIG['LAST_DB_BACKUP_DATE']
+    settings['kittyhack_database_backup_path'] = CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']
 
     # Write updated configuration back to the file
     try:

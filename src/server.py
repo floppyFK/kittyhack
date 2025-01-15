@@ -11,6 +11,7 @@ from faicons import icon_svg
 import math
 import threading
 import subprocess
+import shutil
 from src.helper import *
 from src.database import *
 from src.system import *
@@ -55,6 +56,31 @@ logging.info("----- Startup ----------------------------------------------------
 logging.info("Configuration values:")
 for key, value in CONFIG.items():
     logging.info(f"{key}={value}")
+
+# Cleanup old temp files
+if os.path.exists("/tmp/kittyhack.db"):
+    try:
+        os.remove("/tmp/kittyhack.db")
+    except:
+        logging.error("Failed to delete the temporary kittyhack.db file.")
+
+# Initial database integrity check
+if os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
+    db_check = check_database_integrity(CONFIG['KITTYHACK_DATABASE_PATH'])
+    if db_check.success:
+        logging.info("Initial Database integrity check successful.")
+    else:
+        logging.error(f"Initial Database integrity check failed: {db_check.message}")
+        if os.path.exists(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']):
+            restore_database_backup(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
+        else:
+            logging.error("No backup found to restore the database from. Deleting the database file...")
+            try:
+                os.remove(CONFIG['KITTYHACK_DATABASE_PATH'])
+            except:
+                logging.error("Failed to delete the kittyhack database file.")
+            else:
+                logging.info("Kittyhack Database file deleted.")
 
 # Check, if the kittyhack database file exists. If not, create it.
 if not os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
@@ -128,11 +154,28 @@ def start_background_task():
             if CONFIG['PERIODIC_VERSION_CHECK']:
                 CONFIG['LATEST_VERSION'] = read_latest_kittyhack_version()
 
+            # Check if the last backup date is stored in the configuration
+            if CONFIG['LAST_DB_BACKUP_DATE']:
+                last_backup_date = datetime.strptime(CONFIG['LAST_DB_BACKUP_DATE'], '%Y-%m-%d %H:%M:%S')
+            else:
+                last_backup_date = datetime.min
+
             # Check if the last vacuum date is stored in the configuration
             if CONFIG['LAST_VACUUM_DATE']:
                 last_vacuum_date = datetime.strptime(CONFIG['LAST_VACUUM_DATE'], '%Y-%m-%d %H:%M:%S')
             else:
                 last_vacuum_date = datetime.min
+
+            # Perform backup only between 2:00 and 4:00 AM if last backup is >22h old
+            current_time = datetime.now()
+            backup_window = 2 <= current_time.hour < 4
+            backup_needed = (current_time - last_backup_date) > timedelta(hours=22)
+            
+            if backup_needed and backup_window:
+                logging.info(f"[TRIGGER: background task] It is {current_time.hour}:{current_time.minute}:{current_time.second}. Start backup of the kittyhack database...")
+                db_backup = backup_database(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
+                if not db_backup.success and db_backup.message == "kittyhack_db_corrupted":
+                    restore_database_backup(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
 
             # Perform VACUUM only if the last vacuum date is older than 24 hours
             if (datetime.now() - last_vacuum_date) > timedelta(days=1):
@@ -840,6 +883,45 @@ def server(input, output, session):
         except subprocess.CalledProcessError as e:
             ui.notification_show(_("Failed to create the journal file: {}").format(e), duration=5, type="error")
             return None
+        
+    @render.download(filename="kittyhack.db")
+    def download_kittyhack_db():
+        # Try to acquire database lock
+        result = lock_database()
+        if not result.success:
+            logging.error(f"Failed to lock database: {result.message}")
+            return None
+        else:
+            try:
+                if os.path.exists("/tmp/kittyhack.db"):
+                    os.remove("/tmp/kittyhack.db")
+
+                # Check if there is enough free disk space to copy the database
+                kittyhack_db_size = get_database_size()
+                free_disk_space = get_free_disk_space()
+                required_space = kittyhack_db_size + 250
+                if free_disk_space < required_space:
+                    ui.notification_show(_("Not enough free disk space to download the database. Required: {} MB, Free: {} MB").format(required_space, free_disk_space), duration=5, type="error")
+                    return None
+                
+                # Copy the database file to /tmp
+                shutil.copy2(CONFIG['KITTYHACK_DATABASE_PATH'], "/tmp/kittyhack.db")
+                return "/tmp/kittyhack.db"
+            except Exception as e:
+                logging.error(f"Failed to copy database file: {e}")
+                ui.notification_show(_("Failed to copy the database file: {}").format(e), duration=5, type="error")
+                return None
+            finally:
+                # Release the database lock
+                release_database()
+    
+    @render.download(filename="kittyflap.db")
+    def download_kittyflap_db():
+        if os.path.exists(CONFIG['DATABASE_PATH']):
+            return CONFIG['DATABASE_PATH']
+        else:
+            ui.notification_show(_("The original kittyflap database file does not exist."), duration=5, type="error")
+            return None
     
     @output
     @render.ui
@@ -896,9 +978,13 @@ def server(input, output, session):
                         """
                     ),
                     ui.input_task_button("clear_kittyflap_db", "Remove pictures from original Kittyflap Database", icon=icon_svg("trash")),
+                    ui.download_button("download_kittyflap_db", "Download Kittyflap Database"),
                 )
             elif get_file_size(CONFIG['DATABASE_PATH']) > 0:
-                ui_kittyflap_db = ui.markdown(f"The original kittyflap database file exists and has a regular size of **{get_file_size(CONFIG['DATABASE_PATH']):.1f} MB**. Nothing to do here.")
+                    ui_kittyflap_db = ui.div(
+                        ui.markdown(f"The original kittyflap database file exists and has a regular size of **{get_file_size(CONFIG['DATABASE_PATH']):.1f} MB**. Nothing to do here."),
+                        ui.download_button("download_kittyflap_db", "Download Kittyflap Database"),
+                    )
             else:
                 ui_kittyflap_db = ui.markdown("The original kittyflap database seems to be empty. **WARNING:** A downgrade to Kittyhack v1.1.0 will probably not work!")
         else:
@@ -928,6 +1014,9 @@ def server(input, output, session):
                 - **Database size:** {get_database_size():.1f} MB
                 """
             ),
+            ui.download_button("download_kittyhack_db", "Download Kittyhack Database"),
+            ui.markdown("NOTE: Click the download button just once. Depending on the size of the database, it may take a while until the download starts."),
+            ui.br(),
             ui.output_ui("wlan_info"),
             ui.hr(),
             ui.h5("Original Kittyflap Database"),

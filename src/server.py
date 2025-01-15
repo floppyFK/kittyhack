@@ -11,6 +11,7 @@ from faicons import icon_svg
 import math
 import threading
 import subprocess
+import shutil
 from src.helper import *
 from src.database import *
 from src.system import *
@@ -55,6 +56,24 @@ logging.info("----- Startup ----------------------------------------------------
 logging.info("Configuration values:")
 for key, value in CONFIG.items():
     logging.info(f"{key}={value}")
+
+# Initial database integrity check
+if os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
+    db_check = check_database_integrity(CONFIG['KITTYHACK_DATABASE_PATH'])
+    if db_check.success:
+        logging.info("Initial Database integrity check successful.")
+    else:
+        logging.error(f"Initial Database integrity check failed: {db_check.message}")
+        if os.path.exists(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']):
+            restore_database_backup(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
+        else:
+            logging.error("No backup found to restore the database from. Deleting the database file...")
+            try:
+                os.remove(CONFIG['KITTYHACK_DATABASE_PATH'])
+            except:
+                logging.error("Failed to delete the kittyhack database file.")
+            else:
+                logging.info("Kittyhack Database file deleted.")
 
 # Check, if the kittyhack database file exists. If not, create it.
 if not os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
@@ -128,11 +147,28 @@ def start_background_task():
             if CONFIG['PERIODIC_VERSION_CHECK']:
                 CONFIG['LATEST_VERSION'] = read_latest_kittyhack_version()
 
+            # Check if the last backup date is stored in the configuration
+            if CONFIG['LAST_DB_BACKUP_DATE']:
+                last_backup_date = datetime.strptime(CONFIG['LAST_DB_BACKUP_DATE'], '%Y-%m-%d %H:%M:%S')
+            else:
+                last_backup_date = datetime.min
+
             # Check if the last vacuum date is stored in the configuration
             if CONFIG['LAST_VACUUM_DATE']:
                 last_vacuum_date = datetime.strptime(CONFIG['LAST_VACUUM_DATE'], '%Y-%m-%d %H:%M:%S')
             else:
                 last_vacuum_date = datetime.min
+
+            # Perform backup only between 2:00 and 4:00 AM if last backup is >22h old
+            current_time = datetime.now()
+            backup_window = 2 <= current_time.hour < 4
+            backup_needed = (current_time - last_backup_date) > timedelta(hours=22)
+            
+            if backup_needed and backup_window:
+                logging.info(f"[TRIGGER: background task] It is {current_time.hour}:{current_time.minute}:{current_time.second}. Start backup of the kittyhack database...")
+                db_backup = backup_database(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
+                if not db_backup.success and db_backup.message == "kittyhack_db_corrupted":
+                    restore_database_backup(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
 
             # Perform VACUUM only if the last vacuum date is older than 24 hours
             if (datetime.now() - last_vacuum_date) > timedelta(days=1):

@@ -10,6 +10,8 @@ import cv2
 import time as tm
 import base64
 import numpy as np
+import shutil
+import hashlib
 from src.helper import *
 from src.camera import image_buffer
 
@@ -740,4 +742,152 @@ def clear_original_kittyflap_database(database: str) -> Result:
         logging.info(f"[DATABASE] Successfully cleared the database '{database}'.")
         return Result(True, None)
     finally:
+        release_database()
+
+def check_database_integrity(database: str) -> Result:
+    """
+    This function checks the integrity of the database.
+    """
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA integrity_check")
+        result = cursor.fetchone()
+        conn.close()
+    except Exception as e:
+        error_message = f"[DATABASE] An error occurred while checking the integrity of the database '{database}': {e}"
+        logging.error(error_message)
+        return Result(False, error_message)
+    else:
+        if result[0] == 'ok':
+            logging.info(f"[DATABASE] Database '{database}' integrity check passed.")
+            return Result(True, None)
+        else:
+            error_message = f"[DATABASE] Database '{database}' integrity check failed: {result[0]}"
+            logging.error(error_message)
+            return Result(False, error_message)
+        
+def backup_database(database: str, backup_path: str) -> Result:
+    """
+    Backup the main database file to a specified backup location.
+    This function performs a database backup with various safety checks.
+    Args:
+        database (str): Path to the source database file
+        backup_path (str): Path where the backup should be created
+    Returns:
+        Result: Object containing:
+            - success (bool): True if backup completed successfully
+            - message (str): Error message if backup failed, possible values:
+                - "database_locked": Could not acquire database lock
+                - "kittyhack_db_corrupted": Source database is invalid or empty
+                - "disk_space_full": Insufficient disk space for backup
+                - "backup_verification_failed": Backup file failed integrity check
+                - "backup_failed": General backup operation failure
+                - None: If backup succeeded
+    """
+    free_disk_space = get_free_disk_space()
+    current_time = datetime.now()
+
+    logging.info("[DATABASE_BACKUP] Starting database backup...")
+    # Try to acquire database lock
+    result = lock_database()
+    if not result.success:
+        logging.error(f"[DATABASE_BACKUP] Failed to lock database: {result.message}")
+        return Result(False, "database_locked")
+    
+    try:
+        # Check prerequisites for backup
+        db_integrity = check_database_integrity(database)
+        kittyhack_db_size = get_database_size()
+        kittyhack_db_backup_size = get_file_size(backup_path) if os.path.exists(backup_path) else 0
+        
+        # Check database is valid
+        if kittyhack_db_size == 0 or not db_integrity.success:
+            logging.error("[DATABASE_BACKUP] Source database is invalid or empty")
+            return Result(False, "kittyhack_db_corrupted")
+        
+        # Check if backup exists and compare files
+        if os.path.exists(backup_path):
+            with open(database, 'rb') as f1, open(backup_path, 'rb') as f2:
+                if hashlib.sha256(f1.read()).digest() == hashlib.sha256(f2.read()).digest():
+                    CONFIG['LAST_BACKUP_DATE'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
+                    update_single_config_parameter("LAST_BACKUP_DATE")
+                    logging.info("[DATABASE_BACKUP] Source and backup are identical, skipping backup")
+                    return Result(True, None)
+
+        # Verify we would have enough disk space (>500MB) after backup
+        required_space = kittyhack_db_size - kittyhack_db_backup_size + 500
+        if free_disk_space < required_space:
+            logging.error(f"[DATABASE_BACKUP] Insufficient disk space: {free_disk_space}MB free, need {required_space}MB")
+            return Result(False, "disk_space_full")
+        
+        # Perform the backup
+        try:
+            shutil.copy2(database, backup_path)
+            
+            # Verify backup integrity
+            if check_database_integrity(backup_path).success:
+                CONFIG['LAST_BACKUP_DATE'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
+                update_single_config_parameter("LAST_BACKUP_DATE")
+                logging.info("[DATABASE_BACKUP] Backup completed successfully")
+                return Result(True, None)
+            else:
+                logging.error("[DATABASE_BACKUP] Backup verification failed - will retry next run")
+                try:
+                    os.remove(backup_path)
+                except Exception as e:
+                    logging.error(f"[DATABASE_BACKUP] Failed to delete corrupted backup file: {e}")
+                return Result(False, "backup_verification_failed")
+                
+        except Exception as e:
+            logging.error(f"[DATABASE_BACKUP] Backup failed: {e}")
+            try:
+                os.remove(backup_path)
+            except Exception as e:
+                logging.error(f"[DATABASE_BACKUP] Failed to delete corrupted backup file: {e}")
+            return Result(False, "backup_failed")
+            
+    finally:
+        # Always release the lock
+        release_database()
+
+def restore_database_backup(database: str, backup_path: str) -> Result:
+    """
+    Restores a database from a backup file.
+    This function attempts to restore a database from a specified backup file.
+    Args:
+        database (str): The path to the target database file that will be restored.
+        backup_path (str): The path to the backup file that will be used for restoration.
+    Returns:
+        Result: A Result object containing:
+            - success (bool): True if restore was successful, False otherwise
+            - message (str): Error message if failed, None if successful
+                Possible error messages:
+                - 'database_locked': Could not acquire database lock
+                - 'backup_not_found': Backup file does not exist
+                - 'restore_failed': Error occurred during restore
+    """
+    # Try to acquire database lock
+    result = lock_database()
+    if not result.success:
+        logging.error(f"[DATABASE_BACKUP] Failed to lock database: {result.message}")
+        return Result(False, "database_locked")
+    
+    try:
+        # Check if backup file exists
+        if not os.path.exists(backup_path):
+            logging.error(f"[DATABASE_BACKUP] Backup file not found: {backup_path}")
+            return Result(False, "backup_not_found")
+        
+        # Perform the restore
+        try:
+            shutil.copy2(backup_path, database)
+            logging.info("[DATABASE_BACKUP] Restore completed successfully")
+            return Result(True, None)
+        except Exception as e:
+            logging.error(f"[DATABASE_BACKUP] Restore failed: {e}")
+            return Result(False, "restore_failed")
+            
+    finally:
+        # Always release the lock
         release_database()

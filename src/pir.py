@@ -4,7 +4,7 @@ import time as tm
 import logging
 import random
 from src.system import Gpio
-from src.helper import sigterm_monitor
+from src.helper import sigterm_monitor, CONFIG
 
 # GPIO pin numbers and directions
 OUTSIDE_PIR_GPIO_NUM = 536
@@ -16,6 +16,8 @@ OUTSIDE_POWER_GPIO_DIR = "out"
 INSIDE_POWER_GPIO_NUM = 516
 INSIDE_POWER_GPIO_DIR = "out"
 
+PIR_READ_INTERVAL = 0.05
+
 # Create a Gpio instance
 gpio = Gpio()
 
@@ -24,6 +26,8 @@ class Pir:
         self.state_outside = 0  # 0 = no motion, 1 = motion detected
         self.state_inside = 0   # 0 = no motion, 1 = motion detected
         self.thread_lock = threading.Lock()
+        self.outside_motion_count = 0
+        self.inside_motion_count = 0
         self.simulate_kittyflap = simulate_kittyflap
 
     def init(self):
@@ -69,8 +73,28 @@ class Pir:
                 else:
                     # No simulation, read actual PIR states
                     try:
-                        state_outside = 1 - gpio.get(OUTSIDE_PIR_GPIO_NUM) # 0 -> motion, 1 -> no motion
-                        state_inside = 1 - gpio.get(INSIDE_PIR_GPIO_NUM)   # 0 -> motion, 1 -> no motion
+                        # Hysteresis for PIR readings, based on the thresholds defined in CONFIG
+                        # NOTE: The hysteresis applies only to the 'motion' state. A single 'no motion' reading will reset the count.
+                        outside_reading = 1 - gpio.get(OUTSIDE_PIR_GPIO_NUM) # 0 -> motion, 1 -> no motion
+                        inside_reading = 1 - gpio.get(INSIDE_PIR_GPIO_NUM)   # 0 -> motion, 1 -> no motion
+                        
+                        if outside_reading == 1:
+                            self.outside_motion_count += 1
+                        else:
+                            self.outside_motion_count = 0
+                            state_outside = 0
+                        
+                        if inside_reading == 1:
+                            self.inside_motion_count += 1
+                        else:
+                            self.inside_motion_count = 0
+                            state_inside = 0
+                        
+                        if self.outside_motion_count >= (CONFIG['PIR_OUTSIDE_THRESHOLD'] / PIR_READ_INTERVAL):
+                            state_outside = 1
+                        
+                        if self.inside_motion_count >= (CONFIG['PIR_INSIDE_THRESHOLD'] / PIR_READ_INTERVAL):
+                            state_inside = 1
                     except:
                         # Ignore errors. Error logging is done in gpio.get()
                         pass
@@ -95,7 +119,7 @@ class Pir:
             except Exception as e:
                 logging.error(f"[PIR] Error reading PIR states: {e}")
 
-            tm.sleep(0.2)
+            tm.sleep(PIR_READ_INTERVAL)
 
         logging.info("[PIR] Stopped PIR monitoring thread.")
         sigterm_monitor.signal_task_done()

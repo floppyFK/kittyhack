@@ -12,7 +12,7 @@ from src.helper import CONFIG, sigterm_monitor
 
 TAG_TIMEOUT = 30.0               # after 30 seconds, a detected tag is considered invalid
 RFID_READER_OFF_DELAY = 15.0     # Turn the RFID reader off 15 seconds after the last detected motion outside
-OPEN_OUTSIDE_TIMEOUT = 5.0       # Keep the magnet to the outside open for 5 seconds after the last motion on the inside
+OPEN_OUTSIDE_TIMEOUT = 6.0 + CONFIG['PIR_INSIDE_THRESHOLD'] # Keep the magnet to the outside open for 6 + PIR_INSIDE_THRESHOLD seconds after the last motion on the inside
 
 # Initialize TfLite
 tflite = TfLite(modeldir = "/root/AIContainer/app/",

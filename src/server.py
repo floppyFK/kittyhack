@@ -16,6 +16,7 @@ from src.helper import *
 from src.database import *
 from src.system import *
 from src.backend import *
+from src.magnets import Magnets
 
 # LOGFILE SETUP
 # Convert the log level string from the configuration to the corresponding logging level constant

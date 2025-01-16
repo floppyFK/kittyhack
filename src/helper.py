@@ -56,7 +56,9 @@ DEFAULT_CONFIG = {
         "periodic_version_check": True,
         "kittyflap_db_nagscreen": False,
         "last_db_backup_date": "",
-        "kittyhack_database_backup_path": "../kittyhack_backup.db"
+        "kittyhack_database_backup_path": "../kittyhack_backup.db",
+        "pir_outside_threshold": 0.5,
+        "pir_inside_threshold": 3.0,
     }
 }
 
@@ -169,7 +171,9 @@ def load_config():
         "KITTYFLAP_DB_NAGSCREEN": parser.getboolean('Settings', 'kittyflap_db_nagscreen', fallback=DEFAULT_CONFIG['Settings']['kittyflap_db_nagscreen']),
         "LATEST_VERSION": "unknown", # This value will not be written to the config file
         "LAST_DB_BACKUP_DATE": parser.get('Settings', 'last_db_backup_date', fallback=DEFAULT_CONFIG['Settings']['last_db_backup_date']),
-        "KITTYHACK_DATABASE_BACKUP_PATH": parser.get('Settings', 'kittyhack_database_backup_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_backup_path'])
+        "KITTYHACK_DATABASE_BACKUP_PATH": parser.get('Settings', 'kittyhack_database_backup_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_backup_path']),
+        "PIR_OUTSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_outside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_outside_threshold']),
+        "PIR_INSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_inside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_inside_threshold']),
     }
 
 def save_config():
@@ -207,6 +211,8 @@ def save_config():
     settings['kittyflap_db_nagscreen'] = CONFIG['KITTYFLAP_DB_NAGSCREEN']
     settings['last_db_backup_date'] = CONFIG['LAST_DB_BACKUP_DATE']
     settings['kittyhack_database_backup_path'] = CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']
+    settings['pir_outside_threshold'] = CONFIG['PIR_OUTSIDE_THRESHOLD']
+    settings['pir_inside_threshold'] = CONFIG['PIR_INSIDE_THRESHOLD']
 
     # Write updated configuration back to the file
     try:

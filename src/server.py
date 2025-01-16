@@ -482,7 +482,6 @@ def server(input, output, session):
                 ui.br(),
             )
         
-    # TODO: Add a reactive.Effect for deleting the selected images
     @reactive.Effect
     @reactive.event(input.delete_selected_photos)
     def delete_selected_photos():
@@ -789,6 +788,12 @@ def server(input, output, session):
             ui.br(),
             ui.column(12, ui.input_switch("btnAllowedToExit", _("Allow cats to exit"), CONFIG['ALLOWED_TO_EXIT'])),
             ui.column(12, ui.help_text(_("If this is set to 'No', the direction to the outside remains closed. Useful for e.g. new year's eve or an upcoming vet visit."))),
+            ui.br(),
+            # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
+            #ui.column(12, ui.input_slider("sldPirOutsideThreshold", _("Sensitivity of the motion sensor on the outside"), min=0.1, max=6, step=0.1, value=CONFIG['PIR_OUTSIDE_THRESHOLD'])),
+            ui.column(12, ui.input_slider("sldPirInsideThreshold", _("Reaction speed (in s) of the motion sensor on the inside"), min=0.1, max=6, step=0.1, value=CONFIG['PIR_INSIDE_THRESHOLD'])),
+            ui.column(12, ui.help_text(_("A low value means a fast reaction, but also a higher probability of false alarms. A high value means a slow reaction, but also a lower probability of false alarms."))),
+            ui.column(12, ui.help_text(_("NOTE: The motion sensor on the outside is not yet configurable. This will be implemented soon."))),
             ui.hr(),
 
             ui.column(12, ui.h5(_("Live view settings"))),
@@ -858,6 +863,9 @@ def server(input, output, session):
         CONFIG['ALLOWED_TO_EXIT'] = input.btnAllowedToExit()
         CONFIG['PERIODIC_VERSION_CHECK'] = input.btnPeriodicVersionCheck()
         #CONFIG['KITTYFLAP_DB_NAGSCREEN'] = input.btnShowKittyflapDbNagscreen()
+        # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
+        #CONFIG['PIR_OUTSIDE_THRESHOLD'] = 10-int(input.sldPirOutsideThreshold())
+        CONFIG['PIR_INSIDE_THRESHOLD'] = float(input.sldPirInsideThreshold())
 
         loglevel = logging._nameToLevel.get(input.txtLoglevel(), logging.INFO)
         logger.setLevel(loglevel)

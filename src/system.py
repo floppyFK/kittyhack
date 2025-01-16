@@ -11,7 +11,7 @@ def systemctl(mode: str, service: str, simulate_operations=False):
     Start, stop or restart a service using systemctl.
 
     Parameters:
-    - mode: start, stop, restart
+    - mode: start, stop, restart, disable, enable, mask
     - service: The name of the service, e.g. 'kwork'
 
     Returns:
@@ -35,6 +35,66 @@ def systemctl(mode: str, service: str, simulate_operations=False):
             return False
     
     return True
+
+def is_service_running(service: str, simulate_operations=False):
+    """
+    Check if a service is running.
+
+    Parameters:
+    - service: The name of the service, e.g. 'kwork'
+
+    Returns:
+    - True, if the service is running
+    - False, if the service is not running
+    """
+    if simulate_operations == True:
+        logging.info(f"kittyhack is in development mode. Skip 'is_service_running {service}'.")
+        return True
+    
+    try:
+        result = subprocess.run(
+            ["/usr/bin/systemctl", "is-active", service],
+            check=True,
+            text=True,
+            capture_output=True
+        )
+        logging.info(f"service {service} is active. {result.stdout}")
+        return True
+    except subprocess.CalledProcessError as e:
+        logging.info(f"service {service} is not active. {e.stderr}")
+        return False
+    
+def is_service_masked(service: str, simulate_operations=False):
+    """
+    Check if a service is masked.
+
+    Parameters:
+    - service: The name of the service, e.g. 'kwork'
+
+    Returns:
+    - True, if the service is masked
+    - False, if the service is not masked
+    """
+    if simulate_operations:
+        logging.info(f"kittyhack is in development mode. Skip 'is_service_running {service}'.")
+        return True
+
+    try:
+        # Run the `systemctl is-enabled` command
+        result = subprocess.run(
+            ["/usr/bin/systemctl", "is-enabled", service],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        # Check the output for "masked"
+        if result.returncode != 0 or "masked" in result.stdout:
+            return True
+        return False
+    except Exception as e:
+        logging.error(f"Failed to check if service {service} is masked: {e}")
+        return False
 
 def systemcmd(command: list[str], simulate_operations=False):
     """

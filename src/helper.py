@@ -13,6 +13,7 @@ import threading
 import requests
 import shlex
 import cv2
+from src.system import *
 
 
 ###### CONSTANT DEFINITIONS ######
@@ -469,3 +470,44 @@ def resize_image_to_square(img: cv2.typing.MatLike, size: int = 800, quality: in
             return img_blob.tobytes()
     except:
         return None
+    
+def check_and_stop_kittyflap_services(simulate_operations=False):
+    """
+    Validates if the Kittyflap services 'kwork' and 'manager' are running and stops them if necessary.
+    """
+    if is_service_running("kwork", simulate_operations):
+        logging.warning("The kwork service is running! We will stop it now.")
+        try:
+            systemctl("stop", "kwork", simulate_operations)
+            systemctl("disable", "kwork", simulate_operations)
+        except Exception as e:
+            logging.error(f"Failed to stop the kwork service: {e}")
+    if is_service_running("manager", simulate_operations):
+        logging.warning("The manager service is running! We will stop it now.")
+        try:
+            systemctl("stop", "manager", simulate_operations)
+            systemctl("disable", "manager", simulate_operations)
+        except Exception as e:
+            logging.error(f"Failed to stop the manager service: {e}")
+    if not is_service_masked("manager", simulate_operations):
+        logging.warning("The manager service is not masked! We will mask it now.")
+        try:
+            systemctl("mask", "manager", simulate_operations)
+        except Exception as e:
+            logging.error(f"Failed to mask the manager service: {e}")
+
+    # Additional steps to rename executables if they exist
+    kwork_path = "/root/kittyflap_versions/latest/main"
+    manager_path = "/root/manager"
+    
+    if os.path.isfile(kwork_path):
+        os.rename(kwork_path, kwork_path + "_disabled")
+        logging.info("Kwork executable renamed to main_disabled.")
+    else:
+        logging.info("Kwork executable not found. Skipping.")
+    
+    if os.path.isfile(manager_path):
+        os.rename(manager_path, manager_path + "_disabled")
+        logging.info("Manager executable renamed to manager_disabled.")
+    else:
+        logging.info("Manager executable not found. Skipping.")

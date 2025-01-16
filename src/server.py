@@ -52,10 +52,15 @@ set_language(CONFIG['LANGUAGE'])
 
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
 
+logging.info(f"Current version: {get_git_version()}")
+
 # Log all configuration values from CONFIG dictionary
 logging.info("Configuration values:")
 for key, value in CONFIG.items():
     logging.info(f"{key}={value}")
+
+# IMPORTANT: First of all check that the kwork and manager services are NOT running
+check_and_stop_kittyflap_services(CONFIG['SIMULATE_KITTYFLAP'])
 
 # Cleanup old temp files
 if os.path.exists("/tmp/kittyhack.db"):
@@ -144,6 +149,9 @@ def start_background_task():
     def run_periodically():
         while not sigterm_monitor.stop_now:
             global free_disk_space
+
+            # Periodically check that the kwork and manager services are NOT running anymore
+            check_and_stop_kittyflap_services(CONFIG['SIMULATE_KITTYFLAP'])
             
             immediate_bg_task("background task")
 

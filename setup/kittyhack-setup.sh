@@ -211,8 +211,8 @@ install_full() {
 
     # Now rename the manager executable file just to be sure
     if [ -f /root/manager ]; then
-        mv /root/manager /root/manager_go_fck_yourself
-        echo -e "${GREEN}Manager executable renamed to manager_go_fck_yourself.${NC}"
+        mv /root/manager /root/manager_disabled
+        echo -e "${GREEN}Manager executable renamed to manager_disabled.${NC}"
     else
         echo -e "${GREY}Manager executable not found. Skipping.${NC}"
     fi

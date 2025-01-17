@@ -228,7 +228,6 @@ class Magnets:
         """
         Checks for remaining commands in the command queue and empties it to return magnets to idle state as soon as possible.
         """
-        self.command_queue.shutdown(true)
         
         if not self.command_queue.empty():
             with self.command_queue.mutex:
@@ -252,4 +251,3 @@ class Magnets:
             
         if not shutdown == True:
             self.command_queue = Queue()
-

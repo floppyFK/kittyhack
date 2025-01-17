@@ -564,8 +564,8 @@ def server(input, output, session):
         ui.notification_show(_("Kittyflap is opening now..."), duration=60, type="message")
 
         logging.info(f"[SERVER] Manual override from Live View - letting Kitty in now")
-        Magnets.empty_queue()
-        Magnets.queue_command("unlock_inside")
+        Magnets.instance.empty_queue()
+        Magnets.instance.queue_command("unlock_inside")
 
     @output
     @render.ui

@@ -40,11 +40,15 @@ class MagnetController:
         self._magnet_state_inside = state
 
 class Magnets:
+    instance = None
+    
     def __init__(self, simulate_kittyflap=False):
         self.magnet_controller = MagnetController()
         self.simulate_kittyflap = simulate_kittyflap
 
     def init(self):
+        Magnets.instance = self
+
         if self.simulate_kittyflap:
             logging.info("[MAGNETS] Simulation mode enabled. Magnets would be now initialized.")
         else:

@@ -17,10 +17,11 @@ from src.helper import CONFIG, sigterm_monitor
 
 class VideoStream:
     """Camera object that controls video streaming from the Picamera"""
-    def __init__(self, resolution=(640, 480), framerate=15, jpeg_quality=75):
+    def __init__(self, resolution=(640, 480), framerate=15, jpeg_quality=75, tuning_file="/usr/share/libcamera/ipa/rpi/vc4/ov5647_noir.json"):
         self.resolution = resolution
         self.framerate = framerate
         self.jpeg_quality = jpeg_quality
+        self.tuning_file = tuning_file  # Path to the tuning file
         self.stopped = False
         self.frame = None
         self.process = None
@@ -32,10 +33,18 @@ class VideoStream:
         return self
 
     def update(self):
-        command = f"/usr/bin/libcamera-vid -t 0 --inline --width {self.resolution[0]} --height {self.resolution[1]} --framerate {self.framerate} --codec mjpeg --quality {self.jpeg_quality} -o -"
+        # Include the tuning file in the command if specified
+        tuning_option = f"--tuning-file {self.tuning_file}" if self.tuning_file else ""
+        command = (
+            f"/usr/bin/libcamera-vid -t 0 --inline --width {self.resolution[0]} "
+            f"--height {self.resolution[1]} --framerate {self.framerate} "
+            f"--codec mjpeg --quality {self.jpeg_quality} {tuning_option} -o -"
+        )
         logging.info(f"[CAMERA] Running command: {command}")
 
-        self.process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=4096*10000)
+        self.process = subprocess.Popen(
+            shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=4096 * 10000
+        )
         logging.info(f"[CAMERA] Subprocess started: {self.process.pid}")
         buffer = b""
         while not self.stopped:

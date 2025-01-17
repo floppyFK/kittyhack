@@ -13,6 +13,7 @@ import threading
 import requests
 import shlex
 import cv2
+from src.system import *
 
 
 ###### CONSTANT DEFINITIONS ######
@@ -56,7 +57,9 @@ DEFAULT_CONFIG = {
         "periodic_version_check": True,
         "kittyflap_db_nagscreen": False,
         "last_db_backup_date": "",
-        "kittyhack_database_backup_path": "../kittyhack_backup.db"
+        "kittyhack_database_backup_path": "../kittyhack_backup.db",
+        "pir_outside_threshold": 0.5,
+        "pir_inside_threshold": 3.0,
     }
 }
 
@@ -169,7 +172,9 @@ def load_config():
         "KITTYFLAP_DB_NAGSCREEN": parser.getboolean('Settings', 'kittyflap_db_nagscreen', fallback=DEFAULT_CONFIG['Settings']['kittyflap_db_nagscreen']),
         "LATEST_VERSION": "unknown", # This value will not be written to the config file
         "LAST_DB_BACKUP_DATE": parser.get('Settings', 'last_db_backup_date', fallback=DEFAULT_CONFIG['Settings']['last_db_backup_date']),
-        "KITTYHACK_DATABASE_BACKUP_PATH": parser.get('Settings', 'kittyhack_database_backup_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_backup_path'])
+        "KITTYHACK_DATABASE_BACKUP_PATH": parser.get('Settings', 'kittyhack_database_backup_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_backup_path']),
+        "PIR_OUTSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_outside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_outside_threshold']),
+        "PIR_INSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_inside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_inside_threshold']),
     }
 
 def save_config():
@@ -207,6 +212,8 @@ def save_config():
     settings['kittyflap_db_nagscreen'] = CONFIG['KITTYFLAP_DB_NAGSCREEN']
     settings['last_db_backup_date'] = CONFIG['LAST_DB_BACKUP_DATE']
     settings['kittyhack_database_backup_path'] = CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']
+    settings['pir_outside_threshold'] = CONFIG['PIR_OUTSIDE_THRESHOLD']
+    settings['pir_inside_threshold'] = CONFIG['PIR_INSIDE_THRESHOLD']
 
     # Write updated configuration back to the file
     try:
@@ -463,3 +470,44 @@ def resize_image_to_square(img: cv2.typing.MatLike, size: int = 800, quality: in
             return img_blob.tobytes()
     except:
         return None
+    
+def check_and_stop_kittyflap_services(simulate_operations=False):
+    """
+    Validates if the Kittyflap services 'kwork' and 'manager' are running and stops them if necessary.
+    """
+    if is_service_running("kwork", simulate_operations):
+        logging.warning("The kwork service is running! We will stop it now.")
+        try:
+            systemctl("stop", "kwork", simulate_operations)
+            systemctl("disable", "kwork", simulate_operations)
+        except Exception as e:
+            logging.error(f"Failed to stop the kwork service: {e}")
+    if is_service_running("manager", simulate_operations):
+        logging.warning("The manager service is running! We will stop it now.")
+        try:
+            systemctl("stop", "manager", simulate_operations)
+            systemctl("disable", "manager", simulate_operations)
+        except Exception as e:
+            logging.error(f"Failed to stop the manager service: {e}")
+    if not is_service_masked("manager", simulate_operations):
+        logging.warning("The manager service is not masked! We will mask it now.")
+        try:
+            systemctl("mask", "manager", simulate_operations)
+        except Exception as e:
+            logging.error(f"Failed to mask the manager service: {e}")
+
+    # Additional steps to rename executables if they exist
+    kwork_path = "/root/kittyflap_versions/latest/main"
+    manager_path = "/root/manager"
+    
+    if os.path.isfile(kwork_path):
+        os.rename(kwork_path, kwork_path + "_disabled")
+        logging.info("Kwork executable renamed to main_disabled.")
+    else:
+        logging.info("Kwork executable not found. Skipping.")
+    
+    if os.path.isfile(manager_path):
+        os.rename(manager_path, manager_path + "_disabled")
+        logging.info("Manager executable renamed to manager_disabled.")
+    else:
+        logging.info("Manager executable not found. Skipping.")

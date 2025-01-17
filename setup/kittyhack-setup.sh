@@ -77,6 +77,28 @@ disable_service() {
     fi
 }
 
+mask_service() {
+    local SERVICE="$1"
+    if is_service_active "$SERVICE"; then
+        echo -e "${GREY}Stopping and masking ${SERVICE} service...${NC}"
+        systemctl stop "$SERVICE"
+        systemctl disable "$SERVICE"
+        systemctl mask "$SERVICE"
+        systemctl daemon-reload
+        
+        if is_service_active "$SERVICE"; then
+            ((FAIL_COUNT++))
+            echo -e "${RED}Failed to mask ${SERVICE} service.${NC}"
+            echo -e "${RED}WARNING: This would lead to an interference with the KittyHack service!${NC}"
+        fi
+        echo -e "${GREEN}${SERVICE} service masked.${NC}"
+    else
+        echo -e "${GREY}${SERVICE} service is already masked or inactive.${NC}"
+        # FIXME: Just to be sure, we should mask the service even if it is not active
+        systemctl mask "$SERVICE"
+    fi
+}
+
 # Function to enable and start services
 enable_service() {
     local SERVICE="$1"
@@ -183,9 +205,25 @@ install_full() {
     fi
 
     echo -e "${CYAN}--- BASE INSTALL Step 2: Disable unwanted services ---${NC}"
-    disable_service "remote-iot"
-    disable_service "manager"
+    mask_service "remote-iot"
+    mask_service "manager"
     disable_service "kwork"
+
+    # Now rename the manager executable file just to be sure
+    if [ -f /root/manager ]; then
+        mv /root/manager /root/manager_disabled
+        echo -e "${GREEN}Manager executable renamed to manager_disabled.${NC}"
+    else
+        echo -e "${GREY}Manager executable not found. Skipping.${NC}"
+    fi
+
+    # Rename also the kwork executable
+    if [ -f /root/kittyflap_versions/latest/main ]; then
+        mv /root/kittyflap_versions/latest/main /root/kittyflap_versions/latest/main_disabled
+        echo -e "${GREEN}Kwork executable renamed to main_disabled.${NC}"
+    else
+        echo -e "${GREY}Kwork executable not found. Skipping.${NC}"
+    fi
 
     echo -e "${CYAN}--- BASE INSTALL Step 3: Release the magnets, if they are active ---${NC}"
     # Export GPIOs
@@ -448,7 +486,16 @@ install_kittyhack() {
 
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 3: Start kwork process ---${NC}"
     if [ $INSTALL_LEGACY_KITTYHACK -eq 1 ]; then
+        # Installation of kittyhack v1.1.1 - we need to start the kwork service
         write_kwork_service
+        
+        # Rename the kwork executable if it was renamed to main_disabled
+        if [ -f /root/kittyflap_versions/latest/main_disabled ]; then
+            rm /root/kittyflap_versions/latest/main
+            mv /root/kittyflap_versions/latest/main_disabled /root/kittyflap_versions/latest/main
+            echo -e "${GREEN}Kwork executable renamed back to main.${NC}"
+        fi
+
         enable_service "kwork"
         # check if kwork is running
         if is_service_active "kwork"; then
@@ -484,6 +531,7 @@ install_kittyhack() {
     journalctl -n 1000 -u kittyhack > "${LOGPATH}/journal_kittyhack.log"
     cp /root/kittyhack/kittyhack.log "${LOGPATH}/kittyhack.log"
     dpkg-query -W > "${LOGPATH}/installed_packages_after_kittyhack_setup.log"
+    systemctl list-units --type=service --all > "${LOGPATH}/systemd-services_after_kittyhack_setup.log"
 }
 
 reinstall_camera_drivers() {

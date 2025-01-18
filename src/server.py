@@ -16,6 +16,7 @@ from src.helper import *
 from src.database import *
 from src.system import *
 from src.backend import *
+from src.magnets import Magnets
 
 # LOGFILE SETUP
 # Convert the log level string from the configuration to the corresponding logging level constant
@@ -544,8 +545,27 @@ def server(input, output, session):
                 ui.HTML(img_html),
                 full_screen=False,
                 class_="image-container"
-            )
+            ),
+            ui.br(),
+            ui.br(),
+            ui.br(),
+            ui.panel_absolute(
+                ui.panel_well(
+                    ui.input_action_button(id="bLetKittyIn", label=_("Open KittyFlap now"), icon=icon_svg("unlock")),
+                    style_="background: rgba(240, 240, 240, 0.9); text-align: center;"
+                ),
+                draggable=False, width="100%", left="0px", right="0px", bottom="0px", fixed=True,
+            ),
         )
+    
+    @reactive.Effect
+    @reactive.event(input.bLetKittyIn)
+    def on_action_let_kitty_in():
+        ui.notification_show(_("Kittyflap is opening now..."), duration=60, type="message")
+
+        logging.info(f"[SERVER] Manual override from Live View - letting Kitty in now")
+        Magnets.instance.empty_queue()
+        Magnets.instance.queue_command("unlock_inside")
 
     @output
     @render.ui

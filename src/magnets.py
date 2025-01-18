@@ -40,11 +40,15 @@ class MagnetController:
         self._magnet_state_inside = state
 
 class Magnets:
+    instance = None
+    
     def __init__(self, simulate_kittyflap=False):
         self.magnet_controller = MagnetController()
         self.simulate_kittyflap = simulate_kittyflap
 
     def init(self):
+        Magnets.instance = self
+
         if self.simulate_kittyflap:
             logging.info("[MAGNETS] Simulation mode enabled. Magnets would be now initialized.")
         else:
@@ -184,19 +188,8 @@ class Magnets:
             tm.sleep(0.05)
 
         # Lock the outside and inside direction if the thread is stopped
-        if self.get_outside_state() == True:
-            magnet_delay = MAGNET_COMMAND_DELAY - (tm.time() - last_command_time)
-            if magnet_delay > 0:
-                logging.info(f"[MAGNETS] Shutdown detected! Waiting {magnet_delay:.1f} seconds before finally locking outside direction.")
-                tm.sleep(magnet_delay)
-            self._lock_outside()
-            last_command_time = tm.time()
-        if self.get_inside_state() == True:
-            magnet_delay = MAGNET_COMMAND_DELAY - (tm.time() - last_command_time)
-            if magnet_delay > 0:
-                logging.info(f"[MAGNETS] Shutdown detected! Waiting {magnet_delay:.1f} seconds before finally locking inside direction.")
-                tm.sleep(magnet_delay)
-            self._lock_inside()
+        logging.info(f"[MAGNETS] Shutdown detected! Emptying queue now.")
+        empty_queue(True)
 
         logging.info("[MAGNETS] Stopped magnet command queue thread.")
         sigterm_monitor.signal_task_done()
@@ -231,3 +224,30 @@ class Magnets:
         """
         return command in list(self.command_queue.queue)
 
+    def empty_queue(self, shutdown = False):
+        """
+        Checks for remaining commands in the command queue and empties it to return magnets to idle state as soon as possible.
+        """
+        
+        if not self.command_queue.empty():
+            with self.command_queue.mutex:
+                self.command_queue.clear()
+                self.command_queue.all_tasks_done.notify_all()
+                self.command_queue.unfinished_tasks = 0
+        
+        if self.get_outside_state() == True:
+            magnet_delay = MAGNET_COMMAND_DELAY - (tm.time() - last_command_time)
+            if magnet_delay > 0:
+                logging.info(f"[MAGNETS] Shutdown detected! Waiting {magnet_delay:.1f} seconds before finally locking outside direction.")
+                tm.sleep(magnet_delay)
+            self._lock_outside()
+            last_command_time = tm.time()
+        if self.get_inside_state() == True:
+            magnet_delay = MAGNET_COMMAND_DELAY - (tm.time() - last_command_time)
+            if magnet_delay > 0:
+                logging.info(f"[MAGNETS] Shutdown detected! Waiting {magnet_delay:.1f} seconds before finally locking inside direction.")
+                tm.sleep(magnet_delay)
+            self._lock_inside()
+            
+        if not shutdown == True:
+            self.command_queue = Queue()

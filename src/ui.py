@@ -11,7 +11,8 @@ app_ui = ui.page_fillable(
     ui.navset_bar(
         ui.nav_panel(
             _("Live view"),
-            ui.output_ui("ui_live_view")
+            ui.output_ui("ui_live_view"),
+            ui.output_ui("ui_live_view_footer"),
         ),
         ui.nav_panel(
             _("Pictures"),

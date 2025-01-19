@@ -223,6 +223,7 @@ frame_count = 0
 def server(input, output, session):
 
     reactive_frame_count = reactive.value(0)
+    reactive_lock_state = reactive.value(0)
 
     # Create reactive triggers
     reload_trigger_photos = reactive.Value(0)
@@ -255,6 +256,28 @@ def server(input, output, session):
         reactive.invalidate_later(CONFIG['LIVE_VIEW_REFRESH_INTERVAL'])
         frame_count = (frame_count + 1) % 1000000 # reset the frame count after 1000000
         reactive_frame_count.set(frame_count)
+
+    @render.text
+    def update_lock_state():
+        reactive.invalidate_later(0.1)
+        try:
+            inside_lock_state = Magnets.instance.get_inside_state()
+            outside_lock_state = Magnets.instance.get_outside_state()
+
+            outside_pir_state, inside_pir_state = Pir.instance.get_states()
+
+            if inside_lock_state:
+                ui.update_action_button("bManualOverride", label=_("Close inside now"), icon=icon_svg("lock"), disabled=False)
+            else:
+                ui.update_action_button("bManualOverride", label=_("Open inside now"), icon=icon_svg("lock-open"), disabled=False)
+
+            inside_lock_icon = icon_svg('lock-open') if inside_lock_state else icon_svg('lock')
+            outside_lock_icon = icon_svg('lock-open') if outside_lock_state else icon_svg('lock')
+            outside_pir_state_icon = "🟢" if outside_pir_state else "⚫"
+            inside_pir_state_icon = "🟢" if inside_pir_state else "⚫"
+            return ui.HTML(_("<b>Locks:</b> Inside {} | Outside {}<br><b>Motion:</b> Inside {} | Outside {}").format(inside_lock_icon, outside_lock_icon, inside_pir_state_icon, outside_pir_state_icon))
+        except:
+            return ui.markdown("Failed to fetch the current status of the locks.")
 
     @reactive.Effect
     def immediate_bg_task_site_load():
@@ -540,32 +563,38 @@ def server(input, output, session):
                 ui.card_header(
                     ui.div(
                         ui.HTML(f"{datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S')}"),
+                        ui.br(),
+                        ui.br(),
+                        ui.output_ui("update_lock_state"),
                     )
                 ),
                 ui.HTML(img_html),
                 full_screen=False,
                 class_="image-container"
             ),
-            ui.br(),
-            ui.br(),
-            ui.br(),
-            ui.panel_absolute(
-                ui.panel_well(
-                    ui.input_action_button(id="bLetKittyIn", label=_("Open KittyFlap now"), icon=icon_svg("unlock")),
-                    style_="background: rgba(240, 240, 240, 0.9); text-align: center;"
-                ),
-                draggable=False, width="100%", left="0px", right="0px", bottom="0px", fixed=True,
-            ),
         )
     
+    @output
+    @render.ui
+    def ui_live_view_footer():
+        return ui.div(
+            ui.card(
+                ui.input_action_button(id="bManualOverride", label=_("Manual unlock not yet initialized..."), icon=icon_svg("unlock"), disabled=True),
+                class_="image-container",
+                style_="margin-top: 0px;"
+            ),
+        ),
+    
     @reactive.Effect
-    @reactive.event(input.bLetKittyIn)
+    @reactive.event(input.bManualOverride)
     def on_action_let_kitty_in():
-        ui.notification_show(_("Kittyflap is opening now..."), duration=60, type="message")
-
-        logging.info(f"[SERVER] Manual override from Live View - letting Kitty in now")
-        Magnets.instance.empty_queue()
-        Magnets.instance.queue_command("unlock_inside")
+        inside_state = Magnets.instance.get_inside_state()
+        if inside_state == False:
+            logging.info(f"[SERVER] Manual override from Live View - letting Kitty in now")
+            manual_door_override['unlock_inside'] = True
+        else:
+            logging.info(f"[SERVER] Manual override from Live View - close inside now")
+            manual_door_override['lock_inside'] = True
 
     @output
     @render.ui

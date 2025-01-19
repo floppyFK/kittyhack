@@ -13,6 +13,7 @@ from src.helper import CONFIG, sigterm_monitor
 TAG_TIMEOUT = 30.0               # after 30 seconds, a detected tag is considered invalid
 RFID_READER_OFF_DELAY = 15.0     # Turn the RFID reader off 15 seconds after the last detected motion outside
 OPEN_OUTSIDE_TIMEOUT = 6.0 + CONFIG['PIR_INSIDE_THRESHOLD'] # Keep the magnet to the outside open for 6 + PIR_INSIDE_THRESHOLD seconds after the last motion on the inside
+MAX_UNLOCK_TIME = 45.0           # Maximum time the door is allowed to stay open
 
 # Initialize TfLite
 tflite = TfLite(modeldir = "/root/AIContainer/app/",
@@ -23,7 +24,13 @@ tflite = TfLite(modeldir = "/root/AIContainer/app/",
                 jpeg_quality = 75,
                 simulate_kittyflap = CONFIG['SIMULATE_KITTYFLAP'])
 
+# Global variable for manual door control
+manual_door_override = {'unlock_inside': False, 'unlock_outside': False, 'lock_inside': False, 'lock_outside': False}
+
 def backend_main(simulate_kittyflap = False):
+    # FIXME: We need to ensure, that the maximum time the door is allowed to stay open is not exceeded
+
+    global manual_door_override
 
     tag_id = None
     tag_id_valid = False
@@ -38,6 +45,9 @@ def backend_main(simulate_kittyflap = False):
     ids_with_mouse = []
     ids_of_current_motion_block = []
     known_rfid_tags = []
+    unlock_inside_tm = 0.0
+    unlock_outside_tm = 0.0
+    inside_manually_unlocked = False
 
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
@@ -109,7 +119,7 @@ def backend_main(simulate_kittyflap = False):
                 tm.sleep(0.5)  # Wait for the last image to be processed
             last_motion_outside_tm = tm.time()
             logging.info(f"[BACKEND] Motion stopped OUTSIDE (Block ID: '{motion_block_id}')")
-            if (magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False):
+            if (magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and inside_manually_unlocked == False):
                 magnets.queue_command("lock_inside")
 
             # Update the motion_block_id and the tag_id for for all elements between first_motion_outside_tm and last_motion_outside_tm
@@ -126,7 +136,7 @@ def backend_main(simulate_kittyflap = False):
                 db_thread.start()
 
         # Just double check that the inside magnet is released ( == inside locked) if no motion is detected outside
-        if (motion_outside == 0 and magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False):
+        if (motion_outside == 0 and magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME)):
                 magnets.queue_command("lock_inside")
                 
         
@@ -150,6 +160,7 @@ def backend_main(simulate_kittyflap = False):
                     logging.info("[BACKEND] Allow cats to exit.")
                     if magnets.check_queued("unlock_outside") == False:
                         magnets.queue_command("unlock_outside")
+                        unlock_outside_tm = tm.time()
             else:
                 logging.info("[BACKEND] No cats are allowed to exit. YOU SHALL NOT PASS!")
 
@@ -217,11 +228,46 @@ def backend_main(simulate_kittyflap = False):
         unlock_inside &= (magnets.get_outside_state() == False)
         unlock_inside &= (magnets.check_queued("unlock_inside") == False)
 
-        if unlock_inside:
-            logging.info(f"[BACKEND] All checks are passed. Unlock the inside")
+        if unlock_inside or manual_door_override['unlock_inside']:
+            logging.info(f"[BACKEND] Door unlock requested {'(manual override)' if manual_door_override['unlock_inside'] else ''}")
             logging.debug(f"[BACKEND] Motion outside: {motion_outside}, Motion inside: {motion_inside}, Tag ID: {tag_id}, Tag valid: {tag_id_valid}, Motion block ID: {motion_block_id}, Images with mouse: {len(ids_with_mouse)}, Images in current block: {len(ids_of_current_motion_block)} ({ids_of_current_motion_block})")
-            magnets.queue_command("unlock_inside")
+            if manual_door_override['unlock_inside'] and magnets.get_inside_state():
+                logging.info("[BACKEND] Manual override: Inside door is already open.")
+            else:
+                magnets.empty_queue()
+                magnets.queue_command("unlock_inside")
+                unlock_inside_tm = tm.time()
+                inside_manually_unlocked = True if manual_door_override['unlock_inside'] else False
             
+            manual_door_override['unlock_inside'] = False
+
+        if manual_door_override['unlock_inside']:
+            if magnets.get_outside_state():
+                logging.info("[BACKEND] Manual override: Outside door is already open.")
+            else:
+                logging.info("[BACKEND] Manual override: Opening outside door")
+                magnets.empty_queue()
+                magnets.queue_command("unlock_outside")
+                unlock_outside_tm = tm.time()
+            
+            manual_door_override['unlock_inside'] = False
+
+        if manual_door_override['lock_inside']:
+            if magnets.get_inside_state():
+                logging.info("[BACKEND] Manual override: Locking inside door")
+                magnets.empty_queue()
+            else:
+                logging.info("[BACKEND] Manual override: Inside door is already locked.")
+            manual_door_override['lock_inside'] = False
+            
+        # Check if maximum unlock time is exceeded
+        if magnets.get_inside_state() and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME):
+            logging.warning("[BACKEND] Maximum unlock time exceeded for inside door. Forcing lock.")
+            magnets.queue_command("lock_inside")
+            
+        if magnets.get_outside_state() and (tm.time() - unlock_outside_tm > MAX_UNLOCK_TIME):
+            logging.warning("[BACKEND] Maximum unlock time exceeded for outside door. Forcing lock.")
+            magnets.queue_command("lock_outside")
 
     logging.info("[BACKEND] Stopped backend.")
     sigterm_monitor.signal_task_done()

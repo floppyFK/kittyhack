@@ -16,7 +16,7 @@ OPEN_OUTSIDE_TIMEOUT = 6.0 + CONFIG['PIR_INSIDE_THRESHOLD'] # Keep the magnet to
 MAX_UNLOCK_TIME = 45.0           # Maximum time the door is allowed to stay open
 
 # Initialize TfLite
-tflite = TfLite(modeldir = "/root/AIContainer/app/",
+tflite = TfLite(modeldir = "./tflite/",
                 graph = "cv-lite-model.tflite",
                 labelfile = "labels.txt",
                 resolution = "800x600",

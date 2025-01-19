@@ -473,41 +473,48 @@ def resize_image_to_square(img: cv2.typing.MatLike, size: int = 800, quality: in
     
 def check_and_stop_kittyflap_services(simulate_operations=False):
     """
-    Validates if the Kittyflap services 'kwork' and 'manager' are running and stops them if necessary.
+    Validates if the Kittyflap services are running and stops them if necessary.
+    Also masks services and renames executables to prevent them from running.
+    
+    Args:
+        simulate_operations (bool): If True, only simulates the operations
     """
-    if is_service_running("kwork", simulate_operations):
-        logging.warning("The kwork service is running! We will stop it now.")
-        try:
-            systemctl("stop", "kwork", simulate_operations)
-            systemctl("disable", "kwork", simulate_operations)
-        except Exception as e:
-            logging.error(f"Failed to stop the kwork service: {e}")
-    if is_service_running("manager", simulate_operations):
-        logging.warning("The manager service is running! We will stop it now.")
-        try:
-            systemctl("stop", "manager", simulate_operations)
-            systemctl("disable", "manager", simulate_operations)
-        except Exception as e:
-            logging.error(f"Failed to stop the manager service: {e}")
-    if not is_service_masked("manager", simulate_operations):
-        logging.warning("The manager service is not masked! We will mask it now.")
-        try:
-            systemctl("mask", "manager", simulate_operations)
-        except Exception as e:
-            logging.error(f"Failed to mask the manager service: {e}")
+    services_to_manage = {
+        'kwork': {'mask': False},
+        'manager': {'mask': True},
+        'setup': {'mask': True},
+        'mqtt': {'mask': True}
+    }
 
-    # Additional steps to rename executables if they exist
-    kwork_path = "/root/kittyflap_versions/latest/main"
-    manager_path = "/root/manager"
-    
-    if os.path.isfile(kwork_path):
-        os.rename(kwork_path, kwork_path + "_disabled")
-        logging.info("Kwork executable renamed to main_disabled.")
-    else:
-        logging.info("Kwork executable not found. Skipping.")
-    
-    if os.path.isfile(manager_path):
-        os.rename(manager_path, manager_path + "_disabled")
-        logging.info("Manager executable renamed to manager_disabled.")
-    else:
-        logging.info("Manager executable not found. Skipping.")
+    # Stop and mask services
+    for service_name, options in services_to_manage.items():
+        if is_service_running(service_name, simulate_operations):
+            logging.warning(f"The {service_name} service is running! Stopping it now.")
+            try:
+                systemctl("stop", service_name, simulate_operations)
+                systemctl("disable", service_name, simulate_operations)
+            except Exception as e:
+                logging.error(f"Failed to stop the {service_name} service: {e}")
+        
+        if options['mask'] and not is_service_masked(service_name, simulate_operations):
+            logging.warning(f"The {service_name} service is not masked! Masking it now.")
+            try:
+                systemctl("mask", service_name, simulate_operations)
+            except Exception as e:
+                logging.error(f"Failed to mask the {service_name} service: {e}")
+
+    # Rename executables
+    executables_to_disable = {
+        "/root/kittyflap_versions/latest/main",
+        "/root/manager"
+    }
+
+    for path in executables_to_disable:
+        if os.path.isfile(path):
+            try:
+                os.rename(path, f"{path}_disabled")
+                logging.info(f"{os.path.basename(path)} executable renamed to {path}_disabled.")
+            except Exception as e:
+                logging.error(f"Failed to rename {path}: {e}")
+        else:
+            logging.info(f"{os.path.basename(path)} executable not found. Skipping.")

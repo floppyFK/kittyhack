@@ -16,6 +16,7 @@ from src.helper import *
 from src.database import *
 from src.system import *
 from src.backend import *
+from src.magnets import Magnets
 
 # LOGFILE SETUP
 # Convert the log level string from the configuration to the corresponding logging level constant
@@ -215,13 +216,8 @@ def immediate_bg_task(trigger = "reload"):
 # Start the background task
 start_background_task()
 
-# Initialize the frame count for the live view
-frame_count = 0
-
 # The main server application
 def server(input, output, session):
-
-    reactive_frame_count = reactive.value(0)
 
     # Create reactive triggers
     reload_trigger_photos = reactive.Value(0)
@@ -245,15 +241,53 @@ def server(input, output, session):
             additional_info = ""
         ui.notification_show(_("Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{}).").format(free_disk_space, additional_info), duration=20, type="warning")
 
-    @reactive.effect
-    def framecount():
-        """
-        This effect is used to trigger an update of a ui.output every n seconds (based on CONFIG['LIVE_VIEW_REFRESH_INTERVAL']).
-        """
-        global frame_count
+    @render.text
+    def live_view_header():
+        reactive.invalidate_later(0.25)
+        try:
+            inside_lock_state = Magnets.instance.get_inside_state()
+            outside_lock_state = Magnets.instance.get_outside_state()
+
+            outside_pir_state, inside_pir_state = Pir.instance.get_states()
+
+            if inside_lock_state:
+                ui.update_action_button("bManualOverride", label=_("Close inside now"), icon=icon_svg("lock"), disabled=False)
+            else:
+                ui.update_action_button("bManualOverride", label=_("Open inside now"), icon=icon_svg("lock-open"), disabled=False)
+
+            inside_lock_icon = icon_svg('lock-open') if inside_lock_state else icon_svg('lock')
+            outside_lock_icon = icon_svg('lock-open') if outside_lock_state else icon_svg('lock')
+            outside_pir_state_icon = "🟢" if outside_pir_state else "⚫"
+            inside_pir_state_icon = "🟢" if inside_pir_state else "⚫"
+            ui_html = ui.HTML(_("<b>Locks:</b> Inside {} | Outside {}<br><b>Motion:</b> Inside {} | Outside {}").format(inside_lock_icon, outside_lock_icon, inside_pir_state_icon, outside_pir_state_icon))
+        except:
+            ui_html = ui.markdown(_("Failed to fetch the current status of the locks and motion sensors."))
+        
+        return ui.div(
+            ui.HTML(f"{datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S')}"),
+            ui.br(),
+            ui.br(),
+            ui_html
+        )
+    
+    @render.text
+    def live_view_main():
         reactive.invalidate_later(CONFIG['LIVE_VIEW_REFRESH_INTERVAL'])
-        frame_count = (frame_count + 1) % 1000000 # reset the frame count after 1000000
-        reactive_frame_count.set(frame_count)
+        try:
+            frame = tflite.get_camera_frame()
+            if frame is None:
+                img_html = '<div class="placeholder-image"><strong>' + _('Connection to the camera failed.') + '</strong></div>'
+            else:
+                frame_jpg = tflite.encode_jpg_image(frame)
+                if frame_jpg:
+                    frame_b64 = base64.b64encode(frame_jpg).decode('utf-8')
+                    img_html = f'<img src="data:image/jpeg;base64,{frame_b64}" />'
+                else:
+                    img_html = '<div class="placeholder-image"><strong>' + _('Could not read the picture from the camera.') + '</strong></div>'
+        except Exception as e:
+            logging.error(f"Failed to fetch the live view image: {e}")
+            img_html = '<div class="placeholder-image"><strong>' + _('An error occured while fetching the live view image.') + '</strong></div>'
+        return ui.HTML(img_html)
 
     @reactive.Effect
     def immediate_bg_task_site_load():
@@ -519,33 +553,39 @@ def server(input, output, session):
 
     @output
     @render.ui
-    def ui_live_view():
-        tmp = reactive_frame_count.get() # keep this to allow a periodic update of the live view
-
-        frame = tflite.get_camera_frame()
-        if frame is None:
-            img_html = '<div class="placeholder-image"><strong>' + _('Connection to the camera failed.') + '</strong></div>'
-        else:
-            frame_jpg = tflite.encode_jpg_image(frame)
-            if frame_jpg:
-                frame_b64 = base64.b64encode(frame_jpg).decode('utf-8')
-                img_html = f'<img src="data:image/jpeg;base64,{frame_b64}" />'
-            else:
-                img_html = '<div class="placeholder-image"><strong>' + _('Could not read the picture from the camera.') + '</strong></div>'
-
-        
+    def ui_live_view():        
         return ui.div(
             ui.card(
                 ui.card_header(
-                    ui.div(
-                        ui.HTML(f"{datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S')}"),
-                    )
+                    ui.output_ui("live_view_header"),
                 ),
-                ui.HTML(img_html),
+                ui.output_ui("live_view_main"),
                 full_screen=False,
                 class_="image-container"
-            )
+            ),
         )
+    
+    @output
+    @render.ui
+    def ui_live_view_footer():
+        return ui.div(
+            ui.card(
+                ui.input_action_button(id="bManualOverride", label=_("Manual unlock not yet initialized..."), icon=icon_svg("unlock"), disabled=True),
+                class_="image-container",
+                style_="margin-top: 0px;"
+            ),
+        ),
+    
+    @reactive.Effect
+    @reactive.event(input.bManualOverride)
+    def on_action_let_kitty_in():
+        inside_state = Magnets.instance.get_inside_state()
+        if inside_state == False:
+            logging.info(f"[SERVER] Manual override from Live View - letting Kitty in now")
+            manual_door_override['unlock_inside'] = True
+        else:
+            logging.info(f"[SERVER] Manual override from Live View - close inside now")
+            manual_door_override['lock_inside'] = True
 
     @output
     @render.ui

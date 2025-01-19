@@ -22,6 +22,8 @@ PIR_READ_INTERVAL = 0.05
 gpio = Gpio()
 
 class Pir:
+    instance = None
+
     def __init__(self, simulate_kittyflap=False):
         self.state_outside = 0  # 0 = no motion, 1 = motion detected
         self.state_inside = 0   # 0 = no motion, 1 = motion detected
@@ -32,6 +34,8 @@ class Pir:
 
     def init(self):
         """Enable both PIRs."""
+        Pir.instance = self
+        
         if self.simulate_kittyflap:
             logging.info("[PIR] Simulation mode enabled. PIRs are not powered on.")
         else:

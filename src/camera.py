@@ -263,7 +263,7 @@ image_buffer = ImageBuffer()
 videostream = None
 
 class TfLite:
-    def __init__(self, modeldir="/root/AIContainer/app/",
+    def __init__(self, modeldir="./tflite/",
                  graph="cv-lite-model.tflite",
                  labelfile="labels.txt",
                  resolution="800x600",

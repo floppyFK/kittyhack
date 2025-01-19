@@ -127,6 +127,49 @@ def systemcmd(command: list[str], simulate_operations=False):
     
     return True
 
+def manage_and_switch_wifi(ssid, password, priority=100):
+    """
+    Add or update a Wi-Fi connection using NetworkManager and set its priority.
+    """
+    try:
+        # Check if the connection already exists
+        result = subprocess.run(
+            ["/usr/bin/nmcli", "connection", "show"], stdout=subprocess.PIPE, text=True
+        )
+        if ssid in result.stdout:
+            # Update the password for the existing connection
+            subprocess.run(
+                ["/usr/bin/nmcli", "connection", "modify", ssid, "wifi-sec.psk", password],
+                check=True,
+            )
+            logging.info(f"[SYSTEM] Updated Wi-Fi configuration for {ssid}.")
+        else:
+            # Add a new connection
+            subprocess.run(
+                [
+                    "/usr/bin/nmcli", "connection", "add", "type", "wifi", 
+                    "con-name", ssid, "ifname", "*", "ssid", ssid,
+                    "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
+                    "connection.autoconnect", "yes",
+                ],
+                check=True,
+            )
+            logging.info(f"[SYSTEM] Added Wi-Fi configuration for {ssid}.")
+
+        # Set the priority for the connection
+        subprocess.run(
+            ["/usr/bin/nmcli", "connection", "modify", ssid, "connection.autoconnect-priority", str(priority)],
+            check=True,
+        )
+        logging.info(f"[SYSTEM] Set priority {priority} for {ssid}.")
+
+        # Restart NetworkManager to apply changes (optional)
+        subprocess.run(["/usr/bin/systemctl", "restart", "NetworkManager"], check=True)
+        logging.info(f"[SYSTEM] Restarted NetworkManager to apply changes.")
+
+    except subprocess.CalledProcessError as e:
+        logging.info(f"[SYSTEM] Error managing Wi-Fi: {e}")
+
 class I2C:
     # Fixed constants
     I2C_PORT = "0"

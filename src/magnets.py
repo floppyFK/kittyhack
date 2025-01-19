@@ -258,5 +258,6 @@ class Magnets:
                             logging.info(f"[MAGNETS] Emptying queue! Waiting {magnet_delay:.1f} seconds before finally locking inside direction.")
                         tm.sleep(magnet_delay)
                     self._lock_inside()
+                    self.last_command_time = tm.time()
         except Exception as e:
             logging.error(f"[MAGNETS] Error emptying queue: {e}")

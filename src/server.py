@@ -606,10 +606,6 @@ def server(input, output, session):
                 ui.br(),
                 ui.column(12, ui.input_action_button("bShutdownKittyflap", _("Shutdown Kittyflap"))),
                 ui.column(12, ui.help_text(_("To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again."))),
-                ui.br(),
-                ui.br(),
-                ui.column(12, ui.input_action_button("bRestartKittyhackService", _("Restart Kittyhack Service"))),
-                ui.column(12, ui.help_text(_("Only restart the Kittyhack service (e.g. to apply a changed language setting)."))),
                 ui.hr(),
                 ui.br(),
                 ui.br()
@@ -630,14 +626,6 @@ def server(input, output, session):
         success = systemcmd(["/usr/sbin/shutdown", "-H", "now"], CONFIG['SIMULATE_KITTYFLAP'])
         if not success:
             ui.notification_show(_("An error occurred while rebooting Kittyflap."), duration=5, type="error")
-
-    @reactive.Effect
-    @reactive.event(input.bRestartKittyhackService)
-    def on_action_restart_kittyhack_service():
-        ui.notification_show(_("Kittyhack service is restarting now... Please reload the page in a few seconds."), duration=60, type="message")
-        success = systemcmd(["/bin/systemctl", "restart", "kittyhack"], CONFIG['SIMULATE_KITTYFLAP'])
-        if not success:
-            ui.notification_show(_("An error occurred while restarting the Kittyhack service."), duration=5, type="error")
 
     @output
     @render.ui
@@ -928,7 +916,7 @@ def server(input, output, session):
         if save_config():
             ui.notification_show(_("Kittyhack configuration updated successfully."), duration=5, type="message")
             if language_changed:
-                ui.notification_show(_("Please restart the kittyhack service in the 'System' section, to apply the new language."), duration=15, type="message")
+                ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the new language."), duration=15, type="message")
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=5, type="error")
     
@@ -1229,11 +1217,11 @@ def server(input, output, session):
                 ui.notification_show(f"Rollback to {git_version} complete. Please check the logs for details.", duration=None, type="warning")
 
             else:
-                # Restart the service
-                msg = "Kittyhack updated successfully. The service is now restarting. Please reload the website in a few seconds."
+                # Restart the kittyflap
+                msg = "Kittyhack updated successfully. The kittyflap is now restarting. This will take 1 or 2 minutes. Please reload the page after the restart."
                 i += 1
                 p.set(i, message=msg, detail="")
                 logging.info(msg)
-                subprocess.run(["/bin/systemctl", "restart", "kittyhack"], check=True, capture_output=True, text=True)
+                success = systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
 
 

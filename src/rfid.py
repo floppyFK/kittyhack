@@ -50,18 +50,22 @@ class Rfid:
                 gpio.configure(RFID_POWER_NUM, RFID_POWER_DIR)
                 gpio.configure(RFID_FIELD_NUM, RFID_FIELD_DIR)
 
-                # Ensure RFID is powered off to avoid unnecessary interference
-                gpio.set(RFID_POWER_NUM, 0)
-                gpio.set(RFID_FIELD_NUM, 0)
+                tm.sleep(0.25)
 
                 # PCA6408AHKX setup
                 i2c = I2C()
                 i2c.enable_gate(self)
 
+                # Ensure RFID is powered off to avoid unnecessary interference
+                self.set_power(False)
+                self.set_field(False)
+                tm.sleep(1.0)
+                self.set_power(True)
+
             except Exception as e:
                 logging.error(f"[RFID] Error initializing RFID: {e}")
             else:
-                logging.info("[RFID] RFID initialized and powered on.")
+                logging.info("[RFID] RFID initialized.")
 
     def set_power(self, state: bool):
         """
@@ -126,6 +130,7 @@ class Rfid:
             logging.info(f"[RFID] Starting RFID read operation (read cycles: {read_cycles if read_cycles != 0 else '∞'})")
 
         try:
+            self.set_power(True)
             self.set_field(True)
             self.set_run_state(RfidRunState.running)
 
@@ -145,7 +150,7 @@ class Rfid:
 
             logging.info(f"[RFID] Waiting for RFID tag... (max {read_cycles if read_cycles != 0 else '∞'} cycles)")
             try:
-                with open(RFID_READ_PATH, "r") as f:
+                with open(RFID_READ_PATH, "rb") as f:
                     cycle = 0
                     while read_cycles == 0 or cycle < read_cycles:
                         logging.debug(f"[RFID] Cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'} | RFID run state: {self.get_run_state()}")
@@ -153,15 +158,19 @@ class Rfid:
                             break
                         ready, _, _ = select.select([f], [], [], 1.0)
                         if ready:
-                            tag_id = f.readline().strip()
-                            if tag_id:
-                                # Remove non-hex characters from the tag ID
-                                tag_id = re.sub(r'[^0-9A-Fa-f]', '', tag_id)
-                                timestamp = tm.time()
-                                self.set_tag(tag_id, tm.time())
-                                logging.info(f"[RFID] Tag ID: '{tag_id}' detected at {timestamp} (read cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'})")
+                            line = f.readline().decode('utf-8', errors='ignore').strip()
+                            # Skip empty lines and initialization messages from the RFID reader
+                            if not line or re.search(r'tectus|AESlite', line, re.IGNORECASE):
+                                logging.info(f"[RFID] Skipping line: '{line}'")
+                                continue
+                            
+                            # We found something! Remove non-hex characters from the tag ID
+                            tag_id = re.sub(r'[^0-9A-Fa-f]', '', line)
+                            timestamp = tm.time()
+                            self.set_tag(tag_id, timestamp)
+                            logging.info(f"[RFID] Tag ID: '{tag_id}' (unfiltered Tag ID: '{line}') detected at {timestamp} (read cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'})")
 
-                        tm.sleep(0.1)
+                        #tm.sleep(0.1)
                         cycle += 1
             except Exception as e:
                 logging.error(f"[RFID] Error reading RFID: {e}")

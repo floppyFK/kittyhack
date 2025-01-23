@@ -127,14 +127,41 @@ def systemcmd(command: list[str], simulate_operations=False):
     
     return True
 
-def manage_and_switch_wifi(ssid, password, priority=100):
+def manage_and_switch_wifi(ssid, password="", priority=-1):
     """
     Add or update a Wi-Fi connection using NetworkManager and set its priority.
+
+    Parameters:
+    - ssid: The SSID of the Wi-Fi network.
+    - password: The password for the Wi-Fi network.
+    - priority: The priority of the Wi-Fi connection. Use -1 for highest priority (default), or specific value.
+
+    Returns:
+    - True if the Wi-Fi configuration was successful.
+    - False if there was an error.
     """
+    if priority == -1:
+        try:
+            result = subprocess.run(
+                ["/usr/bin/nmcli", "-g", "AUTOCONNECT-PRIORITY", "connection", "show"],
+                stdout=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            existing_priorities = [int(p) for p in result.stdout.split('\n') if p.strip()]
+            priority = max(existing_priorities, default=0) + 1
+        except subprocess.CalledProcessError:
+            priority = 999
+
+    if password == "":
+        wifi_sec_params = []
+    else:
+        wifi_sec_params = ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+
     try:
         # Check if the connection already exists
         result = subprocess.run(
-            ["/usr/bin/nmcli", "connection", "show"], stdout=subprocess.PIPE, text=True
+            ["/usr/bin/nmcli", "-t", "-f", "NAME", "connection", "show"], stdout=subprocess.PIPE, text=True
         )
         if ssid in result.stdout:
             # Update the password for the existing connection
@@ -142,14 +169,11 @@ def manage_and_switch_wifi(ssid, password, priority=100):
                 ["/usr/bin/nmcli", "connection", "modify", ssid, "wifi-sec.psk", password],
                 check=True,
             )
-            logging.info(f"[SYSTEM] Updated Wi-Fi configuration for {ssid}.")
-        else:
-            # Add a new connection
             subprocess.run(
                 [
                     "/usr/bin/nmcli", "connection", "add", "type", "wifi", 
                     "con-name", ssid, "ifname", "*", "ssid", ssid,
-                    "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
+                    *wifi_sec_params, "--hidden", "yes",
                     "connection.autoconnect", "yes",
                 ],
                 check=True,
@@ -169,6 +193,32 @@ def manage_and_switch_wifi(ssid, password, priority=100):
 
     except subprocess.CalledProcessError as e:
         logging.info(f"[SYSTEM] Error managing Wi-Fi: {e}")
+        return False
+    
+def switch_wifi_connection(ssid):
+    """
+    Switch to an already configured Wi-Fi network.
+
+    Parameters:
+    - ssid: The SSID of the Wi-Fi network to connect to.
+
+    Returns:
+    - True if the switch was successful
+    - False if there was an error
+    """
+    try:
+        subprocess.run(
+            ["/usr/bin/nmcli", "connection", "up", ssid],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        logging.info(f"[SYSTEM] Successfully switched to Wi-Fi network: {ssid}")
+        return True
+    except subprocess.CalledProcessError as e:
+        logging.error(f"[SYSTEM] Error switching to Wi-Fi network {ssid}: {e.stderr}")
+        return False
+
 
 class I2C:
     # Fixed constants

@@ -13,6 +13,7 @@ import threading
 import requests
 import shlex
 import cv2
+import socket
 from src.system import *
 
 
@@ -518,3 +519,32 @@ def check_and_stop_kittyflap_services(simulate_operations=False):
                 logging.error(f"Failed to rename {path}: {e}")
         else:
             logging.info(f"{os.path.basename(path)} executable not found. Skipping.")
+
+def wait_for_network(timeout: int = 120) -> bool:
+    interval = 1
+    attempts = 0
+    
+    while attempts < timeout:
+        try:
+            # Check NTP synchronization status with timeout
+            result = subprocess.run(['/usr/bin/timedatectl', 'status'], 
+                                 capture_output=True, 
+                                 text=True, 
+                                 timeout=5)
+            
+            # Check if command was successful and contains sync info
+            if result.returncode == 0 and 'System clock synchronized: yes' in result.stdout:
+                # Test network connectivity
+                socket.create_connection(("8.8.8.8", 53), timeout=1).close()
+                logging.info("Network connectivity and time synchronization established")
+                return True
+            
+        except (subprocess.TimeoutExpired, socket.error, subprocess.SubprocessError) as e:
+            logging.debug(f"Network check attempt failed: {str(e)}")
+        except Exception:
+            pass
+        
+        attempts += interval
+        tm.sleep(interval)
+    logging.error(f"Failed to establish network connectivity after {timeout} seconds")
+    return False

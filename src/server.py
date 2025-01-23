@@ -130,7 +130,13 @@ if check_if_table_exists(CONFIG['DATABASE_PATH'], "config") and CONFIG['KITTYFLA
     else:
         logging.error("Failed to read the configuration from the kittyflap database.")
 
-logging.info("Starting backend...")
+# Wait for internet connectivity and NTP sync
+logging.info("Waiting for network connectivity...")
+if wait_for_network(timeout=120):
+    logging.info("Starting backend...")
+else:
+    logging.warning("Timeout for network connectivity reached. Proceeding without network connection.")
+    logging.info("Starting backend...")
 backend_thread = threading.Thread(target=backend_main, args=(CONFIG['SIMULATE_KITTYFLAP'],), daemon=True)
 backend_thread.start()
 
@@ -442,7 +448,7 @@ def server(input, output, session):
             return ui.help_text(_("No pictures for the selected filter criteria found."), class_="no-images-found")
         
         else:
-            df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all)
+            df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all_except_photos)
 
             for index, data_row in df_photos.iterrows():
                 if input.button_detection_overlay():

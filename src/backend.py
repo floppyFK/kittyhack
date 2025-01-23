@@ -80,6 +80,10 @@ def backend_main(simulate_kittyflap = False):
     camera_thread.start()
     tflite.pause()
 
+    # Start the RFID reader (without the field enabled)
+    rfid_thread = threading.Thread(target=rfid.run, args=(), daemon=True)
+    rfid_thread.start()
+
     def lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm):
         # Lazy cat workaround: Keep the outside PIR active for 5 further seconds after the last detected motion outside
         if ( (motion_outside == 0) and 
@@ -106,6 +110,12 @@ def backend_main(simulate_kittyflap = False):
 
         previous_tag_id = tag_id
         tag_id, tag_timestamp = rfid.get_tag()
+
+        # Check if the RFID reader is still running. Otherwise restart it.
+        if rfid.get_run_state() == RfidRunState.stopped:
+            logging.warning("[BACKEND] RFID reader stopped unexpectedly. Restarting RFID reader.")
+            rfid_thread = threading.Thread(target=rfid.run, args=(), daemon=True)
+            rfid_thread.start()
 
         # Outside motion stopped
         if last_outside == 1 and motion_outside == 0:
@@ -166,15 +176,14 @@ def backend_main(simulate_kittyflap = False):
         if ( (motion_outside == 0) and (motion_inside == 0) and
              ((tm.time() - last_motion_outside_tm) > RFID_READER_OFF_DELAY) and
              ((tm.time() - last_motion_inside_tm) > RFID_READER_OFF_DELAY) ):
-            if rfid.get_run_state() == RfidRunState.running:
+            if rfid.get_field():
                 logging.info(f"[BACKEND] No motion outside since {RFID_READER_OFF_DELAY} seconds after the last motion. Stopping RFID reader.")
-                rfid.stop_read(wait_for_stop=False)
+                rfid.set_field(False)
         
         # Start the RFID thread with infinite read cycles, if it is not running and motion is detected outside or inside
         if motion_outside == 1 or motion_inside == 1:
-            if ( (rfid.get_run_state() == RfidRunState.stopped) ):
-                rfid_thread = threading.Thread(target=rfid.run, args=(), daemon=True)
-                rfid_thread.start()
+            if rfid.get_field() == False:
+                rfid.set_field(True)
                 logging.info(f"[BACKEND] Started RFID reader.")
         
         # Close the magnet to the outside after the timeout
@@ -185,12 +194,12 @@ def backend_main(simulate_kittyflap = False):
                 magnets.queue_command("lock_outside")
             
         # Check for a valid RFID tag
-        if ( (tag_id) and
-             (tag_id != previous_tag_id) and 
-             (rfid.get_run_state() == RfidRunState.running) ):
+        if ( tag_id and
+             tag_id != previous_tag_id and 
+             rfid.get_field() ):
             logging.info(f"[BACKEND] RFID tag detected: '{tag_id}'.")
             if tag_id in known_rfid_tags:
-                rfid.stop_read(wait_for_stop=False)
+                rfid.set_field(False)
                 logging.info(f"[BACKEND] Detected RFID tag {tag_id} matches a known tag. Stop RFID reader.")
 
         # Check if we are allowed to open the inside direction
@@ -283,6 +292,7 @@ def backend_main(simulate_kittyflap = False):
             magnets.queue_command("lock_outside")
 
     # RFID Cleanup on shutdown:
+    rfid.stop_read(wait_for_stop=True)
     rfid.set_power(False)
     rfid.set_field(False)
 

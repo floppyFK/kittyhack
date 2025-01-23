@@ -35,6 +35,7 @@ class Rfid:
         self.tag_id = None
         self.timestamp = 0.0
         self.rfid_run_state = RfidRunState.stopped
+        self.field_state = False
         self.thread_lock = threading.Lock()
         self.init()
 
@@ -102,7 +103,14 @@ class Rfid:
         except Exception as e:
             logging.error(f"[RFID] Error setting RFID field: {e}")
         else:
+            self.field_state = state
             logging.info(f"[RFID] RFID field {'enabled' if state else 'disabled'}.")
+
+    def get_field(self):
+        """
+        Returns the current state of the RFID field.
+        """
+        return self.field_state
 
     def run(self, read_cycles=0):
         """
@@ -131,7 +139,6 @@ class Rfid:
 
         try:
             self.set_power(True)
-            self.set_field(True)
             self.set_run_state(RfidRunState.running)
 
             if self.simulate_kittyflap:
@@ -150,12 +157,13 @@ class Rfid:
 
             logging.info(f"[RFID] Waiting for RFID tag... (max {read_cycles if read_cycles != 0 else '∞'} cycles)")
             try:
+                line = None
+                last_line = None
+                duplicate_count = 0
                 with open(RFID_READ_PATH, "rb") as f:
                     cycle = 0
-                    while read_cycles == 0 or cycle < read_cycles:
+                    while (read_cycles == 0 or cycle < read_cycles) and (self.get_run_state() != RfidRunState.stop_requested):
                         logging.debug(f"[RFID] Cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'} | RFID run state: {self.get_run_state()}")
-                        if self.get_run_state() == RfidRunState.stop_requested:
-                            break
                         ready, _, _ = select.select([f], [], [], 1.0)
                         if ready:
                             line = f.readline().decode('utf-8', errors='ignore').strip()
@@ -163,12 +171,22 @@ class Rfid:
                             if not line or re.search(r'tectus|AESlite', line, re.IGNORECASE):
                                 logging.info(f"[RFID] Skipping line: '{line}'")
                                 continue
+
+                            if line == last_line:
+                                logging.debug(f"[RFID] Skipping duplicate line: '{line}'")
+                                duplicate_count += 1
+                                continue
                             
+                            if duplicate_count > 0:
+                                logging.debug(f"[RFID] Skipped {duplicate_count} duplicate lines.")
+                                duplicate_count = 0
+
                             # We found something! Remove non-hex characters from the tag ID
                             tag_id = re.sub(r'[^0-9A-Fa-f]', '', line)
                             timestamp = tm.time()
                             self.set_tag(tag_id, timestamp)
-                            logging.info(f"[RFID] Tag ID: '{tag_id}' (unfiltered Tag ID: '{line}') detected at {timestamp} (read cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'})")
+                            logging.info(f"[RFID] Tag ID: '{tag_id}' (raw Tag ID: '{line}') detected at {timestamp} (read cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'})")
+                            last_line = line
 
                         #tm.sleep(0.1)
                         cycle += 1

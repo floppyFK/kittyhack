@@ -617,7 +617,7 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.bRestartKittyflap)
     def on_action_restart_system():
-        ui.notification_show(_("Kittyflap is rebooting now..."), duration=60, type="message")
+        ui.notification_show(_("Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reload the page after the restart."), duration=None, type="message")
         success = systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
         if not success:
             ui.notification_show(_("An error occurred while rebooting Kittyflap."), duration=5, type="error")

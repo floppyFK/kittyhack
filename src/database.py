@@ -605,7 +605,16 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, delete_from_bu
 
             id += 1
 
+        # Check if the number of photos exceeds the maximum allowed number
+        cursor.execute("SELECT COUNT(*) FROM events WHERE deleted != 1")
+        total_photos = cursor.fetchone()[0]
+        if 'MAX_PHOTOS_COUNT' in CONFIG and total_photos > CONFIG['MAX_PHOTOS_COUNT']:
+            excess_photos = total_photos - CONFIG['MAX_PHOTOS_COUNT']
+            logging.info(f"[DATABASE] Number of photos exceeds limit. Deleting {excess_photos} oldest photos.")
+            cursor.execute(f"UPDATE events SET deleted = 1, original_image = NULL, modified_image = NULL WHERE id IN (SELECT id FROM events WHERE deleted != 1 ORDER BY created_at ASC LIMIT {excess_photos})")
+
         conn.commit()
+        conn.close()
     except Exception as e:
         error_message = f"[DATABASE] An error occurred while writing images to the database '{database}': {e}"
         logging.error(error_message)
@@ -708,6 +717,7 @@ def migrate_photos_to_events(database: str) -> Result:
                     cursor.execute("DROP TABLE temp_events")
 
         conn.commit()
+        conn.close()
     except Exception as e:
         error_message = f"[DATABASE] An error occurred while migrating photos from 'photo' table to 'events' table in the database '{database}': {e}"
         logging.error(error_message)
@@ -890,4 +900,49 @@ def restore_database_backup(database: str, backup_path: str) -> Result:
             
     finally:
         # Always release the lock
+        release_database()
+
+def cleanup_deleted_events(database: str) -> Result:
+    """
+    Removes all deleted events from the database up to the first non-deleted event.
+    At least one non-deleted event will always remain in the database.
+    """
+    result = lock_database()
+    if not result.success:
+        return result
+
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        
+        # Find the ID of the oldest non-deleted event
+        cursor.execute("SELECT MIN(id) FROM events WHERE deleted != 1")
+        min_active_id = cursor.fetchone()[0]
+        
+        if min_active_id is not None:
+            # Delete all events older than the oldest non-deleted event
+            cursor.execute("DELETE FROM events WHERE id < ? AND deleted = 1", (min_active_id,))
+            deleted_count = cursor.rowcount
+            conn.commit()
+            
+            if deleted_count > 0:
+                # Vacuum the database to reclaim space
+                cursor.execute("VACUUM")
+                CONFIG['LAST_VACUUM_DATE'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                update_single_config_parameter("LAST_VACUUM_DATE")
+                logging.info(f"[DATABASE] Cleaned up {deleted_count} deleted events from database.")
+            else:
+                logging.warning("[DATABASE] No deleted events found in database. Cleanup skipped.")
+        else:
+            logging.warning("[DATABASE] No non-deleted events found in database. Cleanup skipped.")
+            return Result(True, None)
+        
+        conn.close()
+        return Result(True, None)
+            
+    except Exception as e:
+        error_message = f"[DATABASE] Failed to clean up deleted events: {e}"
+        logging.error(error_message)
+        return Result(False, error_message)
+    finally:
         release_database()

@@ -162,6 +162,9 @@ def start_background_task():
             
             immediate_bg_task("background task")
 
+            # Cleanup the events table
+            cleanup_deleted_events(CONFIG['KITTYHACK_DATABASE_PATH'])
+
             # Check the free disk space
             free_disk_space = get_free_disk_space()
             
@@ -175,7 +178,7 @@ def start_background_task():
             else:
                 last_backup_date = datetime.min
 
-            # Check if the last vacuum date is stored in the configuration
+            # Check if the last scheduled vacuum date is stored in the configuration
             if CONFIG['LAST_VACUUM_DATE']:
                 last_vacuum_date = datetime.strptime(CONFIG['LAST_VACUUM_DATE'], '%Y-%m-%d %H:%M:%S')
             else:
@@ -192,7 +195,7 @@ def start_background_task():
                 if not db_backup.success and db_backup.message == "kittyhack_db_corrupted":
                     restore_database_backup(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
 
-            # Perform VACUUM only if the last vacuum date is older than 24 hours
+            # Perform Scheduled VACUUM only if the last scheduled vacuum date is older than 24 hours
             if (datetime.now() - last_vacuum_date) > timedelta(days=1):
                 logging.info("[TRIGGER: background task] Start VACUUM of the kittyhack database...")
                 write_stmt_to_database(CONFIG['KITTYHACK_DATABASE_PATH'], "VACUUM")

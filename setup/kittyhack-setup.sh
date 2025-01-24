@@ -326,7 +326,32 @@ install_full() {
     fi
 
     echo -e "${CYAN}--- BASE INSTALL Step 6: Install gstreamer1.0 packages ---${NC}"
-    apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 update
+    # Wait for any existing package operations to complete
+    while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+        echo -e "${GREY}Waiting for other package operations to complete...${NC}"
+        sleep 5
+    done
+
+    # Try to update package lists with retries
+    for i in {1..5}; do
+        if apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 update; then
+            break
+        else
+            echo -e "${YELLOW}Attempt $i of 5 failed. Retrying in 5 seconds...${NC}"
+            sleep 5
+        fi
+    done
+
+    # Install/update ca-certificates first to ensure secure package downloads
+    for i in {1..5}; do
+        if apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y ca-certificates; then
+            break
+        else
+            echo -e "${YELLOW}Attempt $i of 5 to install ca-certificates failed. Retrying in 5 seconds...${NC}"
+            sleep 5
+        fi
+    done
+
     GSTREAMER_PACKAGES=(
         gstreamer1.0-tools
         gstreamer1.0-plugins-base
@@ -334,7 +359,22 @@ install_full() {
         gstreamer1.0-libcamera
     )
     echo -e "${GREY}Installing all GStreamer packages...${NC}"
-    apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y "${GSTREAMER_PACKAGES[@]}"
+    # Wait for any existing package operations to complete
+    while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+        echo -e "${GREY}Waiting for other package operations to complete...${NC}"
+        sleep 5
+    done
+
+    # Try to install packages with retries
+    for i in {1..5}; do
+        if apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y "${GSTREAMER_PACKAGES[@]}"; then
+            break
+        else
+            echo -e "${YELLOW}Attempt $i of 5 failed. Retrying in 5 seconds...${NC}"
+            sleep 5
+        fi
+    done
+
     for pkg in "${GSTREAMER_PACKAGES[@]}"; do
         if dpkg -l | grep -q "$pkg"; then
             echo -e "${GREEN}$pkg installed successfully.${NC}"
@@ -342,6 +382,7 @@ install_full() {
             ((FAIL_COUNT++))
             echo -e "${RED}Failed to install $pkg.${NC}"
         fi
+        sleep 0.1
     done
 
 
@@ -352,7 +393,21 @@ install_full() {
         python3.11-dev
     )
     echo -e "${GREY}Installing all Python packages...${NC}"
-    apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y "${PYTHON_PACKAGES[@]}"
+    # Wait for any existing package operations to complete
+    while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+        echo -e "${GREY}Waiting for other package operations to complete...${NC}"
+        sleep 5
+    done
+
+    # Try to install packages with retries
+    for i in {1..5}; do
+        if apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y "${PYTHON_PACKAGES[@]}"; then
+            break
+        else
+            echo -e "${YELLOW}Attempt $i of 5 failed. Retrying in 5 seconds...${NC}"
+            sleep 5
+        fi
+    done
     for pkg in "${PYTHON_PACKAGES[@]}"; do
         if dpkg -l | grep -q "$pkg"; then
             echo -e "${GREEN}$pkg installed successfully.${NC}"
@@ -360,11 +415,27 @@ install_full() {
             ((FAIL_COUNT++))
             echo -e "${RED}Failed to install $pkg.${NC}"
         fi
+        sleep 0.1
     done
 
     if ! python3.11 -m pip --version &>/dev/null; then
         echo -e "${GREY}Python pip is not installed. Installing...${NC}"
-        apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y python3-pip
+        # Wait for any existing package operations to complete
+        while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+            echo -e "${GREY}Waiting for other package operations to complete...${NC}"
+            sleep 5
+        done
+
+        # Try to install pip with retries
+        for i in {1..5}; do
+            if apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y python3-pip; then
+                break
+            else
+                echo -e "${YELLOW}Attempt $i of 5 failed. Retrying in 5 seconds...${NC}"
+                sleep 5
+            fi
+        done
+
         if python3.11 -m pip --version &>/dev/null; then
             echo -e "${GREEN}Python 3.11 pip installed successfully.${NC}"
         else
@@ -378,7 +449,22 @@ install_full() {
     echo -e "${CYAN}--- BASE INSTALL Step 9: Install git ---${NC}"
     if ! git --version &>/dev/null; then
         echo -e "${GREY}Git is not installed. Installing...${NC}"
-        apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y git
+        # Wait for any existing package operations to complete
+        while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+            echo -e "${GREY}Waiting for other package operations to complete...${NC}"
+            sleep 5
+        done
+
+        # Try to install git with retries
+        for i in {1..5}; do
+            if apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y git; then
+                break
+            else
+                echo -e "${YELLOW}Attempt $i of 5 failed. Retrying in 5 seconds...${NC}"
+                sleep 5
+            fi
+        done
+
         if git --version &>/dev/null; then
             echo -e "${GREEN}Git installed successfully.${NC}"
         else
@@ -392,7 +478,22 @@ install_full() {
     echo -e "${CYAN}--- BASE INSTALL Step 10: Install curl and tar ---${NC}"
     if ! curl --version &>/dev/null; then
         echo -e "${GREY}Curl is not installed. Installing...${NC}"
-        apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y curl
+        # Wait for any existing package operations to complete
+        while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+            echo -e "${GREY}Waiting for other package operations to complete...${NC}"
+            sleep 5
+        done
+
+        # Try to install curl with retries
+        for i in {1..5}; do
+            if apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y curl; then
+                break
+            else
+                echo -e "${YELLOW}Attempt $i of 5 failed. Retrying in 5 seconds...${NC}"
+                sleep 5
+            fi
+        done
+
         if curl --version &>/dev/null; then
             echo -e "${GREEN}Curl installed successfully.${NC}"
         else
@@ -405,7 +506,22 @@ install_full() {
 
     if ! tar --version &>/dev/null; then
         echo -e "${GREY}Tar is not installed. Installing...${NC}"
-        apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y tar
+        # Wait for any existing package operations to complete
+        while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+            echo -e "${GREY}Waiting for other package operations to complete...${NC}"
+            sleep 5
+        done
+
+        # Try to install tar with retries
+        for i in {1..5}; do
+            if apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y tar; then
+                break
+            else
+                echo -e "${YELLOW}Attempt $i of 5 failed. Retrying in 5 seconds...${NC}"
+                sleep 5
+            fi
+        done
+
         if tar --version &>/dev/null; then
             echo -e "${GREEN}Tar installed successfully.${NC}"
         else
@@ -443,8 +559,25 @@ install_kittyhack() {
     fi
 
     if [ $INSTALL_LEGACY_KITTYHACK -eq 0 ]; then
-        echo -e "${GREY}Fetching latest release...${NC}"    
-        GIT_TAG=$(curl -s https://api.github.com/repos/floppyFK/kittyhack/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
+        echo -e "${GREY}Fetching latest release...${NC}"
+        # Try up to 3 times to get the latest tag
+        for i in {1..3}; do
+            GIT_TAG=$(curl -sf https://api.github.com/repos/floppyFK/kittyhack/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
+            if [[ -n "$GIT_TAG" ]]; then
+                break
+            fi
+            echo -e "${YELLOW}Attempt $i of 3 to fetch latest release failed. Retrying in 5 seconds...${NC}"
+            sleep 5
+        done
+        # If still empty, try alternative method using git ls-remote
+        if [[ -z "$GIT_TAG" ]]; then
+            GIT_TAG=$(git ls-remote --tags --refs https://github.com/floppyFK/kittyhack.git | tail -n1 | sed 's/.*\///')
+        fi
+        # If still empty, use fallback version
+        if [[ -z "$GIT_TAG" ]]; then
+            echo -e "${YELLOW}Failed to fetch latest version. Using latest known version.${NC}"
+            GIT_TAG="v1.2.6"
+        fi
     else
         GIT_TAG="v1.1.1"
     fi
@@ -547,13 +680,27 @@ reinstall_camera_drivers() {
     for file in "${files[@]}"; do
         if [[ -f "$file" ]]; then
             echo -e "${GREY}Installing $file...${NC}"
-            dpkg -i "$file"
-            if [[ $? -ne 0 ]]; then
-                ((FAIL_COUNT++))
-                echo -e "${RED}Failed to install $file.${NC}"
-            else
-                echo -e "${GREEN}$file installed successfully.${NC}"
-            fi
+            # Wait for any existing package operations to complete
+            while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+                echo -e "${GREY}Waiting for other package operations to complete...${NC}"
+                sleep 5
+            done
+
+            # Try to install with retries
+            for i in {1..5}; do
+                if dpkg -i "$file"; then
+                    echo -e "${GREEN}$file installed successfully.${NC}"
+                    break
+                else
+                    if [ $i -lt 5 ]; then
+                        echo -e "${YELLOW}Attempt $i of 5 failed. Retrying in 5 seconds...${NC}"
+                        sleep 5
+                    else
+                        ((FAIL_COUNT++))
+                        echo -e "${RED}Failed to install $file after 5 attempts.${NC}"
+                    fi
+                fi
+            done
         else
             echo -e "${RED}File $file not found. Please report this in the GitHub repository.${NC}"
         fi

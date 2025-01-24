@@ -158,7 +158,6 @@ class Rfid:
             logging.info(f"[RFID] Waiting for RFID tag... (max {read_cycles if read_cycles != 0 else '∞'} cycles)")
             try:
                 line = None
-                last_line = None
                 duplicate_count = 0
                 with open(RFID_READ_PATH, "rb") as f:
                     cycle = 0
@@ -172,21 +171,20 @@ class Rfid:
                                 logging.info(f"[RFID] Skipping line: '{line}'")
                                 continue
 
-                            if line == last_line:
-                                logging.debug(f"[RFID] Skipping duplicate line: '{line}'")
-                                duplicate_count += 1
-                                continue
-                            
-                            if duplicate_count > 0:
-                                logging.debug(f"[RFID] Skipped {duplicate_count} duplicate lines.")
-                                duplicate_count = 0
-
                             # We found something! Remove non-hex characters from the tag ID
                             tag_id = re.sub(r'[^0-9A-Fa-f]', '', line)
                             timestamp = tm.time()
+                            last_tag, last_tm = self.get_tag()
                             self.set_tag(tag_id, timestamp)
+                            
+                            if tag_id == last_tag:
+                                logging.debug(f"[RFID] Skipping duplicate tag: '{tag_id}'")
+                                duplicate_count += 1
+                                continue
+                            if duplicate_count > 0:
+                                logging.info(f"[RFID] Skipped {duplicate_count} previous duplicate tags of '{last_tag}'")
+                                duplicate_count = 0
                             logging.info(f"[RFID] Tag ID: '{tag_id}' (raw Tag ID: '{line}') detected at {timestamp} (read cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'})")
-                            last_line = line
 
                         #tm.sleep(0.1)
                         cycle += 1

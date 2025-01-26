@@ -992,6 +992,8 @@ def server(input, output, session):
                     ui.input_task_button("update_kittyhack", "Update Kittyhack", icon=icon_svg("download"), class_="btn-primary"),
                     ui.br(),
                     ui.help_text("Please note: A stable WLAN connection is required for the update process."),
+                    ui.br(),
+                    ui.help_text("The update will end with a reboot of the Kittyflap."),
                     ui.markdown("Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to see what's new in the latest version."),
                 )
 

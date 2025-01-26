@@ -482,9 +482,9 @@ def server(input, output, session):
                     try:
                         cat_name = df_cats.loc[df_cats["rfid"] == data_row["rfid"], "name"].values[0]
                     except:
-                        cat_name = data_row["rfid"]
+                        cat_name = _("Unknown RFID: {}".format(data_row["rfid"]))
                 else:
-                    cat_name = ""
+                    cat_name = _("No RFID found")
 
                 card_footer_mouse = f"{icon_svg('magnifying-glass')} {mouse_probability:.1f}%"
                 if cat_name:
@@ -658,6 +658,8 @@ def server(input, output, session):
                                 ui.column(12, ui.input_text(id=f"mng_cat_name_{data_row['id']}", label=_("Name"), value=data_row['name'], width="100%")),
                                 ui.br(),
                                 ui.column(12, ui.input_text(id=f"mng_cat_rfid_{data_row['id']}", label=_("RFID"), value=data_row['rfid'], width="100%")),
+                                ui.column(12, ui.help_text(_("NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."))),
+                                ui.column(12, ui.help_text(_("If you have entered the RFID correctly here, the name of the cat will be displayed in the 'Pictures' section."))),
                                 ui.br(),
                                 ui.column(12, ui.input_file(id=f"mng_cat_pic_{data_row['id']}", label=_("Change Picture"), accept=[".jpg", ".png"], width="100%")),
                             )
@@ -750,7 +752,8 @@ def server(input, output, session):
                         ui.column(12, ui.input_text(id=f"add_new_cat_name", label=_("Name"), value="", width="100%")),
                         ui.br(),
                         ui.column(12, ui.input_text(id=f"add_new_cat_rfid", label=_("RFID"), value="", width="100%")),
-                        ui.column(12, ui.help_text(_("You can find the RFID in the 'Pictures' section, if the cat was detected.")),),
+                        ui.column(12, ui.help_text(_("You can find the RFID in the 'Pictures' section, if the chip of your cat was recognized by the Kittyflap. To read the RFID, just set the entrance mode to 'All Cats' and let pass your cat through the Kittyflap."))),
+                        ui.column(12, ui.help_text(_("NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."))),
                         ui.br(),
                         ui.column(12, ui.input_file(id=f"add_new_cat_pic", label=_("Upload Picture"), accept=".jpg", width="100%")),
                         ui.hr(),

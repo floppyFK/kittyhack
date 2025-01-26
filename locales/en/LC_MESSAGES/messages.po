@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-01-24 19:11+0000\n"
+"POT-Creation-Date: 2025-01-26 12:04+0000\n"
 "PO-Revision-Date: 2024-11-15 19:01+0000\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -84,6 +84,14 @@ msgstr ""
 msgid "No pictures for the selected filter criteria found."
 msgstr ""
 
+#: src/server.py:485
+msgid "Unknown RFID: {}"
+msgstr ""
+
+#: src/server.py:487
+msgid "No RFID found"
+msgstr ""
+
 #: src/server.py:499 src/server.py:652
 msgid "No picture found!"
 msgstr ""
@@ -152,291 +160,306 @@ msgid ""
 "the power."
 msgstr ""
 
-#: src/server.py:658 src/server.py:750
+#: src/server.py:658 src/server.py:752
 msgid "Name"
 msgstr ""
 
-#: src/server.py:660 src/server.py:752
+#: src/server.py:660 src/server.py:754
 msgid "RFID"
 msgstr ""
 
+#: src/server.py:661 src/server.py:756
+msgid ""
+"NOTE: This is NOT the number which stands in the booklet of your vet! You "
+"must use the the ID, which is read by the Kittyflap. It is 16 characters "
+"long and consists of numbers (0-9) and letters (A-F)."
+msgstr ""
+
 #: src/server.py:662
+msgid ""
+"If you have entered the RFID correctly here, the name of the cat will be "
+"displayed in the 'Pictures' section."
+msgstr ""
+
+#: src/server.py:664
 msgid "Change Picture"
 msgstr ""
 
-#: src/server.py:668
+#: src/server.py:670
 msgid "Delete {} from the database"
 msgstr ""
 
-#: src/server.py:680 src/server.py:874
+#: src/server.py:682 src/server.py:877
 msgid "Save all changes"
 msgstr ""
 
-#: src/server.py:687
+#: src/server.py:689
 msgid ""
 "No cats found in the database. Please go to the 'Add new cat' section to add "
 "a new cat."
 msgstr ""
 
-#: src/server.py:713
+#: src/server.py:715
 msgid "{} deleted successfully from the database."
 msgstr ""
 
-#: src/server.py:715
+#: src/server.py:717
 msgid "Failed to delete {} from the database: {}"
 msgstr ""
 
-#: src/server.py:731
+#: src/server.py:733
 msgid "Data for {} updated successfully."
 msgstr ""
 
-#: src/server.py:733
+#: src/server.py:735
 msgid "Failed to update cat details: {}"
 msgstr ""
 
-#: src/server.py:736
+#: src/server.py:738
 msgid "No changes detected. Nothing to save."
 msgstr ""
 
-#: src/server.py:749 src/ui.py:30
+#: src/server.py:751 src/ui.py:30
 msgid "Add new cat"
 msgstr ""
 
-#: src/server.py:753
+#: src/server.py:755
 msgid ""
-"You can find the RFID in the 'Pictures' section, if the cat was detected."
+"You can find the RFID in the 'Pictures' section, if the chip of your cat was "
+"recognized by the Kittyflap. To read the RFID, just set the entrance mode to "
+"'All Cats' and let pass your cat through the Kittyflap."
 msgstr ""
 
-#: src/server.py:755
+#: src/server.py:758
 msgid "Upload Picture"
 msgstr ""
 
-#: src/server.py:757
+#: src/server.py:760
 msgid "Save"
 msgstr ""
 
-#: src/server.py:782
+#: src/server.py:785
 msgid "New cat {} added successfully."
 msgstr ""
 
-#: src/server.py:787
+#: src/server.py:790
 msgid "An error occurred while adding the new cat: {}"
 msgstr ""
 
-#: src/server.py:793
+#: src/server.py:796
 msgid "Kittyhack configuration"
 msgstr ""
 
-#: src/server.py:794
+#: src/server.py:797
 msgid ""
 "In this section you can change the behaviour of the Kittyhack user interface"
 msgstr ""
 
-#: src/server.py:797
+#: src/server.py:800
 msgid "General settings"
 msgstr ""
 
-#: src/server.py:798
+#: src/server.py:801
 msgid "Language"
 msgstr ""
 
-#: src/server.py:799
+#: src/server.py:802
 msgid "Timezone"
 msgstr ""
 
-#: src/server.py:800
+#: src/server.py:803
 msgid "See"
 msgstr ""
 
-#: src/server.py:800
+#: src/server.py:803
 msgid "for valid timezone strings"
 msgstr ""
 
-#: src/server.py:802
+#: src/server.py:805
 msgid "Date format"
 msgstr ""
 
-#: src/server.py:804
+#: src/server.py:807
 msgid "Maximum pictures per page"
 msgstr ""
 
-#: src/server.py:805
+#: src/server.py:808
 msgid ""
 "NOTE: Too many pictures per page could slow down the performance drastically!"
 msgstr ""
 
-#: src/server.py:807
+#: src/server.py:810
 msgid "Periodic version check"
 msgstr ""
 
-#: src/server.py:808
+#: src/server.py:811
 msgid "Automatically check for new versions of Kittyhack."
 msgstr ""
 
-#: src/server.py:813
+#: src/server.py:816
 msgid "Door control settings"
 msgstr ""
 
-#: src/server.py:814
+#: src/server.py:817
 msgid "Mouse detection threshold"
 msgstr ""
 
-#: src/server.py:815
+#: src/server.py:818
 msgid "Kittyhack decides based on this value, if a picture contains a mouse."
 msgstr ""
 
-#: src/server.py:817
+#: src/server.py:820
 msgid "Minimum detection threshold"
 msgstr ""
 
-#: src/server.py:818
+#: src/server.py:821
 msgid ""
 "Pictures with a detection probability below this value (for both 'Mouse' and "
 "'No Mouse' check) are not saved in the database."
 msgstr ""
 
-#: src/server.py:820
+#: src/server.py:823
 msgid "Minimum pictures before unlock decision"
 msgstr ""
 
-#: src/server.py:821
+#: src/server.py:824
 msgid ""
 "Number of pictures that must be analyzed before deciding to unlock the flap. "
 "If a picture exceeds the mouse threshold, the flap will remain closed."
 msgstr ""
 
-#: src/server.py:823
+#: src/server.py:826
 msgid "Detect prey"
 msgstr ""
 
-#: src/server.py:827
+#: src/server.py:830
 msgid "Open inside direction for:"
 msgstr ""
 
-#: src/server.py:829
+#: src/server.py:832
 msgid "All cats"
 msgstr ""
 
-#: src/server.py:829
+#: src/server.py:832
 msgid "All cats with a RFID chip"
 msgstr ""
 
-#: src/server.py:829
+#: src/server.py:832
 msgid "Only registered cats"
 msgstr ""
 
-#: src/server.py:829
+#: src/server.py:832
 msgid "No cats"
 msgstr ""
 
-#: src/server.py:834
+#: src/server.py:837
 msgid "Allow cats to exit"
 msgstr ""
 
-#: src/server.py:835
+#: src/server.py:838
 msgid ""
 "If this is set to 'No', the direction to the outside remains closed. Useful "
 "for e.g. new year's eve or an upcoming vet visit."
 msgstr ""
 
-#: src/server.py:839
+#: src/server.py:842
 msgid "Reaction speed (in s) of the motion sensor on the inside"
 msgstr ""
 
-#: src/server.py:840
+#: src/server.py:843
 msgid ""
 "A low value means a fast reaction, but also a higher probability of false "
 "alarms. A high value means a slow reaction, but also a lower probability of "
 "false alarms."
 msgstr ""
 
-#: src/server.py:841
+#: src/server.py:844
 msgid ""
 "NOTE: The motion sensor on the outside is not yet configurable. This will be "
 "implemented soon."
 msgstr ""
 
-#: src/server.py:844
+#: src/server.py:847
 msgid "Live view settings"
 msgstr ""
 
-#: src/server.py:847
+#: src/server.py:850
 msgid "Live-View update interval:"
 msgstr ""
 
-#: src/server.py:849
+#: src/server.py:852
 msgid "Refresh the live view every..."
 msgstr ""
 
-#: src/server.py:856
+#: src/server.py:859
 msgid ""
 "NOTE: A high refresh rate could slow down the performance, especially if "
 "several users are connected at the same time. Values below 1s require a fast "
 "and stable WLAN connection."
 msgstr ""
 
-#: src/server.py:857
+#: src/server.py:860
 msgid ""
 "This setting affects only the view in the WebUI and has no impact on the "
 "detection process."
 msgstr ""
 
-#: src/server.py:860
+#: src/server.py:863
 msgid "Pictures view settings"
 msgstr ""
 
-#: src/server.py:861
+#: src/server.py:864
 msgid "Maximum number of photos to retain in the database"
 msgstr ""
 
-#: src/server.py:864
+#: src/server.py:867
 msgid "Advanced settings"
 msgstr ""
 
-#: src/server.py:920
+#: src/server.py:923
 msgid "Kittyhack configuration updated successfully."
 msgstr ""
 
-#: src/server.py:922
+#: src/server.py:925
 msgid ""
 "Please restart the kittyflap in the 'System' section, to apply the new "
 "language."
 msgstr ""
 
-#: src/server.py:924
+#: src/server.py:927
 msgid "Failed to save the Kittyhack configuration."
 msgstr ""
 
-#: src/server.py:937
+#: src/server.py:940
 msgid "Failed to create the journal file: {}"
 msgstr ""
 
-#: src/server.py:957
+#: src/server.py:960
 msgid ""
 "Not enough free disk space to download the database. Required: {} MB, Free: "
 "{} MB"
 msgstr ""
 
-#: src/server.py:965
+#: src/server.py:968
 msgid "Failed to copy the database file: {}"
 msgstr ""
 
-#: src/server.py:976
+#: src/server.py:979
 msgid "The original kittyflap database file does not exist."
 msgstr ""
 
-#: src/server.py:1119
+#: src/server.py:1124
 msgid ""
 "The pictures from the original kittyflap database were removed successfully."
 msgstr ""
 
-#: src/server.py:1122
+#: src/server.py:1127
 msgid ""
 "An error occurred while deleting the pictures from the original kittyflap "
 "database: {}"
 msgstr ""
 
-#: src/server.py:1124
+#: src/server.py:1129
 msgid "The original kittyflap database file does not exist anymore."
 msgstr ""
 

@@ -57,7 +57,7 @@ def lock_database(timeout: int = 30, check_interval: float = 0.1) -> Result:
     start_time = tm.time()
     while tm.time() - start_time < timeout:
         if db_write_lock.acquire(blocking=False):
-            logging.info("[DATABASE] Database lock acquired.")
+            logging.debug("[DATABASE] Database lock acquired.")
             return Result(True, None)
         tm.sleep(check_interval)
     error_message = f"[DATABASE] Database lock not released within the given timeout ({timeout}s)."
@@ -70,7 +70,7 @@ def release_database():
     """
     if db_write_lock.locked():
         db_write_lock.release()
-        logging.info("[DATABASE] Database lock released.")
+        logging.debug("[DATABASE] Database lock released.")
     else:
         logging.warning("[DATABASE] Database lock is not acquired. Nothing to release.")
 

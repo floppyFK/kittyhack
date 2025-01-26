@@ -77,6 +77,11 @@ def release_database():
 ###### General database operations ######
 
 def read_df_from_database(database: str, stmt: str) -> pd.DataFrame:
+    result = lock_database()
+    if not result.success:
+        logging.error(f"[DATABASE] Failed to acquire lock for reading from database '{database}': {result.message}")
+        return pd.DataFrame.empty
+
     try:
         conn = sqlite3.connect(database, timeout=30)
         df = pd.read_sql_query(stmt, conn)
@@ -86,10 +91,17 @@ def read_df_from_database(database: str, stmt: str) -> pd.DataFrame:
         df = pd.DataFrame.empty
     else:
         logging.debug(f"[DATABASE] Read from database '{database}': {df}")
+    finally:
+        release_database()
         
     return df
 
 def read_column_info_from_database(database: str, table: str):
+    result = lock_database()
+    if not result.success:
+        logging.error(f"[DATABASE] Failed to acquire lock for reading column information from database '{database}': {result.message}")
+        return []
+
     try:
         conn = sqlite3.connect(database, timeout=30)
         cursor = conn.cursor()
@@ -101,6 +113,8 @@ def read_column_info_from_database(database: str, table: str):
         columns_info = []
     else:
         logging.debug(f"[DATABASE] Read column information from database '{database}': {columns_info}")
+    finally:
+        release_database()
 
     return columns_info
     
@@ -198,6 +212,8 @@ def db_get_all_rfid_tags(database: str):
     """
     stmt = "SELECT rfid FROM cats"
     df = read_df_from_database(database, stmt)
+    if df.empty:
+        return []
     return df['rfid'].tolist()
 
 def db_get_config(database: str, return_data: ReturnDataConfigDB):
@@ -459,80 +475,6 @@ def db_add_new_cat(database: str, name: str, rfid: str, cat_image_path: str) -> 
     finally:
         release_database()
 
-def db_duplicate_photos(src_database: str, dst_database: str, dst_max_photos: int):
-    """
-    This function duplicates the photos from one database to another.
-    If the number of photos in the destination database exceeds dst_max_photos,
-    the oldest photos will be deleted.
-    Dataframes with the value 'deleted = 1' will not be considered.
-    """
-    src_photos = db_get_photos(src_database, ReturnDataPhotosDB.only_ids, ignore_deleted=False)
-    logging.info("[DATABASE] Reading photos from source database done.")
-    dst_photos = db_get_photos(dst_database, ReturnDataPhotosDB.only_ids, ignore_deleted=False)
-    logging.info("[DATABASE] Reading photos from destination database done.")
-
-    src_ids = src_photos['id'].tolist() if not src_photos.empty else []
-    dst_ids = dst_photos['id'].tolist() if not dst_photos.empty else []
-
-    new_ids = set(src_ids) - set(dst_ids)
-
-    if not new_ids:
-        logging.info("[DATABASE] No new photos to add to the destination database.")
-        return Result(True, None)
-    
-    logging.info(f"[DATABASE] Number of new photos to be added to the destination database: {len(new_ids)}")
-
-    result = lock_database()
-    if not result.success:
-        return result
-
-    try:
-        conn_dst = sqlite3.connect(dst_database, timeout=30)
-        cursor_dst = conn_dst.cursor()
-
-        for photo_id in new_ids:
-            photo_df = read_photo_by_id(src_database, photo_id)
-            if not photo_df.empty:
-                logging.info(f"[DATABASE] Adding photo with ID '{photo_id}' to the destination database.")
-                photo_df['deleted'] = 0
-                columns = ', '.join(photo_df.columns)
-                values = ', '.join(['?' for _ in photo_df.columns])
-                values_list = [
-                    int(photo_df.iloc[0]['id']),
-                    str(photo_df.iloc[0]['created_at']),
-                    photo_df.iloc[0]['blob_picture'],
-                    float(photo_df.iloc[0]['no_mouse_probability']),
-                    float(photo_df.iloc[0]['mouse_probability']),
-                    int(photo_df.iloc[0]['kittyflap_id']),
-                    int(photo_df.iloc[0]['cat_id']),
-                    str(photo_df.iloc[0]['rfid']),
-                    float(photo_df.iloc[0]['false_accept_probability']),
-                    int(photo_df.iloc[0]['deleted'])
-                ]
-                cursor_dst.execute(f"INSERT INTO photo ({columns}) VALUES ({values})", values_list)
-
-        conn_dst.commit()
-
-        # Check if the number of photos exceeds dst_max_photos and delete the oldest if necessary
-        cursor_dst.execute("SELECT COUNT(*) FROM photo WHERE deleted != 1")
-        total_photos = cursor_dst.fetchone()[0]
-
-        if total_photos > dst_max_photos:
-            excess_photos = total_photos - dst_max_photos
-            logging.info(f"[DATABASE] Number of photos in the destination database exceeds the limit. Deleting {excess_photos} oldest photos.")
-            cursor_dst.execute(f"DELETE FROM photo WHERE id IN (SELECT id FROM photo WHERE deleted != 1 ORDER BY created_at ASC LIMIT {excess_photos})")
-
-        conn_dst.commit()
-    except Exception as e:
-        error_message = f"[DATABASE] An error occurred while duplicating photos to the database '{dst_database}': {e}"
-        logging.error(error_message)
-        return Result(False, error_message)
-    else:
-        logging.info(f"[DATABASE] Successfully duplicated photos to the database '{dst_database}'.")
-        return Result(True, None)
-    finally:
-        release_database()
-
 def read_photo_by_id(database: str, photo_id: int) -> pd.DataFrame:
     """
     This function reads a specific dataframe based on the ID from the source database.
@@ -629,7 +571,12 @@ def check_if_table_exists(database: str, table: str) -> bool:
     """
     if not os.path.exists(database):
         return False
-        
+    
+    result = lock_database()
+    if not result.success:
+        logging.error(f"[DATABASE] Failed to acquire lock for checking if table '{table}' exists in the database '{database}': {result.message}")
+        return False
+
     try:
         conn = sqlite3.connect(database, timeout=30)
         cursor = conn.cursor()
@@ -641,6 +588,8 @@ def check_if_table_exists(database: str, table: str) -> bool:
         return False
     else:
         return True if result else False
+    finally:
+        release_database()
     
 def migrate_photos_to_events(database: str) -> Result:    
     """
@@ -758,6 +707,11 @@ def check_database_integrity(database: str) -> Result:
     """
     This function checks the integrity of the database.
     """
+    result = lock_database()
+    if not result.success:
+        logging.error(f"[DATABASE] Failed to acquire lock for integrity check: {result.message}")
+        return Result(False, result.message)
+    
     try:
         conn = sqlite3.connect(database, timeout=30)
         cursor = conn.cursor()
@@ -776,6 +730,8 @@ def check_database_integrity(database: str) -> Result:
             error_message = f"[DATABASE] Database '{database}' integrity check failed: {result[0]}"
             logging.error(error_message)
             return Result(False, error_message)
+    finally:
+        release_database()
         
 def backup_database(database: str, backup_path: str) -> Result:
     """

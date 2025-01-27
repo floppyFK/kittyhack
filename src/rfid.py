@@ -162,7 +162,7 @@ class Rfid:
                 with open(RFID_READ_PATH, "rb") as f:
                     cycle = 0
                     while (read_cycles == 0 or cycle < read_cycles) and (self.get_run_state() != RfidRunState.stop_requested):
-                        logging.debug(f"[RFID] Cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'} | RFID run state: {self.get_run_state()}")
+                        #logging.debug(f"[RFID] Cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'} | RFID run state: {self.get_run_state()}")
                         ready, _, _ = select.select([f], [], [], 1.0)
                         if ready:
                             line = f.readline().decode('utf-8', errors='ignore').strip()

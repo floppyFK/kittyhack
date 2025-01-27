@@ -218,6 +218,107 @@ def switch_wifi_connection(ssid):
     except subprocess.CalledProcessError as e:
         logging.error(f"[SYSTEM] Error switching to Wi-Fi network {ssid}: {e.stderr}")
         return False
+    
+def delete_wifi_connection(ssid):
+    """
+    Delete a Wi-Fi network configuration.
+
+    Parameters:
+    - ssid: The SSID of the Wi-Fi network to delete.
+
+    Returns:
+    - True if the deletion was successful
+    - False if there was an error
+    """
+    try:
+        subprocess.run(
+            ["/usr/bin/nmcli", "connection", "delete", ssid],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        logging.info(f"[SYSTEM] Successfully deleted Wi-Fi network configuration: {ssid}")
+        return True
+    except subprocess.CalledProcessError as e:
+        logging.error(f"[SYSTEM] Error deleting Wi-Fi network configuration {ssid}: {e.stderr}")
+        return False
+    
+def scan_wifi_networks():
+    # Added channel to the scan results
+    """
+    Scans for available Wi-Fi networks using the `nmcli` command-line tool.
+
+    Returns:
+        list: A list of dictionaries, each containing information about a Wi-Fi network.
+              Each dictionary has the following keys:
+              - "ssid" (str): The SSID of the Wi-Fi network.
+              - "signal" (int): The signal strength of the Wi-Fi network.
+              - "security" (str): The security type of the Wi-Fi network.
+              - "bars" (int): The number of bars indicating signal strength (0-4).
+              - "channel" (int): The channel number of the Wi-Fi network.
+
+    Raises:
+        subprocess.CalledProcessError: If the `nmcli` command fails to execute.
+
+    Logs:
+        An error message if there is an issue scanning Wi-Fi networks.
+    """
+
+    try:
+        result = subprocess.run(
+            ["/usr/bin/nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,BARS,CHAN", "device", "wifi", "list"],
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+        networks = []
+        for line in result.stdout.split('\n'):
+            if line:
+                ssid, signal, security, bars, channel = line.split(':')
+                if not ssid:
+                    ssid = "HIDDEN_SSID"
+                bar_count = len([c for c in bars if c not in ('_', ' ')])
+                networks.append({
+                    "ssid": ssid,
+                    "signal": int(signal),
+                    "security": security,
+                    "bars": bar_count,
+                    "channel": int(channel)
+                })
+        return networks
+    except subprocess.CalledProcessError as e:
+        logging.error(f"[SYSTEM] Error scanning Wi-Fi networks: {e.stderr}")
+        return []
+    
+def get_wifi_connections():
+    """
+    Get a list of configured Wi-Fi networks.
+
+    Returns:
+    - A list of dictionaries, each containing the SSID, connection status, and priority of a Wi-Fi network.
+    """
+    try:
+        result = subprocess.run(
+            ["/usr/bin/nmcli", "-t", "-f", "NAME,DEVICE,AUTOCONNECT-PRIORITY,STATE", "connection", "show"],
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+        connections = []
+        for line in result.stdout.split('\n'):
+            if line:
+                ssid, device, priority, state = line.split(':')
+                # Skip loopback and wired connections
+                if ssid not in ["lo", "Wired connection 1"]:
+                    connections.append({
+                        "ssid": ssid,
+                        "connected": state == "activated",
+                        "priority": int(priority)
+                    })
+        return connections
+    except subprocess.CalledProcessError as e:
+        logging.error(f"[SYSTEM] Error getting Wi-Fi connections: {e.stderr}")
+        return []
 
 
 class I2C:

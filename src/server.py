@@ -232,6 +232,7 @@ def server(input, output, session):
     reload_trigger_photos = reactive.Value(0)
     reload_trigger_cats = reactive.Value(0)
     reload_trigger_info = reactive.Value(0)
+    reload_trigger_wlan = reactive.Value(0)
 
     # Show a notification if a new version of Kittyhack is available
     if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
@@ -965,6 +966,90 @@ def server(input, output, session):
                 ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the new language."), duration=15, type="message")
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=5, type="error")
+
+    @render.ui
+    def ui_wlan_please_wait():
+        return ui.busy_indicators.use(spinners=True, pulse=True, fade=False)
+
+    @output
+    @render.ui
+    @reactive.event(reload_trigger_wlan, ignore_none=True)
+    def ui_wlan_configured_connections():
+        configured_wlans = get_wifi_connections()
+        for wlan in configured_wlans:
+            if wlan['connected']:
+                wlan['connected_icon'] = "🟢"
+            else:
+                wlan['connected_icon'] = "⚫"
+
+        return ui.div(
+            ui.card(
+                ui.card_header(
+                    ui.p(_("Configured WLANs"))
+                ),
+                ui.div(
+                    *[
+                    ui.div(
+                        ui.markdown("###### **{}:** {}\n- **{}:** {}\n- **{}:** {}\n------\n".format(_("SSID"), wlan['ssid'], _("Connected"), wlan['connected_icon'], _("Priority"), wlan['priority'])),
+                        style_="text-align: left; width: 800px; max-width: 100%;"
+                    )
+                    for wlan in configured_wlans
+                    ]
+                ),
+                full_screen=False,
+                class_="image-container"
+                ),
+            ui.busy_indicators.options(spinner_type="bars3"),
+            ui.output_ui("ui_wlan_please_wait"),
+        )
+
+    @output
+    @render.ui
+    @reactive.event(reload_trigger_wlan, ignore_none=True)
+    def ui_wlan_available_networks():
+        # FIXME: The height of the card is not adjusted to the content. Add the according css style to fix this
+        return ui.card(
+            ui.card_header(
+                ui.p(_("Available WLANs"))
+            ),
+            ui.output_ui("scan_wifi_results"),
+            full_screen=False,
+            class_="image-container"
+        )
+    
+    @render.text
+    def scan_wifi_results():
+        # Get the available WLANs
+        reactive.invalidate_later(60.0)
+        try:
+            available_wlans = scan_wifi_networks()
+            markdown_str = ""
+            for wlan in available_wlans:
+                if wlan['ssid'] == "" or wlan['ssid'] == "HIDDEN_SSID":
+                    wlan['escaped_ssid'] = _("`HIDDEN SSID`")
+                else:
+                    wlan['escaped_ssid'] = wlan['ssid'].replace('*', '\\*').replace('`', '\\`').replace('[', '\\[').replace(']', '\\]').replace('(', '\\(').replace(')', '\\)').replace('#', '\\#').replace('+', '\\+').replace('-', '\\-').replace('!', '\\!').replace('|', '\\|').replace('{', '\\{').replace('}', '\\}').replace('.', '\\.').replace('>', '\\>').replace('<', '\\<')
+                signal_strength = wlan['bars']
+                if signal_strength == 0:
+                    wlan['signal_icon'] = "⚫"
+                elif signal_strength == 1:
+                    wlan['signal_icon'] = "🔴"
+                elif 2 <= signal_strength <= 3:
+                    wlan['signal_icon'] = "🟡"
+                else:
+                    wlan['signal_icon'] = "🟢"
+                
+                markdown_str += "###### **{}** - {}: {}, {}: {}  \n".format(wlan['escaped_ssid'], _("Channel"), wlan['channel'], _("Signal Quality"), wlan['signal_icon'])
+
+            return ui.div(
+                ui.div(
+                    ui.markdown(markdown_str),
+                    style_="text-align: left; width: 800px; max-width: 100%;"
+                )
+            )
+        except Exception as e:
+            logging.error(f"Failed to scan for available WLANs: {e}")
+            return ui.div(ui.markdown(_("Failed to scan for available WLANs.")))
     
     @render.download()
     def download_logfile():

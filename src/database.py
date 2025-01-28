@@ -11,7 +11,6 @@ import time as tm
 import base64
 import numpy as np
 import shutil
-import hashlib
 from src.helper import *
 from src.camera import image_buffer
 
@@ -778,31 +777,63 @@ def backup_database(database: str, backup_path: str) -> Result:
         db_integrity = check_database_integrity(database, skip_lock=True)
         kittyhack_db_size = get_database_size()
         kittyhack_db_backup_size = get_file_size(backup_path) if os.path.exists(backup_path) else 0
-        
+
         # Check database is valid
         if kittyhack_db_size == 0 or not db_integrity.success:
             logging.error("[DATABASE_BACKUP] Source database is invalid or empty")
             return Result(False, "kittyhack_db_corrupted")
-        
-        # Check if backup exists and compare files
-        if os.path.exists(backup_path):
-            with open(database, 'rb') as f1, open(backup_path, 'rb') as f2:
-                if hashlib.sha256(f1.read()).digest() == hashlib.sha256(f2.read()).digest():
-                    CONFIG['LAST_DB_BACKUP_DATE'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
-                    update_single_config_parameter("LAST_DB_BACKUP_DATE")
-                    logging.info("[DATABASE_BACKUP] Source and backup are identical, skipping backup")
-                    return Result(True, None)
 
         # Verify we would have enough disk space (>500MB) after backup
         required_space = kittyhack_db_size - kittyhack_db_backup_size + 500
         if free_disk_space < required_space:
             logging.error(f"[DATABASE_BACKUP] Insufficient disk space: {free_disk_space}MB free, need {required_space}MB")
             return Result(False, "disk_space_full")
-        
-        # Perform the backup
-        try:
+
+        if not os.path.exists(backup_path):
+            # Create a full backup if the backup file does not exist
             shutil.copy2(database, backup_path)
-            
+        else:
+            # Synchronize tables from the source database to the backup database
+            conn_src = sqlite3.connect(database, timeout=30)
+            conn_dst = sqlite3.connect(backup_path, timeout=30)
+            cursor_src = conn_src.cursor()
+            cursor_dst = conn_dst.cursor()
+
+            # Synchronize events table
+            # Compare only the 'id' and 'deleted' columns in the event tables of both databases.
+            cursor_src.execute("SELECT id, deleted FROM events")
+            events_src = cursor_src.fetchall()
+            cursor_dst.execute("SELECT id, deleted FROM events")
+            events_dst = cursor_dst.fetchall()
+            events_dst_dict = {row[0]: row[1] for row in events_dst}
+
+            for row in events_src:
+                src_id, src_deleted = row
+                if src_id not in events_dst_dict:
+                    cursor_src.execute("SELECT * FROM events WHERE id = ?", (src_id,))
+                    full_row = cursor_src.fetchone()
+                    cursor_dst.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", full_row)
+                elif events_dst_dict[src_id] != src_deleted:
+                    cursor_src.execute("SELECT * FROM events WHERE id = ?", (src_id,))
+                    full_row = cursor_src.fetchone()
+                    cursor_dst.execute("UPDATE events SET block_id = ?, created_at = ?, event_type = ?, original_image = ?, modified_image = ?, mouse_probability = ?, no_mouse_probability = ?, rfid = ?, event_text = ?, deleted = ? WHERE id = ?", full_row[1:] + (src_id,))
+
+            # Delete events from backup that don't exist in source
+            cursor_src.execute("SELECT id FROM events")
+            events_src_ids = {row[0] for row in cursor_src.fetchall()}
+            cursor_dst.execute("DELETE FROM events WHERE id NOT IN (%s)" % ','.join('?' * len(events_src_ids)), tuple(events_src_ids)) if events_src_ids else cursor_dst.execute("DELETE FROM events")
+
+            # Synchronize cats table
+            cursor_dst.execute("DELETE FROM cats")
+            cursor_src.execute("SELECT * FROM cats")
+            cats_src = cursor_src.fetchall()
+            for row in cats_src:
+                cursor_dst.execute("INSERT INTO cats VALUES (?, ?, ?, ?, ?)", row)
+
+            conn_dst.commit()
+            conn_src.close()
+            conn_dst.close()
+
             # Verify backup integrity
             if check_database_integrity(backup_path, skip_lock=True).success:
                 CONFIG['LAST_DB_BACKUP_DATE'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
@@ -817,18 +848,30 @@ def backup_database(database: str, backup_path: str) -> Result:
                     logging.error(f"[DATABASE_BACKUP] Failed to delete corrupted backup file: {e}")
                 return Result(False, "backup_verification_failed")
                 
+    except Exception as e:
+        logging.error(f"[DATABASE_BACKUP] Backup failed: {e}")
+        try:
+            os.remove(backup_path)
         except Exception as e:
-            logging.error(f"[DATABASE_BACKUP] Backup failed: {e}")
-            try:
-                os.remove(backup_path)
-            except Exception as e:
-                logging.error(f"[DATABASE_BACKUP] Failed to delete corrupted backup file: {e}")
-            return Result(False, "backup_failed")
+            logging.error(f"[DATABASE_BACKUP] Failed to delete corrupted backup file: {e}")
+        return Result(False, "backup_failed")
             
     finally:
         # Always release the lock
         release_database()
-        logging.info(f"[DATABASE_BACKUP] Database backup done within {datetime.now() - current_time}s")
+        duration = (datetime.now() - current_time).total_seconds()
+        logging.info(f"[DATABASE_BACKUP] Database backup done within {duration} seconds")
+
+        # Vacuum the backup database to reclaim space
+        try:
+            conn = sqlite3.connect(backup_path, timeout=30)
+            cursor = conn.cursor()
+            cursor.execute("VACUUM")
+            conn.close()
+            logging.info("[DATABASE_BACKUP] Successfully vacuumed backup database")
+        except Exception as e:
+            logging.warning(f"[DATABASE_BACKUP] Failed to vacuum backup database: {e}")
+        
 
 def restore_database_backup(database: str, backup_path: str) -> Result:
     """
@@ -895,10 +938,6 @@ def cleanup_deleted_events(database: str) -> Result:
             conn.commit()
             
             if deleted_count > 0:
-                # Vacuum the database to reclaim space
-                cursor.execute("VACUUM")
-                CONFIG['LAST_VACUUM_DATE'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                update_single_config_parameter("LAST_VACUUM_DATE")
                 logging.info(f"[DATABASE] Cleaned up {deleted_count} deleted events from database.")
             else:
                 logging.info("[DATABASE] No deleted events found in database. Cleanup skipped.")

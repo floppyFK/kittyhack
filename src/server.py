@@ -186,9 +186,7 @@ def start_background_task():
 
             # Perform backup only between 2:00 and 4:00 AM if last backup is >22h old
             current_time = datetime.now()
-            #backup_window = 2 <= current_time.hour < 4
-            ####### DEBUG DEBUG DEBUG
-            backup_window = 2 <= current_time.hour < 23
+            backup_window = 2 <= current_time.hour < 4
             backup_needed = (current_time - last_backup_date) > timedelta(hours=22)
             
             if backup_needed and backup_window:
@@ -422,15 +420,14 @@ def server(input, output, session):
         tabs_count = int(math.ceil(data_elements_count / CONFIG['ELEMENTS_PER_PAGE']))
         if tabs_count > 0:
             for i in range(tabs_count, 0, -1):
-                highest_photo_id = df_photo_ids.iloc[(i-1) * CONFIG['ELEMENTS_PER_PAGE']: i * CONFIG['ELEMENTS_PER_PAGE']].max().item()
-                ui_tabs.append(ui.nav_panel(f"{i}", "", value=f"{highest_photo_id}"))
+                ui_tabs.append(ui.nav_panel(f"{i}", ""))
         else:
             ui_tabs.append(ui.nav_panel("1", ""))
         return ui.navset_tab(*ui_tabs, id="ui_photos_cards_tabs")
 
     @output
     @render.ui
-    @reactive.event(input.button_reload, input.ui_photos_cards_tabs, input.button_detection_overlay, reload_trigger_photos, ignore_none=True)
+    @reactive.event(input.button_reload, input.ui_photos_cards_tabs, input.date_selector, input.button_detection_overlay, reload_trigger_photos, ignore_none=True)
     def ui_photos_cards():
         ui_cards = []
 

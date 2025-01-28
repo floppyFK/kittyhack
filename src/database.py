@@ -11,7 +11,6 @@ import time as tm
 import base64
 import numpy as np
 import shutil
-import hashlib
 from src.helper import *
 from src.camera import image_buffer
 
@@ -44,7 +43,7 @@ class ReturnDataConfigDB(Enum):
 # Lock for database writes
 db_write_lock = Lock()
 
-def lock_database(timeout: int = 30, check_interval: float = 0.1) -> Result:
+def lock_database(timeout: int = 60, check_interval: float = 0.1) -> Result:
     """
     This function checks if the database is locked (db_write_lock). If it is locked,
     the function waits up to a given time and checks periodically if the lock is released.
@@ -188,9 +187,14 @@ def db_get_photos(database: str,
     stmt = f"{stmt} ORDER BY id DESC"
 
     if elements_per_page != sys.maxsize:
+        # calculate the total number of pages
+        total_rows = read_df_from_database(database, f"SELECT COUNT(*) as count FROM ({stmt})").iloc[0]['count']
+        total_pages = (total_rows + elements_per_page - 1) // elements_per_page
         # calculate the offset for the current page
-        offset = page_index * elements_per_page
+        offset = (total_pages - page_index - 1) * elements_per_page
         stmt = f"{stmt} LIMIT {elements_per_page} OFFSET {offset}"
+
+    logging.debug(f"[DATABASE] query db_get_photos: return_data={return_data}, date_start={date_start}, date_end={date_end}, cats_only={cats_only}, mouse_only={mouse_only}, mouse_probability={mouse_probability}, page_index={page_index}, elements_per_page={elements_per_page}, ignore_deleted={ignore_deleted}")
 
     return read_df_from_database(database, stmt)
 
@@ -553,7 +557,11 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, delete_from_bu
         if 'MAX_PHOTOS_COUNT' in CONFIG and total_photos > CONFIG['MAX_PHOTOS_COUNT']:
             excess_photos = total_photos - CONFIG['MAX_PHOTOS_COUNT']
             logging.info(f"[DATABASE] Number of photos exceeds limit. Deleting {excess_photos} oldest photos.")
-            cursor.execute(f"UPDATE events SET deleted = 1, original_image = NULL, modified_image = NULL WHERE id IN (SELECT id FROM events WHERE deleted != 1 ORDER BY created_at ASC LIMIT {excess_photos})")
+            cursor.execute(f"SELECT id, created_at FROM events WHERE deleted != 1 ORDER BY created_at ASC LIMIT {excess_photos}")
+            photos_to_delete = cursor.fetchall()
+            for photo in photos_to_delete:
+                logging.info(f"[DATABASE] Deleting photo ID: {photo[0]}, created_at: {photo[1]}")
+                cursor.execute(f"UPDATE events SET deleted = 1, original_image = NULL, modified_image = NULL WHERE id = {photo[0]}")
 
         conn.commit()
         conn.close()
@@ -703,14 +711,16 @@ def clear_original_kittyflap_database(database: str) -> Result:
     finally:
         release_database()
 
-def check_database_integrity(database: str) -> Result:
+def check_database_integrity(database: str, skip_lock: bool = False) -> Result:
     """
     This function checks the integrity of the database.
+    :param skip_lock: If True, skip acquiring the database lock.
     """
-    result = lock_database()
-    if not result.success:
-        logging.error(f"[DATABASE] Failed to acquire lock for integrity check: {result.message}")
-        return Result(False, result.message)
+    if not skip_lock:
+        result = lock_database()
+        if not result.success:
+            logging.error(f"[DATABASE] Failed to acquire lock for integrity check: {result.message}")
+            return Result(False, result.message)
     
     try:
         conn = sqlite3.connect(database, timeout=30)
@@ -731,7 +741,8 @@ def check_database_integrity(database: str) -> Result:
             logging.error(error_message)
             return Result(False, error_message)
     finally:
-        release_database()
+        if not skip_lock:
+            release_database()
         
 def backup_database(database: str, backup_path: str) -> Result:
     """
@@ -763,38 +774,70 @@ def backup_database(database: str, backup_path: str) -> Result:
     
     try:
         # Check prerequisites for backup
-        db_integrity = check_database_integrity(database)
+        db_integrity = check_database_integrity(database, skip_lock=True)
         kittyhack_db_size = get_database_size()
         kittyhack_db_backup_size = get_file_size(backup_path) if os.path.exists(backup_path) else 0
-        
+
         # Check database is valid
         if kittyhack_db_size == 0 or not db_integrity.success:
             logging.error("[DATABASE_BACKUP] Source database is invalid or empty")
             return Result(False, "kittyhack_db_corrupted")
-        
-        # Check if backup exists and compare files
-        if os.path.exists(backup_path):
-            with open(database, 'rb') as f1, open(backup_path, 'rb') as f2:
-                if hashlib.sha256(f1.read()).digest() == hashlib.sha256(f2.read()).digest():
-                    CONFIG['LAST_BACKUP_DATE'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
-                    update_single_config_parameter("LAST_BACKUP_DATE")
-                    logging.info("[DATABASE_BACKUP] Source and backup are identical, skipping backup")
-                    return Result(True, None)
 
         # Verify we would have enough disk space (>500MB) after backup
         required_space = kittyhack_db_size - kittyhack_db_backup_size + 500
         if free_disk_space < required_space:
             logging.error(f"[DATABASE_BACKUP] Insufficient disk space: {free_disk_space}MB free, need {required_space}MB")
             return Result(False, "disk_space_full")
-        
-        # Perform the backup
-        try:
+
+        if not os.path.exists(backup_path):
+            # Create a full backup if the backup file does not exist
             shutil.copy2(database, backup_path)
-            
+        else:
+            # Synchronize tables from the source database to the backup database
+            conn_src = sqlite3.connect(database, timeout=30)
+            conn_dst = sqlite3.connect(backup_path, timeout=30)
+            cursor_src = conn_src.cursor()
+            cursor_dst = conn_dst.cursor()
+
+            # Synchronize events table
+            # Compare only the 'id' and 'deleted' columns in the event tables of both databases.
+            cursor_src.execute("SELECT id, deleted FROM events")
+            events_src = cursor_src.fetchall()
+            cursor_dst.execute("SELECT id, deleted FROM events")
+            events_dst = cursor_dst.fetchall()
+            events_dst_dict = {row[0]: row[1] for row in events_dst}
+
+            for row in events_src:
+                src_id, src_deleted = row
+                if src_id not in events_dst_dict:
+                    cursor_src.execute("SELECT * FROM events WHERE id = ?", (src_id,))
+                    full_row = cursor_src.fetchone()
+                    cursor_dst.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", full_row)
+                elif events_dst_dict[src_id] != src_deleted:
+                    cursor_src.execute("SELECT * FROM events WHERE id = ?", (src_id,))
+                    full_row = cursor_src.fetchone()
+                    cursor_dst.execute("UPDATE events SET block_id = ?, created_at = ?, event_type = ?, original_image = ?, modified_image = ?, mouse_probability = ?, no_mouse_probability = ?, rfid = ?, event_text = ?, deleted = ? WHERE id = ?", full_row[1:] + (src_id,))
+
+            # Delete events from backup that don't exist in source
+            cursor_src.execute("SELECT id FROM events")
+            events_src_ids = {row[0] for row in cursor_src.fetchall()}
+            cursor_dst.execute("DELETE FROM events WHERE id NOT IN (%s)" % ','.join('?' * len(events_src_ids)), tuple(events_src_ids)) if events_src_ids else cursor_dst.execute("DELETE FROM events")
+
+            # Synchronize cats table
+            cursor_dst.execute("DELETE FROM cats")
+            cursor_src.execute("SELECT * FROM cats")
+            cats_src = cursor_src.fetchall()
+            for row in cats_src:
+                cursor_dst.execute("INSERT INTO cats VALUES (?, ?, ?, ?, ?)", row)
+
+            conn_dst.commit()
+            conn_src.close()
+            conn_dst.close()
+
             # Verify backup integrity
-            if check_database_integrity(backup_path).success:
-                CONFIG['LAST_BACKUP_DATE'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
-                update_single_config_parameter("LAST_BACKUP_DATE")
+            if check_database_integrity(backup_path, skip_lock=True).success:
+                CONFIG['LAST_DB_BACKUP_DATE'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
+                update_single_config_parameter("LAST_DB_BACKUP_DATE")
                 logging.info("[DATABASE_BACKUP] Backup completed successfully")
                 return Result(True, None)
             else:
@@ -805,17 +848,30 @@ def backup_database(database: str, backup_path: str) -> Result:
                     logging.error(f"[DATABASE_BACKUP] Failed to delete corrupted backup file: {e}")
                 return Result(False, "backup_verification_failed")
                 
+    except Exception as e:
+        logging.error(f"[DATABASE_BACKUP] Backup failed: {e}")
+        try:
+            os.remove(backup_path)
         except Exception as e:
-            logging.error(f"[DATABASE_BACKUP] Backup failed: {e}")
-            try:
-                os.remove(backup_path)
-            except Exception as e:
-                logging.error(f"[DATABASE_BACKUP] Failed to delete corrupted backup file: {e}")
-            return Result(False, "backup_failed")
+            logging.error(f"[DATABASE_BACKUP] Failed to delete corrupted backup file: {e}")
+        return Result(False, "backup_failed")
             
     finally:
         # Always release the lock
         release_database()
+        duration = (datetime.now() - current_time).total_seconds()
+        logging.info(f"[DATABASE_BACKUP] Database backup done within {duration} seconds")
+
+        # Vacuum the backup database to reclaim space
+        try:
+            conn = sqlite3.connect(backup_path, timeout=30)
+            cursor = conn.cursor()
+            cursor.execute("VACUUM")
+            conn.close()
+            logging.info("[DATABASE_BACKUP] Successfully vacuumed backup database")
+        except Exception as e:
+            logging.warning(f"[DATABASE_BACKUP] Failed to vacuum backup database: {e}")
+        
 
 def restore_database_backup(database: str, backup_path: str) -> Result:
     """
@@ -882,15 +938,11 @@ def cleanup_deleted_events(database: str) -> Result:
             conn.commit()
             
             if deleted_count > 0:
-                # Vacuum the database to reclaim space
-                cursor.execute("VACUUM")
-                CONFIG['LAST_VACUUM_DATE'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                update_single_config_parameter("LAST_VACUUM_DATE")
                 logging.info(f"[DATABASE] Cleaned up {deleted_count} deleted events from database.")
             else:
-                logging.warning("[DATABASE] No deleted events found in database. Cleanup skipped.")
+                logging.info("[DATABASE] No deleted events found in database. Cleanup skipped.")
         else:
-            logging.warning("[DATABASE] No non-deleted events found in database. Cleanup skipped.")
+            logging.info("[DATABASE] No non-deleted events found in database. Cleanup skipped.")
             return Result(True, None)
         
         conn.close()

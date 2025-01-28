@@ -408,23 +408,26 @@ def server(input, output, session):
         ui_tabs = []
         date_start = format_date_minmax(input.date_selector(), True)
         date_end = format_date_minmax(input.date_selector(), False)
+        timezone = ZoneInfo(CONFIG['TIMEZONE'])
+        # Convert date_start and date_end to timezone-aware datetime strings in the UTC timezone
+        date_start = datetime.strptime(date_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
+        date_end = datetime.strptime(date_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
         df_photo_ids = db_get_photos(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataPhotosDB.only_ids, date_start, date_end, input.button_cat_only(), input.button_mouse_only(), CONFIG['MOUSE_THRESHOLD'])
         try:
             data_elements_count = df_photo_ids.shape[0]
         except:
             data_elements_count = 0
         tabs_count = int(math.ceil(data_elements_count / CONFIG['ELEMENTS_PER_PAGE']))
-
         if tabs_count > 0:
-            for i in range(tabs_count):
-                ui_tabs.append(ui.nav_panel(f"{i+1}", ""))
-            return ui.navset_tab(*ui_tabs, id="ui_photos_cards_tabs")
+            for i in range(tabs_count, 0, -1):
+                ui_tabs.append(ui.nav_panel(f"{i}", ""))
         else:
-            return ui.div()
+            ui_tabs.append(ui.nav_panel("1", ""))
+        return ui.navset_tab(*ui_tabs, id="ui_photos_cards_tabs")
 
     @output
     @render.ui
-    @reactive.event(input.button_reload, input.date_selector, input.ui_photos_cards_tabs, input.button_mouse_only, input.button_cat_only, input.button_detection_overlay, reload_trigger_photos, ignore_none=True)
+    @reactive.event(input.button_reload, input.ui_photos_cards_tabs, input.date_selector, input.button_detection_overlay, reload_trigger_photos, ignore_none=True)
     def ui_photos_cards():
         ui_cards = []
 
@@ -434,6 +437,11 @@ def server(input, output, session):
         date_start = format_date_minmax(input.date_selector(), True)
         date_end = format_date_minmax(input.date_selector(), False)
         page_index = int(input.ui_photos_cards_tabs()) - 1
+        timezone = ZoneInfo(CONFIG['TIMEZONE'])
+
+        # Convert date_start and date_end to timezone-aware datetime strings in the UTC timezone
+        date_start = datetime.strptime(date_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
+        date_end = datetime.strptime(date_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
         df_photos = db_get_photos(
             CONFIG['KITTYHACK_DATABASE_PATH'],
             ReturnDataPhotosDB.all,
@@ -520,7 +528,7 @@ def server(input, output, session):
                 )
 
             return ui.div(
-                ui.layout_columns(*ui_cards),
+                ui.layout_column_wrap(*ui_cards, width="400px"),
                 ui.panel_absolute(
                     ui.panel_well(
                         ui.input_action_button(id="delete_selected_photos", label=_("Delete selected photos"), icon=icon_svg("trash")),
@@ -676,7 +684,7 @@ def server(input, output, session):
                 )
             
             return ui.div(
-                ui.layout_columns(*ui_cards),
+                ui.layout_column_wrap(*ui_cards, width="400px"),
                 ui.panel_absolute(
                     ui.panel_well(
                         ui.input_action_button(id="mng_cat_save_changes", label=_("Save all changes"), icon=icon_svg("floppy-disk")),
@@ -689,7 +697,7 @@ def server(input, output, session):
             ui_cards.append(ui.help_text(_("No cats found in the database. Please go to the 'Add new cat' section to add a new cat.")))
 
             return ui.div(
-                ui.layout_columns(*ui_cards),
+                ui.layout_column_wrap(*ui_cards, width="400px"),
             )
     
     @reactive.Effect
@@ -765,7 +773,7 @@ def server(input, output, session):
             )
         )
 
-        return ui.layout_columns(*ui_cards)
+        return ui.layout_column_wrap(*ui_cards, width="400px"),
     
     @reactive.Effect
     @reactive.event(input.add_new_cat_save)

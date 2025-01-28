@@ -480,14 +480,37 @@ def check_and_stop_kittyflap_services(simulate_operations=False):
     Args:
         simulate_operations (bool): If True, only simulates the operations
     """
+
+    # Remove 'manager' entries from the cron jobs
+    try:
+        # Check if the cron configuration contains 'manager' entries
+        result = subprocess.run("crontab -l 2>/dev/null | grep 'manager'", shell=True, capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout:
+            # Remove 'manager' entries from the cron jobs
+            subprocess.run("crontab -l 2>/dev/null | grep -v 'manager' | crontab -", shell=True, check=True)
+            logging.info("Removed 'manager' entries from the cron jobs.")
+        else:
+            logging.info("No 'manager' entries found in the cron jobs.")
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to check or remove 'manager' entries from the cron jobs: {e}")
+
     services_to_manage = {
-        'kwork': {'mask': False},
-        'manager': {'mask': True},
-        'setup': {'mask': True},
-        'mqtt': {'mask': True}
+        'kwork': {'mask': False, 'delete': False},
+        'manager': {'mask': True, 'delete': True},
+        'setup': {'mask': True, 'delete': False},
+        'mqtt': {'mask': True, 'delete': False}
     }
 
     # Stop and mask services
+    # Check the 'delete' flag and remove the service file if set to True
+    for service_name, options in services_to_manage.items():
+        service_file = f"/etc/systemd/system/{service_name}.service"
+        if options['delete'] and os.path.exists(service_file):
+            try:
+                os.remove(service_file)
+                logging.info(f"Service file {service_file} deleted.")
+            except Exception as e:
+                logging.warning(f"Failed to delete service file {service_file}: {e}")
     for service_name, options in services_to_manage.items():
         if is_service_running(service_name, simulate_operations):
             logging.warning(f"The {service_name} service is running! Stopping it now.")
@@ -502,23 +525,28 @@ def check_and_stop_kittyflap_services(simulate_operations=False):
             try:
                 systemctl("mask", service_name, simulate_operations)
             except Exception as e:
-                logging.error(f"Failed to mask the {service_name} service: {e}")
+                logging.warning(f"Failed to mask the {service_name} service: {e}")
 
     # Rename executables
+    import glob
+
     executables_to_disable = {
+        "/root/kittyflap_versions/*/manager",
+        "/root/kittyflap_versions/*/dependencies",
         "/root/kittyflap_versions/latest/main",
         "/root/manager"
     }
 
-    for path in executables_to_disable:
-        if os.path.isfile(path):
-            try:
-                os.rename(path, f"{path}_disabled")
-                logging.info(f"{os.path.basename(path)} executable renamed to {path}_disabled.")
-            except Exception as e:
-                logging.error(f"Failed to rename {path}: {e}")
-        else:
-            logging.info(f"{os.path.basename(path)} executable not found. Skipping.")
+    for pattern in executables_to_disable:
+        for path in glob.glob(pattern):
+            if os.path.isfile(path):
+                try:
+                    os.rename(path, f"{path}_disabled")
+                    logging.info(f"{os.path.basename(path)} executable renamed to {path}_disabled.")
+                except Exception as e:
+                    logging.error(f"Failed to rename {path}: {e}")
+            else:
+                logging.info(f"{os.path.basename(path)} executable not found. Skipping.")
 
 def wait_for_network(timeout: int = 120) -> bool:
     interval = 1

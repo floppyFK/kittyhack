@@ -183,9 +183,9 @@ def backend_main(simulate_kittyflap = False):
             
             # Start the RFID thread with infinite read cycles, if it is not running and motion is detected outside or inside
             if motion_outside == 1 or motion_inside == 1:
-                if rfid.get_field() == False:
+                if rfid.get_field() == False and (tag_id == None or tag_id not in known_rfid_tags):
                     rfid.set_field(True)
-                    logging.info(f"[BACKEND] Started RFID reader.")
+                    logging.info(f"[BACKEND] Enabled RFID field.")
             
             # Close the magnet to the outside after the timeout
             if ( (motion_inside == 0) and
@@ -201,7 +201,7 @@ def backend_main(simulate_kittyflap = False):
                 logging.info(f"[BACKEND] RFID tag detected: '{tag_id}'.")
                 if tag_id in known_rfid_tags:
                     rfid.set_field(False)
-                    logging.info(f"[BACKEND] Detected RFID tag {tag_id} matches a known tag. Stop RFID reader.")
+                    logging.info(f"[BACKEND] Detected RFID tag {tag_id} matches a known tag. Disabled RFID field.")
 
             # Check if we are allowed to open the inside direction
             if motion_outside and not unlock_inside_decision_made:
@@ -237,19 +237,46 @@ def backend_main(simulate_kittyflap = False):
                 ids_of_current_motion_block = []
                 ids_with_mouse = []
 
-            # Collect sensor data and determine if the inside magnet should be unlocked:
-            # - Motion is detected outside
-            # - The detected RFID tag is valid
-            # - The inside magnet is currently locked
-            # - Mouse check is either disabled or no mouse is detected in the images
-            # - The outside magnet is locked (only one magnet can be unlocked at a time to avoid a potential overload of the electronics)
-            # - No unlock command is already queued for the inside magnet
-            unlock_inside =  (motion_outside == 1)
-            unlock_inside &= (tag_id_valid)
-            unlock_inside &= (magnets.get_inside_state() == False)
-            unlock_inside &= ( (CONFIG['MOUSE_CHECK_ENABLED'] == False) or ((len(ids_with_mouse) == 0) and (len(ids_of_current_motion_block) >= CONFIG['MIN_PICTURES_TO_ANALYZE'])) )
-            unlock_inside &= (magnets.get_outside_state() == False)
-            unlock_inside &= (magnets.check_queued("unlock_inside") == False)
+            # Check if the inside magnet should be unlocked
+            mouse_check_conditions = {
+                "mouse_check_enabled": CONFIG['MOUSE_CHECK_ENABLED'] == False,
+                "no_mouse_detected": len(ids_with_mouse) == 0,
+                "sufficient_pictures": len(ids_of_current_motion_block) >= CONFIG['MIN_PICTURES_TO_ANALYZE']
+            }
+
+            mouse_check = mouse_check_conditions["mouse_check_enabled"] or (mouse_check_conditions["no_mouse_detected"] and mouse_check_conditions["sufficient_pictures"])
+
+            unlock_inside_conditions = {
+                "motion_outside": motion_outside == 1,
+                "tag_id_valid": tag_id_valid,
+                "inside_locked": magnets.get_inside_state() == False,
+                "mouse_check": mouse_check,
+                "outside_locked": magnets.get_outside_state() == False,
+                "no_unlock_queued": magnets.check_queued("unlock_inside") == False
+            }
+
+            if not hasattr(backend_main, "previous_mouse_check_conditions"):
+                backend_main.previous_mouse_check_conditions = mouse_check_conditions
+            else:
+                for key, value in mouse_check_conditions.items():
+                    if backend_main.previous_mouse_check_conditions[key] != value:
+                        logging.info(f"[BACKEND] Mouse check condition '{key}' changed to {value}.")
+                if backend_main.previous_mouse_check_conditions != mouse_check_conditions:
+                    logging.info(f"[BACKEND] Mouse check conditions: {mouse_check_conditions}")
+                    backend_main.previous_mouse_check_conditions = mouse_check_conditions
+
+            if not hasattr(backend_main, "previous_unlock_inside_conditions"):
+                backend_main.previous_unlock_inside_conditions = unlock_inside_conditions
+            else:
+                total_unlock_inside_conditions = len(unlock_inside_conditions)
+                for key, value in unlock_inside_conditions.items():
+                    if backend_main.previous_unlock_inside_conditions[key] != value:
+                        logging.info(f"[BACKEND] Unlock inside Condition '{key}' changed to {value}. ({sum(unlock_inside_conditions.values())}/{total_unlock_inside_conditions} conditions fulfilled)")
+                if backend_main.previous_unlock_inside_conditions != unlock_inside_conditions:
+                    logging.info(f"[BACKEND] Unlock inside conditions: {unlock_inside_conditions}")
+                    backend_main.previous_unlock_inside_conditions = unlock_inside_conditions
+
+            unlock_inside = all(unlock_inside_conditions.values())
 
             if unlock_inside or manual_door_override['unlock_inside']:
                 logging.info(f"[BACKEND] Door unlock requested {'(manual override)' if manual_door_override['unlock_inside'] else ''}")

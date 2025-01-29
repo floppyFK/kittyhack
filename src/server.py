@@ -623,21 +623,52 @@ def server(input, output, session):
                 ui.br()
             )
     
+    @reactive.effect
+    @reactive.event(input.btn_modal_cancel)
+    def modal_cancel():
+        ui.modal_remove()
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_reboot_ok)
+    def modal_reboot():
+        ui.modal_remove()
+        ui.modal_show(ui.modal(_("Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reload the page after the restart."), title=_("Restart Kittyflap"), footer=None))
+        systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
+
     @reactive.Effect
     @reactive.event(input.bRestartKittyflap)
     def on_action_restart_system():
-        ui.notification_show(_("Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reload the page after the restart."), duration=None, type="message")
-        success = systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
-        if not success:
-            ui.notification_show(_("An error occurred while rebooting Kittyflap."), duration=5, type="error")
+        m = ui.modal(
+            _("Do you really want to restart the Kittyflap?"),
+            title=_("Restart Kittyflap"),
+            easy_close=True,
+            footer=ui.div(
+                ui.input_action_button("btn_modal_reboot_ok", _("OK")),
+                ui.input_action_button("btn_modal_cancel", _("Cancel")),
+            )
+        )
+        ui.modal_show(m)
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_shutdown_ok)
+    def modal_shutdown():
+        ui.modal_remove()
+        ui.modal_show(ui.modal(_("Kittyflap is shutting down now... Please wait 30 seconds before unplugging the power."), title=_("Shutdown Kittyflap"), footer=None))
+        systemcmd(["/usr/sbin/shutdown", "-H", "now"], CONFIG['SIMULATE_KITTYFLAP'])
 
     @reactive.Effect
     @reactive.event(input.bShutdownKittyflap)
     def on_action_shutdown_system():
-        ui.notification_show(_("Kittyflap is shutting down now... Please wait 30 seconds before unplugging the power."), duration=60, type="message")
-        success = systemcmd(["/usr/sbin/shutdown", "-H", "now"], CONFIG['SIMULATE_KITTYFLAP'])
-        if not success:
-            ui.notification_show(_("An error occurred while rebooting Kittyflap."), duration=5, type="error")
+        m = ui.modal(
+            _("Do you really want to shut down the Kittyflap?"),
+            title=_("Shutdown Kittyflap"),
+            easy_close=True,
+            footer=ui.div(
+                ui.input_action_button("btn_modal_shutdown_ok", _("OK")),
+                ui.input_action_button("btn_modal_cancel", _("Cancel")),
+            )
+        )
+        ui.modal_show(m)
 
     @output
     @render.ui
@@ -1234,12 +1265,17 @@ def server(input, output, session):
                 ui.notification_show(f"Rollback to {git_version} complete. Please check the logs for details.", duration=None, type="warning")
 
             else:
-                # Restart the kittyflap
-                msg = "Kittyhack updated successfully. The kittyflap is now restarting. This will take 1 or 2 minutes. Please reload the page after the restart."
-                i += 1
-                p.set(i, message=msg, detail="")
-                logging.info(msg)
-                ui.notification_show(msg, duration=None, type="message")
-                success = systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
+                logging.info(f"Kittyhack updated successfully to version {latest_version}.")
+                # Show the restart dialog
+                m = ui.modal(
+                    _("A restart is required to apply the update. Do you want to restart the Kittyflap now?"),
+                    title=_("Restart required"),
+                    easy_close=False,
+                    footer=ui.div(
+                        ui.input_action_button("btn_modal_reboot_ok", _("OK")),
+                        ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                    )
+                )
+                ui.modal_show(m)
 
 

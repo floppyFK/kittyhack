@@ -132,7 +132,7 @@ if check_if_table_exists(CONFIG['DATABASE_PATH'], "config") and CONFIG['KITTYFLA
 
 # Wait for internet connectivity and NTP sync
 logging.info("Waiting for network connectivity...")
-if wait_for_network(timeout=120):
+if wait_for_network(timeout=10):
     logging.info("Starting backend...")
 else:
     logging.warning("Timeout for network connectivity reached. Proceeding without network connection.")

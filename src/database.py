@@ -29,6 +29,8 @@ class ReturnDataPhotosDB(Enum):
     all = 0
     all_except_photos = 1
     only_ids = 2
+    all_modified_image = 3
+    all_original_image = 4
 
 # Return types for cat database actions
 class ReturnDataCatDB(Enum):
@@ -165,6 +167,10 @@ def db_get_photos(database: str,
     """
     if return_data == ReturnDataPhotosDB.all:
          columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, rfid, event_text"
+    elif return_data == ReturnDataPhotosDB.all_modified_image:
+         columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, rfid, event_text"
+    elif return_data == ReturnDataPhotosDB.all_original_image:
+         columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, rfid, event_text"
     elif return_data == ReturnDataPhotosDB.all_except_photos:
          columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, rfid, event_text"
     elif return_data == ReturnDataPhotosDB.only_ids:

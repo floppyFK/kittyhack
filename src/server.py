@@ -404,6 +404,7 @@ def server(input, output, session):
     
     @output
     @render.ui
+    @reactive.event(input.button_reload, input.date_selector, input.button_cat_only, input.button_mouse_only, reload_trigger_photos, ignore_none=True)
     def ui_photos_cards_nav():
         ui_tabs = []
         date_start = format_date_minmax(input.date_selector(), True)
@@ -412,7 +413,16 @@ def server(input, output, session):
         # Convert date_start and date_end to timezone-aware datetime strings in the UTC timezone
         date_start = datetime.strptime(date_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
         date_end = datetime.strptime(date_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
-        df_photo_ids = db_get_photos(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataPhotosDB.only_ids, date_start, date_end, input.button_cat_only(), input.button_mouse_only(), CONFIG['MOUSE_THRESHOLD'])
+        df_photo_ids = db_get_photos(
+            CONFIG['KITTYHACK_DATABASE_PATH'],
+            ReturnDataPhotosDB.only_ids,
+            date_start,
+            date_end,
+            input.button_cat_only(),
+            input.button_mouse_only(),
+            CONFIG['MOUSE_THRESHOLD']
+        )
+
         try:
             data_elements_count = df_photo_ids.shape[0]
         except:
@@ -420,31 +430,39 @@ def server(input, output, session):
         tabs_count = int(math.ceil(data_elements_count / CONFIG['ELEMENTS_PER_PAGE']))
         if tabs_count > 0:
             for i in range(tabs_count, 0, -1):
-                ui_tabs.append(ui.nav_panel(f"{i}", ""))
+                ui_tabs.append(ui.nav_panel(f"{i}", "", value=f"{date_start}_{date_end}_{i}"))
         else:
-            ui_tabs.append(ui.nav_panel("1", ""))
+            ui_tabs.append(ui.nav_panel("1", "", value="empty"))
+        logging.debug(f"[WEBGUI] Pictures-Nav: Recalculating tabs: {tabs_count} tabs for {data_elements_count} elements")
         return ui.navset_tab(*ui_tabs, id="ui_photos_cards_tabs")
 
     @output
     @render.ui
-    @reactive.event(input.button_reload, input.ui_photos_cards_tabs, input.date_selector, input.button_detection_overlay, reload_trigger_photos, ignore_none=True)
+    @reactive.event(input.ui_photos_cards_tabs, input.button_detection_overlay, ignore_none=True)
     def ui_photos_cards():
         ui_cards = []
 
-        current_date = input.date_selector()
-        logging.debug(f"Fetching images for {current_date}")
+        if input.ui_photos_cards_tabs() == "empty":
+            logging.info("No pictures for the selected filter criteria found.")
+            return ui.help_text(_("No pictures for the selected filter criteria found."), class_="no-images-found")
+        
+        selected_page = input.ui_photos_cards_tabs().split('_')
+        logging.debug(f"[WEBGUI] Pictures: Fetching images for {selected_page}")
 
-        date_start = format_date_minmax(input.date_selector(), True)
-        date_end = format_date_minmax(input.date_selector(), False)
-        page_index = int(input.ui_photos_cards_tabs()) - 1
-        timezone = ZoneInfo(CONFIG['TIMEZONE'])
+        date_start = selected_page[0]
+        date_end = selected_page[1]
+        page_index = int(selected_page[2])-1
 
-        # Convert date_start and date_end to timezone-aware datetime strings in the UTC timezone
-        date_start = datetime.strptime(date_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
-        date_end = datetime.strptime(date_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
+        if input.button_detection_overlay():
+            picture_type = ReturnDataPhotosDB.all_modified_image
+            blob_picture = "modified_image"
+        else:
+            picture_type = ReturnDataPhotosDB.all_original_image
+            blob_picture = "original_image"
+
         df_photos = db_get_photos(
             CONFIG['KITTYHACK_DATABASE_PATH'],
-            ReturnDataPhotosDB.all,
+            picture_type,
             date_start,
             date_end,
             input.button_cat_only(),
@@ -454,92 +472,75 @@ def server(input, output, session):
             CONFIG['ELEMENTS_PER_PAGE']
         )
 
-        if df_photos is None or df_photos.empty:
-            logging.info("No pictures for the selected filter criteria found.")
-            return ui.help_text(_("No pictures for the selected filter criteria found."), class_="no-images-found")
-        
-        else:
-            df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all_except_photos)
+        df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all_except_photos)
 
-            for index, data_row in df_photos.iterrows():
-                if input.button_detection_overlay():
-                    blob_picture = data_row["modified_image"]
-                else:
-                    blob_picture = data_row["original_image"]
+        for index, data_row in df_photos.iterrows():
+            try:
+                decoded_picture = base64.b64encode(data_row[blob_picture]).decode('utf-8')
+            except:
+                decoded_picture = None
+            
+            mouse_probability = data_row["mouse_probability"]
+
+            try:
+                photo_timestamp = pd.to_datetime(get_local_date_from_utc_date(data_row["created_at"])).strftime('%H:%M:%S')
+            except ValueError:
+                photo_timestamp = "Unknown date"
+            
+            if data_row["rfid"]:
                 try:
-                    decoded_picture = base64.b64encode(blob_picture).decode('utf-8')
+                    cat_name = df_cats.loc[df_cats["rfid"] == data_row["rfid"], "name"].values[0]
                 except:
-                    decoded_picture = None
-                
-                # Try to Fallback to the original image if the modified image is not available
-                if decoded_picture == None and input.button_detection_overlay():
-                    logging.warning(f"No modified_image found for entry {data_row['id']}. Falling back to original_image.")
-                    try:
-                        decoded_picture = base64.b64encode(data_row["original_image"]).decode('utf-8')
-                    except:
-                        decoded_picture = None
-                
-                mouse_probability = data_row["mouse_probability"]
+                    cat_name = _("Unknown RFID: {}".format(data_row["rfid"]))
+            else:
+                cat_name = _("No RFID found")
 
-                try:
-                    photo_timestamp = pd.to_datetime(get_local_date_from_utc_date(data_row["created_at"])).strftime('%H:%M:%S')
-                except ValueError:
-                    photo_timestamp = "Unknown date"
-                
-                if data_row["rfid"]:
-                    try:
-                        cat_name = df_cats.loc[df_cats["rfid"] == data_row["rfid"], "name"].values[0]
-                    except:
-                        cat_name = _("Unknown RFID: {}".format(data_row["rfid"]))
-                else:
-                    cat_name = _("No RFID found")
+            card_footer_mouse = f"{icon_svg('magnifying-glass')} {mouse_probability:.1f}%"
+            if cat_name:
+                card_footer_cat = f" | {icon_svg('cat')} {cat_name}"
+            else:
+                card_footer_cat = ""
+            
 
-                card_footer_mouse = f"{icon_svg('magnifying-glass')} {mouse_probability:.1f}%"
-                if cat_name:
-                    card_footer_cat = f" | {icon_svg('cat')} {cat_name}"
-                else:
-                    card_footer_cat = ""
-                
-
-                if decoded_picture:
-                    img_html = f'<img src="data:image/jpeg;base64,{decoded_picture}" style="min-width: 250px;" />'
-                else:
-                    img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
-                    logging.warning(f"No blob_picture found for entry {photo_timestamp}")
-                
-                ui_cards.append(
-                         ui.card(
-                            ui.card_header(
-                                ui.div(
-                                    ui.HTML(f"{photo_timestamp} | {data_row['id']}"),
-                                    ui.div(ui.input_checkbox(id=f"delete_photo_{data_row['id']}", label="", value=False), style_="float: right; width: 15px;"),
-                                ),
+            if decoded_picture:
+                img_html = f'<img src="data:image/jpeg;base64,{decoded_picture}" style="min-width: 250px;" />'
+            else:
+                img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
+                logging.warning(f"No blob_picture found for entry {photo_timestamp}")
+            
+            ui_cards.append(
+                        ui.card(
+                        ui.card_header(
+                            ui.div(
+                                ui.HTML(f"{photo_timestamp} | {data_row['id']}"),
+                                ui.div(ui.input_checkbox(id=f"delete_photo_{data_row['id']}", label="", value=False), style_="float: right; width: 15px;"),
                             ),
-                            ui.HTML(img_html),
-                            ui.card_footer(
-                                ui.div(
-                                    ui.tooltip(ui.HTML(card_footer_mouse), _("Mouse probability")),
-                                    ui.HTML(card_footer_cat),
-                                )
-                            ),
-                            full_screen=True,
-                            class_="image-container" + (" image-container-alert" if mouse_probability >= CONFIG['MOUSE_THRESHOLD'] else "")
-                        )
-                )
-
-            return ui.div(
-                ui.layout_column_wrap(*ui_cards, width="400px"),
-                ui.panel_absolute(
-                    ui.panel_well(
-                        ui.input_action_button(id="delete_selected_photos", label=_("Delete selected photos"), icon=icon_svg("trash")),
-                        style_="background: rgba(240, 240, 240, 0.9); text-align: center;"
-                    ),
-                    draggable=False, width="100%", left="0px", right="0px", bottom="0px", fixed=True,
-                ),
-                ui.br(),
-                ui.br(),
-                ui.br(),
+                        ),
+                        ui.HTML(img_html),
+                        ui.card_footer(
+                            ui.div(
+                                ui.tooltip(ui.HTML(card_footer_mouse), _("Mouse probability")),
+                                ui.HTML(card_footer_cat),
+                            )
+                        ),
+                        full_screen=True,
+                        class_="image-container" + (" image-container-alert" if mouse_probability >= CONFIG['MOUSE_THRESHOLD'] else "")
+                    )
             )
+
+        return ui.div(
+            ui.layout_column_wrap(*ui_cards, width="400px"),
+            ui.panel_absolute(
+                ui.panel_well(
+                    ui.input_action_button(id="delete_selected_photos", label=_("Delete selected photos"), icon=icon_svg("trash")),
+                    style_="background: rgba(240, 240, 240, 0.9); text-align: center;"
+                ),
+                draggable=False, width="100%", left="0px", right="0px", bottom="0px", fixed=True,
+            ),
+            ui.br(),
+            ui.br(),
+            ui.br(),
+        )
         
     @reactive.Effect
     @reactive.event(input.delete_selected_photos)
@@ -1238,6 +1239,7 @@ def server(input, output, session):
                 i += 1
                 p.set(i, message=msg, detail="")
                 logging.info(msg)
+                ui.notification_show(msg, duration=None, type="message")
                 success = systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
 
 

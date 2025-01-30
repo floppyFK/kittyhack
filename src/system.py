@@ -127,17 +127,17 @@ def systemcmd(command: list[str], simulate_operations=False):
     
     return True
 
-def manage_and_switch_wifi(ssid, password="", priority=-1):
+def manage_and_switch_wlan(ssid, password="", priority=-1):
     """
-    Add or update a Wi-Fi connection using NetworkManager and set its priority.
+    Add or update a WLAN connection using NetworkManager and set its priority.
 
     Parameters:
-    - ssid: The SSID of the Wi-Fi network.
-    - password: The password for the Wi-Fi network.
-    - priority: The priority of the Wi-Fi connection. Use -1 for highest priority (default), or specific value.
+    - ssid: The SSID of the WLAN network.
+    - password: The password for the WLAN network.
+    - priority: The priority of the WLAN connection. Use -1 for highest priority (default), or specific value.
 
     Returns:
-    - True if the Wi-Fi configuration was successful.
+    - True if the WLAN configuration was successful.
     - False if there was an error.
     """
     if priority == -1:
@@ -178,7 +178,7 @@ def manage_and_switch_wifi(ssid, password="", priority=-1):
                 ],
                 check=True,
             )
-            logging.info(f"[SYSTEM] Added Wi-Fi configuration for {ssid}.")
+            logging.info(f"[SYSTEM] Added WLAN configuration for {ssid}.")
 
         # Set the priority for the connection
         subprocess.run(
@@ -192,15 +192,15 @@ def manage_and_switch_wifi(ssid, password="", priority=-1):
         logging.info(f"[SYSTEM] Restarted NetworkManager to apply changes.")
 
     except subprocess.CalledProcessError as e:
-        logging.info(f"[SYSTEM] Error managing Wi-Fi: {e}")
+        logging.info(f"[SYSTEM] Error managing WLAN: {e}")
         return False
     
-def switch_wifi_connection(ssid):
+def switch_wlan_connection(ssid):
     """
-    Switch to an already configured Wi-Fi network.
+    Switch to an already configured WLAN network.
 
     Parameters:
-    - ssid: The SSID of the Wi-Fi network to connect to.
+    - ssid: The SSID of the WLAN network to connect to.
 
     Returns:
     - True if the switch was successful
@@ -213,18 +213,18 @@ def switch_wifi_connection(ssid):
             capture_output=True,
             text=True
         )
-        logging.info(f"[SYSTEM] Successfully switched to Wi-Fi network: {ssid}")
+        logging.info(f"[SYSTEM] Successfully switched to WLAN network: {ssid}")
         return True
     except subprocess.CalledProcessError as e:
-        logging.error(f"[SYSTEM] Error switching to Wi-Fi network {ssid}: {e.stderr}")
+        logging.error(f"[SYSTEM] Error switching to WLAN network {ssid}: {e.stderr}")
         return False
     
-def delete_wifi_connection(ssid):
+def delete_wlan_connection(ssid):
     """
-    Delete a Wi-Fi network configuration.
+    Delete a WLAN network configuration.
 
     Parameters:
-    - ssid: The SSID of the Wi-Fi network to delete.
+    - ssid: The SSID of the WLAN network to delete.
 
     Returns:
     - True if the deletion was successful
@@ -237,65 +237,75 @@ def delete_wifi_connection(ssid):
             capture_output=True,
             text=True
         )
-        logging.info(f"[SYSTEM] Successfully deleted Wi-Fi network configuration: {ssid}")
+        logging.info(f"[SYSTEM] Successfully deleted WLAN network configuration: {ssid}")
         return True
     except subprocess.CalledProcessError as e:
-        logging.error(f"[SYSTEM] Error deleting Wi-Fi network configuration {ssid}: {e.stderr}")
+        logging.error(f"[SYSTEM] Error deleting WLAN network configuration {ssid}: {e.stderr}")
         return False
     
-def scan_wifi_networks():
+def scan_wlan_networks():
     # Added channel to the scan results
     """
-    Scans for available Wi-Fi networks using the `nmcli` command-line tool.
+    Scans for available WLAN networks using the `nmcli` command-line tool.
 
     Returns:
-        list: A list of dictionaries, each containing information about a Wi-Fi network.
+        list: A list of dictionaries, each containing information about a WLAN network.
               Each dictionary has the following keys:
-              - "ssid" (str): The SSID of the Wi-Fi network.
-              - "signal" (int): The signal strength of the Wi-Fi network.
-              - "security" (str): The security type of the Wi-Fi network.
+              - "ssid" (str): The SSID of the WLAN network (or BSSID if SSID is not available).
+              - "signal" (int): The signal strength of the WLAN network.
+              - "security" (str): The security type of the WLAN network.
               - "bars" (int): The number of bars indicating signal strength (0-4).
-              - "channel" (int): The channel number of the Wi-Fi network.
+              - "channel" (int): The channel number of the WLAN network.
 
     Raises:
         subprocess.CalledProcessError: If the `nmcli` command fails to execute.
 
     Logs:
-        An error message if there is an issue scanning Wi-Fi networks.
+        An error message if there is an issue scanning WLAN networks.
     """
-
     try:
         result = subprocess.run(
-            ["/usr/bin/nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,BARS,CHAN", "device", "wifi", "list"],
+            ["/usr/bin/nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,BARS,CHAN,BSSID", "device", "wifi", "list"],
             stdout=subprocess.PIPE,
             text=True,
             check=True
         )
-        networks = []
+        networks = {}
         for line in result.stdout.split('\n'):
             if line:
-                ssid, signal, security, bars, channel = line.split(':')
-                if not ssid:
-                    ssid = "HIDDEN_SSID"
+                # Split with maxsplit to handle BSSIDs containing colons
+                parts = line.split(':', 5)
+                if len(parts) != 6:
+                    continue
+                ssid, signal, security, bars, channel, bssid = parts
+                if not ssid or ssid == "":
+                    ssid = bssid.replace("\\", "")
                 bar_count = len([c for c in bars if c not in ('_', ' ')])
-                networks.append({
-                    "ssid": ssid,
-                    "signal": int(signal),
-                    "security": security,
-                    "bars": bar_count,
-                    "channel": int(channel)
-                })
+                if ssid not in networks:
+                    networks[ssid] = {
+                        "ssid": ssid,
+                        "signal": int(signal),
+                        "security": security,
+                        "bars": bar_count,
+                        "channel": str(channel)
+                    }
+                else:
+                    networks[ssid]["signal"] = max(networks[ssid]["signal"], int(signal))
+                    networks[ssid]["bars"] = max(networks[ssid]["bars"], bar_count)
+                    if str(channel) not in networks[ssid]["channel"].split(','):
+                        networks[ssid]["channel"] = f"{networks[ssid]['channel']}, {channel}"
+        networks = list(networks.values())
         return networks
     except subprocess.CalledProcessError as e:
-        logging.error(f"[SYSTEM] Error scanning Wi-Fi networks: {e.stderr}")
+        logging.error(f"[SYSTEM] Error scanning WLAN networks: {e.stderr}")
         return []
     
-def get_wifi_connections():
+def get_wlan_connections():
     """
-    Get a list of configured Wi-Fi networks.
+    Get a list of configured WLAN networks.
 
     Returns:
-    - A list of dictionaries, each containing the SSID, connection status, and priority of a Wi-Fi network.
+    - A list of dictionaries, each containing the SSID, connection status, and priority of a WLAN network.
     """
     try:
         result = subprocess.run(
@@ -317,7 +327,7 @@ def get_wifi_connections():
                     })
         return connections
     except subprocess.CalledProcessError as e:
-        logging.error(f"[SYSTEM] Error getting Wi-Fi connections: {e.stderr}")
+        logging.error(f"[SYSTEM] Error getting WLAN connections: {e.stderr}")
         return []
 
 

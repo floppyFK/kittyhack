@@ -967,89 +967,119 @@ def server(input, output, session):
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=5, type="error")
 
-    @render.ui
-    def ui_wlan_please_wait():
-        return ui.busy_indicators.use(spinners=True, pulse=True, fade=False)
-
     @output
     @render.ui
     @reactive.event(reload_trigger_wlan, ignore_none=True)
     def ui_wlan_configured_connections():
-        configured_wlans = get_wifi_connections()
-        for wlan in configured_wlans:
-            if wlan['connected']:
-                wlan['connected_icon'] = "🟢"
-            else:
-                wlan['connected_icon'] = "⚫"
-
-        return ui.div(
-            ui.card(
-                ui.card_header(
-                    ui.p(_("Configured WLANs"))
+        return ui.layout_column_wrap(
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.p(_("Configured WLANs"))
+                    ),
+                    ui.HTML('<div id="pleasewait_wlan_configured" class="spinner-container"><div class="spinner"></div></div>'),
+                    ui.output_ui("configured_wlans_table"),
+                    ui.hr(),
+                    ui.input_action_button(id="btn_wlan_add", label=_("Add new WLAN"), icon=icon_svg("plus")),
+                    full_screen=False,
+                    class_="generic-container",
+                    min_height="150px"
                 ),
-                ui.div(
-                    *[
-                    ui.div(
-                        ui.markdown("###### **{}:** {}\n- **{}:** {}\n- **{}:** {}\n------\n".format(_("SSID"), wlan['ssid'], _("Connected"), wlan['connected_icon'], _("Priority"), wlan['priority'])),
-                        style_="text-align: left; width: 800px; max-width: 100%;"
-                    )
-                    for wlan in configured_wlans
-                    ]
-                ),
-                full_screen=False,
-                class_="image-container"
-                ),
-            ui.busy_indicators.options(spinner_type="bars3"),
-            ui.output_ui("ui_wlan_please_wait"),
+                width="400px"
+            )
         )
+    
+    @render.table
+    def configured_wlans_table():
+        try:
+            configured_wlans = get_wlan_connections()
+            i = 0
+            for wlan in configured_wlans:
+                if wlan['connected']:
+                    wlan['connected_icon'] = "🟢"
+                else:
+                    wlan['connected_icon'] = "⚫"
+                wlan['actions'] = ui.div(
+                    ui.input_action_button(id=f"btn_wlan_modify_{i}" , label=_("Modify"), icon=icon_svg("pencil")),
+                    ui.input_action_button(id=f"btn_wlan_delete_{i}" , label=_("Delete"), icon=icon_svg("trash")),
+                )
+                i += 1
+
+            # Create a pandas DataFrame from the available WLANs
+            df = pd.DataFrame(configured_wlans)
+            df = df[['ssid', 'priority', 'connected_icon', 'actions']]  # Select only the columns we want to display
+            df.columns = ['SSID', _('Priority'), _('Connection state'), ""]  # Rename columns for display
+
+            return (
+                df.style.set_table_attributes('class="dataframe shiny-table table w-auto"')
+                .hide(axis="index")
+            )
+        except Exception as e:
+            logging.error(f"Failed to scan for available WLANs: {e}")
+            # Return an empty DataFrame with an error message
+            return pd.DataFrame({
+                'ERROR': [_('Failed to scan for available WLANs')]
+            })
+        finally:
+            ui.remove_ui("#pleasewait_wlan_configured")
 
     @output
     @render.ui
     @reactive.event(reload_trigger_wlan, ignore_none=True)
     def ui_wlan_available_networks():
-        # FIXME: The height of the card is not adjusted to the content. Add the according css style to fix this
-        return ui.card(
-            ui.card_header(
-                ui.p(_("Available WLANs"))
-            ),
-            ui.output_ui("scan_wifi_results"),
-            full_screen=False,
-            class_="image-container"
+        return ui.layout_column_wrap(
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.p(_("Available WLANs"))
+                    ),
+                    ui.HTML('<div id="pleasewait_wlan_scan" class="spinner-container"><div class="spinner"></div></div>'),
+                    ui.output_ui("scan_wlan_results_table"),
+                    full_screen=False,
+                    class_="generic-container",
+                    min_height="150px"
+                ),
+                width="400px"
+            )
         )
     
-    @render.text
-    def scan_wifi_results():
+    @render.table
+    def scan_wlan_results_table():
         # Get the available WLANs
-        reactive.invalidate_later(60.0)
+        reactive.invalidate_later(30.0)
         try:
-            available_wlans = scan_wifi_networks()
-            markdown_str = ""
+            available_wlans = scan_wlan_networks()
             for wlan in available_wlans:
-                if wlan['ssid'] == "" or wlan['ssid'] == "HIDDEN_SSID":
-                    wlan['escaped_ssid'] = _("`HIDDEN SSID`")
-                else:
-                    wlan['escaped_ssid'] = wlan['ssid'].replace('*', '\\*').replace('`', '\\`').replace('[', '\\[').replace(']', '\\]').replace('(', '\\(').replace(')', '\\)').replace('#', '\\#').replace('+', '\\+').replace('-', '\\-').replace('!', '\\!').replace('|', '\\|').replace('{', '\\{').replace('}', '\\}').replace('.', '\\.').replace('>', '\\>').replace('<', '\\<')
                 signal_strength = wlan['bars']
+                wlan['signal_icon'] = f"{wlan['signal']}% "
                 if signal_strength == 0:
-                    wlan['signal_icon'] = "⚫"
+                    wlan['signal_icon'] += "⚫"
                 elif signal_strength == 1:
-                    wlan['signal_icon'] = "🔴"
+                    wlan['signal_icon'] += "🔴"
                 elif 2 <= signal_strength <= 3:
-                    wlan['signal_icon'] = "🟡"
+                    wlan['signal_icon'] += "🟡"
                 else:
-                    wlan['signal_icon'] = "🟢"
+                    wlan['signal_icon'] += "🟢"
                 
-                markdown_str += "###### **{}** - {}: {}, {}: {}  \n".format(wlan['escaped_ssid'], _("Channel"), wlan['channel'], _("Signal Quality"), wlan['signal_icon'])
 
-            return ui.div(
-                ui.div(
-                    ui.markdown(markdown_str),
-                    style_="text-align: left; width: 800px; max-width: 100%;"
-                )
+            # Create a pandas DataFrame from the available WLANs
+            df = pd.DataFrame(available_wlans)
+            df = df[['ssid', 'channel', 'signal_icon']]  # Select only the columns we want to display
+            df.columns = ['SSID', _('Channel'), _('Signal')]  # Rename columns for display
+
+            return (
+                df.style.set_table_attributes('class="dataframe shiny-table table w-auto"')
+                .hide(axis="index")
             )
         except Exception as e:
             logging.error(f"Failed to scan for available WLANs: {e}")
-            return ui.div(ui.markdown(_("Failed to scan for available WLANs.")))
+            # Return an empty DataFrame with an error message
+            return pd.DataFrame({
+                'ERROR': [_('Failed to scan for available WLANs')]
+            })
+        finally:
+            ui.remove_ui("#pleasewait_wlan_scan")
+            
     
     @render.download()
     def download_logfile():

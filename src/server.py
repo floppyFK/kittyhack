@@ -192,7 +192,7 @@ def start_background_task():
             if backup_needed and backup_window:
                 logging.info(f"[TRIGGER: background task] It is {current_time.hour}:{current_time.minute}:{current_time.second}. Start backup of the kittyhack database...")
                 db_backup = backup_database(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
-                if not db_backup.success and db_backup.message == "kittyhack_db_corrupted":
+                if db_backup and db_backup.message == "kittyhack_db_corrupted":
                     restore_database_backup(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
 
             # Perform Scheduled VACUUM only if the last scheduled vacuum date is older than 24 hours

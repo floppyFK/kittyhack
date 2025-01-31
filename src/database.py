@@ -59,7 +59,7 @@ def lock_database(timeout: int = 60, check_interval: float = 0.1) -> Result:
     while tm.time() - start_time < timeout:
         if db_write_lock.acquire(blocking=False):
             logging.debug("[DATABASE] Database lock acquired.")
-            return Result(True, None)
+            return Result(True, "")
         tm.sleep(check_interval)
     error_message = f"[DATABASE] Database lock not released within the given timeout ({timeout}s)."
     logging.error(error_message)
@@ -142,7 +142,7 @@ def write_stmt_to_database(database: str, stmt: str) -> Result:
     else:
         # success
         logging.debug(f"[DATABASE] Successfully executed statement to database '{database}': {stmt}")
-        return Result(True, None)
+        return Result(True, "")
     finally:
         release_database()
 
@@ -314,7 +314,7 @@ def create_kittyhack_photo_table(database: str):
         return Result(False, error_message)
     else:
         logging.info(f"Successfully created the 'photo' table in the database '{database}'.")
-        return Result(True, None)
+        return Result(True, "")
     finally:
         release_database()
 
@@ -390,7 +390,7 @@ def migrate_cats_to_kittyhack(kittyflap_db: str, kittyhack_db: str) -> Result:
         return Result(False, error_message)
     else:
         logging.info(f"[DATABASE] Successfully migrated the 'cats' table from the database '{kittyflap_db}' to '{kittyhack_db}'.")
-        return Result(True, None)
+        return Result(True, "")
     finally:
         release_database()
 
@@ -439,7 +439,7 @@ def db_update_cat_data_by_id(database: str, cat_id: int, name: str, rfid: str, c
         return Result(False, error_message)
     else:
         logging.info(f"[DATABASE] Cat data with ID '{cat_id}' updated successfully.")
-        return Result(True, None)
+        return Result(True, "")
     finally:
         release_database()
 
@@ -481,7 +481,7 @@ def db_add_new_cat(database: str, name: str, rfid: str, cat_image_path: str) -> 
         return Result(False, error_message)
     else:
         logging.info(f"[DATABASE] New cat added successfully to the database '{database}' with ID '{id}'.")
-        return Result(True, None)
+        return Result(True, "")
     finally:
         release_database()
 
@@ -622,7 +622,7 @@ def migrate_photos_to_events(database: str) -> Result:
         photo_ids = cursor.fetchall()
         if not photo_ids:
             logging.info(f"[DATABASE] No photos to migrate from 'photo' table to 'events' table in the database '{database}'.")
-            return Result(True, None)
+            return Result(True, "")
 
         for photo_id in photo_ids:
             cursor.execute("SELECT * FROM photo WHERE id = ?", (photo_id[0],))
@@ -687,7 +687,7 @@ def migrate_photos_to_events(database: str) -> Result:
         return Result(False, error_message)
     else:
         logging.info(f"[DATABASE] Successfully migrated photos from 'photo' table to 'events' table in the database '{database}'.")
-        return Result(True, None)
+        return Result(True, "")
     finally:
         release_database()
 
@@ -713,7 +713,7 @@ def clear_original_kittyflap_database(database: str) -> Result:
         return Result(False, error_message)
     else:
         logging.info(f"[DATABASE] Successfully cleared the database '{database}'.")
-        return Result(True, None)
+        return Result(True, "")
     finally:
         release_database()
 
@@ -741,7 +741,7 @@ def check_database_integrity(database: str, skip_lock: bool = False) -> Result:
     else:
         if result[0] == 'ok':
             logging.info(f"[DATABASE] Database '{database}' integrity check passed.")
-            return Result(True, None)
+            return Result(True, "")
         else:
             error_message = f"[DATABASE] Database '{database}' integrity check failed: {result[0]}"
             logging.error(error_message)
@@ -845,7 +845,7 @@ def backup_database(database: str, backup_path: str) -> Result:
                 CONFIG['LAST_DB_BACKUP_DATE'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
                 update_single_config_parameter("LAST_DB_BACKUP_DATE")
                 logging.info("[DATABASE_BACKUP] Backup completed successfully")
-                return Result(True, None)
+                return Result(True, "")
             else:
                 logging.error("[DATABASE_BACKUP] Backup verification failed - will retry next run")
                 try:
@@ -911,7 +911,7 @@ def restore_database_backup(database: str, backup_path: str) -> Result:
         try:
             shutil.copy2(backup_path, database)
             logging.info("[DATABASE_BACKUP] Restore completed successfully")
-            return Result(True, None)
+            return Result(True, "")
         except Exception as e:
             logging.error(f"[DATABASE_BACKUP] Restore failed: {e}")
             return Result(False, "restore_failed")
@@ -949,10 +949,10 @@ def cleanup_deleted_events(database: str) -> Result:
                 logging.info("[DATABASE] No deleted events found in database. Cleanup skipped.")
         else:
             logging.info("[DATABASE] No non-deleted events found in database. Cleanup skipped.")
-            return Result(True, None)
+            return Result(True, "")
         
         conn.close()
-        return Result(True, None)
+        return Result(True, "")
             
     except Exception as e:
         error_message = f"[DATABASE] Failed to clean up deleted events: {e}"

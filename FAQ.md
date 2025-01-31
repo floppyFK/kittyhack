@@ -1,20 +1,20 @@
-# FAQ
+# FAQ  
+  
+### [German version below / Deutsche Version weiter unten!](#deutsch)  
+  
+# ENGLISH  
 
-### [German version below / Deutsche Version weiter unten!](#deutsch)
-
-# ENGLISH
-
-We try to answer some frequently asked questions and share some neat tips and tricks in this section.
-⚠️ Please bear in mind, that some of these actions might void your warranty, damage your flap or interfere with several functions - any action is on your own risk and responsibility!
-
+We try to answer some frequently asked questions and share some neat tips and tricks in this section.  
+⚠️ Please bear in mind, that some of these actions might void your warranty, damage your flap or interfere with several functions - any action is on your own risk and responsibility!  
+  
 ---
-1.1) My Kittyflap disappears from my WLAN after a few hours
-1.2) WIP
-1.3) Why is the website background grayed out and the content disappears when I try to switch sections?
-
-2.1) WIP
-2.2) WIP
-2.3) WIP
+1.1) My Kittyflap disappears from my WLAN after a few hours  
+1.2) WIP  
+1.3) Why is the website background grayed out and the content disappears when I try to switch sections?  
+  
+2.1) WIP  
+2.2) WIP  
+2.3) WIP  
 ---
 
 ### My Kittyflap disappears from my WLAN after a few hours
@@ -63,17 +63,26 @@ In der Zwischenzeit kannst du die Kittyhack Seite aber einfach neu laden (z. B. 
 
 
 ### 2.1) Ich möchte meinen Empfang durch eine externe Antenne verbessern
-Wir arbeiten derzeit an einer detaillierten Anleitung zur Nutzung und zum Einbau einer externen WLAN-Antenne. Bitte hab noch ein wenig Geduld...
-Kaufen kann man eine passende Antenne z.B. bei Amazon ( https://www.amazon.de/Waveshare-Compatible-Raspberry-Supports-Frequency/dp/B08RRX9H2Q/ ) oder BerryBase ( https://www.berrybase.de/antennenkit-fuer-raspberry-pi-compute-module-4-5 ), wobei es nur auf den passenden Stecker ankommt - es gibt also sicher noch viele andere Bezugsquellen.
-Bei einem ersten Test konnte eine deutliche Verbesserung der Signalqualität erreicht werden. Die Ergebnisse können individuell abweichen, aber es zeigt, dass eine Verbesserung mit einfachen Mitteln erreicht werden kann.
-Vorher:
-Link Quality: 🟡 53/70
-Signal Level: -57 dBm
-
-Nachher:
-Link Quality: 🟢 60/70
-Signal Level: -50 dBm
-
+Zunächst muss in die innere Abdeckung ein Loch gebohrt werden, in dem die Antenne später befestigt werden kann. Hierbei ist ein wenig Fingerspitzengefühl gefragt. Ich habe einen scharfen 5er Holzbohrer verwendet und das Loch dann so lange Schritt für Schritt vergrößert, bis der Antennenfuß gut gepasst hat.  
+Die Antenne kann dann aber noch nicht montiert werden! Aufgrund der Platzierung der Elektronikkomponenten auf der Außenseite muss zunächst die KittyFlap an den schwarzen Schrauben geöffnet und damit das Innere entblößt werden. Das Kabel habe ich dann aufgrund der geringen Länge durch das im folgenden Bild gezeigte Loch geführt und mit dem Compute Module verbunden (siehe übernächstes Bild - rot eingekringelt).
+![Antenne_2](https://github.com/user-attachments/assets/c90730e2-0d1e-431f-8a7a-c49c0e6227b2)  
+![CM_1](https://github.com/user-attachments/assets/d2fd90ea-f3ab-4172-be9f-d0e48170f19d)  
+So sieht das Ergebnis dann aus:  
+![Antenne_1](https://github.com/user-attachments/assets/625ffa7f-3806-42d2-8092-06c24c2eda41)  
+Kaufen kann man eine passende Antenne z.B. bei  
+Amazon: https://www.amazon.de/Waveshare-Compatible-Raspberry-Supports-Frequency/dp/B08RRX9H2Q/  
+BerryBase: https://www.berrybase.de/antennenkit-fuer-raspberry-pi-compute-module-4-5  
+Reichelt: https://www.reichelt.de/de/de/shop/produkt/raspberry_pi_-_compute_modul_4_5_antenne_2_4ghz_5_8ghz-290554  
+Wobei es nur auf den passenden Stecker ankommt - es gibt also sicher noch viele andere Bezugsquellen.  
+Bei einem ersten Test konnte eine deutliche Verbesserung der Signalqualität erreicht werden. Die Ergebnisse können individuell abweichen, aber es zeigt, dass eine Verbesserung mit einfachen Mitteln erreicht werden kann.  
+Vorher:  
+Link Quality: 🟡 53/70  
+Signal Level: -57 dBm  
+  
+Nachher:  
+Link Quality: 🟢 60/70  
+Signal Level: -50 dBm  
+  
 ### 2.2) Ich möchte meine Infrarot-Sensoren verbessern
 Stelle bei Problemen zunächst sicher, dass die Lötstellen alle in Ordnung sind. Hier wurden bereits des öfteren lose Kontakte oder sog. kalte Lötstellen festgestellt.
 Ein weiterer Punkt, der überprüft werden sollte, ist die Einbaurichtung insbesondere des inneren PIR-Sensors. Aufgrund der Funktionsweise des PIR-Sensors kann es bei leichter Drehung des Sensors zu Problemen kommen. Ein Bild wie er korrekt eingebaut sein sollte, folgt in Kürze.

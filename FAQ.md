@@ -64,7 +64,8 @@ In der Zwischenzeit kannst du die Kittyhack Seite aber einfach neu laden (z. B. 
 
 ### 2.1) Ich möchte meinen Empfang durch eine externe Antenne verbessern
 Wir arbeiten derzeit an einer detaillierten Anleitung zur Nutzung und zum Einbau einer externen WLAN-Antenne. Bitte hab noch ein wenig Geduld...
-Bei einem ersten Test konnte eine deutliche Verbesserung der Signalqualität erreicht werden. Die Ergebnisse können individuell abweichen, aber es zeigt, dass eine Verbesserung erreicht werden kann.
+Kaufen kann man eine passende Antenne z.B. bei Amazon ( https://www.amazon.de/Waveshare-Compatible-Raspberry-Supports-Frequency/dp/B08RRX9H2Q/ ) oder BerryBase ( https://www.berrybase.de/antennenkit-fuer-raspberry-pi-compute-module-4-5 ), wobei es nur auf den passenden Stecker ankommt - es gibt also sicher noch viele andere Bezugsquellen.
+Bei einem ersten Test konnte eine deutliche Verbesserung der Signalqualität erreicht werden. Die Ergebnisse können individuell abweichen, aber es zeigt, dass eine Verbesserung mit einfachen Mitteln erreicht werden kann.
 Vorher:
 Link Quality: 🟡 53/70
 Signal Level: -57 dBm

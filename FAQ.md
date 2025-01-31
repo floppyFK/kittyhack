@@ -7,7 +7,7 @@
 We try to answer some frequently asked questions and share some neat tips and tricks in this section.  
 ⚠️ Please bear in mind, that some of these actions might void your warranty, damage your flap or interfere with several functions - any action is on your own risk and responsibility!  
   
----
+---  
 1.1) My Kittyflap disappears from my WLAN after a few hours  
 1.2) WIP  
 1.3) Why is the website background grayed out and the content disappears when I try to switch sections?  
@@ -26,24 +26,24 @@ In Kittyhack version 1.2.0 and later, you can check the strength of the WLAN sig
 ### Why is the website background grayed out and the content disappears when I try to switch sections?
 This issue is related to power-saving features on smartphones and tablets: When your browser on your smartphone loses focus (e.g., when you switch to the home screen), communication 
 with the Kittyhack page stops after a few seconds. I am still working on a solution for this problem.  
-In the meantime, you can simply reload the Kittyhack page (e.g., with the refresh gesture) to make it work normally again.
-
----
-
-
-# DEUTSCH
-
-In diesem Abschnitt versuchen wir auf häufig gestellte Fragen einzugehen und teilen ein paar nützliche Tipps und Tricks, wie ihr eure KittyFlap ein wenig verbessern könnt.
-⚠️ Bitte habt dabei stets im Kopf, dass die hier beschriebenen Schritte eure Garantie beeinträchtigen, die KittyFlap beschädigen oder andere Funktionen beeinträchtigen könnten - ihr führt die Schritte auf eigenes Risiko durch und seid ausschließlich selbst verantwortlich!
-
----
-1.1) Meine Kittyflap verschwindet nach einigen Stunden immer wieder aus meinem WLAN
-1.2) Meine KittyFlap hat schlechten WLAN-Empfang und verliert immer mal wieder die Verbindung
-1.3) Warum ist der Hintergrund der Website ausgegraut und der Inhalt verschwindet, wenn ich versuche, die Sektion zu wechseln
-
-2.1) Ich möchte meinen Empfang durch eine externe Antenne verbessern
-2.2) Ich möchte meine Infrarot-Sensoren verbessern
-2.3) Meine Magnete lösen wie von geisterhand aus, obwohl keine Bewegung im Klappenbereich war
+In the meantime, you can simply reload the Kittyhack page (e.g., with the refresh gesture) to make it work normally again.  
+  
+---  
+  
+  
+# DEUTSCH  
+  
+In diesem Abschnitt versuchen wir auf häufig gestellte Fragen einzugehen und teilen ein paar nützliche Tipps und Tricks, wie ihr eure KittyFlap ein wenig verbessern könnt.  
+⚠️ Bitte habt dabei stets im Kopf, dass die hier beschriebenen Schritte eure Garantie beeinträchtigen, die KittyFlap beschädigen oder andere Funktionen beeinträchtigen könnten - ihr führt die Schritte auf eigenes Risiko durch und seid ausschließlich selbst verantwortlich!  
+  
+---  
+1.1) Meine Kittyflap verschwindet nach einigen Stunden immer wieder aus meinem WLAN  
+1.2) Meine KittyFlap hat schlechten WLAN-Empfang und verliert immer mal wieder die Verbindung  
+1.3) Warum ist der Hintergrund der Website ausgegraut und der Inhalt verschwindet, wenn ich versuche, die Sektion zu wechseln  
+  
+2.1) Ich möchte meinen Empfang durch eine externe Antenne verbessern  
+2.2) Ich möchte meine Infrarot-Sensoren verbessern  
+2.3) Meine Magnete lösen wie von geisterhand aus, obwohl keine Bewegung im Klappenbereich war  
 ---
 
 ### 1.1) Meine Kittyflap verschwindet nach einigen Stunden immer wieder aus meinem WLAN

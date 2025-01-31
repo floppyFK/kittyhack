@@ -42,16 +42,16 @@ In diesem Abschnitt versuchen wir auf häufig gestellte Fragen einzugehen und te
 ⚠️ Bitte habt dabei stets im Kopf, dass die hier beschriebenen Schritte eure Garantie beeinträchtigen, die KittyFlap beschädigen oder andere Funktionen beeinträchtigen könnten - ihr führt die Schritte auf eigenes Risiko durch und seid ausschließlich selbst verantwortlich!  
   
 ---  
-[1.1 Meine Kittyflap verschwindet nach einigen Stunden immer wieder aus meinem WLAN](#)  
+[1.1 Meine Kittyflap verschwindet nach einigen Stunden immer wieder aus meinem WLAN](#11-meine-kittyflap-verschwindet-nach-einigen-stunden-immer-wieder-aus-meinem-wlan)  
 
-[1.2 Meine KittyFlap hat schlechten WLAN-Empfang und verliert immer mal wieder die Verbindung](#)  
+[1.2 Meine KittyFlap hat schlechten WLAN-Empfang und verliert immer mal wieder die Verbindung](#12-meine-kittyflap-hat-schlechten-wlan-empfang-und-verliert-immer-mal-wieder-die-verbindung)  
 
-[1.3 Warum ist der Hintergrund der Website ausgegraut und der Inhalt verschwindet, wenn ich versuche, die Sektion zu wechseln](#)  
+[1.3 Warum ist der Hintergrund der Website ausgegraut und der Inhalt verschwindet, wenn ich versuche, die Sektion zu wechseln](#13-warum-ist-der-hintergrund-der-website-ausgegraut-und-der-inhalt-verschwindet-wenn-ich-versuche-die-sektion-zu-wechseln)  
 
   
-[2.1 Ich möchte meinen Empfang durch eine externe Antenne verbessern](#)  
+[2.1 Ich möchte meinen Empfang durch eine externe Antenne verbessern](#21-ich-m%C3%B6chte-meinen-empfang-durch-eine-externe-antenne-verbessern)  
 
-[2.2 Ich möchte meine Infrarot-Sensoren verbessern](#)  
+[2.2 Ich möchte meine Infrarot-Sensoren verbessern](#22-ich-m%C3%B6chte-meine-infrarot-sensoren-verbessern)  
 
 [2.3 Meine Magnete lösen wie von geisterhand aus, obwohl keine Bewegung im Klappenbereich war](#23-meine-magnete-lösen-wie-von-geisterhand-aus-obwohl-keine-bewegung-im-klappenbereich-war)  
 
@@ -95,14 +95,14 @@ Link Quality: 🟢 60/70
 Signal Level: -50 dBm  
   
 ### 2.2 Ich möchte meine Infrarot-Sensoren verbessern
-Stelle bei Problemen zunächst sicher, dass die Lötstellen alle in Ordnung sind. Hier wurden bereits des öfteren lose Kontakte oder sog. kalte Lötstellen festgestellt.
-Ein weiterer Punkt, der überprüft werden sollte, ist die Einbaurichtung insbesondere des inneren PIR-Sensors. Aufgrund der Funktionsweise des PIR-Sensors kann es bei leichter Drehung des Sensors zu Problemen kommen. Ein Bild wie er korrekt eingebaut sein sollte, folgt in Kürze.
-[Bild PIR 1
-Außerdem prüfen wird derzeit verschiedene neue Sensoren auf Tauglichkeit und Erkennungsgenauigkeit. Bitte hab noch ein wenig Geduld...
-
+Stelle bei Problemen zunächst sicher, dass die Lötstellen alle in Ordnung sind. Hier wurden bereits des öfteren lose Kontakte oder sog. kalte Lötstellen festgestellt.  
+Ein weiterer Punkt, der überprüft werden sollte, ist die Einbaurichtung insbesondere des inneren PIR-Sensors. Aufgrund der Funktionsweise des PIR-Sensors kann es bei leichter Drehung des Sensors zu Problemen kommen. Ein Bild wie er korrekt eingebaut sein sollte, folgt in Kürze.  
+[Bild PIR 1]  
+Außerdem prüfen wird derzeit verschiedene neue Sensoren auf Tauglichkeit und Erkennungsgenauigkeit. Bitte hab noch ein wenig Geduld...  
+  
 ### 2.3 Meine Magnete lösen wie von geisterhand aus, obwohl keine Bewegung im Klappenbereich war
-Zwei Hauptauslöser haben wir bisher bereits identifizieren können: Bewegungen in großer Entfernung (z.B. Baum/Äste/Schaukel in bis zu 10-15m Entfernung!), aber eventuell auch induktionsbedingte Auslösungen der PIR-Sensoren (bzw. Fehlerströme auf den Leitungen).
-Den ersten Punkt kann man oft mit Hausmitteln beheben. Ein wenig undurchsichtiges Klebeband oder anderes wasserfestes, undurchlässiges Material auf den Sensorbereich kleben, der das Problem verursacht. Im Bild siehst du den Baum (rot eingerahmter Bereich), der sich bei leichtem Wind bewegt und den Sensor auslöst.
-[Bild PIR 2]
-Durch ein Abkleben des oberen Bereichs des äußeren PIR-Sensors kann diese Störquelle "ausgeblendet" werden. Hier kann man durch ein wenig rumprobieren den genauen Bereich bestimmen, den man abkleben muss, sodass die Katze weiterhin den Sensor auslöst, gleichzeit aber keine anderen Bewegungen.
-[Bild PIR 3]
+Zwei Hauptauslöser haben wir bisher bereits identifizieren können: Bewegungen in großer Entfernung (z.B. Baum/Äste/Schaukel in bis zu 10-15m Entfernung!), aber eventuell auch induktionsbedingte Auslösungen der PIR-Sensoren (bzw. Fehlerströme auf den Leitungen).  
+Den ersten Punkt kann man oft mit Hausmitteln beheben. Ein wenig undurchsichtiges Klebeband oder anderes wasserfestes, undurchlässiges Material auf den Sensorbereich kleben, der das Problem verursacht. Im Bild siehst du den Baum (rot eingerahmter Bereich), der sich bei leichtem Wind bewegt und den Sensor auslöst.  
+[Bild PIR 2]  
+Durch ein Abkleben des oberen Bereichs des äußeren PIR-Sensors kann diese Störquelle "ausgeblendet" werden. Hier kann man durch ein wenig rumprobieren den genauen Bereich bestimmen, den man abkleben muss, sodass die Katze weiterhin den Sensor auslöst, gleichzeit aber keine anderen Bewegungen.  
+[Bild PIR 3]  

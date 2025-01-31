@@ -157,3 +157,34 @@
     align-items: center;
     height: 150px;
 }
+
+.disabled-wrapper {
+    pointer-events: none;
+    opacity: 0.5;
+}
+
+.btn-danger-custom {
+    background-color: #dc3545;
+    color: white;
+    border: none;
+    /*padding: 10px 16px;
+    font-size: 16px;
+    border-radius: 5px;*/
+    cursor: pointer;
+    transition: background-color 0.3s, transform 0.1s;
+}
+
+.btn-danger-custom:hover {
+    background-color: #c82333;
+}
+
+.btn-danger-custom:active {
+    background-color: #a71d2a;
+    transform: scale(0.98);
+}
+
+.btn-danger-custom:disabled {
+    background-color: #e0a0a5;
+    cursor: not-allowed;
+    opacity: 0.6;
+}

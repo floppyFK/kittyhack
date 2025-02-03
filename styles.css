@@ -30,6 +30,8 @@
     text-align: center;
     background-color: transparent !important;
     vertical-align: middle;
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .generic-container table tr:not(:last-child) td {

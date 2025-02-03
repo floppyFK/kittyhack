@@ -127,7 +127,7 @@ def systemcmd(command: list[str], simulate_operations=False):
     
     return True
 
-def manage_and_switch_wlan(ssid, password="", priority=-1):
+def manage_and_switch_wlan(ssid, password="", priority=-1, update_password=False):
     """
     Add or update a WLAN connection using NetworkManager and set its priority.
 
@@ -135,6 +135,7 @@ def manage_and_switch_wlan(ssid, password="", priority=-1):
     - ssid: The SSID of the WLAN network.
     - password: The password for the WLAN network.
     - priority: The priority of the WLAN connection. Use -1 for highest priority (default), or specific value.
+    - update_password: Boolean flag to indicate if the password should be updated for an existing connection.
 
     Returns:
     - True if the WLAN configuration was successful.
@@ -164,16 +165,21 @@ def manage_and_switch_wlan(ssid, password="", priority=-1):
             ["/usr/bin/nmcli", "-t", "-f", "NAME", "connection", "show"], stdout=subprocess.PIPE, text=True
         )
         if ssid in result.stdout:
-            # Update the password for the existing connection
-            subprocess.run(
-                ["/usr/bin/nmcli", "connection", "modify", ssid, "wifi-sec.psk", password],
-                check=True,
-            )
+            if update_password:
+                # Update the password for the existing connection
+                subprocess.run(
+                    ["/usr/bin/nmcli", "connection", "modify", ssid, "wifi-sec.psk", password],
+                    check=True,
+                )
+                logging.info(f"[SYSTEM] Updated password for WLAN {ssid}.")
+            else:
+                logging.info(f"[SYSTEM] Skipping password update for WLAN {ssid}.")
+        else:
             subprocess.run(
                 [
                     "/usr/bin/nmcli", "connection", "add", "type", "wifi", 
-                    "con-name", ssid, "ifname", "*", "ssid", ssid,
-                    *wifi_sec_params, "--hidden", "yes",
+                    "ifname", "wlan0", "con-name", ssid, "ssid", ssid,
+                    *wifi_sec_params, "802-11-wireless.hidden", "yes",
                     "connection.autoconnect", "yes",
                 ],
                 check=True,

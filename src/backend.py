@@ -49,9 +49,18 @@ def backend_main(simulate_kittyflap = False):
     unlock_outside_tm = 0.0
     inside_manually_unlocked = False
 
-
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
+
+    # Start the camera
+    logging.info("[BACKEND] Start the camera...")
+    def run_camera():
+        tflite.run()
+
+    # Run the camera in a separate thread
+    camera_thread = threading.Thread(target=run_camera, daemon=True)
+    camera_thread.start()
+    tflite.pause()
 
     # Initialize PIRs, Magnets and RFID
     pir = Pir(simulate_kittyflap=simulate_kittyflap)
@@ -69,16 +78,6 @@ def backend_main(simulate_kittyflap = False):
     # Start PIR monitoring thread
     pir_thread = threading.Thread(target=pir.read, args=(), daemon=True)
     pir_thread.start()
-
-    # Start the camera
-    logging.info("[BACKEND] Start the camera...")
-    def run_camera():
-        tflite.run()
-
-    # Run the camera in a separate thread
-    camera_thread = threading.Thread(target=run_camera, daemon=True)
-    camera_thread.start()
-    tflite.pause()
 
     # Start the RFID reader (without the field enabled)
     rfid_thread = threading.Thread(target=rfid.run, args=(), daemon=True)

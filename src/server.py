@@ -12,6 +12,7 @@ import math
 import threading
 import subprocess
 import shutil
+import re
 from src.helper import *
 from src.database import *
 from src.system import *
@@ -367,7 +368,14 @@ def server(input, output, session):
         try:
             frame = tflite.get_camera_frame()
             if frame is None:
-                img_html = '<div class="placeholder-image"><strong>' + _('Connection to the camera failed.') + '</strong></div>'
+                img_html = (
+                    '<div class="placeholder-image">' +
+                    '<div></div>' +
+                    '<div><strong>' + _('Connection to the camera failed.') + '</strong></div>' +
+                    '<div>' + _('If this message does not disappear within 10 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>' +
+                    '<div></div>' +
+                    '</div>'
+                )
             else:
                 frame_jpg = tflite.encode_jpg_image(frame)
                 if frame_jpg:
@@ -700,10 +708,114 @@ def server(input, output, session):
                 ui.br(),
                 ui.column(12, ui.input_action_button("bShutdownKittyflap", _("Shutdown Kittyflap"))),
                 ui.column(12, ui.help_text(_("To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again."))),
+                ui.br(),
+                ui.br(),
+                ui.column(12, ui.input_task_button("reinstall_camera_driver", "Reinstall Camera Driver", icon=icon_svg("rotate-right"), class_="btn-primary")),
+                ui.column(12, ui.help_text(_("Reinstall the camera driver if the live view does not work properly."))),
                 ui.hr(),
                 ui.br(),
                 ui.br()
             )
+    
+    @reactive.Effect
+    @reactive.event(input.reinstall_camera_driver)
+    def reinstall_camera_driver_process():
+        # Read the dependencies (*.deb packages) from the "camera_dependencies.txt" file
+        dependencies_file = "./camera_dependencies.txt"
+        dependencies_url = "https://github.com/floppyFK/kittyhack-dependencies/raw/refs/heads/main/camera/"
+        download_path = "/tmp/kittyhack-dependencies/camera/"
+
+        with open(dependencies_file, "r") as file:
+            dependencies = file.readlines()
+        installation_steps = 4 + len(dependencies)
+
+        with ui.Progress(min=1, max=installation_steps) as p:
+            p.set(message=_("Reinstall Camera Driver in progress."), detail=_("This may take a while..."))
+            i = 0
+
+            try:
+                # Step 1: Stop the camera
+                msg = "Stopping the camera"
+                msg_localized = _("Stopping the camera")
+                i += 1
+                p.set(i, message=msg_localized)
+                logging.info(msg)
+                sigterm_monitor.halt_backend()
+                tm.sleep(1.0)
+
+                # Step 2: Download all dependencies for the camera driver
+                msg = "Downloading all dependencies"
+                msg_localized = _("Downloading all dependencies")
+                i += 1
+                p.set(i, message=msg_localized)
+                logging.info(msg)
+                
+                # Ensure the download path exists
+                os.makedirs(download_path, exist_ok=True)                
+
+                for dependency in dependencies:
+                    dependency = dependency.strip()
+                    if dependency:
+                        dependency_url = f"{dependencies_url}{dependency}"
+                        dependency_path = os.path.join(download_path, dependency)
+                        msg = f"Downloading {dependency}"
+                        msg_localized = _("Download") + " " + dependency
+                        i += 1
+                        p.set(i, message=msg_localized)
+                        logging.info(msg)
+                        if not execute_update_step(f"wget -O {dependency_path} {dependency_url}", msg):
+                            raise subprocess.CalledProcessError(1, f"wget {dependency_url}")
+
+                # Step 3: Uninstall all libcamera packages above version 0.3 (if there are any)
+                msg = "Uninstalling libcamera packages above version 0.3"
+                msg_localized = _("Uninstalling libcamera packages above version 0.3")
+                i += 1
+                p.set(i, message=msg_localized)
+                logging.info(msg)
+                result = subprocess.run("dpkg -l | grep libcamera", shell=True, capture_output=True, text=True, check=True)
+                pattern = r'libcamera(\d+)\.(\d+)'
+                for line in result.stdout.splitlines():
+                    if line.startswith("ii"):
+                        parts = line.split()
+                        package_name = parts[1].split(":")[0]  # Remove architecture suffix
+                        if package_name.startswith("libcamera"):
+                            # Try to match the version pattern
+                            match = re.search(pattern, package_name)
+                            if match:
+                                major_version = int(match.group(1))
+                                minor_version = int(match.group(2))
+                                version = float(f"{major_version}.{minor_version}")
+                                if version > 0.3:
+                                    logging.info(f"Uninstalling package {parts[1]} (version {version})")
+                                    execute_update_step(f"apt-get remove -y {parts[1]}", f"Uninstalling package {parts[1]}")
+                
+                # Step 4: Install all dependencies
+                msg = "Installing all dependencies"
+                msg_localized = _("Installing all dependencies")
+                i += 1
+                p.set(i, message=msg_localized)
+                logging.info(msg)
+                dependencies_paths = " ".join([os.path.join(download_path, dep.strip()) for dep in dependencies if dep.strip()])
+                if not execute_update_step(f"dpkg -i {dependencies_paths}", msg):
+                    raise subprocess.CalledProcessError(1, f"dpkg -i {dependencies_paths}")
+
+            except subprocess.CalledProcessError as e:
+                logging.error(f"An error occurred during the installation process: {e}")
+                ui.notification_show(_("An error occurred during the installation process. Please check the logs for details."), duration=None, type="error")
+
+            else:
+                logging.info(f"Camera driver reinstallation successful.")
+                # Show the restart dialog
+                m = ui.modal(
+                    _("A restart is required to apply the update. Do you want to restart the Kittyflap now?"),
+                    title=_("Restart required"),
+                    easy_close=False,
+                    footer=ui.div(
+                        ui.input_action_button("btn_modal_reboot_ok", _("OK")),
+                        ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                    )
+                )
+                ui.modal_show(m)
     
     @reactive.effect
     @reactive.event(input.btn_modal_cancel)

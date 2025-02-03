@@ -1,0 +1,7 @@
+libcamera-ipa_0.2.0+rpt20240418-1_arm64.deb
+libcamera0.2_0.2.0+rpt20240418-1_arm64.deb
+libcamera0.3_0.3.2+rpt20241119-1_arm64.deb
+gstreamer1.0-libcamera_0.3.2+rpt20241119-1_arm64.deb
+libpisp1_1.0.7-1_arm64.deb
+libpisp-common_1.0.7-1_all.deb
+rpicam-apps_1.4.4-1.deb

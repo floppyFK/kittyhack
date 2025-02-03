@@ -100,9 +100,26 @@ class GracefulKiller:
         with self.lock:
             if self.tasks_count == 0:
                 self.tasks_done.set()
-        self.tasks_done.wait()  # Wait until all tasks signal they are done
+            else:
+                self.tasks_done.clear()
+        while self.tasks_count > 0:
+            self.tasks_done.wait(timeout=1)  # Wait until all tasks signal they are done
         logging.info("All tasks finished. Exiting now.")
         subprocess.run(["/usr/bin/pkill", "-9", "-f", "shiny"])  # Send SIGKILL to "shiny" process
+
+    def halt_backend(self):
+        """
+        Halts the backend by setting the stop_now flag to True.
+        """
+        self.stop_now = True
+        with self.lock:
+            if self.tasks_count == 0:
+                self.tasks_done.set()
+            else:
+                self.tasks_done.clear()
+        while self.tasks_count > 0:
+            self.tasks_done.wait(timeout=1)  # Wait until all tasks signal they are done
+        
 
     def signal_task_done(self):
         """

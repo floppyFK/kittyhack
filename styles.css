@@ -125,9 +125,8 @@
 }
 
 .placeholder-image {
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    display: grid;
+    place-items: center;
     height: 100%;
     width: 100%;
     min-height: 250px;

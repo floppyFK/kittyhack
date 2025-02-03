@@ -1210,7 +1210,7 @@ def server(input, output, session):
             # Create a pandas DataFrame from the available WLANs
             df = pd.DataFrame(configured_wlans)
             df = df[['ssid', 'priority', 'connected_icon', 'actions']]  # Select only the columns we want to display
-            df.columns = ['SSID', _('Priority'), _('Connection state'), ""]  # Rename columns for display
+            df.columns = ['SSID', _('Priority'), "", ""]  # Rename columns for display
 
             return (
                 df.style.set_table_attributes('class="dataframe shiny-table table w-auto"')

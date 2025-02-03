@@ -29,7 +29,6 @@ Current features:
 - **Manage cats and add new cats**
 
 ### Planned Features
-- **WiFi configuration**: Currently needs to be set up manually. Will be implemented in the WebGUI in a future version
 - **Display of events**: A journal showing when the flap was opened in which direction, when it was locked, etc.
 - **Additional filters for image display**: e.g., grouping all images of an event (cat entering / cat exiting)
 
@@ -58,13 +57,7 @@ After changing the router SSID:
 2. Wait until it appears as a client in your router
 3. Connect [via SSH](#ssh_access_en) (User: `pi`, Password: `kittyflap`)
 
-Configuration of your own WiFi:
-```bash
-nmcli dev wifi connect YourSSID password "YourPassword"
-nmcli dev set wlan0 autoconnect yes
-```
-
-If you have any special characters in your password like an exclamation mark ("!") or just like to use a graphical interface, you should use `nmtui` to add your WiFi.
+Now proceed with the installation. You can add your own WLAN configuration later on in the Kittyhack Web interface.
 
 ### Instructions
 The setup is quite simple:
@@ -226,7 +219,6 @@ Aktuelle Features:
 - **Katzen verwalten und neue Katzen hinzufügen**
 
 ### Geplante Features
-- **WLAN-Konfiguration**: Muss aktuell noch manuell eingerichtet werden. Wird in einer zukünftigen Version in der WebGUI implementiert
 - **Anzeige von Events**: Ein Journal darüber, wann die Klappe in welche Richtung geöffnet wurde, wann sie gesperrt hat usw.
 - **Weitere Filter für die Bildanzeige**: z.B. alle Bilder eines Events (Katze kommt rein / Katze geht raus) zusammenfassen
 
@@ -255,13 +247,7 @@ Nach Änderung der Router-SSID:
 2. Warte bis sie im Router als Client erscheint
 3. Verbinde dich [per SSH](#ssh_access_de) (Benutzer: `pi`, Passwort: `kittyflap`)
 
-Konfiguration deines eigenen WLANs:
-```bash
-nmcli dev wifi connect DeinSSID password "DeinPasswort"
-nmcli dev set wlan0 autoconnect yes
-```
-
-Wenn du Sonderzeichen wie ein Ausrufezeichen ("!") in deinem Passwort verwendest oder einfach ein grafisches Interface bevorzugst, dann kannst du auch `nmtui` verwenden, um dein WLAN hinzuzufügen.
+Fahre jetzt mit der Installation fort. Du kannst dein eigenes WLAN später im Web Interface von Kittyhack konfigurieren.
 
 ### Anleitung
 Die Installation ist kinderleicht:

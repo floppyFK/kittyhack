@@ -127,6 +127,216 @@ def systemcmd(command: list[str], simulate_operations=False):
     
     return True
 
+def manage_and_switch_wlan(ssid, password="", priority=-1, update_password=False):
+    """
+    Add or update a WLAN connection using NetworkManager and set its priority.
+
+    Parameters:
+    - ssid: The SSID of the WLAN network.
+    - password: The password for the WLAN network.
+    - priority: The priority of the WLAN connection. Use -1 for highest priority (default), or specific value.
+    - update_password: Boolean flag to indicate if the password should be updated for an existing connection.
+
+    Returns:
+    - True if the WLAN configuration was successful.
+    - False if there was an error.
+    """
+    if priority == -1:
+        try:
+            result = subprocess.run(
+                ["/usr/bin/nmcli", "-g", "AUTOCONNECT-PRIORITY", "connection", "show"],
+                stdout=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            existing_priorities = [int(p) for p in result.stdout.split('\n') if p.strip()]
+            priority = max(existing_priorities, default=0) + 1
+        except subprocess.CalledProcessError:
+            priority = 999
+
+    if password == "":
+        wifi_sec_params = []
+    else:
+        wifi_sec_params = ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+
+    try:
+        # Check if the connection already exists
+        result = subprocess.run(
+            ["/usr/bin/nmcli", "-t", "-f", "NAME", "connection", "show"], stdout=subprocess.PIPE, text=True
+        )
+        if ssid in result.stdout:
+            if update_password:
+                # Update the password for the existing connection
+                subprocess.run(
+                    ["/usr/bin/nmcli", "connection", "modify", ssid, "wifi-sec.psk", password],
+                    check=True,
+                )
+                logging.info(f"[SYSTEM] Updated password for WLAN {ssid}.")
+            else:
+                logging.info(f"[SYSTEM] Skipping password update for WLAN {ssid}.")
+        else:
+            subprocess.run(
+                [
+                    "/usr/bin/nmcli", "connection", "add", "type", "wifi", 
+                    "ifname", "wlan0", "con-name", ssid, "ssid", ssid,
+                    *wifi_sec_params, "802-11-wireless.hidden", "yes",
+                    "connection.autoconnect", "yes",
+                ],
+                check=True,
+            )
+            logging.info(f"[SYSTEM] Added WLAN configuration for {ssid}.")
+
+        # Set the priority for the connection
+        subprocess.run(
+            ["/usr/bin/nmcli", "connection", "modify", ssid, "connection.autoconnect-priority", str(priority)],
+            check=True,
+        )
+        logging.info(f"[SYSTEM] Set priority {priority} for {ssid}.")
+
+        # Restart NetworkManager to apply changes (optional)
+        subprocess.run(["/usr/bin/systemctl", "restart", "NetworkManager"], check=True)
+        logging.info(f"[SYSTEM] Restarted NetworkManager to apply changes.")
+
+    except subprocess.CalledProcessError as e:
+        logging.info(f"[SYSTEM] Error managing WLAN: {e}")
+        return False
+    
+def switch_wlan_connection(ssid):
+    """
+    Switch to an already configured WLAN network.
+
+    Parameters:
+    - ssid: The SSID of the WLAN network to connect to.
+
+    Returns:
+    - True if the switch was successful
+    - False if there was an error
+    """
+    try:
+        subprocess.run(
+            ["/usr/bin/nmcli", "connection", "up", ssid],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        logging.info(f"[SYSTEM] Successfully switched to WLAN network: {ssid}")
+        return True
+    except subprocess.CalledProcessError as e:
+        logging.error(f"[SYSTEM] Error switching to WLAN network {ssid}: {e.stderr}")
+        return False
+    
+def delete_wlan_connection(ssid):
+    """
+    Delete a WLAN network configuration.
+
+    Parameters:
+    - ssid: The SSID of the WLAN network to delete.
+
+    Returns:
+    - True if the deletion was successful
+    - False if there was an error
+    """
+    try:
+        subprocess.run(
+            ["/usr/bin/nmcli", "connection", "delete", ssid],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        logging.info(f"[SYSTEM] Successfully deleted WLAN network configuration: {ssid}")
+        return True
+    except subprocess.CalledProcessError as e:
+        logging.error(f"[SYSTEM] Error deleting WLAN network configuration {ssid}: {e.stderr}")
+        return False
+    
+def scan_wlan_networks():
+    # Added channel to the scan results
+    """
+    Scans for available WLAN networks using the `nmcli` command-line tool.
+
+    Returns:
+        list: A list of dictionaries, each containing information about a WLAN network.
+              Each dictionary has the following keys:
+              - "ssid" (str): The SSID of the WLAN network (or BSSID if SSID is not available).
+              - "signal" (int): The signal strength of the WLAN network.
+              - "security" (str): The security type of the WLAN network.
+              - "bars" (int): The number of bars indicating signal strength (0-4).
+              - "channel" (int): The channel number of the WLAN network.
+
+    Raises:
+        subprocess.CalledProcessError: If the `nmcli` command fails to execute.
+
+    Logs:
+        An error message if there is an issue scanning WLAN networks.
+    """
+    try:
+        result = subprocess.run(
+            ["/usr/bin/nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,BARS,CHAN,BSSID", "device", "wifi", "list"],
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+        networks = {}
+        for line in result.stdout.split('\n'):
+            if line:
+                # Split with maxsplit to handle BSSIDs containing colons
+                parts = line.split(':', 5)
+                if len(parts) != 6:
+                    continue
+                ssid, signal, security, bars, channel, bssid = parts
+                if not ssid or ssid == "":
+                    ssid = bssid.replace("\\", "")
+                bar_count = len([c for c in bars if c not in ('_', ' ')])
+                if ssid not in networks:
+                    networks[ssid] = {
+                        "ssid": ssid,
+                        "signal": int(signal),
+                        "security": security,
+                        "bars": bar_count,
+                        "channel": str(channel)
+                    }
+                else:
+                    networks[ssid]["signal"] = max(networks[ssid]["signal"], int(signal))
+                    networks[ssid]["bars"] = max(networks[ssid]["bars"], bar_count)
+                    if str(channel) not in networks[ssid]["channel"].split(','):
+                        networks[ssid]["channel"] = f"{networks[ssid]['channel']}, {channel}"
+        networks = list(networks.values())
+        return networks
+    except subprocess.CalledProcessError as e:
+        logging.error(f"[SYSTEM] Error scanning WLAN networks: {e.stderr}")
+        return []
+    
+def get_wlan_connections():
+    """
+    Get a list of configured WLAN networks.
+
+    Returns:
+    - A list of dictionaries, each containing the SSID, connection status, and priority of a WLAN network.
+    """
+    try:
+        result = subprocess.run(
+            ["/usr/bin/nmcli", "-t", "-f", "NAME,DEVICE,AUTOCONNECT-PRIORITY,STATE", "connection", "show"],
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+        connections = []
+        for line in result.stdout.split('\n'):
+            if line:
+                ssid, device, priority, state = line.split(':')
+                # Skip loopback and wired connections
+                if ssid not in ["lo", "Wired connection 1"]:
+                    connections.append({
+                        "ssid": ssid,
+                        "connected": state == "activated",
+                        "priority": int(priority)
+                    })
+        return connections
+    except subprocess.CalledProcessError as e:
+        logging.error(f"[SYSTEM] Error getting WLAN connections: {e.stderr}")
+        return []
+
+
 class I2C:
     # Fixed constants
     I2C_PORT = "0"

@@ -40,6 +40,11 @@ app_ui = ui.page_fillable(
             ui.output_ui("ui_configuration")
         ),
         ui.nav_panel(
+            _("WLAN Configuration"),
+            ui.output_ui("ui_wlan_configured_connections"),
+            ui.output_ui("ui_wlan_available_networks"),
+        ),
+        ui.nav_panel(
             _("Info"),
             ui.output_ui("ui_info")
         ),

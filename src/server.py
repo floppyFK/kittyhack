@@ -232,6 +232,7 @@ def server(input, output, session):
     reload_trigger_photos = reactive.Value(0)
     reload_trigger_cats = reactive.Value(0)
     reload_trigger_info = reactive.Value(0)
+    reload_trigger_wlan = reactive.Value(0)
 
     # Show a notification if a new version of Kittyhack is available
     if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
@@ -249,6 +250,87 @@ def server(input, output, session):
         else:
             additional_info = ""
         ui.notification_show(_("Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{}).").format(free_disk_space, additional_info), duration=20, type="warning")
+
+    # WLAN enforce connect
+    def wlan_connect(id):
+        configured_wlans = get_wlan_connections()
+        ui.modal_show(
+            ui.modal(
+                _("The WLAN connection will be interrupted now!"),
+                ui.br(),
+                _("You won't see any further progress here. Please wait a few seconds and reload the page."),
+                title=_("Updating WLAN configuration..."),
+                footer=None
+            )
+        )
+        switch_wlan_connection(configured_wlans[id]['ssid'])
+        reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
+
+    # WLAN Change dialog
+    def wlan_change_dialog(id):
+        configured_wlans = get_wlan_connections()
+        connected = configured_wlans[id]['connected']
+        if connected:
+            additional_note = ui.div(
+                _("This WLAN is currently connected. You can not delete it or change the password."),
+                class_="alert alert-info",
+                style_="margin-bottom: 0px; margin-top: 10px; padding: 10px"
+            )
+        else:
+            additional_note = ""
+
+        m = ui.modal(
+            ui.div(ui.input_text("txtWlanSSID", _("SSID"), configured_wlans[id]['ssid']), class_="disabled-wrapper"),
+            ui.div(ui.input_password("txtWlanPassword", _("Password"), "", placeholder=_("Leave empty to keep the current password")), class_="disabled-wrapper" if connected else ""),
+            ui.input_numeric("numWlanPriority", _("Priority"), configured_wlans[id]['priority'], min=0, max=100, step=1),
+            ui.help_text(_("The priority determines the order in which the WLANs are tried to connect. Higher numbers are tried first.")),
+            additional_note,
+            title=_("Change WLAN configuration"),
+            easy_close=False,
+            footer=ui.div(
+                ui.input_action_button(
+                    id="btn_wlan_save",
+                    label=_("Save"),
+                    class_="btn-vertical-margin btn-narrow"
+                ),
+                ui.input_action_button(
+                    id="btn_modal_cancel",
+                    label=_("Cancel"),
+                    class_="btn-vertical-margin btn-narrow"
+                ),
+                ui.input_action_button(
+                    id=f"btn_wlan_delete", 
+                    label=_("Delete"), 
+                    icon=icon_svg("trash"), 
+                    class_=f"btn-vertical-margin btn-narrow btn-danger {'disabled-wrapper' if connected else ''}"
+                ),
+            )
+        )
+        ui.modal_show(m)
+    
+    # Add new WLAN dialog
+    def wlan_add_dialog():
+        m = ui.modal(
+            ui.div(ui.input_text("txtWlanSSID", _("SSID"), "")),
+            ui.div(ui.input_password("txtWlanPassword", _("Password"), "")),
+            ui.input_numeric("numWlanPriority", _("Priority"), 0, min=0, max=100, step=1),
+            ui.help_text(_("The priority determines the order in which the WLANs are tried to connect. Higher numbers are tried first.")),
+            title=_("Add new WLAN configuration"),
+            easy_close=False,
+            footer=ui.div(
+                ui.input_action_button(
+                    id="btn_wlan_save",
+                    label=_("Save"),
+                    class_="btn-vertical-margin btn-narrow"
+                ),
+                ui.input_action_button(
+                    id="btn_modal_cancel",
+                    label=_("Cancel"),
+                    class_="btn-vertical-margin btn-narrow"
+                ),
+            )
+        )
+        ui.modal_show(m)
 
     @render.text
     def live_view_header():
@@ -965,6 +1047,275 @@ def server(input, output, session):
                 ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the new language."), duration=15, type="message")
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=5, type="error")
+
+    @output
+    @render.ui
+    @reactive.event(reload_trigger_wlan, ignore_none=True)
+    def ui_wlan_configured_connections():
+        return ui.layout_column_wrap(
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.p(_("Configured WLANs"))
+                    ),
+                    ui.HTML('<div id="pleasewait_wlan_configured" class="spinner-container"><div class="spinner"></div></div>'),
+                    ui.output_ui("configured_wlans_table"),
+                    ui.hr(),
+                    ui.input_action_button(id="btn_wlan_add", label=_("Add new WLAN"), icon=icon_svg("plus")),
+                    full_screen=False,
+                    class_="generic-container",
+                    min_height="150px"
+                ),
+                width="400px"
+            )
+        )
+    
+    @render.table
+    @reactive.event(reload_trigger_wlan, ignore_none=True)
+    def configured_wlans_table():
+        try:
+            configured_wlans = get_wlan_connections()
+            i = 0
+            for wlan in configured_wlans:
+                if wlan['connected']:
+                    wlan['connected_icon'] = "🟢"
+                else:
+                    wlan['connected_icon'] = "⚫"
+                wlan['actions'] = ui.div(
+                    ui.tooltip(
+                        ui.input_action_button(id=f"btn_wlan_connect_{i}" , label="", icon=icon_svg("wifi"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;"),
+                        _("Enforce connection to this WLAN"),
+                        id=f"tooltip_wlan_connect_{i}"
+                    ),
+                    ui.tooltip(
+                        ui.input_action_button(id=f"btn_wlan_modify_{i}" , label="", icon=icon_svg("pencil"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;"),
+                        _("Modify this WLAN"),
+                        id=f"tooltip_wlan_modify_{i}"
+                    ),
+                )
+                i += 1
+
+            # Create a pandas DataFrame from the available WLANs
+            df = pd.DataFrame(configured_wlans)
+            df = df[['ssid', 'priority', 'connected_icon', 'actions']]  # Select only the columns we want to display
+            df.columns = ['SSID', _('Priority'), _('Connection state'), ""]  # Rename columns for display
+
+            return (
+                df.style.set_table_attributes('class="dataframe shiny-table table w-auto"')
+                .hide(axis="index")
+            )
+        except Exception as e:
+            logging.error(f"Failed to scan for available WLANs: {e}")
+            # Return an empty DataFrame with an error message
+            return pd.DataFrame({
+                'ERROR': [_('Failed to scan for available WLANs')]
+            })
+        finally:
+            ui.remove_ui("#pleasewait_wlan_configured")
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_add)
+    def wlan_add():
+        wlan_add_dialog()
+
+    # Unfortunately there seems to be no way to create reactive events for dynamically created elements.
+    # And if not all buttons are created, the event will not be triggered.
+    # Therefore we have to create a separate event for each button.
+    # We will support up to 10 configured WLANs. This should be sufficient for most users.
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify_0)
+    def wlan_modify_0():
+        wlan_change_dialog(0)
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect_0)
+    def wlan_connect_0():
+        wlan_connect(0)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify_1)
+    def wlan_modify_1():
+        wlan_change_dialog(1)
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect_1)
+    def wlan_connect_1():
+        wlan_connect(1)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify_2)
+    def wlan_modify_2():
+        wlan_change_dialog(2)
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect_2)
+    def wlan_connect_2():
+        wlan_connect(2)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify_3)
+    def wlan_modify_3():
+        wlan_change_dialog(3)
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect_3)
+    def wlan_connect_3():
+        wlan_connect(3)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify_4)
+    def wlan_modify_4():
+        wlan_change_dialog(4)
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect_4)
+    def wlan_connect_4():
+        wlan_connect(4)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify_5)
+    def wlan_modify_5():
+        wlan_change_dialog(5)
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect_5)
+    def wlan_connect_5():
+        wlan_connect(5)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify_6)
+    def wlan_modify_6():
+        wlan_change_dialog(6)
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect_6)
+    def wlan_connect_6():
+        wlan_connect(6)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify_7)
+    def wlan_modify_7():
+        wlan_change_dialog(7)
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect_7)
+    def wlan_connect_7():
+        wlan_connect(7)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify_8)
+    def wlan_modify_8():
+        wlan_change_dialog(8)
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect_8)
+    def wlan_connect_8():
+        wlan_connect(8)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify_9)
+    def wlan_modify_9():
+        wlan_change_dialog(9)
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect_9)
+    def wlan_connect_9():
+        wlan_connect(9)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify_10)
+    def wlan_modify_10():
+        wlan_change_dialog(10)
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect_10)
+    def wlan_connect_10():
+        wlan_connect(10)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_delete)
+    def wlan_delete():
+        ssid = input.txtWlanSSID()
+        success = delete_wlan_connection(ssid)
+        if success:
+            ui.notification_show(_("WLAN connection {} deleted successfully.").format(ssid), duration=5, type="message")
+            ui.modal_remove()
+            reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
+        else:
+            ui.notification_show(_("Failed to delete WLAN connection {}: {}").format(ssid, success.message), duration=5, type="error")
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_save)
+    def wlan_save():
+        ssid = input.txtWlanSSID()
+        password = input.txtWlanPassword()
+        priority = input.numWlanPriority()
+        password_changed = True if password else False
+        logging.info(f"Updating WLAN configuration: SSID={ssid}, Priority={priority}, Password changed={password_changed}")
+        ui.modal_remove()
+        ui.modal_show(
+            ui.modal(
+                _("The WLAN connection will be interrupted now!"),
+                ui.br(),
+                _("You won't see any further progress here. Please wait a few seconds and reload the page."),
+                title=_("Updating WLAN configuration..."),
+                footer=None
+            )
+        )
+        result = manage_and_switch_wlan(ssid, password, priority, password_changed)
+        if result:
+            ui.notification_show(_("WLAN configuration for {} updated successfully.").format(ssid), duration=5, type="message")
+            reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
+        else:
+            ui.notification_show(_("Failed to update WLAN configuration for {}: {}").format(ssid, result.message), duration=5, type="error")
+        ui.modal_remove()
+
+    @output
+    @render.ui
+    @reactive.event(reload_trigger_wlan, ignore_none=True)
+    def ui_wlan_available_networks():
+        return ui.layout_column_wrap(
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.p(_("Available WLANs"))
+                    ),
+                    ui.HTML('<div id="pleasewait_wlan_scan" class="spinner-container"><div class="spinner"></div></div>'),
+                    ui.output_ui("scan_wlan_results_table"),
+                    full_screen=False,
+                    class_="generic-container",
+                    min_height="150px"
+                ),
+                width="400px"
+            )
+        )
+    
+    @render.table
+    def scan_wlan_results_table():
+        # Get the available WLANs
+        reactive.invalidate_later(30.0)
+        try:
+            available_wlans = scan_wlan_networks()
+            for wlan in available_wlans:
+                signal_strength = wlan['bars']
+                wlan['signal_icon'] = f"{wlan['signal']}% "
+                if signal_strength == 0:
+                    wlan['signal_icon'] += "⚫"
+                elif signal_strength == 1:
+                    wlan['signal_icon'] += "🔴"
+                elif 2 <= signal_strength <= 3:
+                    wlan['signal_icon'] += "🟡"
+                else:
+                    wlan['signal_icon'] += "🟢"
+                
+
+            # Create a pandas DataFrame from the available WLANs
+            df = pd.DataFrame(available_wlans)
+            df = df[['ssid', 'channel', 'signal_icon']]  # Select only the columns we want to display
+            df.columns = ['SSID', _('Channel'), _('Signal')]  # Rename columns for display
+
+            return (
+                df.style.set_table_attributes('class="dataframe shiny-table table w-auto"')
+                .hide(axis="index")
+            )
+        except Exception as e:
+            logging.error(f"Failed to scan for available WLANs: {e}")
+            # Return an empty DataFrame with an error message
+            return pd.DataFrame({
+                'ERROR': [_('Failed to scan for available WLANs')]
+            })
+        finally:
+            ui.remove_ui("#pleasewait_wlan_scan")
+            
     
     @render.download()
     def download_logfile():

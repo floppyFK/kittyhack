@@ -576,7 +576,7 @@ install_kittyhack() {
         # If still empty, use fallback version
         if [[ -z "$GIT_TAG" ]]; then
             echo -e "${YELLOW}Failed to fetch latest version. Using latest known version.${NC}"
-            GIT_TAG="v1.2.6"
+            GIT_TAG="v1.3.0"
         fi
     else
         GIT_TAG="v1.1.1"
@@ -669,42 +669,38 @@ install_kittyhack() {
 
 reinstall_camera_drivers() {
     echo -e "${CYAN}--- CAMERA DRIVER REINSTALL ---${NC}"
-    local files=(
-        "/root/libcamera-ipa-libs/libcamera0.2_0.2.0+rpt20240418-1_arm64.deb"
-        "/root/libcamera-ipa-libs/libcamera-ipa_0.2.0+rpt20240418-1_arm64.deb"
-        "/root/libcamera-dependencies/rpicam-apps.deb"
-        "/root/libcamera-dependencies/libcamera0.2.deb"
-        "/root/libcamera-dependencies/libcamera-ipa.deb"
-    )
+    # Download and install camera drivers
+    local base_url="https://github.com/floppyFK/kittyhack-dependencies/raw/refs/heads/main/camera"
+    local dependencies_file="/root/kittyhack/camera_dependencies.txt"
+    local download_dir="/tmp/camera_drivers"
 
-    for file in "${files[@]}"; do
-        if [[ -f "$file" ]]; then
-            echo -e "${GREY}Installing $file...${NC}"
-            # Wait for any existing package operations to complete
-            while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-                echo -e "${GREY}Waiting for other package operations to complete...${NC}"
-                sleep 5
-            done
+    mkdir -p "$download_dir"
 
-            # Try to install with retries
-            for i in {1..5}; do
-                if dpkg -i "$file"; then
-                    echo -e "${GREEN}$file installed successfully.${NC}"
-                    break
-                else
-                    if [ $i -lt 5 ]; then
-                        echo -e "${YELLOW}Attempt $i of 5 failed. Retrying in 5 seconds...${NC}"
-                        sleep 5
-                    else
-                        ((FAIL_COUNT++))
-                        echo -e "${RED}Failed to install $file after 5 attempts.${NC}"
-                    fi
-                fi
-            done
-        else
-            echo -e "${RED}File $file not found. Please report this in the GitHub repository.${NC}"
-        fi
-    done
+    if [[ -f "$dependencies_file" ]]; then
+        while IFS= read -r package; do
+            echo -e "${GREY}Downloading $package...${NC}"
+            curl -L -o "${download_dir}/${package}" "${base_url}/${package}"
+            if [[ $? -ne 0 ]]; then
+                ((FAIL_COUNT++))
+                echo -e "${RED}Failed to download $package.${NC}"
+                continue
+            fi
+        done < "$dependencies_file"
+    else
+        echo -e "${RED}Dependencies file $dependencies_file not found. Please report this in the GitHub repository.${NC}"
+        return 1
+    fi
+
+    echo -e "${GREY}Installing downloaded packages...${NC}"
+    dpkg -i ${download_dir}/*.deb
+    if [[ $? -ne 0 ]]; then
+        ((FAIL_COUNT++))
+        echo -e "${RED}Failed to install some packages.${NC}"
+    else
+        echo -e "${GREEN}All packages installed successfully.${NC}"
+    fi
+
+    rm -rf "$download_dir"
 }
 
 # Main script logic
@@ -740,23 +736,20 @@ EOF
 
     # Menu
     echo
+    # FIXME: We need to change the recommendation for the installation:
+    # - The v1.1.1 is NOT recommended anymore
     if [ "$LANGUAGE" == "de" ]; then
         echo -e "Willkommen zum KittyHack-Setup!"
         echo
-        echo -e "+--------------------------------- ${CYAN}WARNUNG${NC} ---------------------------------+"
-        echo -e "| Es gibt Berichte über Probleme bei der Installation der neuesten Version  |"
-        echo -e "| von Kittyhack. Wenn du keine Änderungen am Kittyflap-System vorgenommen   |"
-        echo -e "| hast (insbesondere wenn du selbst bisher kein '${CYAN}apt upgrade${NC}' ausgeführt    |"
-        echo -e "| hast), sollte die Installation der neuesten Version funktionieren.        |"
-        echo -e "| Du musst dich nicht endgültig entscheiden - ein nachträglicher Wechsel    |"
-        echo -e "| zwischen den Versionen ist möglich, indem du das setup einfach nochmal    |"
-        echo -e "| ausführst!                                                                |"
-        echo -e "|         ${CYAN}${FMTBOLD}Wenn du dir unsicher bist, installiere die Version 1.1.1${FMTDEF}${NC}          |"
+        echo -e "+--------------------------------- ${CYAN}HINWEIS${NC} ---------------------------------+"
+        echo -e "| Du hast hier in diesem Installer die Möglichkeit, die erste Version von   |"
+        echo -e "| Kittyhack (v1.1.1) zu installieren. Dies wird jedoch ausdrücklich nicht   |"
+        echo -e "| mehr empfohlen, da es zu diversen Problemen mit der Kamera kommen kann.   |"
         echo -e "| Was ist der Unterschied zwischen den Versionen?                           |"
         echo -e "| - Die v1.1.x basiert auf der originalen Kittyflap Software und fungiert   |"
         echo -e "|   nur als 'Client' zur Anzeige der Bilder und zur Steuerung einger        |"
         echo -e "|   weniger Funktionen.                                                     |"
-        echo -e "| - Ab v1.2.0 wird die originale Kittyflap Software komplett durch eine neu |"
+        echo -e "| - Ab v1.2.0 wurde die originale Kittyflap Software komplett durch eine neu|"
         echo -e "|   entwickelte Software ersetzt, die mehr Funktionen und eine bessere      |"
         echo -e "|   Kontrolle über die Katzenklappe bietet.                                 |"
         echo -e "| Zusätzlich wird der Installer fragen, ob du die Installationsprotokolle   |"
@@ -767,14 +760,10 @@ EOF
     else
         echo -e "Welcome to the KittyHack setup!"
         echo
-        echo -e "+--------------------------------- ${CYAN}WARNING${NC} --------------------------------+"
-        echo -e "| There have been reports of issues when installing the latest version of  |"
-        echo -e "| Kittyhack. If you have not made any changes on the Kittyflap system      |"
-        echo -e "| (especially if you have not run the '${CYAN}apt upgrade${NC}' command), you should be|"
-        echo -e "| able to install the latest version.                                      |"
-        echo -e "| Note that you do not have to make a final decision - you can switch      |"
-        echo -e "| between versions by running the setup again!                             |"
-        echo -e "|             ${CYAN}${FMTBOLD}If you are unsure, please install version 1.1.1${FMTDEF}${NC}              |"
+        echo -e "+---------------------------------- ${CYAN}NOTE${NC} ----------------------------------+"
+        echo -e "| In this installer, you have the option to install the first version of   |"
+        echo -e "| Kittyhack (v1.1.1). However, this is explicitly not recommended anymore  |"
+        echo -e "| as it can cause various issues with the camera.                          |"
         echo -e "| What is the difference between the versions?                             |"
         echo -e "| - The v1.1.x is based on the original Kittyflap software and acts as a   |"
         echo -e "|   'client' to display images and control a few functions.                |"
@@ -790,15 +779,15 @@ EOF
     echo -e "${ERRMSG}" 
     if [ "$LANGUAGE" == "de" ]; then
         echo -e "${CYAN}Bitte die gewünschte Option auswählen:${NC}"
-        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Kittyhack v1.1.1 installieren"
-        echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Neueste Kittyhack Version installieren (Warnung oben beachten!)"
-        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Kameratreiber erneut installieren (bitte nur ausführen, wenn du keine Live-Bilder siehst)"
+        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Kittyhack v1.1.1 installieren (Nicht mehr empfohlen!)"
+        echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Neueste Kittyhack Version installieren"
+        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Kameratreiber erneut installieren (bitte nur ausführen, wenn du keine Live-Bilder siehst. Ist inzwischen auch über die Kittyhack Web-Oberfläche möglich)"
         echo -e "(${BLUE}${FMTBOLD}b${FMTDEF}${NC})eenden"
     else
         echo -e "${CYAN}Please choose the desired option:${NC}"
-        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) install v1.1.1"
-        echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) install the latest version (see the warning above!)"
-        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Reinstall camera drivers (only run if you don't see live images)"
+        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) install v1.1.1 (not recommended anymore!)"
+        echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) install the latest version"
+        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Reinstall camera drivers (only run if you don't see live images. Can also be done via the Kittyhack web interface now)"
         echo -e "(${BLUE}${FMTBOLD}q${FMTDEF}${NC})uit"
     fi
     read -r MODE

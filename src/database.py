@@ -503,7 +503,7 @@ def delete_photo_by_id(database: str, photo_id: int) -> Result:
         logging.info(f"[DATABASE] Photo with ID '{photo_id}' deleted successfully.")
     return result
 
-def write_motion_block_to_db(database: str, buffer_block_id: int, delete_from_buffer: bool = True):
+def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: str = "image", delete_from_buffer: bool = True):
     """
     This function writes an image block from the image buffer to the database.
     """
@@ -541,7 +541,7 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, delete_from_bu
             values_list = [
                 db_block_id,
                 get_utc_date_string(element.timestamp),
-                "image",
+                event_type,
                 element.original_image,
                 element.modified_image,
                 element.mouse_probability,
@@ -578,6 +578,46 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, delete_from_bu
         logging.info(f"[DATABASE] Successfully wrote images to the database '{database}'.")
     finally:
         release_database()
+    
+def create_index_on_events(database: str):
+    """
+    This function creates an indexes in the events table.
+    """
+    stmt_id_index = "CREATE INDEX IF NOT EXISTS idx_id ON events (id)"
+    write_stmt_to_database(database, stmt_id_index)
+    stmt_id_block_index = "CREATE INDEX IF NOT EXISTS idx_block_id_created_at ON events (block_id, created_at)"
+    write_stmt_to_database(database, stmt_id_block_index)
+
+def get_last_motion_blocks(database: str, block_count: int = 1):
+    """
+    This function reads the last 'block_count' motion blocks from the database.
+    """
+    columns = "block_id, created_at, event_type, rfid, event_text"
+    if block_count > 0:
+        stmt = f"""
+            SELECT {columns} FROM events 
+            WHERE deleted != 1 
+            GROUP BY block_id 
+            ORDER BY block_id DESC 
+            LIMIT {block_count}
+        """
+    else:
+        stmt = f"""
+            SELECT {columns} FROM events 
+            WHERE deleted != 1 
+            GROUP BY block_id 
+            ORDER BY block_id DESC
+        """
+    return read_df_from_database(database, stmt)
+
+def get_cat_name(database: str, rfid):
+    df_cats = db_get_cats(database, ReturnDataCatDB.all_except_photos)
+    if not rfid:
+        return "No RFID found"
+    cat_row = df_cats.loc[df_cats['rfid'] == rfid]
+    if not cat_row.empty:
+        return cat_row['name'].values[0]
+    return f"Unknown RFID: {rfid}"
 
 def check_if_table_exists(database: str, table: str) -> bool:
     """

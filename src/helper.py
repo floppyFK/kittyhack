@@ -14,6 +14,7 @@ import requests
 import shlex
 import cv2
 import socket
+from faicons import icon_svg
 from src.system import *
 
 
@@ -75,6 +76,45 @@ class AllowedToEnter(Enum):
     ALL_RFIDS = 'all_rfids'
     KNOWN = 'known'
     NONE = 'none'
+
+class EventType:
+    MOTION_OUTSIDE_ONLY = "motion_outside_only"
+    MOTION_OUTSIDE_WITH_MOUSE = "motion_outside_with_mouse"
+    CAT_WENT_INSIDE = "cat_went_inside"
+    CAT_WENT_INSIDE_WITH_MOUSE = "cat_went_inside_with_mouse"
+    CAT_WENT_OUTSIDE = "cat_went_outside"
+
+    @staticmethod
+    def to_pretty_string(event_type):
+        return {
+            EventType.MOTION_OUTSIDE_ONLY: _("Motion outside only"),
+            EventType.MOTION_OUTSIDE_WITH_MOUSE: _("Motion outside with mouse"),
+            EventType.CAT_WENT_INSIDE: _("Cat went inside"),
+            EventType.CAT_WENT_INSIDE_WITH_MOUSE: _("Cat went inside with mouse"),
+            EventType.CAT_WENT_OUTSIDE: _("Cat went outside")
+        }.get(event_type, _("Unknown event"))
+
+    @staticmethod
+    def to_icons(event_type):
+        return {
+            EventType.MOTION_OUTSIDE_ONLY: [str(icon_svg("eye"))],
+            EventType.MOTION_OUTSIDE_WITH_MOUSE: [str(icon_svg("hand")), icon_svg_local("mouse")],
+            EventType.CAT_WENT_INSIDE: [str(icon_svg("circle-down"))],
+            EventType.CAT_WENT_INSIDE_WITH_MOUSE: [str(icon_svg("circle-down"))],
+            EventType.CAT_WENT_OUTSIDE: [str(icon_svg("circle-up"))]
+        }.get(event_type, [str(icon_svg("circle-question"))])
+
+def icon_svg_local(svg: str) -> str:
+    """
+    Creates an HTML img tag with the path to a local SVG file.
+    
+    Args:
+        svg (str): Name of the SVG file without extension
+        
+    Returns:
+        str: HTML img tag with the SVG file as source
+    """
+    return f'<img src="icons/{svg}.svg" alt="{svg}" style="fill:currentColor;height:1em;width:1.0em;margin-left:auto;margin-right:0.2em;position:relative;vertical-align:-0.125em;overflow:visible;">'
 
 class GracefulKiller:
     stop_now = False

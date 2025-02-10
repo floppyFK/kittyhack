@@ -41,6 +41,8 @@ def backend_main(simulate_kittyflap = False):
     motion_inside_tm = 0.0
     last_motion_outside_tm = 0.0
     last_motion_inside_tm = 0.0
+    first_motion_outside_tm = 0.0
+    first_motion_inside_tm = 0.0
     motion_block_id = 0
     ids_with_mouse = []
     ids_of_current_motion_block = []
@@ -130,6 +132,25 @@ def backend_main(simulate_kittyflap = False):
                 if (magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and inside_manually_unlocked == False):
                     magnets.queue_command("lock_inside")
 
+                # Decide if the cat went in or out:
+                if first_motion_inside_tm == 0.0 or (first_motion_outside_tm - first_motion_inside_tm) > 90.0:
+                    if mouse_check_conditions["no_mouse_detected"]:
+                        logging.info("[BACKEND] Motion event conclusion: No one went inside.")
+                        event_type = EventType.MOTION_OUTSIDE_ONLY
+                    else:
+                        logging.info("[BACKEND] Motion event conclusion: Motion outside with mouse detected and entry blocked.")
+                        event_type = EventType.MOTION_OUTSIDE_WITH_MOUSE
+                elif first_motion_outside_tm < first_motion_inside_tm:
+                    if mouse_check_conditions["no_mouse_detected"]:
+                        logging.info("[BACKEND] Motion event conclusion: Cat went inside.")
+                        event_type = EventType.CAT_WENT_INSIDE
+                    else:
+                        logging.info("[BACKEND] Motion event conclusion: Cat went inside with mouse detected.")
+                        event_type = EventType.CAT_WENT_INSIDE_WITH_MOUSE
+                else:
+                    logging.info("[BACKEND] Motion event conclusion: Cat went outside.")
+                    event_type = EventType.CAT_WENT_OUTSIDE
+
                 # Update the motion_block_id and the tag_id for for all elements between first_motion_outside_tm and last_motion_outside_tm
                 img_ids_for_motion_block = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm)
                 logging.info(f"[BACKEND] Found {len(img_ids_for_motion_block)} elements between {first_motion_outside_tm} and {last_motion_outside_tm}")
@@ -140,8 +161,12 @@ def backend_main(simulate_kittyflap = False):
                             image_buffer.update_tag_id(element, tag_id)
                     logging.info(f"[BACKEND] Updated block ID for {len(img_ids_for_motion_block)} elements to '{motion_block_id}' and tag ID to '{tag_id if tag_id is not None else ''}'")
                     # Write to the database in a separate thread
-                    db_thread = threading.Thread(target=write_motion_block_to_db, args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id), daemon=True)
+                    db_thread = threading.Thread(target=write_motion_block_to_db, args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, event_type), daemon=True)
                     db_thread.start()
+                
+                # Reset the first motion timestamps
+                first_motion_outside_tm = 0.0
+                first_motion_inside_tm = 0.0
 
             # Just double check that the inside magnet is released ( == inside locked) if no motion is detected outside
             if (motion_outside == 0 and magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME)):
@@ -161,6 +186,7 @@ def backend_main(simulate_kittyflap = False):
             
             if last_inside == 0 and motion_inside == 1: # Inside motion detected
                 logging.info("[BACKEND] Motion detected INSIDE")
+                first_motion_inside_tm = tm.time()
                 if CONFIG['ALLOWED_TO_EXIT'] == True:
                     if magnets.get_inside_state() == True:
                         logging.info("[BACKEND] Inside magnet is already unlocked. Only one magnet is allowed. --> Outside magnet will not be unlocked.")

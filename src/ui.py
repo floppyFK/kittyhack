@@ -13,6 +13,7 @@ app_ui = ui.page_fillable(
             _("Live view"),
             ui.output_ui("ui_live_view"),
             ui.output_ui("ui_live_view_footer"),
+            ui.output_ui("ui_events"),
         ),
         ui.nav_panel(
             _("Pictures"),

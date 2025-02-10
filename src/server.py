@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 from datetime import datetime, timedelta
 import time as tm
@@ -13,11 +14,30 @@ import threading
 import subprocess
 import shutil
 import re
-from src.helper import *
+from src.helper import (
+    AllowedToEnter, 
+    EventType, 
+    set_language, 
+    get_git_version, 
+    wait_for_network, 
+    get_free_disk_space, 
+    check_and_stop_kittyflap_services, 
+    read_latest_kittyhack_version, 
+    execute_update_step, 
+    get_file_size, 
+    get_local_date_from_utc_date, 
+    format_date_minmax, 
+    save_config,
+    _, 
+    sigterm_monitor, 
+    CONFIG, 
+    LOGFILE
+)
 from src.database import *
-from src.system import *
-from src.backend import *
+from src.system import switch_wlan_connection, get_wlan_connections, systemcmd
+from src.backend import backend_main, manual_door_override, tflite
 from src.magnets import Magnets
+from src.pir import Pir
 
 # LOGFILE SETUP
 # Convert the log level string from the configuration to the corresponding logging level constant
@@ -130,6 +150,9 @@ if check_if_table_exists(CONFIG['DATABASE_PATH'], "config") and CONFIG['KITTYFLA
             logging.error("Failed to save the migrated kittyflap configuration.")
     else:
         logging.error("Failed to read the configuration from the kittyflap database.")
+
+# Create indexes for the kittyhack database
+create_index_on_events(CONFIG['KITTYHACK_DATABASE_PATH'])
 
 # Wait for internet connectivity and NTP sync
 logging.info("Waiting for network connectivity...")
@@ -694,6 +717,98 @@ def server(input, output, session):
         else:
             logging.info(f"[SERVER] Manual override from Live View - close inside now")
             manual_door_override['lock_inside'] = True
+
+    @output
+    @render.ui
+    #@reactive.event(ignore_none=True)
+    def ui_events():
+        return ui.layout_column_wrap(
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.p(_("Last events"))
+                    ),
+                    ui.output_ui("events_table"),
+                    full_screen=False,
+                    class_="generic-container",
+                    min_height="150px"
+                ),
+                width="400px"
+            )
+        )
+    
+    @render.table
+    #@reactive.event(ignore_none=True)
+    def events_table():
+        try:
+            df_events = get_last_motion_blocks(CONFIG['KITTYHACK_DATABASE_PATH'], 50)
+
+            if df_events.empty:
+                return pd.DataFrame({
+                    '': [_('No events found.')]
+                })
+            # Convert UTC timestamps to local timezone
+            df_events['created_at'] = pd.to_datetime(df_events['created_at']).dt.tz_convert('UTC').dt.tz_convert(CONFIG['TIMEZONE'])
+            df_events = df_events.sort_values(by='created_at', ascending=False)
+            df_events['date'] = df_events['created_at'].dt.date
+            df_events['time'] = df_events['created_at'].dt.strftime('%H:%M:%S')
+
+            # Replace dates with "Today" and "Yesterday"
+            today = datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).date()
+            yesterday = today - timedelta(days=1)
+            # Convert dates to 'Today', 'Yesterday', or the date string
+            df_events['date_display'] = df_events['date'].apply(
+                lambda date: _("Today") if date == today else (_("Yesterday") if date == yesterday else date.strftime("%Y-%m-%d"))
+            )
+            # Show the cat name instead of the RFID
+            df_events['cat_name'] = df_events['rfid'].apply(lambda rfid: get_cat_name(CONFIG['KITTYHACK_DATABASE_PATH'], rfid))
+
+            # Add a column 'event_pretty' to the events table with icon(s) and a tooltip            
+            df_events['event_pretty'] = df_events['event_type'].apply(lambda event_type: ui.tooltip(
+                ui.HTML("<div>" + " ".join(str(icon) for icon in EventType.to_icons(event_type)) + "</div>"),
+                EventType.to_pretty_string(event_type)
+            ))
+
+            # Add an 'inspect' column to the 'events' DataFrame
+            df_events['inspect'] = [
+                ui.div(
+                    ui.input_action_button(id=f"btn_event_inspect_{i}", label="", icon=icon_svg("magnifying-glass"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
+                ) for i in range(len(df_events))
+            ]
+
+            # Create a new DataFrame to hold the formatted events
+            formatted_events = pd.DataFrame(columns=['time', 'event', 'cat', 'action'])
+
+            # Iterate through the events and add date rows when the date changes
+            last_date = None
+            for x, row in df_events.iterrows():
+                if row['date_display'] != last_date:
+                    # Create a date separator row that spans all columns
+                    new_row = pd.DataFrame([{
+                        'time': ui.div(
+                            row["date_display"], 
+                            class_="event-date-separator",
+                        ),
+                        'event': '',
+                        'cat': '',
+                        'action': ''
+                    }])
+                    formatted_events = pd.concat([formatted_events, new_row], ignore_index=True)
+                    last_date = row['date_display']
+                new_row = pd.DataFrame([{'time': row['time'], 'event': row['event_pretty'], 'cat': row['cat_name'], 'action': row['inspect']}])
+                formatted_events = pd.concat([formatted_events, new_row], ignore_index=True)
+
+            return (
+                formatted_events.style.set_table_attributes('class="dataframe shiny-table table w-auto"')
+                .hide(axis="index")
+                .hide(axis="columns")
+            )
+        except Exception as e:
+            logging.error(f"Failed to read events from the database: {e}")
+            # Return an empty DataFrame with an error message
+            return pd.DataFrame({
+                'ERROR': [_('Failed to read events from the database.')]
+            })
 
     @output
     @render.ui

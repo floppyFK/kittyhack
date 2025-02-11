@@ -36,13 +36,18 @@ def backend_main(simulate_kittyflap = False):
     tag_timestamp = 0.0
     motion_outside = 0
     motion_inside = 0
+    motion_outside_raw = 0
+    motion_inside_raw = 0
     unlock_inside_decision_made = False
     motion_outside_tm = 0.0
     motion_inside_tm = 0.0
+    motion_inside_raw_tm = 0.0
     last_motion_outside_tm = 0.0
     last_motion_inside_tm = 0.0
+    last_motion_inside_raw_tm = 0.0
     first_motion_outside_tm = 0.0
     first_motion_inside_tm = 0.0
+    first_motion_inside_raw_tm = 0.0
     motion_block_id = 0
     ids_with_mouse = []
     ids_of_current_motion_block = []
@@ -100,13 +105,16 @@ def backend_main(simulate_kittyflap = False):
 
             last_outside = motion_outside
             last_inside = motion_inside
-            motion_outside, motion_inside = pir.get_states()
+            last_inside_raw = motion_inside_raw
+            motion_outside, motion_inside, motion_outside_raw, motion_inside_raw = pir.get_states()
 
             # Update the motion timestamps
             if motion_outside == 1:
                 motion_outside_tm = tm.time()
             if motion_inside == 1:
                 motion_inside_tm = tm.time()
+            if motion_inside_raw == 1:
+                motion_inside_raw_tm = tm.time()
 
             motion_outside = lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm)
 
@@ -133,14 +141,14 @@ def backend_main(simulate_kittyflap = False):
                     magnets.queue_command("lock_inside")
 
                 # Decide if the cat went in or out:
-                if first_motion_inside_tm == 0.0 or (first_motion_outside_tm - first_motion_inside_tm) > 90.0:
+                if first_motion_inside_raw_tm == 0.0 or (first_motion_outside_tm - first_motion_inside_raw_tm) > 60.0:
                     if mouse_check_conditions["no_mouse_detected"]:
                         logging.info("[BACKEND] Motion event conclusion: No one went inside.")
                         event_type = EventType.MOTION_OUTSIDE_ONLY
                     else:
                         logging.info("[BACKEND] Motion event conclusion: Motion outside with mouse detected and entry blocked.")
                         event_type = EventType.MOTION_OUTSIDE_WITH_MOUSE
-                elif first_motion_outside_tm < first_motion_inside_tm:
+                elif first_motion_outside_tm < first_motion_inside_raw_tm:
                     if mouse_check_conditions["no_mouse_detected"]:
                         logging.info("[BACKEND] Motion event conclusion: Cat went inside.")
                         event_type = EventType.CAT_WENT_INSIDE
@@ -167,6 +175,7 @@ def backend_main(simulate_kittyflap = False):
                 # Reset the first motion timestamps
                 first_motion_outside_tm = 0.0
                 first_motion_inside_tm = 0.0
+                first_motion_inside_raw_tm = 0.0
 
             # Just double check that the inside magnet is released ( == inside locked) if no motion is detected outside
             if (motion_outside == 0 and magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME)):

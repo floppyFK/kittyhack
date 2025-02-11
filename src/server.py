@@ -363,7 +363,7 @@ def server(input, output, session):
             inside_lock_state = Magnets.instance.get_inside_state()
             outside_lock_state = Magnets.instance.get_outside_state()
 
-            outside_pir_state, inside_pir_state = Pir.instance.get_states()
+            outside_pir_state, inside_pir_state, motion_outside_raw, motion_inside_raw = Pir.instance.get_states()
 
             if inside_lock_state:
                 ui.update_action_button("bManualOverride", label=_("Close inside now"), icon=icon_svg("lock"), disabled=False)

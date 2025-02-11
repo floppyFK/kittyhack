@@ -27,6 +27,8 @@ class Pir:
     def __init__(self, simulate_kittyflap=False):
         self.state_outside = 0  # 0 = no motion, 1 = motion detected
         self.state_inside = 0   # 0 = no motion, 1 = motion detected
+        self.state_outside_raw = 0
+        self.state_inside_raw = 0
         self.thread_lock = threading.Lock()
         self.outside_motion_count = 0
         self.inside_motion_count = 0
@@ -87,18 +89,24 @@ class Pir:
                         else:
                             self.outside_motion_count = 0
                             state_outside = 0
+                            state_outside_raw = 0
                         
                         if inside_reading == 1:
                             self.inside_motion_count += 1
                         else:
                             self.inside_motion_count = 0
                             state_inside = 0
+                            state_inside_raw = 0
                         
                         if self.outside_motion_count >= (CONFIG['PIR_OUTSIDE_THRESHOLD'] / PIR_READ_INTERVAL):
                             state_outside = 1
+                        if self.outside_motion_count > 0:
+                            state_outside_raw = 1
                         
                         if self.inside_motion_count >= (CONFIG['PIR_INSIDE_THRESHOLD'] / PIR_READ_INTERVAL):
                             state_inside = 1
+                        if self.inside_motion_count > 0:
+                            state_inside_raw = 1
                     except:
                         # Ignore errors. Error logging is done in gpio.get()
                         pass
@@ -116,9 +124,23 @@ class Pir:
                     else:
                         logging.info(f"[PIR] INSIDE: No motion")
 
+                if self.state_outside_raw != state_outside_raw:
+                    if state_outside_raw == 1:
+                        logging.info(f"[PIR] OUTSIDE RAW: Motion detected")
+                    else:
+                        logging.info(f"[PIR] OUTSIDE RAW: No motion")
+
+                if self.state_inside_raw != state_inside_raw:
+                    if state_inside_raw == 1:
+                        logging.info(f"[PIR] INSIDE RAW: Motion detected")
+                    else:
+                        logging.info(f"[PIR] INSIDE RAW: No motion")
+
                 with self.thread_lock:
                     self.state_outside = state_outside
                     self.state_inside = state_inside
+                    self.state_outside_raw = state_outside_raw
+                    self.state_inside_raw = state_inside_raw
 
             except Exception as e:
                 logging.error(f"[PIR] Error reading PIR states: {e}")
@@ -151,4 +173,4 @@ class Pir:
                    (0 = no motion, 1 = motion detected)
         """
         with self.thread_lock:
-            return self.state_outside, self.state_inside
+            return self.state_outside, self.state_inside, self.state_outside_raw, self.state_inside_raw

@@ -164,6 +164,10 @@ else:
 backend_thread = threading.Thread(target=backend_main, args=(CONFIG['SIMULATE_KITTYFLAP'],), daemon=True)
 backend_thread.start()
 
+# Set the WLAN TX Power level
+logging.info (f"Setting WLAN TX Power to {CONFIG['WLAN_TX_POWER']} dBm...")
+systemcmd(["iwconfig", "wlan0", "txpower", f"{CONFIG['WLAN_TX_POWER']}"], CONFIG['SIMULATE_KITTYFLAP'])
+
 logging.info("Starting frontend...")
 
 # Read the GIT version
@@ -1161,7 +1165,12 @@ def server(input, output, session):
             ui.column(12, ui.help_text(_("Automatically check for new versions of Kittyhack."))),
             ui.br(),
             #ui.column(12, ui.input_switch("btnShowKittyflapDbNagscreen", _("Show nag screen, if the original kittyflap database file exists and has a very large size"), CONFIG['KITTYFLAP_DB_NAGSCREEN'])),
-            #ui.hr(),
+            ui.column(12, ui.input_slider("sldWlanTxPower", _("WLAN TX power (in dBm)"), min=0, max=20, value=CONFIG['WLAN_TX_POWER'], step=1)),
+            ui.column(12, ui.help_text(_("Set the WLAN transmission power in dBm."))),
+            ui.column(12, ui.help_text(_("WARNING: You should keep this as low as possible to avoid interference with the PIR Sensors! You should only increase this value, if you have problems with the WLAN connection."))),
+            ui.column(12, ui.help_text(_("NOTE: 0dBm = 1mW, 10dBm = 10mW, 20dBm = 100mW"))),
+            ui.hr(),
+
 
             ui.column(12, ui.h5(_("Door control settings"))),
             ui.column(12, ui.input_slider("sldMouseThreshold", _("Mouse detection threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
@@ -1264,6 +1273,7 @@ def server(input, output, session):
         # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
         #CONFIG['PIR_OUTSIDE_THRESHOLD'] = 10-int(input.sldPirOutsideThreshold())
         CONFIG['PIR_INSIDE_THRESHOLD'] = float(input.sldPirInsideThreshold())
+        CONFIG['WLAN_TX_POWER'] = int(input.sldWlanTxPower())
 
         loglevel = logging._nameToLevel.get(input.txtLoglevel(), logging.INFO)
         logger.setLevel(loglevel)

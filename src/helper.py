@@ -62,6 +62,7 @@ DEFAULT_CONFIG = {
         "kittyhack_database_backup_path": "../kittyhack_backup.db",
         "pir_outside_threshold": 0.5,
         "pir_inside_threshold": 3.0,
+        "wlan_tx_power": 10
     }
 }
 
@@ -236,6 +237,7 @@ def load_config():
         "KITTYHACK_DATABASE_BACKUP_PATH": parser.get('Settings', 'kittyhack_database_backup_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_backup_path']),
         "PIR_OUTSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_outside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_outside_threshold']),
         "PIR_INSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_inside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_inside_threshold']),
+        "WLAN_TX_POWER": parser.getint('Settings', 'wlan_tx_power', fallback=DEFAULT_CONFIG['Settings']['wlan_tx_power'])
     }
 
 def save_config():
@@ -275,6 +277,7 @@ def save_config():
     settings['kittyhack_database_backup_path'] = CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']
     settings['pir_outside_threshold'] = CONFIG['PIR_OUTSIDE_THRESHOLD']
     settings['pir_inside_threshold'] = CONFIG['PIR_INSIDE_THRESHOLD']
+    settings['wlan_tx_power'] = CONFIG['WLAN_TX_POWER']
 
     # Write updated configuration back to the file
     try:

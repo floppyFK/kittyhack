@@ -81,6 +81,7 @@ class EventType:
     MOTION_OUTSIDE_ONLY = "motion_outside_only"
     MOTION_OUTSIDE_WITH_MOUSE = "motion_outside_with_mouse"
     CAT_WENT_INSIDE = "cat_went_inside"
+    CAT_WENT_PROBABLY_INSIDE = "cat_went_probably_inside"
     CAT_WENT_INSIDE_WITH_MOUSE = "cat_went_inside_with_mouse"
     CAT_WENT_OUTSIDE = "cat_went_outside"
 
@@ -90,6 +91,7 @@ class EventType:
             EventType.MOTION_OUTSIDE_ONLY: _("Motion outside only"),
             EventType.MOTION_OUTSIDE_WITH_MOUSE: _("Motion outside with mouse"),
             EventType.CAT_WENT_INSIDE: _("Cat went inside"),
+            EventType.CAT_WENT_PROBABLY_INSIDE: _("Cat went probably inside (no motion inside detected, but the flap was unlocked)"),
             EventType.CAT_WENT_INSIDE_WITH_MOUSE: _("Cat went inside with mouse"),
             EventType.CAT_WENT_OUTSIDE: _("Cat went outside")
         }.get(event_type, _("Unknown event"))
@@ -100,6 +102,7 @@ class EventType:
             EventType.MOTION_OUTSIDE_ONLY: [str(icon_svg("eye"))],
             EventType.MOTION_OUTSIDE_WITH_MOUSE: [str(icon_svg("hand")), icon_svg_local("mouse")],
             EventType.CAT_WENT_INSIDE: [str(icon_svg("circle-down"))],
+            EventType.CAT_WENT_PROBABLY_INSIDE: [str(icon_svg("circle-down")), str(icon_svg("circle-question"))],
             EventType.CAT_WENT_INSIDE_WITH_MOUSE: [str(icon_svg("circle-down"))],
             EventType.CAT_WENT_OUTSIDE: [str(icon_svg("circle-up"))]
         }.get(event_type, [str(icon_svg("circle-question"))])

@@ -70,6 +70,29 @@ class VideoStream:
                 else:
                     logging.error("[CAMERA] Failed to decode frame")
 
+        if self.stopped:
+            final_frame = np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8)
+            # Calculate text size
+            text = "Stream Ended. Please restart the Kittyflap."
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 1
+            thickness = 2
+            text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+
+            # Calculate text position
+            text_x = (final_frame.shape[1] - text_size[0]) // 2
+            text_y = (final_frame.shape[0] + text_size[1]) // 2
+
+            # Draw background rectangle
+            cv2.rectangle(final_frame, (text_x - 10, text_y - text_size[1] - 10), 
+                          (text_x + text_size[0] + 10, text_y + 10), (128, 128, 128), cv2.FILLED)
+
+            # Draw text
+            cv2.putText(final_frame, text, (text_x, text_y), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+            with self.lock:
+                self.frame = final_frame
+            logging.info("[CAMERA] Added final frame to indicate stream ended.")
+
         self.process.terminate()
 
     def read(self):

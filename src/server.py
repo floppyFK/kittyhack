@@ -222,8 +222,7 @@ def start_background_task():
             # Perform Scheduled VACUUM only if the last scheduled vacuum date is older than 24 hours
             if (datetime.now() - last_vacuum_date) > timedelta(days=1):
                 logging.info("[TRIGGER: background task] Start VACUUM of the kittyhack database...")
-                write_stmt_to_database(CONFIG['KITTYHACK_DATABASE_PATH'], "VACUUM")
-                logging.info("[TRIGGER: background task] VACUUM done")
+                vacuum_database(CONFIG['KITTYHACK_DATABASE_PATH'])
                 CONFIG['LAST_VACUUM_DATE'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 update_single_config_parameter("LAST_VACUUM_DATE")
 
@@ -760,8 +759,10 @@ def server(input, output, session):
             df_events['date_display'] = df_events['date'].apply(
                 lambda date: _("Today") if date == today else (_("Yesterday") if date == yesterday else date.strftime("%Y-%m-%d"))
             )
+
             # Show the cat name instead of the RFID
-            df_events['cat_name'] = df_events['rfid'].apply(lambda rfid: get_cat_name(CONFIG['KITTYHACK_DATABASE_PATH'], rfid))
+            cat_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
+            df_events['cat_name'] = df_events['rfid'].apply(lambda rfid: cat_name_dict.get(rfid, _("Unknown RFID") + f": {rfid}" if rfid else _("No RFID found") ))
 
             # Add a column 'event_pretty' to the events table with icon(s) and a tooltip            
             df_events['event_pretty'] = df_events['event_type'].apply(lambda event_type: ui.tooltip(
@@ -1560,34 +1561,26 @@ def server(input, output, session):
         
     @render.download(filename="kittyhack.db")
     def download_kittyhack_db():
-        # Try to acquire database lock
-        result = lock_database()
-        if not result.success:
-            logging.error(f"Failed to lock database: {result.message}")
+        try:
+            sigterm_monitor.halt_backend()
+            tm.sleep(1.0)
+            return CONFIG['KITTYHACK_DATABASE_PATH']
+        except Exception as e:
+            logging.error(f"Failed to halt the backend processes: {e}")
+            ui.notification_show(_("Failed to halt the backend processes: {}").format(e), duration=5, type="error")
             return None
-        else:
-            try:
-                if os.path.exists("/tmp/kittyhack.db"):
-                    os.remove("/tmp/kittyhack.db")
-
-                # Check if there is enough free disk space to copy the database
-                kittyhack_db_size = get_database_size()
-                free_disk_space = get_free_disk_space()
-                required_space = kittyhack_db_size + 250
-                if free_disk_space < required_space:
-                    ui.notification_show(_("Not enough free disk space to download the database. Required: {} MB, Free: {} MB").format(required_space, free_disk_space), duration=5, type="error")
-                    return None
-                
-                # Copy the database file to /tmp
-                shutil.copy2(CONFIG['KITTYHACK_DATABASE_PATH'], "/tmp/kittyhack.db")
-                return "/tmp/kittyhack.db"
-            except Exception as e:
-                logging.error(f"Failed to copy database file: {e}")
-                ui.notification_show(_("Failed to copy the database file: {}").format(e), duration=5, type="error")
-                return None
-            finally:
-                # Release the database lock
-                release_database()
+        finally:
+            logging.info(f"A download of the kittyhack database was requested --> Restart pending.")
+            # Show the restart dialog
+            m = ui.modal(
+                _("Please click the 'Reboot' button to restart the Kittyflap **after** the download has finished.\n\nNOTE: The download will start in the background, so check your browser's download section."),
+                title=_("Download started..."),
+                easy_close=False,
+                footer=ui.div(
+                    ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
+                )
+            )
+            ui.modal_show(m)
     
     @render.download(filename="kittyflap.db")
     def download_kittyflap_db():
@@ -1691,7 +1684,7 @@ def server(input, output, session):
                 """
             ),
             ui.download_button("download_kittyhack_db", "Download Kittyhack Database"),
-            ui.markdown("NOTE: Click the download button just once. Depending on the size of the database, it may take a while until the download starts."),
+            ui.markdown("**WARNING:** To download the database, the Kittyhack software will be stopped and the flap will be locked. You have to restart the Kittyflap afterwards to return to normal operation."),
             ui.br(),
             ui.output_ui("wlan_info"),
             ui.hr(),

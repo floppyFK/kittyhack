@@ -579,14 +579,24 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
     finally:
         release_database()
     
-def create_index_on_events(database: str):
+def create_index_on_events(database: str) -> Result:
     """
-    This function creates an indexes in the events table.
+    This function creates indexes in the events and cats tables.
     """
-    stmt_id_index = "CREATE INDEX IF NOT EXISTS idx_id ON events (id)"
-    write_stmt_to_database(database, stmt_id_index)
-    stmt_id_block_index = "CREATE INDEX IF NOT EXISTS idx_block_id_created_at ON events (block_id, created_at)"
-    write_stmt_to_database(database, stmt_id_block_index)
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_id ON events (id)",
+        "CREATE INDEX IF NOT EXISTS idx_block_id_created_at ON events (block_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_events_block_id_deleted_created_at ON events (block_id, deleted, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_cats_rfid ON cats (rfid)"
+    ]
+    
+    for stmt in indexes:
+        result = write_stmt_to_database(database, stmt)
+        if not result.success:
+            return result
+    
+    logging.info("[DATABASE] Successfully created indexes.")
+    return Result(True, "")
 
 def get_last_motion_blocks(database: str, block_count: int = 1):
     """
@@ -610,14 +620,34 @@ def get_last_motion_blocks(database: str, block_count: int = 1):
         """
     return read_df_from_database(database, stmt)
 
-def get_cat_name(database: str, rfid):
-    df_cats = db_get_cats(database, ReturnDataCatDB.all_except_photos)
-    if not rfid:
-        return "No RFID found"
-    cat_row = df_cats.loc[df_cats['rfid'] == rfid]
-    if not cat_row.empty:
-        return cat_row['name'].values[0]
-    return f"Unknown RFID: {rfid}"
+def vacuum_database(database: str) -> Result:
+    """
+    This function performs a VACUUM operation on the database.
+    """
+    result = lock_database()
+    if not result.success:
+        return result
+
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("VACUUM")
+        cursor.execute("ANALYZE")
+        conn.close()
+    except Exception as e:
+        error_message = f"[DATABASE] An error occurred while vacuuming and analyzing the database '{database}': {e}"
+        logging.error(error_message)
+        return Result(False, error_message)
+    else:
+        logging.info(f"[DATABASE] Successfully vacuumed and analyzed the database '{database}'.")
+        return Result(True, "")
+    finally:
+        release_database()
+
+def get_cat_name_rfid_dict(database: str):
+    stmt = "SELECT rfid, name FROM cats"
+    df_cats = read_df_from_database(database, stmt)
+    return dict(zip(df_cats['rfid'], df_cats['name']))
 
 def check_if_table_exists(database: str, table: str) -> bool:
     """

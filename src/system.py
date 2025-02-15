@@ -193,15 +193,29 @@ def manage_and_switch_wlan(ssid, password="", priority=-1, update_password=False
         )
         logging.info(f"[SYSTEM] Set priority {priority} for {ssid}.")
 
-        # Restart NetworkManager to apply changes (optional)
+        # Restart NetworkManager to apply changes
         subprocess.run(["/usr/bin/systemctl", "restart", "NetworkManager"], check=True)
         logging.info(f"[SYSTEM] Restarted NetworkManager to apply changes.")
+        # Wait for the network to be up before returning
+        for x in range(20):
+            result = subprocess.run(
+                ["/usr/bin/nmcli", "-t", "-f", "NETWORKING"],
+                stdout=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            if "wlan0: connected to" in result.stdout:
+                logging.info(f"[SYSTEM] Network is up and connected.")
+                return True
+            tm.sleep(2)
+        logging.error(f"[SYSTEM] Network did not come up in time.")
+        return False
 
     except subprocess.CalledProcessError as e:
         logging.info(f"[SYSTEM] Error managing WLAN: {e}")
         return False
     
-def switch_wlan_connection(ssid):
+def switch_wlan_connection(ssid: str):
     """
     Switch to an already configured WLAN network.
 
@@ -219,8 +233,20 @@ def switch_wlan_connection(ssid):
             capture_output=True,
             text=True
         )
-        logging.info(f"[SYSTEM] Successfully switched to WLAN network: {ssid}")
-        return True
+        # Wait for the network to be up before returning
+        for x in range(20):
+            result = subprocess.run(
+                ["/usr/bin/nmcli", "-t", "-f", "NETWORKING"],
+                stdout=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            if "wlan0: connected to" in result.stdout:
+                logging.info(f"[SYSTEM] Network is up and connected.")
+                return True
+            tm.sleep(2)
+        logging.error(f"[SYSTEM] Network did not come up in time.")
+        return False
     except subprocess.CalledProcessError as e:
         logging.error(f"[SYSTEM] Error switching to WLAN network {ssid}: {e.stderr}")
         return False

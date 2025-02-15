@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from datetime import datetime, timedelta
 import time as tm
-from shiny import render, ui, reactive
+from shiny import render, ui, reactive, module
 from shiny.types import FileInfo
 import logging
 from logging.handlers import RotatingFileHandler
@@ -12,8 +12,8 @@ from faicons import icon_svg
 import math
 import threading
 import subprocess
-import shutil
 import re
+import hashlib
 from src.helper import (
     AllowedToEnter, 
     EventType, 
@@ -255,51 +255,49 @@ def immediate_bg_task(trigger = "reload"):
 # Start the background task
 start_background_task()
 
-# The main server application
-def server(input, output, session):
+reload_trigger_wlan = reactive.Value(0)
 
-    # Create reactive triggers
-    reload_trigger_photos = reactive.Value(0)
-    reload_trigger_cats = reactive.Value(0)
-    reload_trigger_info = reactive.Value(0)
-    reload_trigger_wlan = reactive.Value(0)
+#######################################################################
+# Modules
+#######################################################################
+@module.ui
+def btn_wlan_modify():
+    return ui.input_action_button(id=f"btn_wlan_modify" , label="", icon=icon_svg("pencil"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
 
-    # Show a notification if a new version of Kittyhack is available
-    if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
-        ui.notification_show(_("A new version of Kittyhack is available: {}. Go to the 'Info' section for update instructions.").format(CONFIG['LATEST_VERSION']), duration=10, type="message")
+@module.ui
+def btn_wlan_connect():
+    return ui.input_action_button(id=f"btn_wlan_connect" , label="", icon=icon_svg("wifi"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;"),
 
-    # Show a nag screen if the kittyflap database file still exists
-    kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
-    #if kittyflap_db_file_exists and CONFIG['KITTYFLAP_DB_NAGSCREEN']:
-    #    ui.notification_show(_("The original kittyflap database file still exists. Please consider deleting the photos in it to free up disk space. For more details, see the 'Info' section (NOTE: You can disable this message in the 'Configuration' section.)"), duration=10, type="warning")
-
-    # Show a warning if the remaining disk space is below the critical threshold
-    if free_disk_space < 500:
-        if kittyflap_db_file_exists:
-            additional_info = _(" or consider deleting pictures from the original kittyflap database file. For more details, see the 'Info' section.")
-        else:
-            additional_info = ""
-        ui.notification_show(_("Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{}).").format(free_disk_space, additional_info), duration=20, type="warning")
-
-    # WLAN enforce connect
-    def wlan_connect(id):
-        configured_wlans = get_wlan_connections()
+@module.server
+def wlan_connect_server(input, output, session, ssid: str):
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect)
+    def wlan_connect():
         ui.modal_show(
             ui.modal(
                 _("The WLAN connection will be interrupted now!"),
                 ui.br(),
-                _("You won't see any further progress here. Please wait a few seconds and reload the page."),
+                _("Please wait a few seconds. If the page does not reload automatically, please reload it manually."),
                 title=_("Updating WLAN configuration..."),
                 footer=None
             )
         )
-        switch_wlan_connection(configured_wlans[id]['ssid'])
+        switch_wlan_connection(ssid)
         reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
+        ui.modal_remove()
 
-    # WLAN Change dialog
-    def wlan_change_dialog(id):
+@module.server
+def wlan_modify_server(input, output, session, ssid: str):
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify)
+    def wlan_modify():
+        # We need to read the configured wlans again here to get the current connection status
         configured_wlans = get_wlan_connections()
-        connected = configured_wlans[id]['connected']
+        wlan = next((w for w in configured_wlans if w['ssid'] == ssid), None)
+        if wlan is None:
+            logging.error(f"WLAN with SSID {ssid} not found.")
+            return
+        connected = wlan['connected']
         if connected:
             additional_note = ui.div(
                 _("This WLAN is currently connected. You can not delete it or change the password."),
@@ -310,9 +308,9 @@ def server(input, output, session):
             additional_note = ""
 
         m = ui.modal(
-            ui.div(ui.input_text("txtWlanSSID", _("SSID"), configured_wlans[id]['ssid']), class_="disabled-wrapper"),
+            ui.div(ui.input_text("txtWlanSSID", _("SSID"), wlan['ssid']), class_="disabled-wrapper"),
             ui.div(ui.input_password("txtWlanPassword", _("Password"), "", placeholder=_("Leave empty to keep the current password")), class_="disabled-wrapper" if connected else ""),
-            ui.input_numeric("numWlanPriority", _("Priority"), configured_wlans[id]['priority'], min=0, max=100, step=1),
+            ui.input_numeric("numWlanPriority", _("Priority"), wlan['priority'], min=0, max=100, step=1),
             ui.help_text(_("The priority determines the order in which the WLANs are tried to connect. Higher numbers are tried first.")),
             additional_note,
             title=_("Change WLAN configuration"),
@@ -337,6 +335,77 @@ def server(input, output, session):
             )
         )
         ui.modal_show(m)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_save)
+    def wlan_save():
+        ssid = input.txtWlanSSID()
+        password = input.txtWlanPassword()
+        priority = input.numWlanPriority()
+        password_changed = True if password else False
+        logging.info(f"Updating WLAN configuration: SSID={ssid}, Priority={priority}, Password changed={password_changed}")
+        ui.modal_remove()
+        ui.modal_show(
+            ui.modal(
+                _("The WLAN connection will be interrupted now!"),
+                ui.br(),
+                _("Please wait a few seconds. If the page does not reload automatically, please reload it manually."),
+                title=_("Updating WLAN configuration..."),
+                footer=None
+            )
+        )
+        success = manage_and_switch_wlan(ssid, password, priority, password_changed)
+        if success:
+            ui.notification_show(_("WLAN configuration for {} updated successfully.").format(ssid), duration=5, type="message")
+            reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
+        else:
+            ui.notification_show(_("Failed to update WLAN configuration for {}").format(ssid), duration=5, type="error")
+        ui.modal_remove()
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_cancel)
+    def modal_cancel():
+        ui.modal_remove()
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_delete)
+    def wlan_delete():
+        ssid = input.txtWlanSSID()
+        success = delete_wlan_connection(ssid)
+        if success:
+            ui.notification_show(_("WLAN connection {} deleted successfully.").format(ssid), duration=5, type="message")
+            ui.modal_remove()
+            reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
+        else:
+            ui.notification_show(_("Failed to delete WLAN connection {}").format(ssid), duration=5, type="error")
+
+#######################################################################
+# The main server application
+#######################################################################
+def server(input, output, session):
+
+    # Create reactive triggers
+    reload_trigger_photos = reactive.Value(0)
+    reload_trigger_cats = reactive.Value(0)
+    reload_trigger_info = reactive.Value(0)
+    
+
+    # Show a notification if a new version of Kittyhack is available
+    if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
+        ui.notification_show(_("A new version of Kittyhack is available: {}. Go to the 'Info' section for update instructions.").format(CONFIG['LATEST_VERSION']), duration=10, type="message")
+
+    # Show a nag screen if the kittyflap database file still exists
+    kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
+    #if kittyflap_db_file_exists and CONFIG['KITTYFLAP_DB_NAGSCREEN']:
+    #    ui.notification_show(_("The original kittyflap database file still exists. Please consider deleting the photos in it to free up disk space. For more details, see the 'Info' section (NOTE: You can disable this message in the 'Configuration' section.)"), duration=10, type="warning")
+
+    # Show a warning if the remaining disk space is below the critical threshold
+    if free_disk_space < 500:
+        if kittyflap_db_file_exists:
+            additional_info = _(" or consider deleting pictures from the original kittyflap database file. For more details, see the 'Info' section.")
+        else:
+            additional_info = ""
+        ui.notification_show(_("Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{}).").format(free_disk_space, additional_info), duration=20, type="warning")
     
     # Add new WLAN dialog
     def wlan_add_dialog():
@@ -1291,7 +1360,6 @@ def server(input, output, session):
 
     @output
     @render.ui
-    @reactive.event(reload_trigger_wlan, ignore_none=True)
     def ui_wlan_configured_connections():
         return ui.layout_column_wrap(
             ui.div(
@@ -1310,7 +1378,7 @@ def server(input, output, session):
                 width="400px"
             )
         )
-    
+
     @render.table
     @reactive.event(reload_trigger_wlan, ignore_none=True)
     def configured_wlans_table():
@@ -1318,22 +1386,26 @@ def server(input, output, session):
             configured_wlans = get_wlan_connections()
             i = 0
             for wlan in configured_wlans:
+                unique_id = hashlib.md5(os.urandom(16)).hexdigest()
                 if wlan['connected']:
                     wlan['connected_icon'] = "🟢"
                 else:
                     wlan['connected_icon'] = "⚫"
                 wlan['actions'] = ui.div(
                     ui.tooltip(
-                        ui.input_action_button(id=f"btn_wlan_connect_{i}" , label="", icon=icon_svg("wifi"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;"),
+                        btn_wlan_connect(f"btn_wlan_connect_{unique_id}"),
                         _("Enforce connection to this WLAN"),
-                        id=f"tooltip_wlan_connect_{i}"
+                        id=f"tooltip_wlan_connect_{unique_id}"
                     ),
                     ui.tooltip(
-                        ui.input_action_button(id=f"btn_wlan_modify_{i}" , label="", icon=icon_svg("pencil"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;"),
+                        btn_wlan_modify(f"btn_wlan_modify_{unique_id}"),
                         _("Modify this WLAN"),
-                        id=f"tooltip_wlan_modify_{i}"
+                        id=f"tooltip_wlan_modify_{unique_id}"
                     ),
                 )
+                # Add new event listeners for the buttons
+                wlan_modify_server(f"btn_wlan_modify_{unique_id}", wlan["ssid"])
+                wlan_connect_server(f"btn_wlan_connect_{unique_id}", wlan["ssid"])
                 i += 1
 
             # Create a pandas DataFrame from the available WLANs
@@ -1359,121 +1431,6 @@ def server(input, output, session):
     def wlan_add():
         wlan_add_dialog()
 
-    # Unfortunately there seems to be no way to create reactive events for dynamically created elements.
-    # And if not all buttons are created, the event will not be triggered.
-    # Therefore we have to create a separate event for each button.
-    # We will support up to 10 configured WLANs. This should be sufficient for most users.
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_0)
-    def wlan_modify_0():
-        wlan_change_dialog(0)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_0)
-    def wlan_connect_0():
-        wlan_connect(0)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_1)
-    def wlan_modify_1():
-        wlan_change_dialog(1)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_1)
-    def wlan_connect_1():
-        wlan_connect(1)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_2)
-    def wlan_modify_2():
-        wlan_change_dialog(2)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_2)
-    def wlan_connect_2():
-        wlan_connect(2)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_3)
-    def wlan_modify_3():
-        wlan_change_dialog(3)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_3)
-    def wlan_connect_3():
-        wlan_connect(3)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_4)
-    def wlan_modify_4():
-        wlan_change_dialog(4)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_4)
-    def wlan_connect_4():
-        wlan_connect(4)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_5)
-    def wlan_modify_5():
-        wlan_change_dialog(5)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_5)
-    def wlan_connect_5():
-        wlan_connect(5)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_6)
-    def wlan_modify_6():
-        wlan_change_dialog(6)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_6)
-    def wlan_connect_6():
-        wlan_connect(6)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_7)
-    def wlan_modify_7():
-        wlan_change_dialog(7)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_7)
-    def wlan_connect_7():
-        wlan_connect(7)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_8)
-    def wlan_modify_8():
-        wlan_change_dialog(8)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_8)
-    def wlan_connect_8():
-        wlan_connect(8)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_9)
-    def wlan_modify_9():
-        wlan_change_dialog(9)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_9)
-    def wlan_connect_9():
-        wlan_connect(9)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_10)
-    def wlan_modify_10():
-        wlan_change_dialog(10)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_10)
-    def wlan_connect_10():
-        wlan_connect(10)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_delete)
-    def wlan_delete():
-        ssid = input.txtWlanSSID()
-        success = delete_wlan_connection(ssid)
-        if success:
-            ui.notification_show(_("WLAN connection {} deleted successfully.").format(ssid), duration=5, type="message")
-            ui.modal_remove()
-            reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
-        else:
-            ui.notification_show(_("Failed to delete WLAN connection {}: {}").format(ssid, success.message), duration=5, type="error")
-
     @reactive.effect
     @reactive.event(input.btn_wlan_save)
     def wlan_save():
@@ -1487,22 +1444,21 @@ def server(input, output, session):
             ui.modal(
                 _("The WLAN connection will be interrupted now!"),
                 ui.br(),
-                _("You won't see any further progress here. Please wait a few seconds and reload the page."),
+                _("Please wait a few seconds. If the page does not reload automatically, please reload it manually."),
                 title=_("Updating WLAN configuration..."),
                 footer=None
             )
         )
-        result = manage_and_switch_wlan(ssid, password, priority, password_changed)
-        if result:
+        success = manage_and_switch_wlan(ssid, password, priority, password_changed)
+        if success:
             ui.notification_show(_("WLAN configuration for {} updated successfully.").format(ssid), duration=5, type="message")
             reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
         else:
-            ui.notification_show(_("Failed to update WLAN configuration for {}: {}").format(ssid, result.message), duration=5, type="error")
+            ui.notification_show(_("Failed to update WLAN configuration for {}").format(ssid), duration=5, type="error")
         ui.modal_remove()
 
     @output
     @render.ui
-    @reactive.event(reload_trigger_wlan, ignore_none=True)
     def ui_wlan_available_networks():
         return ui.layout_column_wrap(
             ui.div(

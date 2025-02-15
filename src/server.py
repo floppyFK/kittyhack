@@ -164,6 +164,9 @@ else:
 backend_thread = threading.Thread(target=backend_main, args=(CONFIG['SIMULATE_KITTYFLAP'],), daemon=True)
 backend_thread.start()
 
+# Log the relevant installed deb packages
+log_relevant_deb_packages()
+
 # Set the WLAN TX Power level
 logging.info (f"Setting WLAN TX Power to {CONFIG['WLAN_TX_POWER']} dBm...")
 systemcmd(["iwconfig", "wlan0", "txpower", f"{CONFIG['WLAN_TX_POWER']}"], CONFIG['SIMULATE_KITTYFLAP'])

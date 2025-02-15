@@ -639,3 +639,17 @@ def wait_for_network(timeout: int = 120) -> bool:
         tm.sleep(interval)
     logging.error(f"Failed to establish network connectivity after {timeout} seconds")
     return False
+
+def log_relevant_deb_packages():
+    """
+    Logs the currently installed deb packages that are relevant based on the package name.
+    """
+    relevant_packages = ["libcamera", "gstreamer", "libpisp", "rpicam", "raspi"]
+    try:
+        result = subprocess.run(["dpkg", "-l"], capture_output=True, text=True, check=True)
+        installed_packages = result.stdout.splitlines()
+        for package in installed_packages:
+            if any(relevant in package for relevant in relevant_packages):
+                logging.info(f"Installed software package: {package}")
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to retrieve installed packages: {e}")

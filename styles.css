@@ -211,6 +211,11 @@
     }
 }
 
+.modal-content:has(.transparent-modal-content) {
+    background: rgb(0 0 0 / 0%) !important;
+    border: 0 !important;
+  }
+
 /* Live view panel - Event table */
 tr:has(.event-date-separator) {
     position: relative;

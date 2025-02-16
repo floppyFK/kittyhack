@@ -13,6 +13,8 @@ import threading
 import requests
 import shlex
 import cv2
+import numpy as np
+import base64
 import socket
 from faicons import icon_svg
 from src.system import *
@@ -533,6 +535,41 @@ def resize_image_to_square(img: cv2.typing.MatLike, size: int = 800, quality: in
             _, img_blob = cv2.imencode('.jpg', img_resized, encode_param)
             return img_blob.tobytes()
     except:
+        return None
+    
+def process_image(image_blob, target_width, target_height, quality):
+    """
+    Processes an image by resizing it to the target dimensions while maintaining the aspect ratio and encoding it with the specified quality.
+
+    Args:
+        image_blob (bytes): The image data in binary format.
+        target_width (int): The target width for the resized image.
+        target_height (int): The target height for the resized image.
+        quality (int): The quality of the output JPEG image (0 to 100).
+
+    Returns:
+        str: The base64 encoded string of the processed image, or None if an error occurs.
+    """
+    try:
+        # Convert the blob to a numpy array for OpenCV
+        nparr = np.frombuffer(image_blob, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        # Resize the image while maintaining aspect ratio
+        height, width = img.shape[:2]
+        aspect = width / height
+        if aspect > (target_width / target_height):
+            new_width = target_width
+            new_height = int(target_width / aspect)
+        else:
+            new_height = target_height
+            new_width = int(target_height * aspect)
+        resized = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        # Encode the resized image with reduced quality
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+        _, encoded_img = cv2.imencode('.jpg', resized, encode_param)
+        return base64.b64encode(encoded_img).decode('utf-8')
+    except Exception as e:
+        logging.error(f"Failed to process image: {e}")
         return None
     
 def check_and_stop_kittyflap_services(simulate_operations=False):

@@ -266,7 +266,119 @@ def btn_wlan_modify():
 
 @module.ui
 def btn_wlan_connect():
-    return ui.input_action_button(id=f"btn_wlan_connect" , label="", icon=icon_svg("wifi"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;"),
+    return ui.input_action_button(id=f"btn_wlan_connect" , label="", icon=icon_svg("wifi"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
+
+@module.ui
+def btn_show_event():
+    return ui.input_action_button(id=f"btn_show_event" , label="", icon=icon_svg("magnifying-glass"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
+
+@module.server
+def show_event_server(input, output, session, block_id: int):
+
+    # Use standard Python list to store pictures and current frame index
+    pictures = []
+    frame_index = [0]  # Use list to allow modification in nested functions
+
+    @render.ui
+    @reactive.effect
+    @reactive.event(input.btn_show_event)
+    def show_event():
+        logging.info(f"Show event with block_id {block_id}")
+        if CONFIG['SHOW_IMAGES_WITH_OVERLAY']:
+            picture_type = ReturnDataPhotosDB.all_modified_image
+            blob_picture = "modified_image"
+        else:
+            picture_type = ReturnDataPhotosDB.all_original_image
+            blob_picture = "original_image"
+
+        event = db_get_photos_by_block_id(CONFIG['KITTYHACK_DATABASE_PATH'], block_id, picture_type)
+        # Convert each picture blob to base64 and store in an array
+        blob_pictures = []
+        for x, row in event.iterrows():
+            if row[blob_picture] is not None:
+                try:
+                    encoded_picture = process_image(row[blob_picture], 640, 480, 50)
+                    if encoded_picture:
+                        blob_pictures.append(encoded_picture)
+                except Exception as e:
+                    logging.error(f"Failed to encode picture: {e}")
+
+        # Set the array of blob_picture to the global pictures array
+        pictures.clear()
+        pictures.extend(blob_pictures)
+
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.card(
+                        ui.output_ui("show_event_picture"),
+                        ui.card_footer(
+                            ui.div(
+                                ui.input_action_button(id="btn_prev", label="", icon=icon_svg("chevron-left"), class_="btn-narrow", style_="width: 42px;"),
+                                ui.input_action_button(id="btn_play_pause", label="", icon=icon_svg("pause"), class_="btn-narrow", style_="width: 42px;"),
+                                ui.input_action_button(id="btn_next", label="", icon=icon_svg("chevron-right"), class_="btn-narrow", style_="width: 42px;"),
+                            )
+                        ),
+                        full_screen=False,
+                        class_="image-container"
+                    ),
+                ),
+                #title=_("Event details"),
+                #footer=ui.div(
+                #    ui.input_action_button(
+                #        id="btn_modal_cancel",
+                #        label=_("Close"),
+                #        class_="btn-vertical-margin btn-narrow"
+                #    ),
+                #),
+                footer=ui.div(),
+                size='l',
+                easy_close=True,
+                class_="transparent-modal-content"
+            )
+        )
+    @render.text
+    def show_event_picture():
+        reactive.invalidate_later(0.25)        
+        try:
+            frame = pictures[frame_index[0]]
+            if frame is not None:
+                img_html = f'<img src="data:image/jpeg;base64,{frame}" style="min-width: 250px;" />'
+            else:
+                img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
+        except Exception as e:
+            logging.error(f"Failed to show the picture for event: {e}")
+            img_html = '<div class="placeholder-image"><strong>' + _('An error occured while reading the image.') + '</strong></div>'
+        
+        # Update frame index using standard list, if the play/pause button is in play mode
+        if input.btn_play_pause() % 2 == 0:
+            frame_index[0] = (frame_index[0] + 1) % max(len(pictures), 1)
+        return ui.HTML(img_html)
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_cancel)
+    def modal_cancel():
+        ui.modal_remove()
+
+    @reactive.effect
+    @reactive.event(input.btn_play_pause)
+    def play_pause():
+        logging.info(f"DEBUG DEBUG DEBUG: Play/Pause button clicked. Click count: {input.btn_play_pause()}")
+        # Toggle play/pause based on the click count
+        if input.btn_play_pause() % 2 == 0:
+            ui.update_action_button("btn_play_pause", label="", icon=icon_svg("pause"))
+        else:
+            ui.update_action_button("btn_play_pause", label="", icon=icon_svg("play"))
+
+    @reactive.effect
+    @reactive.event(input.btn_prev)
+    def prev_picture():
+        frame_index[0] = (frame_index[0] - 1) % max(len(pictures), 1)
+
+    @reactive.effect
+    @reactive.event(input.btn_next)
+    def next_picture():
+        frame_index[0] = (frame_index[0] + 1) % max(len(pictures), 1)
 
 @module.server
 def wlan_connect_server(input, output, session, ssid: str):
@@ -847,11 +959,14 @@ def server(input, output, session):
             ))
 
             # Add an 'inspect' column to the 'events' DataFrame
-            df_events['inspect'] = [
-                ui.div(
-                    ui.input_action_button(id=f"btn_event_inspect_{i}", label="", icon=icon_svg("magnifying-glass"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
-                ) for i in range(len(df_events))
-            ]
+            inspect_buttons = []
+            for index, row in df_events.iterrows():
+                unique_id = hashlib.md5(os.urandom(16)).hexdigest()
+                inspect_buttons.append(
+                    ui.div(btn_show_event(f"btn_show_event_{unique_id}"))
+                )
+                show_event_server(f"btn_show_event_{unique_id}", row['block_id'])
+            df_events['inspect'] = inspect_buttons
 
             # Create a new DataFrame to hold the formatted events
             formatted_events = pd.DataFrame(columns=['time', 'event', 'cat', 'action'])

@@ -204,6 +204,30 @@ def db_get_photos(database: str,
 
     return read_df_from_database(database, stmt)
 
+def db_get_photos_by_block_id(database: str, block_id: int, return_data: ReturnDataPhotosDB = ReturnDataPhotosDB.all):
+    """
+    this function returns all dataframes from the 'events' table, based on the
+    specified block_id.
+    
+    :param database: Path to the database file
+    :param block_id: ID of the block to retrieve
+    :param return_data: Type of data to return (ReturnDataPhotosDB enum)
+    :return: DataFrame containing the requested data
+    """
+    if return_data == ReturnDataPhotosDB.all:
+        columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, rfid, event_text"
+    elif return_data == ReturnDataPhotosDB.all_modified_image:
+        columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, rfid, event_text"
+    elif return_data == ReturnDataPhotosDB.all_original_image:
+        columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, rfid, event_text"
+    elif return_data == ReturnDataPhotosDB.all_except_photos:
+        columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, rfid, event_text"
+    elif return_data == ReturnDataPhotosDB.only_ids:
+        columns = "id"
+        
+    stmt = f"SELECT {columns} FROM events WHERE block_id = {block_id}"
+    return read_df_from_database(database, stmt)
+
 def db_get_cats(database: str, return_data: ReturnDataCatDB):
     """
     this function returns all dataframes from the 'cats' table.

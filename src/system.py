@@ -2,6 +2,7 @@ from enum import Enum
 import logging
 import subprocess
 import os
+import re
 import time as tm
 
 GPIO_BASE_PATH = "/sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/"
@@ -304,32 +305,37 @@ def scan_wlan_networks():
         )
         networks = {}
         for line in result.stdout.split('\n'):
-            if line:
-                # Split with maxsplit to handle BSSIDs containing colons
-                parts = line.split(':', 5)
-                if len(parts) != 6:
-                    continue
-                ssid, signal, security, bars, channel, bssid = parts
-                if not ssid or ssid == "":
-                    ssid = bssid.replace("\\", "")
-                bar_count = len([c for c in bars if c not in ('_', ' ')])
-                if ssid not in networks:
-                    networks[ssid] = {
-                        "ssid": ssid,
-                        "signal": int(signal),
-                        "security": security,
-                        "bars": bar_count,
-                        "channel": str(channel)
-                    }
-                else:
-                    networks[ssid]["signal"] = max(networks[ssid]["signal"], int(signal))
-                    networks[ssid]["bars"] = max(networks[ssid]["bars"], bar_count)
-                    if str(channel) not in networks[ssid]["channel"].split(','):
-                        networks[ssid]["channel"] = f"{networks[ssid]['channel']}, {channel}"
+            if not line:
+                continue
+                
+            # Use regex to split on unescaped colons
+            parts = re.split(r'(?<!\\):', line, maxsplit=5)
+            if len(parts) != 6:
+                continue
+                
+            # Unescape any escaped characters
+            parts = [p.replace('\\:', ':').replace('\\\\', '\\') for p in parts]
+            ssid, signal, security, bars, channel, bssid = parts
+            if not ssid or ssid == "":
+                ssid = bssid.replace("\\", "")
+            bar_count = len([c for c in bars if c not in ('_', ' ')])
+            if ssid not in networks:
+                networks[ssid] = {
+                    "ssid": ssid,
+                    "signal": int(signal),
+                    "security": security,
+                    "bars": bar_count,
+                    "channel": str(channel)
+                }
+            else:
+                networks[ssid]["signal"] = max(networks[ssid]["signal"], int(signal))
+                networks[ssid]["bars"] = max(networks[ssid]["bars"], bar_count)
+                if str(channel) not in networks[ssid]["channel"].split(','):
+                    networks[ssid]["channel"] = f"{networks[ssid]['channel']}, {channel}"
         networks = list(networks.values())
         return networks
-    except subprocess.CalledProcessError as e:
-        logging.error(f"[SYSTEM] Error scanning WLAN networks: {e.stderr}")
+    except Exception as e:
+        logging.error(f"[SYSTEM] Error scanning WLAN networks: {e}")
         return []
     
 def get_wlan_connections():
@@ -349,7 +355,14 @@ def get_wlan_connections():
         connections = []
         for line in result.stdout.split('\n'):
             if line:
-                ssid, device, priority, state = line.split(':')
+                # Use regex to split on unescaped colons
+                parts = re.split(r'(?<!\\):', line, maxsplit=3)
+                if len(parts) != 4:
+                    continue
+                
+                # Unescape any escaped characters
+                parts = [p.replace('\\:', ':').replace('\\\\', '\\') for p in parts]
+                ssid, device, priority, state = parts
                 # Skip loopback and wired connections
                 if ssid not in ["lo", "Wired connection 1"]:
                     connections.append({

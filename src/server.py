@@ -235,6 +235,9 @@ def start_background_task():
                 CONFIG['LAST_VACUUM_DATE'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 update_single_config_parameter("LAST_VACUUM_DATE")
 
+            # Log system information
+            log_system_information()
+
             # Use a shorter sleep interval and check for sigterm_monitor.stop_now to allow graceful shutdown
             for _ in range(int(CONFIG['PERIODIC_JOBS_INTERVAL'])):
                 if sigterm_monitor.stop_now:

@@ -16,6 +16,7 @@ import cv2
 import numpy as np
 import base64
 import socket
+import sys
 from faicons import icon_svg
 from src.system import *
 
@@ -693,3 +694,86 @@ def log_relevant_deb_packages():
                 logging.info(f"Installed software package: {package}")
     except subprocess.CalledProcessError as e:
         logging.error(f"Failed to retrieve installed packages: {e}")
+
+def log_system_information():
+    """
+    Logs relevant system information.
+    """
+    info_lines = []
+    info_lines.append("---- System information: ------------------------------------------------")
+    info_lines.append(f"System: {os.uname().sysname} {os.uname().release} {os.uname().machine}")
+    info_lines.append(f"Python version: {sys.version}")
+    info_lines.append(f"Git version: {get_git_version()}")
+    info_lines.append(f"Kittyhack version: {CONFIG['LATEST_VERSION']}")
+    info_lines.append(f"Free disk space: {get_free_disk_space():.2f} / {get_total_disk_space():.2f} MB")
+    info_lines.append(f"Database size: {get_database_size():.2f} MB")
+    
+    # Memory information
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            mem_total = int(next(line for line in f if 'MemTotal' in line).split()[1]) // 1024
+            f.seek(0)
+            mem_available = int(next(line for line in f if 'MemAvailable' in line).split()[1]) // 1024
+            info_lines.append(f"Memory: {mem_available}MB free of {mem_total}MB")
+    except Exception as e:
+        info_lines.append(f"Failed to get memory info: {e}")
+
+    # CPU usage and temperature
+    try:
+        cpu_temp = subprocess.check_output(['vcgencmd', 'measure_temp']).decode().strip()
+        info_lines.append(f"CPU Temperature: {cpu_temp}")
+        
+        # Get top processes sorted by CPU usage
+        ps_cmd = ['ps', '-eo', 'pid,ppid,%mem,%cpu,args', '--sort=-%cpu', '--columns', '200']
+        ps_output = subprocess.Popen(ps_cmd, stdout=subprocess.PIPE)
+        grep_output = subprocess.Popen(['grep', '-v', 'ps -eo'], 
+                                     stdin=ps_output.stdout,
+                                     stdout=subprocess.PIPE)
+        ps_output.stdout.close()
+        head_output = subprocess.check_output(['head', '-n', '10'], 
+                                            stdin=grep_output.stdout).decode()
+        grep_output.stdout.close()
+        info_lines.append(f"Top processes by CPU:\n{head_output}")
+    except Exception as e:
+        info_lines.append(f"Failed to get CPU info: {e}")
+
+    # Network information
+    try:
+        wifi_info = subprocess.check_output(['iwconfig', 'wlan0']).decode()
+        info_lines.append(f"WiFi status:\n{wifi_info}")
+    except Exception as e:
+        info_lines.append(f"Failed to get network info: {e}")
+    
+    # Check internet connectivity
+    try:
+        ping_result = subprocess.run(['ping', '-c', '1', '-W', '2', '8.8.8.8'], capture_output=True, text=True)
+        info_lines.append(f"Internet connectivity: {'Connected' if ping_result.returncode == 0 else 'Disconnected'}")
+    except Exception as e:
+        info_lines.append(f"Failed to check internet connectivity: {e}")
+    
+    # System uptime
+    try:
+        with open('/proc/uptime', 'r') as f:
+            uptime_seconds = float(f.readline().split()[0])
+            uptime_days = uptime_seconds / 86400  # Convert seconds to days
+            info_lines.append(f"System uptime: {uptime_days:.1f} days")
+    except Exception as e:
+        info_lines.append(f"Failed to get uptime: {e}")
+
+    # Journal errors from the last periodic interval
+    try:
+        interval_seconds = CONFIG['PERIODIC_JOBS_INTERVAL'] + 5
+        journal_errors = subprocess.check_output(
+            ['journalctl', '-p', 'err', '--since', f"{interval_seconds} seconds ago", '--no-pager'],
+            stderr=subprocess.STDOUT
+        ).decode()
+        if journal_errors.strip():
+            info_lines.append(f"System errors from the last {interval_seconds} seconds:\n{journal_errors}")
+        else:
+            info_lines.append("No systen errors in the specified time period")
+    except Exception as e:
+        info_lines.append(f"Failed to get journal errors: {e}")
+    info_lines.append("-------------------------------------------------------------------------")
+
+    # Log all information at once
+    logging.info('\n'.join(info_lines))

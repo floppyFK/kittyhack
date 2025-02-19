@@ -163,9 +163,14 @@ def manage_and_switch_wlan(ssid, password="", priority=-1, update_password=False
     try:
         # Check if the connection already exists
         result = subprocess.run(
-            ["/usr/bin/nmcli", "-t", "-f", "NAME", "connection", "show"], stdout=subprocess.PIPE, text=True
+            ["/usr/bin/nmcli", "-t", "-f", "NAME", "connection", "show"],
+            stdout=subprocess.PIPE, text=True
         )
-        if ssid in result.stdout:
+        existing_connections = [conn for conn in result.stdout.splitlines() 
+                              if conn not in ["lo", "Wired connection 1"]]
+        
+
+        if ssid in existing_connections:
             if update_password:
                 # Update the password for the existing connection
                 subprocess.run(

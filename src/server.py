@@ -168,8 +168,10 @@ backend_thread.start()
 log_relevant_deb_packages()
 
 # Set the WLAN TX Power level
-logging.info (f"Setting WLAN TX Power to {CONFIG['WLAN_TX_POWER']} dBm...")
+logging.info(f"Setting WLAN TX Power to {CONFIG['WLAN_TX_POWER']} dBm...")
 systemcmd(["iwconfig", "wlan0", "txpower", f"{CONFIG['WLAN_TX_POWER']}"], CONFIG['SIMULATE_KITTYFLAP'])
+logging.info("Disabling WiFi power saving mode...")
+systemcmd(["iw", "dev", "wlan0", "set", "power_save", "off"], CONFIG['SIMULATE_KITTYFLAP'])
 
 logging.info("Starting frontend...")
 
@@ -255,28 +257,31 @@ def immediate_bg_task(trigger = "reload"):
 # Start the background task
 start_background_task()
 
+# Global reactive triggers
 reload_trigger_wlan = reactive.Value(0)
+reload_trigger_photos = reactive.Value(0)
 
 #######################################################################
 # Modules
 #######################################################################
 @module.ui
 def btn_wlan_modify():
-    return ui.input_action_button(id=f"btn_wlan_modify" , label="", icon=icon_svg("pencil"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
+    return ui.input_action_button(id=f"btn_wlan_modify" , label="", icon=icon_svg("pencil", margin_left="-0.1em", margin_right="auto"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
 
 @module.ui
 def btn_wlan_connect():
-    return ui.input_action_button(id=f"btn_wlan_connect" , label="", icon=icon_svg("wifi"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
+    return ui.input_action_button(id=f"btn_wlan_connect" , label="", icon=icon_svg("wifi", margin_left="-0.2em", margin_right="auto"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
 
 @module.ui
 def btn_show_event():
-    return ui.input_action_button(id=f"btn_show_event" , label="", icon=icon_svg("magnifying-glass"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
+    return ui.input_action_button(id=f"btn_show_event" , label="", icon=icon_svg("magnifying-glass", margin_left="-1", margin_right="auto"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
 
 @module.server
 def show_event_server(input, output, session, block_id: int):
 
     # Use standard Python list to store pictures and current frame index
     pictures = []
+    timestamps = []
     frame_index = [0]  # Use list to allow modification in nested functions
 
     @render.ui
@@ -292,20 +297,21 @@ def show_event_server(input, output, session, block_id: int):
             blob_picture = "original_image"
 
         event = db_get_photos_by_block_id(CONFIG['KITTYHACK_DATABASE_PATH'], block_id, picture_type)
-        # Convert each picture blob to base64 and store in an array
-        blob_pictures = []
+        
+        # Clear the pictures list
+        pictures.clear()
+        timestamps.clear()
+
+        # Iterate over the rows and encode the pictures
         for x, row in event.iterrows():
             if row[blob_picture] is not None:
                 try:
                     encoded_picture = process_image(row[blob_picture], 640, 480, 50)
                     if encoded_picture:
-                        blob_pictures.append(encoded_picture)
+                        pictures.append(encoded_picture)
+                        timestamps.append(pd.to_datetime(get_local_date_from_utc_date(row["created_at"])).strftime('%H:%M:%S'))
                 except Exception as e:
                     logging.error(f"Failed to encode picture: {e}")
-
-        # Set the array of blob_picture to the global pictures array
-        pictures.clear()
-        pictures.extend(blob_pictures)
 
         ui.modal_show(
             ui.modal(
@@ -314,38 +320,57 @@ def show_event_server(input, output, session, block_id: int):
                         ui.output_ui("show_event_picture"),
                         ui.card_footer(
                             ui.div(
-                                ui.input_action_button(id="btn_prev", label="", icon=icon_svg("chevron-left"), class_="btn-narrow", style_="width: 42px;"),
-                                ui.input_action_button(id="btn_play_pause", label="", icon=icon_svg("pause"), class_="btn-narrow", style_="width: 42px;"),
-                                ui.input_action_button(id="btn_next", label="", icon=icon_svg("chevron-right"), class_="btn-narrow", style_="width: 42px;"),
-                            )
+                                ui.div(
+                                    ui.tooltip(
+                                        ui.input_action_button(id=f"btn_delete_event", label="", icon=icon_svg("trash"), class_="btn-vertical-margin btn-narrow btn-danger", style_="width: 42px;"),
+                                        _("Delete all pictures of this event"),
+                                        id="tooltip_delete_event",
+                                    ),
+                                ),
+                                ui.div(
+                                    ui.input_action_button(id="btn_prev", label="", icon=icon_svg("chevron-left", margin_right="auto"), class_="btn-narrow", style_="width: 42px;"),
+                                    ui.input_action_button(id="btn_play_pause", label="", icon=icon_svg("pause", margin_right="auto"), class_="btn-narrow", style_="width: 42px;"),
+                                    ui.input_action_button(id="btn_next", label="", icon=icon_svg("chevron-right", margin_right="auto"), class_="btn-narrow", style_="width: 42px;"),
+                                    style_="display: flex; gap: 8px; position: absolute; left: 50%; transform: translateX(-50%);"
+                                ),
+                                ui.div(
+                                    ui.input_action_button(id="btn_modal_cancel", label="", icon=icon_svg("xmark", margin_right="auto"), class_="btn-vertical-margin btn-narrow", style_="width: 42px;"),
+                                ),
+                                style_="display: flex; align-items: center; justify-content: space-between; position: relative;"
+                            ),
                         ),
                         full_screen=False,
                         class_="image-container"
                     ),
                 ),
-                #title=_("Event details"),
-                #footer=ui.div(
-                #    ui.input_action_button(
-                #        id="btn_modal_cancel",
-                #        label=_("Close"),
-                #        class_="btn-vertical-margin btn-narrow"
-                #    ),
-                #),
                 footer=ui.div(),
                 size='l',
-                easy_close=True,
+                easy_close=False,
                 class_="transparent-modal-content"
             )
         )
     @render.text
     def show_event_picture():
-        reactive.invalidate_later(0.25)        
+        reactive.invalidate_later(0.25)
         try:
-            frame = pictures[frame_index[0]]
-            if frame is not None:
-                img_html = f'<img src="data:image/jpeg;base64,{frame}" style="min-width: 250px;" />'
+            if len(pictures) > 0:
+                frame = pictures[frame_index[0]]
+                if frame is not None:
+                    img_html = f'''
+                    <div style="position: relative; display: inline-block;">
+                        <img src="data:image/jpeg;base64,{frame}" style="min-width: 250px;" />
+                        <div style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px;">
+                            {timestamps[frame_index[0]]}
+                        </div>
+                        <div style="position: absolute; bottom: 12px; right: 8px; background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px;">
+                            {frame_index[0] + 1}/{len(pictures)}
+                        </div>
+                    </div>
+                    '''
+                else:
+                    img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
             else:
-                img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
+                img_html = '<div class="placeholder-image"><strong>' + _('No pictures found for this event.') + '</strong></div>'
         except Exception as e:
             logging.error(f"Failed to show the picture for event: {e}")
             img_html = '<div class="placeholder-image"><strong>' + _('An error occured while reading the image.') + '</strong></div>'
@@ -357,8 +382,26 @@ def show_event_server(input, output, session, block_id: int):
 
     @reactive.effect
     @reactive.event(input.btn_modal_cancel)
-    def modal_cancel():
+    def modal_cancel():  
         ui.modal_remove()
+        # Clear pictures and timestamps lists and reset frame index
+        pictures.clear()
+        timestamps.clear()
+        frame_index[0] = 0
+        logging.info(f"DEBUG DEBUG DEBUG: Pictures and timestamps cleared.")
+    
+    @reactive.effect
+    @reactive.event(input.btn_delete_event)
+    def delete_event():
+        logging.info(f"Delete all pictures of event with block_id {block_id}")
+        delete_photos_by_block_id(CONFIG['KITTYHACK_DATABASE_PATH'], block_id)
+        reload_trigger_photos.set(reload_trigger_photos.get() + 1)
+        ui.modal_remove()
+        # Clear pictures and timestamps lists and reset frame index
+        pictures.clear()
+        timestamps.clear()
+        frame_index[0] = 0
+        logging.info(f"DEBUG DEBUG DEBUG: Pictures and timestamps cleared.")
 
     @reactive.effect
     @reactive.event(input.btn_play_pause)
@@ -366,9 +409,9 @@ def show_event_server(input, output, session, block_id: int):
         logging.info(f"DEBUG DEBUG DEBUG: Play/Pause button clicked. Click count: {input.btn_play_pause()}")
         # Toggle play/pause based on the click count
         if input.btn_play_pause() % 2 == 0:
-            ui.update_action_button("btn_play_pause", label="", icon=icon_svg("pause"))
+            ui.update_action_button("btn_play_pause", label="", icon=icon_svg("pause", margin_right="auto"))
         else:
-            ui.update_action_button("btn_play_pause", label="", icon=icon_svg("play"))
+            ui.update_action_button("btn_play_pause", label="", icon=icon_svg("play", margin_right="auto"))
 
     @reactive.effect
     @reactive.event(input.btn_prev)
@@ -389,7 +432,7 @@ def wlan_connect_server(input, output, session, ssid: str):
             ui.modal(
                 _("The WLAN connection will be interrupted now!"),
                 ui.br(),
-                _("Please wait a few seconds. If the page does not reload automatically, please reload it manually."),
+                _("Please wait a few seconds. If the page does not reload automatically within 30 seconds, please reload it manually."),
                 title=_("Updating WLAN configuration..."),
                 footer=None
             )
@@ -461,7 +504,7 @@ def wlan_modify_server(input, output, session, ssid: str):
             ui.modal(
                 _("The WLAN connection will be interrupted now!"),
                 ui.br(),
-                _("Please wait a few seconds. If the page does not reload automatically, please reload it manually."),
+                _("Please wait a few seconds. If the page does not reload automatically within 30 seconds, please reload it manually."),
                 title=_("Updating WLAN configuration..."),
                 footer=None
             )
@@ -497,7 +540,6 @@ def wlan_modify_server(input, output, session, ssid: str):
 def server(input, output, session):
 
     # Create reactive triggers
-    reload_trigger_photos = reactive.Value(0)
     reload_trigger_cats = reactive.Value(0)
     reload_trigger_info = reactive.Value(0)
     
@@ -618,6 +660,12 @@ def server(input, output, session):
         CONFIG['SHOW_IMAGES_WITH_OVERLAY'] = input.button_detection_overlay()
         update_single_config_parameter("SHOW_IMAGES_WITH_OVERLAY")
 
+    @reactive.Effect
+    @reactive.event(input.button_events_view)
+    def update_config_group_pictures_to_events():
+        CONFIG['GROUP_PICTURES_TO_EVENTS'] = input.button_events_view()
+        update_single_config_parameter("GROUP_PICTURES_TO_EVENTS")
+
     @output
     @render.ui
     def ui_photos_date():
@@ -635,20 +683,21 @@ def server(input, output, session):
         uiDateBar = ui.div(
             ui.row(
                 ui.div(
-                    ui.div(button_decrement := ui.input_action_button("button_decrement", "", icon=icon_svg("angle-left"), class_="btn-date-control"), class_="col-auto px-1"),
-                    ui.div(date := ui.input_date("date_selector", "", format=CONFIG['DATE_FORMAT']), class_="col-auto px-1"),
-                    ui.div(button_increment := ui.input_action_button("button_increment", "", icon=icon_svg("angle-right"), class_="btn-date-control"), class_="col-auto px-1"),
+                    ui.div(ui.input_action_button("button_decrement", "", icon=icon_svg("angle-left", margin_right="auto"), class_="btn-date-control"), class_="col-auto px-1"),
+                    ui.div(ui.input_date("date_selector", "", format=CONFIG['DATE_FORMAT']), class_="col-auto px-1"),
+                    ui.div(ui.input_action_button("button_increment", "", icon=icon_svg("angle-right", margin_right="auto"), class_="btn-date-control"), class_="col-auto px-1"),
                     class_="d-flex justify-content-center align-items-center flex-nowrap"
                 ),
-                ui.div(button_today := ui.input_action_button("button_today", _("Today"), icon=icon_svg("calendar-day"), class_="btn-date-filter"), class_="col-auto px-1"),
-                ui.div(button_reload := ui.input_action_button("button_reload", "", icon=icon_svg("rotate"), class_="btn-date-filter"), class_="col-auto px-1"),
+                ui.div(ui.input_action_button("button_today", _("Today"), icon=icon_svg("calendar-day"), class_="btn-date-filter"), class_="col-auto px-1"),
+                ui.div(ui.input_action_button("button_reload", "", icon=icon_svg("rotate", margin_right="auto"), class_="btn-date-filter"), class_="col-auto px-1"),
                 class_="d-flex justify-content-center align-items-center"  # Centers elements horizontally and prevents wrapping
             ),
             ui.br(),
             ui.row(
-                ui.div(button_cat_only := ui.input_switch("button_cat_only", _("Show detected cats only")), class_="col-auto btn-date-filter px-1"),
-                ui.div(button_mouse_only := ui.input_switch("button_mouse_only", _("Show detected mice only")), class_="col-auto btn-date-filter px-1"),
-                ui.div(button_detection_overlay := ui.input_switch("button_detection_overlay", _("Show detection overlay"), CONFIG['SHOW_IMAGES_WITH_OVERLAY']), class_="col-auto btn-date-filter px-1"),
+                ui.div(ui.input_switch("button_cat_only", _("Show detected cats only")), class_="col-auto btn-date-filter px-1"),
+                ui.div(ui.input_switch("button_mouse_only", _("Show detected mice only")), class_="col-auto btn-date-filter px-1"),
+                ui.div(ui.input_switch("button_detection_overlay", _("Show detection overlay"), CONFIG['SHOW_IMAGES_WITH_OVERLAY']), class_="col-auto btn-date-filter px-1"),
+                ui.div(ui.input_switch("button_events_view", _("Group pictures to events"), CONFIG['GROUP_PICTURES_TO_EVENTS']), class_="col-auto btn-date-filter px-1"),
                 class_="d-flex justify-content-center align-items-center"  # Centers elements horizontally
             ),
             class_="container"  # Adds centering within a smaller container
@@ -701,6 +750,18 @@ def server(input, output, session):
         # Get the current date
         now = datetime.now()
         session.send_input_message("date_selector", {"value": now.strftime("%Y-%m-%d")})
+
+    @output
+    @render.ui
+    @reactive.event(input.button_events_view, ignore_none=True)
+    def ui_photos_events():
+        if input.button_events_view():
+            return ui.output_ui("ui_events_by_date")
+        else:
+            return ui.div(
+                ui.output_ui("ui_photos_cards_nav"),
+                ui.output_ui("ui_photos_cards"),
+            )
     
     @output
     @render.ui
@@ -907,15 +968,14 @@ def server(input, output, session):
 
     @output
     @render.ui
-    #@reactive.event(ignore_none=True)
-    def ui_events():
+    def ui_last_events():
         return ui.layout_column_wrap(
             ui.div(
                 ui.card(
                     ui.card_header(
-                        ui.p(_("Last events"))
+                        ui.h5(_("Last events"))
                     ),
-                    ui.output_ui("events_table"),
+                    ui.output_ui("ui_last_events_table"),
                     full_screen=False,
                     class_="generic-container",
                     min_height="150px"
@@ -925,10 +985,40 @@ def server(input, output, session):
         )
     
     @render.table
-    #@reactive.event(ignore_none=True)
-    def events_table():
+    @reactive.event(reload_trigger_photos, ignore_none=True)
+    def ui_last_events_table():
+        return get_events_table(block_count=25)
+    
+    @output
+    @render.ui
+    def ui_events_by_date():
+        return ui.layout_column_wrap(
+            ui.div(
+                ui.card(
+                    ui.output_ui("ui_events_by_date_table"),
+                    full_screen=False,
+                    class_="generic-container",
+                    min_height="150px"
+                ),
+                width="400px"
+            )
+        )
+    
+    @render.table
+    @reactive.event(input.button_reload, input.date_selector, input.button_cat_only, input.button_mouse_only, reload_trigger_photos, ignore_none=True)
+    def ui_events_by_date_table():
+        date_start = format_date_minmax(input.date_selector(), True)
+        date_end = format_date_minmax(input.date_selector(), False)
+        timezone = ZoneInfo(CONFIG['TIMEZONE'])
+        # Convert date_start and date_end to timezone-aware datetime strings in the UTC timezone
+        date_start = datetime.strptime(date_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
+        date_end = datetime.strptime(date_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
+        return get_events_table(0, date_start, date_end, input.button_cat_only(), input.button_mouse_only(), CONFIG['MOUSE_THRESHOLD'])
+
+    def get_events_table(block_count = 0, date_start="2020-01-01 00:00:00", date_end="2100-12-31 23:59:59", cats_only=False, mouse_only=False, mouse_probability=0.0):
         try:
-            df_events = get_last_motion_blocks(CONFIG['KITTYHACK_DATABASE_PATH'], 50)
+            logging.info(f"Reading events from the database for block_count={block_count}, date_start={date_start}, date_end={date_end}, cats_only={cats_only}, mouse_only={mouse_only}, mouse_probability={mouse_probability}")
+            df_events = db_get_motion_blocks(CONFIG['KITTYHACK_DATABASE_PATH'], block_count, date_start, date_end, cats_only, mouse_only, mouse_probability)
 
             if df_events.empty:
                 return pd.DataFrame({
@@ -1497,6 +1587,9 @@ def server(input, output, session):
     @render.table
     @reactive.event(reload_trigger_wlan, ignore_none=True)
     def configured_wlans_table():
+        # FIXME: There is an error if one of the SSIDs contains special characters ( e.g.: TEST1 -_!"#$%&'()*+,./:;=?@[\] )
+        # This is the error which is thrown: invalid literal for int() with base 10: ';=?@[\\\\]'
+        # Properly handle SSIDs with special characters
         try:
             configured_wlans = get_wlan_connections()
             i = 0
@@ -1559,7 +1652,7 @@ def server(input, output, session):
             ui.modal(
                 _("The WLAN connection will be interrupted now!"),
                 ui.br(),
-                _("Please wait a few seconds. If the page does not reload automatically, please reload it manually."),
+                _("Please wait a few seconds. If the page does not reload automatically within 30 seconds, please reload it manually."),
                 title=_("Updating WLAN configuration..."),
                 footer=None
             )
@@ -1614,7 +1707,6 @@ def server(input, output, session):
             df = pd.DataFrame(available_wlans)
             df = df[['ssid', 'channel', 'signal_icon']]  # Select only the columns we want to display
             df.columns = ['SSID', _('Channel'), _('Signal')]  # Rename columns for display
-
             return (
                 df.style.set_table_attributes('class="dataframe shiny-table table w-auto"')
                 .hide(axis="index")

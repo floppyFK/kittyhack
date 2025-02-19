@@ -527,6 +527,16 @@ def delete_photo_by_id(database: str, photo_id: int) -> Result:
         logging.info(f"[DATABASE] Photo with ID '{photo_id}' deleted successfully.")
     return result
 
+def delete_photos_by_block_id(database: str, block_id: int) -> Result:
+    """
+    This function deletes all dataframes based on the block_id from the source database.
+    """
+    stmt = f"UPDATE events SET original_image = NULL, modified_image = NULL, deleted = 1 WHERE block_id = {block_id}"
+    result = write_stmt_to_database(database, stmt)
+    if result.success == True:
+        logging.info(f"[DATABASE] Photos with block ID '{block_id}' deleted successfully.")
+    return result
+
 def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: str = "image", delete_from_buffer: bool = True):
     """
     This function writes an image block from the image buffer to the database.
@@ -622,15 +632,33 @@ def create_index_on_events(database: str) -> Result:
     logging.info("[DATABASE] Successfully created indexes.")
     return Result(True, "")
 
-def get_last_motion_blocks(database: str, block_count: int = 1):
+def db_get_motion_blocks(database: str, block_count: int = 0, date_start="2020-01-01 00:00:00", date_end="2100-12-31 23:59:59", cats_only=False, mouse_only=False, mouse_probability=0.0):
     """
-    This function reads the last 'block_count' motion blocks from the database.
+    This function reads the last 'block_count' motion blocks from the database with specified filters.
+
+    :param database: Path to the database file
+    :param block_count: Number of motion blocks to return (0 for all)
+    :param date_start: Start date for filtering (format: 'YYYY-MM-DD HH:MM:SS')
+    :param date_end: End date for filtering (format: 'YYYY-MM-DD HH:MM:SS')
+    :param cats_only: If True, only return blocks with RFID tags
+    :param mouse_only: If True, only return blocks with mouse probability above threshold
+    :param mouse_probability: Minimum mouse probability threshold
+    :return: DataFrame containing the filtered motion blocks
     """
     columns = "block_id, created_at, event_type, rfid, event_text"
+    where_clauses = ["deleted != 1", f"created_at BETWEEN '{date_start}' AND '{date_end}'"]
+    
+    if cats_only:
+        where_clauses.append("rfid != ''")
+    if mouse_only:
+        where_clauses.append(f"mouse_probability >= {mouse_probability}")
+    
+    where_clause = " AND ".join(where_clauses)
+    
     if block_count > 0:
         stmt = f"""
             SELECT {columns} FROM events 
-            WHERE deleted != 1 
+            WHERE {where_clause}
             GROUP BY block_id 
             ORDER BY block_id DESC 
             LIMIT {block_count}
@@ -638,7 +666,7 @@ def get_last_motion_blocks(database: str, block_count: int = 1):
     else:
         stmt = f"""
             SELECT {columns} FROM events 
-            WHERE deleted != 1 
+            WHERE {where_clause}
             GROUP BY block_id 
             ORDER BY block_id DESC
         """

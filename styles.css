@@ -216,6 +216,14 @@
     border: 0 !important;
   }
 
+  .transparent-modal-content {
+    padding: 0 !important;
+  }
+  .transparent-modal-content + div {
+    padding: 0 !important;
+  }
+ 
+
 /* Live view panel - Event table */
 tr:has(.event-date-separator) {
     position: relative;
@@ -239,4 +247,25 @@ tr:has(.event-date-separator) {
   tr:has(.event-date-separator) td:not(:has(.event-date-separator)) {
     border: none;
   }
-  
+  #shiny-disconnected-overlay {
+    opacity: 0.75;
+  }
+
+  #shiny-disconnected-overlay::after {
+    content: "Connection lost.\A Please reload the page to reconnect.";
+    font-size: 2rem;
+    font-weight: bold;
+    color: rgb(255 237 115);
+    text-shadow: 2px 2px 4px black;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #252525;
+    padding: 20px 40px;
+    border-radius: 10px;
+    z-index: 99999;
+    text-align: center;
+    max-width: 80%;
+    white-space: pre-wrap;
+  }

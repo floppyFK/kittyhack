@@ -119,7 +119,7 @@ class DetectedObject:
         self.probability = probability
 
 class ImageBufferElement:
-    def __init__(self, id: int, block_id: int, timestamp: float, original_image: bytes, modified_image: bytes, 
+    def __init__(self, id: int, block_id: int, timestamp: float, original_image: bytes | None, modified_image: bytes | None, 
                  mouse_probability: float, no_mouse_probability: float, tag_id: str = "", detected_objects: List[DetectedObject] = None):
         self.id = id
         self.block_id = block_id
@@ -141,7 +141,7 @@ class ImageBuffer:
         self._buffer: List[ImageBufferElement] = []
         self._next_id = 0
 
-    def append(self, timestamp: float, original_image: bytes, modified_image: bytes, 
+    def append(self, timestamp: float, original_image: bytes | None, modified_image: bytes | None, 
                mouse_probability: float, no_mouse_probability: float, detected_objects: List[DetectedObject] = None):
         """
         Append a new element to the buffer.
@@ -398,6 +398,7 @@ class TfLite:
         #tm.sleep(5)
 
         # Wait for the camera to warm up
+        detected_objects = []
         frame = None
         stream_start_time = tm.time()
         while frame is None:
@@ -469,6 +470,9 @@ class TfLite:
                             xmin = int(max(1, (boxes[i][1] * imW)))
                             ymax = int(min(imH, (boxes[i][2] * imH)))
                             xmax = int(min(imW, (boxes[i][3] * imW)))
+
+                            object_name = str(labels[int(classes[i])]) # Look up object name from "labels" array using class index
+                            probability = float(scores[i] * 100)
                             
                             # Add the detected object to the list with coordinates as percentages
                             detected_objects.append(DetectedObject(
@@ -476,28 +480,27 @@ class TfLite:
                                 float(ymin / imH * 100),  # y as percentage
                                 float((xmax - xmin) / imW * 100),  # width as percentage
                                 float((ymax - ymin) / imH * 100),  # height as percentage
-                                str(labels[int(classes[i])]),
-                                float(scores[i])
+                                object_name,
+                                probability
                             ))
 
-                            cv2.rectangle(frame_with_overlay, (xmin, ymin), (xmax, ymax), (10, 255, 0), 2)
+                            #cv2.rectangle(frame_with_overlay, (xmin, ymin), (xmax, ymax), (10, 255, 0), 2)
 
                             # Draw label
-                            object_name = labels[int(classes[i])] # Look up object name from "labels" array using class index
                             probability = int(scores[i] * 100)
                             label = '%s: %d%%' % (object_name, probability) # Example: 'person: 72%'
                             labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2) # Get font size
                             label_ymin = max(ymin, labelSize[1] + 10) # Make sure not to draw label too close to top of window
-                            cv2.rectangle(frame_with_overlay, (xmin, label_ymin - labelSize[1] - 10), (xmin + labelSize[0], label_ymin + baseLine - 10), (255, 255, 255), cv2.FILLED) # Draw white box to put label text in
-                            cv2.putText(frame_with_overlay, label, (xmin, label_ymin - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2) # Draw label text
+                            #cv2.rectangle(frame_with_overlay, (xmin, label_ymin - labelSize[1] - 10), (xmin + labelSize[0], label_ymin + baseLine - 10), (255, 255, 255), cv2.FILLED) # Draw white box to put label text in
+                            #cv2.putText(frame_with_overlay, label, (xmin, label_ymin - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2) # Draw label text
 
                             if object_name == "Maus":
-                                mouse_probability = probability
+                                mouse_probability = int(probability)
                             elif object_name == "Keine Maus":
-                                no_mouse_probability = probability
+                                no_mouse_probability = int(probability)
 
                     if save_image:
-                        image_buffer.append(timestamp, self.encode_jpg_image(frame), self.encode_jpg_image(frame_with_overlay), mouse_probability, no_mouse_probability, detected_objects=detected_objects)
+                        image_buffer.append(timestamp, self.encode_jpg_image(frame), None, mouse_probability, no_mouse_probability, detected_objects=detected_objects)
 
                 # To avoid intensive CPU load, wait here until we reached the desired framerate
                 elapsed_time = (cv2.getTickCount() - t1) / freq

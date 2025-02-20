@@ -296,12 +296,8 @@ def show_event_server(input, output, session, block_id: int):
     @reactive.event(input.btn_show_event)
     def show_event():
         logging.info(f"Show event with block_id {block_id}")
-        if CONFIG['SHOW_IMAGES_WITH_OVERLAY']:
-            picture_type = ReturnDataPhotosDB.all_modified_image
-            blob_picture = "modified_image"
-        else:
-            picture_type = ReturnDataPhotosDB.all_original_image
-            blob_picture = "original_image"
+        picture_type = ReturnDataPhotosDB.all_original_image
+        blob_picture = "original_image"
 
         event = db_get_photos_by_block_id(CONFIG['KITTYHACK_DATABASE_PATH'], block_id, picture_type)
         
@@ -349,9 +345,10 @@ def show_event_server(input, output, session, block_id: int):
                                     ui.input_action_button(id="btn_prev", label="", icon=icon_svg("chevron-left", margin_right="auto"), class_="btn-narrow", style_="width: 42px;"),
                                     ui.input_action_button(id="btn_play_pause", label="", icon=icon_svg("pause", margin_right="auto"), class_="btn-narrow", style_="width: 42px;"),
                                     ui.input_action_button(id="btn_next", label="", icon=icon_svg("chevron-right", margin_right="auto"), class_="btn-narrow", style_="width: 42px;"),
-                                    style_="display: flex; gap: 8px; position: absolute; left: 50%; transform: translateX(-50%);"
+                                    style_="display: flex; gap: 4px; position: absolute; right: 35px; transform: translateX(-50%);"
                                 ),
                                 ui.div(
+                                    ui.input_action_button(id="btn_toggle_overlay", label="", icon=icon_svg("expand", margin_left="-0.05em", margin_right="auto"), class_="btn-vertical-margin btn-narrow", style_="width: 42px;"),
                                     ui.input_action_button(id="btn_modal_cancel", label="", icon=icon_svg("xmark", margin_right="auto"), class_="btn-vertical-margin btn-narrow", style_="width: 42px;"),
                                 ),
                                 style_="display: flex; align-items: center; justify-content: space-between; position: relative;"
@@ -374,8 +371,6 @@ def show_event_server(input, output, session, block_id: int):
             if len(pictures) > 0:
                 frame = pictures[frame_index[0]]
                 # Get the detection areas from the current frame's EventSchema object
-                # FIXME: I receive an error here: 'dict' object has no attribute 'detected_objects'
-                # This is because the event_data object is a dict and not an EventSchema object. We must ensure that it is an EventSchema object.
                 detected_objects = event_datas[frame_index[0]]
                 if frame is not None:
                     # Start the HTML for the container and image
@@ -384,24 +379,29 @@ def show_event_server(input, output, session, block_id: int):
                         <img src="data:image/jpeg;base64,{frame}" style="min-width: 250px;" />'''
 
                     # Iterate over the detected objects and draw bounding boxes
-                    for detected_object in detected_objects.detected_objects:
-                        img_html += f'''
-                        <div style="position: absolute; 
-                                    left: {detected_object.x}%; 
-                                    top: {detected_object.y}%; 
-                                    width: {detected_object.width}%; 
-                                    height: {detected_object.height}%; 
-                                    border: 2px solid #ff0000; 
-                                    pointer-events: none;">
+                    if input.btn_toggle_overlay() % 2 == 1:
+                        for detected_object in detected_objects:
+                            img_html += f'''
                             <div style="position: absolute; 
-                                        top: -20px; 
-                                        left: 0px; 
-                                        background-color: rgba(255, 0, 0, 0.7); 
-                                        color: white; 
-                                        padding: 2px 5px;">
-                                {detected_object.object_name} ({detected_object.probability:.0f}%)
-                            </div>
-                        </div>'''
+                                        left: {detected_object.x}%; 
+                                        top: {detected_object.y}%; 
+                                        width: {detected_object.width}%; 
+                                        height: {detected_object.height}%; 
+                                        border: 2px solid #ff0000; 
+                                        background-color: rgba(255, 0, 0, 0.05);
+                                        pointer-events: none;">
+                                <div style="position: absolute; 
+                                            {f'bottom: -26px' if detected_object.y < 16 else 'top: -26px'}; 
+                                            left: 0px; 
+                                            background-color: rgba(255, 0, 0, 0.7); 
+                                            color: white; 
+                                            padding: 2px 5px;
+                                            border-radius: 5px;
+                                            text-wrap-mode: nowrap;
+                                            font-size: 12px;">
+                                    {detected_object.object_name} ({detected_object.probability:.0f}%)
+                                </div>
+                            </div>'''
 
                     # Add the timestamp and frame counter overlays
                     img_html += f'''
@@ -456,6 +456,15 @@ def show_event_server(input, output, session, block_id: int):
             ui.update_action_button("btn_play_pause", label="", icon=icon_svg("pause", margin_right="auto"))
         else:
             ui.update_action_button("btn_play_pause", label="", icon=icon_svg("play", margin_right="auto"))
+
+    @reactive.effect
+    @reactive.event(input.btn_toggle_overlay)
+    def toggle_overlay():
+        # Toggle the overlay visibility based on the click count
+        if input.btn_toggle_overlay() % 2 == 0:
+            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg("expand", margin_left="-0.05em", margin_right="auto"))
+        else:
+            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg("users-viewfinder", margin_left="-0.22em", margin_right="auto"))
 
     @reactive.effect
     @reactive.event(input.btn_prev)
@@ -858,12 +867,8 @@ def server(input, output, session):
         date_end = selected_page[1]
         page_index = int(selected_page[2])-1
 
-        if input.button_detection_overlay():
-            picture_type = ReturnDataPhotosDB.all_modified_image
-            blob_picture = "modified_image"
-        else:
-            picture_type = ReturnDataPhotosDB.all_original_image
-            blob_picture = "original_image"
+        picture_type = ReturnDataPhotosDB.all_original_image
+        blob_picture = "original_image"
 
         df_photos = db_get_photos(
             CONFIG['KITTYHACK_DATABASE_PATH'],
@@ -887,6 +892,12 @@ def server(input, output, session):
             
             mouse_probability = data_row["mouse_probability"]
 
+            event_text = data_row['event_text']
+            if event_text:
+                detected_objects = read_event_from_json(event_text)
+            else:
+                detected_objects = []
+
             try:
                 photo_timestamp = pd.to_datetime(get_local_date_from_utc_date(data_row["created_at"])).strftime('%H:%M:%S')
             except ValueError:
@@ -908,7 +919,34 @@ def server(input, output, session):
             
 
             if decoded_picture:
-                img_html = f'<img src="data:image/jpeg;base64,{decoded_picture}" style="min-width: 250px;" />'
+                img_html = f'''
+                <div style="position: relative; display: inline-block;">
+                    <img src="data:image/jpeg;base64,{decoded_picture}" style="min-width: 250px;" />'''
+                
+                if input.button_detection_overlay():
+                    for detected_object in detected_objects:
+                        img_html += f'''
+                        <div style="position: absolute; 
+                                    left: {detected_object.x}%; 
+                                    top: {detected_object.y}%; 
+                                    width: {detected_object.width}%; 
+                                    height: {detected_object.height}%; 
+                                    border: 2px solid #ff0000; 
+                                    background-color: rgba(255, 0, 0, 0.05);
+                                    pointer-events: none;">
+                            <div style="position: absolute; 
+                                        {f'bottom: -26px' if detected_object.y < 16 else 'top: -26px'}; 
+                                        left: 0px; 
+                                        background-color: rgba(255, 0, 0, 0.7); 
+                                        color: white; 
+                                        padding: 2px 5px;
+                                        border-radius: 5px;
+                                        text-wrap-mode: nowrap;
+                                        font-size: 12px;">
+                                {detected_object.object_name} ({detected_object.probability:.0f}%)
+                            </div>
+                        </div>'''
+                img_html += "</div>"
             else:
                 img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
                 logging.warning(f"No blob_picture found for entry {photo_timestamp}")

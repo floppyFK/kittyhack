@@ -109,9 +109,18 @@ class VideoStream:
         else:
             logging.error("[CAMERA] Video stream not yet started. Nothing to stop.")
 
+class DetectedObject:
+    def __init__(self, x: float, y: float, width: float, height: float, object_name: str, probability: float):
+        self.x = x  # x as percentage of image width
+        self.y = y  # y as percentage of image height
+        self.width = width  # width as percentage of image width
+        self.height = height  # height as percentage of image height
+        self.object_name = object_name
+        self.probability = probability
+
 class ImageBufferElement:
     def __init__(self, id: int, block_id: int, timestamp: float, original_image: bytes, modified_image: bytes, 
-                 mouse_probability: float, no_mouse_probability: float, tag_id: str = ""):
+                 mouse_probability: float, no_mouse_probability: float, tag_id: str = "", detected_objects: List[DetectedObject] = None):
         self.id = id
         self.block_id = block_id
         self.timestamp = timestamp
@@ -120,10 +129,11 @@ class ImageBufferElement:
         self.mouse_probability = mouse_probability
         self.no_mouse_probability = no_mouse_probability
         self.tag_id = tag_id
+        self.detected_objects = detected_objects
 
     def __repr__(self):
         return (f"ImageBufferElement(id={self.id}, block_id={self.block_id}, timestamp={self.timestamp}, mouse_probability={self.mouse_probability}, "
-                f"no_mouse_probability={self.no_mouse_probability}, tag_id={self.tag_id})")
+                f"no_mouse_probability={self.no_mouse_probability}, tag_id={self.tag_id}, detected_objects={self.detected_objects})")
 
 class ImageBuffer:
     def __init__(self):
@@ -132,11 +142,11 @@ class ImageBuffer:
         self._next_id = 0
 
     def append(self, timestamp: float, original_image: bytes, modified_image: bytes, 
-               mouse_probability: float, no_mouse_probability: float):
+               mouse_probability: float, no_mouse_probability: float, detected_objects: List[DetectedObject] = None):
         """
         Append a new element to the buffer.
         """
-        element = ImageBufferElement(self._next_id, 0, timestamp, original_image, modified_image, mouse_probability, no_mouse_probability)
+        element = ImageBufferElement(self._next_id, 0, timestamp, original_image, modified_image, mouse_probability, no_mouse_probability, detected_objects=detected_objects)
         self._buffer.append(element)
         logging.info(f"[IMAGEBUFFER] Appended new element with ID {self._next_id}, timestamp: {timestamp}, Mouse probability: {mouse_probability}, No mouse probability: {no_mouse_probability} to the buffer.")
         self._next_id += 1
@@ -448,6 +458,7 @@ class TfLite:
                     save_image = False
                     no_mouse_probability = 0.0
                     mouse_probability = 0.0
+                    detected_objects = []
                     for i in range(len(scores)):
                         if ((scores[i] > (CONFIG['MIN_THRESHOLD']/100)) and (scores[i] <= 1.0)):
                             save_image = True
@@ -458,6 +469,16 @@ class TfLite:
                             xmin = int(max(1, (boxes[i][1] * imW)))
                             ymax = int(min(imH, (boxes[i][2] * imH)))
                             xmax = int(min(imW, (boxes[i][3] * imW)))
+                            
+                            # Add the detected object to the list with coordinates as percentages
+                            detected_objects.append(DetectedObject(
+                                float(xmin / imW * 100),  # x as percentage
+                                float(ymin / imH * 100),  # y as percentage
+                                float((xmax - xmin) / imW * 100),  # width as percentage
+                                float((ymax - ymin) / imH * 100),  # height as percentage
+                                str(labels[int(classes[i])]),
+                                float(scores[i])
+                            ))
 
                             cv2.rectangle(frame_with_overlay, (xmin, ymin), (xmax, ymax), (10, 255, 0), 2)
 
@@ -476,7 +497,7 @@ class TfLite:
                                 no_mouse_probability = probability
 
                     if save_image:
-                        image_buffer.append(timestamp, self.encode_jpg_image(frame), self.encode_jpg_image(frame_with_overlay), mouse_probability, no_mouse_probability)
+                        image_buffer.append(timestamp, self.encode_jpg_image(frame), self.encode_jpg_image(frame_with_overlay), mouse_probability, no_mouse_probability, detected_objects=detected_objects)
 
                 # To avoid intensive CPU load, wait here until we reached the desired framerate
                 elapsed_time = (cv2.getTickCount() - t1) / freq

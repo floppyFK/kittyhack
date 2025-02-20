@@ -14,6 +14,8 @@ import threading
 import subprocess
 import re
 import hashlib
+import json
+from typing import List
 from src.helper import (
     AllowedToEnter, 
     EventType, 
@@ -285,6 +287,8 @@ def show_event_server(input, output, session, block_id: int):
     # Use standard Python list to store pictures and current frame index
     pictures = []
     timestamps = []
+    # Store lists of DetectedObjects, one list per event
+    event_datas: List[List[DetectedObject]] = []
     frame_index = [0]  # Use list to allow modification in nested functions
 
     @render.ui
@@ -304,6 +308,7 @@ def show_event_server(input, output, session, block_id: int):
         # Clear the pictures list
         pictures.clear()
         timestamps.clear()
+        event_datas.clear()
 
         # Iterate over the rows and encode the pictures
         for x, row in event.iterrows():
@@ -313,6 +318,16 @@ def show_event_server(input, output, session, block_id: int):
                     if encoded_picture:
                         pictures.append(encoded_picture)
                         timestamps.append(pd.to_datetime(get_local_date_from_utc_date(row["created_at"])).strftime('%H:%M:%S'))
+                        try:
+                            event_text = row['event_text']
+                            if event_text:
+                                event_datas.append(read_event_from_json(event_text))
+                            else:
+                                event_datas.append([])
+                        except Exception as e:
+                            logging.error(f"Failed to parse event data: {e}")
+                            event_datas.append([])
+                            
                 except Exception as e:
                     logging.error(f"Failed to encode picture: {e}")
 
@@ -358,10 +373,38 @@ def show_event_server(input, output, session, block_id: int):
         try:
             if len(pictures) > 0:
                 frame = pictures[frame_index[0]]
+                # Get the detection areas from the current frame's EventSchema object
+                # FIXME: I receive an error here: 'dict' object has no attribute 'detected_objects'
+                # This is because the event_data object is a dict and not an EventSchema object. We must ensure that it is an EventSchema object.
+                detected_objects = event_datas[frame_index[0]]
                 if frame is not None:
+                    # Start the HTML for the container and image
                     img_html = f'''
                     <div style="position: relative; display: inline-block;">
-                        <img src="data:image/jpeg;base64,{frame}" style="min-width: 250px;" />
+                        <img src="data:image/jpeg;base64,{frame}" style="min-width: 250px;" />'''
+
+                    # Iterate over the detected objects and draw bounding boxes
+                    for detected_object in detected_objects.detected_objects:
+                        img_html += f'''
+                        <div style="position: absolute; 
+                                    left: {detected_object.x}%; 
+                                    top: {detected_object.y}%; 
+                                    width: {detected_object.width}%; 
+                                    height: {detected_object.height}%; 
+                                    border: 2px solid #ff0000; 
+                                    pointer-events: none;">
+                            <div style="position: absolute; 
+                                        top: -20px; 
+                                        left: 0px; 
+                                        background-color: rgba(255, 0, 0, 0.7); 
+                                        color: white; 
+                                        padding: 2px 5px;">
+                                {detected_object.object_name} ({detected_object.probability:.0f}%)
+                            </div>
+                        </div>'''
+
+                    # Add the timestamp and frame counter overlays
+                    img_html += f'''
                         <div style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px;">
                             {timestamps[frame_index[0]]}
                         </div>
@@ -390,8 +433,8 @@ def show_event_server(input, output, session, block_id: int):
         # Clear pictures and timestamps lists and reset frame index
         pictures.clear()
         timestamps.clear()
+        event_datas.clear()
         frame_index[0] = 0
-        logging.info(f"DEBUG DEBUG DEBUG: Pictures and timestamps cleared.")
     
     @reactive.effect
     @reactive.event(input.btn_delete_event)
@@ -404,12 +447,10 @@ def show_event_server(input, output, session, block_id: int):
         pictures.clear()
         timestamps.clear()
         frame_index[0] = 0
-        logging.info(f"DEBUG DEBUG DEBUG: Pictures and timestamps cleared.")
 
     @reactive.effect
     @reactive.event(input.btn_play_pause)
     def play_pause():
-        logging.info(f"DEBUG DEBUG DEBUG: Play/Pause button clicked. Click count: {input.btn_play_pause()}")
         # Toggle play/pause based on the click count
         if input.btn_play_pause() % 2 == 0:
             ui.update_action_button("btn_play_pause", label="", icon=icon_svg("pause", margin_right="auto"))

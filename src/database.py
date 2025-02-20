@@ -11,8 +11,10 @@ import time as tm
 import base64
 import numpy as np
 import shutil
+import json
+from typing import TypedDict, List
 from src.helper import *
-from src.camera import image_buffer
+from src.camera import image_buffer, DetectedObject
 
 # database actions
 class db_action(Enum):
@@ -41,6 +43,19 @@ class ReturnDataCatDB(Enum):
 class ReturnDataConfigDB(Enum):
     all = 0
     all_except_password = 1
+
+# Detection object and Event data schema
+class DetectedObjectSchema(TypedDict):
+    object_name: str
+    probability: float
+    x: float
+    y: float
+    width: float
+    height: float
+
+class EventSchema(TypedDict):
+    detected_objects: List[DetectedObjectSchema]
+    event_text: str
 
 # Lock for database writes
 db_write_lock = Lock()
@@ -537,6 +552,63 @@ def delete_photos_by_block_id(database: str, block_id: int) -> Result:
         logging.info(f"[DATABASE] Photos with block ID '{block_id}' deleted successfully.")
     return result
 
+def create_json_from_event(detected_objects: List[DetectedObject]) -> str:
+    """
+    Create a JSON string from a list of detected objects.
+    
+    :param detected_objects: List of DetectedObject instances
+    :return: JSON string containing the event data
+    """
+    event_data: EventSchema = {
+        'detected_objects': [{
+            'object_name': obj.object_name,
+            'probability': round(float(obj.probability), 2),
+            'x': round(float(obj.x), 3),
+            'y': round(float(obj.y), 3),
+            'width': round(float(obj.width), 3),
+            'height': round(float(obj.height), 3)
+        } for obj in detected_objects],
+        'event_text': ''
+    }
+    return json.dumps(event_data)
+
+def read_event_from_json(event_json: str) -> List[DetectedObject]:
+    """
+    Parse a JSON string containing event data back into a list of DetectedObject instances.
+    
+    :param event_json: JSON string containing the event data
+    :return: List of DetectedObject instances
+    """
+    try:
+        event_data = json.loads(event_json)
+        detected_objects = []
+        for obj in event_data.get('detected_objects', []):
+            detected_objects.append(DetectedObject(
+                object_name=obj['object_name'],
+                probability=float(obj['probability']),
+                x=float(obj['x']),
+                y=float(obj['y']),
+                width=float(obj['width']),
+                height=float(obj['height'])
+            ))
+        return detected_objects
+    except Exception as e:
+        logging.error(f"[DATABASE] Failed to parse event JSON: {e}")
+        return []
+    
+# FIXME: We need also a function which returns the values of a detected_object from a DetectedObject list (the function shall offer an index to select the object)
+def get_detected_object_by_index(detected_objects: List[DetectedObject], index: int) -> DetectedObject:
+    """
+    This function returns the values of a detected_object from a DetectedObject list.
+    
+    :param detected_objects: List of DetectedObject instances
+    :param index: Index of the detected object to return
+    :return: DetectedObject instance
+    """
+    if index < len(detected_objects):
+        return detected_objects[index]
+    return None
+
 def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: str = "image", delete_from_buffer: bool = True):
     """
     This function writes an image block from the image buffer to the database.
@@ -568,8 +640,14 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
         elements = image_buffer.get_by_block_id(buffer_block_id)
         logging.info(f"[DATABASE] Writing {len(elements)} images from buffer image block '{buffer_block_id}' as database block '{db_block_id}' to '{database}'.")
 
-        for element in elements:        
+        for element in elements:
             # Write the image to the database
+            try:
+                detected_objects = element.detected_objects if element.detected_objects is not None else []
+                event_json = create_json_from_event(detected_objects)
+            except Exception as e:
+                event_json = json.dumps({'detected_objects': [], 'event_text': ''})
+                logging.error(f"[DATABASE] Failed to serialize event data: {e}")
             columns = "block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, rfid, event_text"
             values = ', '.join(['?' for _ in columns.split(', ')])
             values_list = [
@@ -581,7 +659,7 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
                 element.mouse_probability,
                 element.no_mouse_probability,
                 element.tag_id,
-                ""
+                event_json
             ]
             cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
 

@@ -2,6 +2,7 @@ from enum import Enum
 import logging
 import subprocess
 import os
+import re
 import time as tm
 
 GPIO_BASE_PATH = "/sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/"
@@ -162,9 +163,14 @@ def manage_and_switch_wlan(ssid, password="", priority=-1, update_password=False
     try:
         # Check if the connection already exists
         result = subprocess.run(
-            ["/usr/bin/nmcli", "-t", "-f", "NAME", "connection", "show"], stdout=subprocess.PIPE, text=True
+            ["/usr/bin/nmcli", "-t", "-f", "NAME", "connection", "show"],
+            stdout=subprocess.PIPE, text=True
         )
-        if ssid in result.stdout:
+        existing_connections = [conn for conn in result.stdout.splitlines() 
+                              if conn not in ["lo", "Wired connection 1"]]
+        
+
+        if ssid in existing_connections:
             if update_password:
                 # Update the password for the existing connection
                 subprocess.run(
@@ -193,15 +199,29 @@ def manage_and_switch_wlan(ssid, password="", priority=-1, update_password=False
         )
         logging.info(f"[SYSTEM] Set priority {priority} for {ssid}.")
 
-        # Restart NetworkManager to apply changes (optional)
+        # Restart NetworkManager to apply changes
         subprocess.run(["/usr/bin/systemctl", "restart", "NetworkManager"], check=True)
         logging.info(f"[SYSTEM] Restarted NetworkManager to apply changes.")
+        # Wait for the network to be up before returning
+        for x in range(20):
+            result = subprocess.run(
+                ["/usr/bin/nmcli", "-t", "-f", "NETWORKING"],
+                stdout=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            if "wlan0: connected to" in result.stdout:
+                logging.info(f"[SYSTEM] Network is up and connected.")
+                return True
+            tm.sleep(2)
+        logging.error(f"[SYSTEM] Network did not come up in time.")
+        return False
 
     except subprocess.CalledProcessError as e:
         logging.info(f"[SYSTEM] Error managing WLAN: {e}")
         return False
     
-def switch_wlan_connection(ssid):
+def switch_wlan_connection(ssid: str):
     """
     Switch to an already configured WLAN network.
 
@@ -219,8 +239,20 @@ def switch_wlan_connection(ssid):
             capture_output=True,
             text=True
         )
-        logging.info(f"[SYSTEM] Successfully switched to WLAN network: {ssid}")
-        return True
+        # Wait for the network to be up before returning
+        for x in range(20):
+            result = subprocess.run(
+                ["/usr/bin/nmcli", "-t", "-f", "NETWORKING"],
+                stdout=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            if "wlan0: connected to" in result.stdout:
+                logging.info(f"[SYSTEM] Network is up and connected.")
+                return True
+            tm.sleep(2)
+        logging.error(f"[SYSTEM] Network did not come up in time.")
+        return False
     except subprocess.CalledProcessError as e:
         logging.error(f"[SYSTEM] Error switching to WLAN network {ssid}: {e.stderr}")
         return False
@@ -278,32 +310,37 @@ def scan_wlan_networks():
         )
         networks = {}
         for line in result.stdout.split('\n'):
-            if line:
-                # Split with maxsplit to handle BSSIDs containing colons
-                parts = line.split(':', 5)
-                if len(parts) != 6:
-                    continue
-                ssid, signal, security, bars, channel, bssid = parts
-                if not ssid or ssid == "":
-                    ssid = bssid.replace("\\", "")
-                bar_count = len([c for c in bars if c not in ('_', ' ')])
-                if ssid not in networks:
-                    networks[ssid] = {
-                        "ssid": ssid,
-                        "signal": int(signal),
-                        "security": security,
-                        "bars": bar_count,
-                        "channel": str(channel)
-                    }
-                else:
-                    networks[ssid]["signal"] = max(networks[ssid]["signal"], int(signal))
-                    networks[ssid]["bars"] = max(networks[ssid]["bars"], bar_count)
-                    if str(channel) not in networks[ssid]["channel"].split(','):
-                        networks[ssid]["channel"] = f"{networks[ssid]['channel']}, {channel}"
+            if not line:
+                continue
+                
+            # Use regex to split on unescaped colons
+            parts = re.split(r'(?<!\\):', line, maxsplit=5)
+            if len(parts) != 6:
+                continue
+                
+            # Unescape any escaped characters
+            parts = [p.replace('\\:', ':').replace('\\\\', '\\') for p in parts]
+            ssid, signal, security, bars, channel, bssid = parts
+            if not ssid or ssid == "":
+                ssid = bssid.replace("\\", "")
+            bar_count = len([c for c in bars if c not in ('_', ' ')])
+            if ssid not in networks:
+                networks[ssid] = {
+                    "ssid": ssid,
+                    "signal": int(signal),
+                    "security": security,
+                    "bars": bar_count,
+                    "channel": str(channel)
+                }
+            else:
+                networks[ssid]["signal"] = max(networks[ssid]["signal"], int(signal))
+                networks[ssid]["bars"] = max(networks[ssid]["bars"], bar_count)
+                if str(channel) not in networks[ssid]["channel"].split(','):
+                    networks[ssid]["channel"] = f"{networks[ssid]['channel']}, {channel}"
         networks = list(networks.values())
         return networks
-    except subprocess.CalledProcessError as e:
-        logging.error(f"[SYSTEM] Error scanning WLAN networks: {e.stderr}")
+    except Exception as e:
+        logging.error(f"[SYSTEM] Error scanning WLAN networks: {e}")
         return []
     
 def get_wlan_connections():
@@ -323,7 +360,14 @@ def get_wlan_connections():
         connections = []
         for line in result.stdout.split('\n'):
             if line:
-                ssid, device, priority, state = line.split(':')
+                # Use regex to split on unescaped colons
+                parts = re.split(r'(?<!\\):', line, maxsplit=3)
+                if len(parts) != 4:
+                    continue
+                
+                # Unescape any escaped characters
+                parts = [p.replace('\\:', ':').replace('\\\\', '\\') for p in parts]
+                ssid, device, priority, state = parts
                 # Skip loopback and wired connections
                 if ssid not in ["lo", "Wired connection 1"]:
                     connections.append({

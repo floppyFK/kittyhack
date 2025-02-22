@@ -13,7 +13,13 @@ import threading
 import requests
 import shlex
 import cv2
+import numpy as np
+import base64
 import socket
+import sys
+import re
+import htmltools
+from faicons import icon_svg
 from src.system import *
 
 
@@ -61,6 +67,8 @@ DEFAULT_CONFIG = {
         "kittyhack_database_backup_path": "../kittyhack_backup.db",
         "pir_outside_threshold": 0.5,
         "pir_inside_threshold": 3.0,
+        "wlan_tx_power": 7,
+        "group_pictures_to_events": True
     }
 }
 
@@ -75,6 +83,64 @@ class AllowedToEnter(Enum):
     ALL_RFIDS = 'all_rfids'
     KNOWN = 'known'
     NONE = 'none'
+
+class EventType:
+    MOTION_OUTSIDE_ONLY = "motion_outside_only"
+    MOTION_OUTSIDE_WITH_MOUSE = "motion_outside_with_mouse"
+    CAT_WENT_INSIDE = "cat_went_inside"
+    CAT_WENT_PROBABLY_INSIDE = "cat_went_probably_inside"
+    CAT_WENT_INSIDE_WITH_MOUSE = "cat_went_inside_with_mouse"
+    CAT_WENT_OUTSIDE = "cat_went_outside"
+
+    @staticmethod
+    def to_pretty_string(event_type):
+        return {
+            EventType.MOTION_OUTSIDE_ONLY: _("Motion outside only"),
+            EventType.MOTION_OUTSIDE_WITH_MOUSE: _("Motion outside with mouse"),
+            EventType.CAT_WENT_INSIDE: _("Cat went inside"),
+            EventType.CAT_WENT_PROBABLY_INSIDE: _("Cat went probably inside (no motion inside detected, but the flap was unlocked)"),
+            EventType.CAT_WENT_INSIDE_WITH_MOUSE: _("Cat went inside with mouse"),
+            EventType.CAT_WENT_OUTSIDE: _("Cat went outside")
+        }.get(event_type, _("Unknown event"))
+
+    @staticmethod
+    def to_icons(event_type):
+        return {
+            EventType.MOTION_OUTSIDE_ONLY: [str(icon_svg("eye"))],
+            EventType.MOTION_OUTSIDE_WITH_MOUSE: [str(icon_svg("hand")), icon_svg_local("mouse")],
+            EventType.CAT_WENT_INSIDE: [str(icon_svg("circle-down"))],
+            EventType.CAT_WENT_PROBABLY_INSIDE: [str(icon_svg("circle-down")), str(icon_svg("circle-question"))],
+            EventType.CAT_WENT_INSIDE_WITH_MOUSE: [str(icon_svg("circle-down"))],
+            EventType.CAT_WENT_OUTSIDE: [str(icon_svg("circle-up"))]
+        }.get(event_type, [str(icon_svg("circle-question"))])
+
+def icon_svg_local(svg: str, margin_left: str | None = "auto", margin_right: str | None = "0.2em",) -> htmltools.TagChild:
+    """
+    Creates an HTML img tag with the path to a local SVG file.
+    
+    Args:
+        svg (str): Name of the SVG file without extension
+        
+    Returns:
+        htmltools.TagChild: HTML img tag with the SVG file as source
+    """
+    return htmltools.img(
+        src=f"icons/{svg}.svg",
+        alt=svg,
+        style=f"""
+        fill:currentColor;
+        height:1em;
+        width:1.0em;
+        margin-left: {margin_left};
+        margin-right: {margin_right};
+        position:relative;
+        vertical-align:-0.125em;
+        overflow:visible;
+        outline-width: 0px;
+        margin-top: 0;
+        margin-bottom: 0;
+        """
+    )
 
 class GracefulKiller:
     stop_now = False
@@ -193,6 +259,8 @@ def load_config():
         "KITTYHACK_DATABASE_BACKUP_PATH": parser.get('Settings', 'kittyhack_database_backup_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_backup_path']),
         "PIR_OUTSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_outside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_outside_threshold']),
         "PIR_INSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_inside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_inside_threshold']),
+        "WLAN_TX_POWER": parser.getint('Settings', 'wlan_tx_power', fallback=DEFAULT_CONFIG['Settings']['wlan_tx_power']),
+        "GROUP_PICTURES_TO_EVENTS": parser.getboolean('Settings', 'group_pictures_to_events', fallback=DEFAULT_CONFIG['Settings']['group_pictures_to_events'])
     }
 
 def save_config():
@@ -232,6 +300,8 @@ def save_config():
     settings['kittyhack_database_backup_path'] = CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']
     settings['pir_outside_threshold'] = CONFIG['PIR_OUTSIDE_THRESHOLD']
     settings['pir_inside_threshold'] = CONFIG['PIR_INSIDE_THRESHOLD']
+    settings['wlan_tx_power'] = CONFIG['WLAN_TX_POWER']
+    settings['group_pictures_to_events'] = CONFIG['GROUP_PICTURES_TO_EVENTS']
 
     # Write updated configuration back to the file
     try:
@@ -489,6 +559,41 @@ def resize_image_to_square(img: cv2.typing.MatLike, size: int = 800, quality: in
     except:
         return None
     
+def process_image(image_blob, target_width, target_height, quality):
+    """
+    Processes an image by resizing it to the target dimensions while maintaining the aspect ratio and encoding it with the specified quality.
+
+    Args:
+        image_blob (bytes): The image data in binary format.
+        target_width (int): The target width for the resized image.
+        target_height (int): The target height for the resized image.
+        quality (int): The quality of the output JPEG image (0 to 100).
+
+    Returns:
+        str: The base64 encoded string of the processed image, or None if an error occurs.
+    """
+    try:
+        # Convert the blob to a numpy array for OpenCV
+        nparr = np.frombuffer(image_blob, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        # Resize the image while maintaining aspect ratio
+        height, width = img.shape[:2]
+        aspect = width / height
+        if aspect > (target_width / target_height):
+            new_width = target_width
+            new_height = int(target_width / aspect)
+        else:
+            new_height = target_height
+            new_width = int(target_height * aspect)
+        resized = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        # Encode the resized image with reduced quality
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+        _, encoded_img = cv2.imencode('.jpg', resized, encode_param)
+        return base64.b64encode(encoded_img).decode('utf-8')
+    except Exception as e:
+        logging.error(f"Failed to process image: {e}")
+        return None
+    
 def check_and_stop_kittyflap_services(simulate_operations=False):
     """
     Validates if the Kittyflap services are running and stops them if necessary.
@@ -593,3 +698,100 @@ def wait_for_network(timeout: int = 120) -> bool:
         tm.sleep(interval)
     logging.error(f"Failed to establish network connectivity after {timeout} seconds")
     return False
+
+def log_relevant_deb_packages():
+    """
+    Logs the currently installed deb packages that are relevant based on the package name.
+    """
+    relevant_packages = ["libcamera", "gstreamer", "libpisp", "rpicam", "raspi"]
+    try:
+        result = subprocess.run(["dpkg", "-l"], capture_output=True, text=True, check=True)
+        installed_packages = result.stdout.splitlines()
+        for package in installed_packages:
+            if any(relevant in package for relevant in relevant_packages):
+                logging.info(f"Installed software package: {package}")
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to retrieve installed packages: {e}")
+
+def log_system_information():
+    """
+    Logs relevant system information.
+    """
+    info_lines = []
+    info_lines.append("\n---- System information: ------------------------------------------------")
+    info_lines.append(f"System: {os.uname().sysname} {os.uname().release} {os.uname().machine}")
+    info_lines.append(f"Python version: {sys.version}")
+    info_lines.append(f"Git version: {get_git_version()}")
+    info_lines.append(f"Kittyhack version: {CONFIG['LATEST_VERSION']}")
+    info_lines.append(f"Free disk space: {get_free_disk_space():.2f} / {get_total_disk_space():.2f} MB")
+    info_lines.append(f"Database size: {get_database_size():.2f} MB")
+    
+    # Memory information
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            mem_total = int(next(line for line in f if 'MemTotal' in line).split()[1]) // 1024
+            f.seek(0)
+            mem_available = int(next(line for line in f if 'MemAvailable' in line).split()[1]) // 1024
+            info_lines.append(f"Memory: {mem_available}MB free of {mem_total}MB")
+    except Exception as e:
+        info_lines.append(f"Failed to get memory info: {e}")
+
+    # CPU usage and temperature
+    try:
+        cpu_temp = subprocess.check_output(['vcgencmd', 'measure_temp']).decode().strip()
+        info_lines.append(f"CPU Temperature: {cpu_temp}")
+        
+        # Get top processes sorted by CPU usage
+        ps_cmd = ['ps', '-eo', 'pid,ppid,%mem,%cpu,args', '--sort=-%cpu', '--columns', '200']
+        ps_output = subprocess.Popen(ps_cmd, stdout=subprocess.PIPE)
+        grep_output = subprocess.Popen(['grep', '-v', 'ps -eo'], 
+                                     stdin=ps_output.stdout,
+                                     stdout=subprocess.PIPE)
+        ps_output.stdout.close()
+        head_output = subprocess.check_output(['head', '-n', '10'], 
+                                            stdin=grep_output.stdout).decode()
+        grep_output.stdout.close()
+        info_lines.append(f"Top processes by CPU:\n{head_output}")
+    except Exception as e:
+        info_lines.append(f"Failed to get CPU info: {e}")
+
+    # Network information
+    try:
+        wifi_info = subprocess.check_output(['iwconfig', 'wlan0']).decode()
+        info_lines.append(f"WiFi status:\n{wifi_info}")
+    except Exception as e:
+        info_lines.append(f"Failed to get network info: {e}")
+    
+    # Check internet connectivity
+    try:
+        ping_result = subprocess.run(['ping', '-c', '1', '-W', '2', '8.8.8.8'], capture_output=True, text=True)
+        info_lines.append(f"Internet connectivity: {'Connected' if ping_result.returncode == 0 else 'Disconnected'}")
+    except Exception as e:
+        info_lines.append(f"Failed to check internet connectivity: {e}")
+    
+    # System uptime
+    try:
+        with open('/proc/uptime', 'r') as f:
+            uptime_seconds = float(f.readline().split()[0])
+            uptime_days = uptime_seconds / 86400  # Convert seconds to days
+            info_lines.append(f"System uptime: {uptime_days:.1f} days")
+    except Exception as e:
+        info_lines.append(f"Failed to get uptime: {e}")
+
+    # Journal errors from the last periodic interval
+    try:
+        interval_seconds = CONFIG['PERIODIC_JOBS_INTERVAL'] + 5
+        journal_errors = subprocess.check_output(
+            ['journalctl', '-p', 'err', '--since', f"{interval_seconds} seconds ago", '--no-pager'],
+            stderr=subprocess.STDOUT
+        ).decode()
+        if journal_errors.strip():
+            info_lines.append(f"System errors from the last {interval_seconds} seconds:\n{journal_errors}")
+        else:
+            info_lines.append("No systen errors in the specified time period")
+    except Exception as e:
+        info_lines.append(f"Failed to get journal errors: {e}")
+    info_lines.append("-------------------------------------------------------------------------")
+
+    # Log all information at once
+    logging.info('\n'.join(info_lines))

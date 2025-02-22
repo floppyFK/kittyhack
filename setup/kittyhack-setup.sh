@@ -94,7 +94,6 @@ mask_service() {
         echo -e "${GREEN}${SERVICE} service masked.${NC}"
     else
         echo -e "${GREY}${SERVICE} service is already masked or inactive.${NC}"
-        # FIXME: Just to be sure, we should mask the service even if it is not active
         systemctl mask "$SERVICE"
     fi
 }
@@ -753,8 +752,6 @@ EOF
 
     # Menu
     echo
-    # FIXME: We need to change the recommendation for the installation:
-    # - The v1.1.1 is NOT recommended anymore
     if [ "$LANGUAGE" == "de" ]; then
         echo -e "Willkommen zum KittyHack-Setup!"
         echo

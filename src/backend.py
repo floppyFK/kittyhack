@@ -14,6 +14,7 @@ TAG_TIMEOUT = 30.0               # after 30 seconds, a detected tag is considere
 RFID_READER_OFF_DELAY = 15.0     # Turn the RFID reader off 15 seconds after the last detected motion outside
 OPEN_OUTSIDE_TIMEOUT = 6.0 + CONFIG['PIR_INSIDE_THRESHOLD'] # Keep the magnet to the outside open for 6 + PIR_INSIDE_THRESHOLD seconds after the last motion on the inside
 MAX_UNLOCK_TIME = 45.0           # Maximum time the door is allowed to stay open
+LAZY_CAT_DELAY = 6.0             # Keep the PIR active for an additional 6 seconds after the last detected motion
 
 # Initialize TfLite
 tflite = TfLite(modeldir = "./tflite/",
@@ -36,11 +37,18 @@ def backend_main(simulate_kittyflap = False):
     tag_timestamp = 0.0
     motion_outside = 0
     motion_inside = 0
+    motion_outside_raw = 0
+    motion_inside_raw = 0
     unlock_inside_decision_made = False
     motion_outside_tm = 0.0
     motion_inside_tm = 0.0
+    motion_inside_raw_tm = 0.0
     last_motion_outside_tm = 0.0
     last_motion_inside_tm = 0.0
+    last_motion_inside_raw_tm = 0.0
+    first_motion_outside_tm = 0.0
+    first_motion_inside_tm = 0.0
+    first_motion_inside_raw_tm = 0.0
     motion_block_id = 0
     ids_with_mouse = []
     ids_of_current_motion_block = []
@@ -83,30 +91,47 @@ def backend_main(simulate_kittyflap = False):
     rfid_thread = threading.Thread(target=rfid.run, args=(), daemon=True)
     rfid_thread.start()
 
-    def lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm):
-        # Lazy cat workaround: Keep the outside PIR active for 5 further seconds after the last detected motion outside
-        if ( (motion_outside == 0) and 
-             (last_outside == 1) and
-             ((tm.time() - motion_outside_tm) < 5.0) ):
-            motion_outside = 1
-            logging.debug(f"[BACKEND] Lazy cat workaround: Keep the outside PIR active for {5.0-(tm.time()-motion_outside_tm):.1f} seconds.")
-        return motion_outside
+    def lazy_cat_workaround(current_motion_state: int | bool, last_motion_state: int | bool, current_motion_timestamp: float, delay=LAZY_CAT_DELAY) -> int | bool:
+        """
+        Helps to keep a PIR sensor active for an additional configurable seconds after the last detected motion.
 
+        Args:
+            current_motion_state (int): The current state of motion detection (1 for motion detected, 0 for no motion).
+            last_motion_state (int): The previous state of motion detection (1 for motion detected, 0 for no motion).
+            current_motion_timestamp (float): The timestamp of the current motion detection event.
+            delay (float): The additional delay in seconds to keep the PIR active after the last detected motion outside.
+
+        Returns:
+            int: The possibly modified current motion state, ensuring the PIR remains active for an additional configurable seconds 
+            if the conditions are met.
+        """
+        if ( (current_motion_state == 0) and 
+                (last_motion_state == 1) and
+                ((tm.time() - current_motion_timestamp) < delay) ):
+            current_motion_state = 1
+            logging.debug(f"[BACKEND] Lazy cat workaround: Keep the PIR active for {delay-(tm.time()-current_motion_timestamp):.1f} seconds.")
+        return current_motion_state
+        
     while not sigterm_monitor.stop_now:
         try:
             tm.sleep(0.1)  # sleep to reduce CPU load
 
             last_outside = motion_outside
             last_inside = motion_inside
-            motion_outside, motion_inside = pir.get_states()
+            last_inside_raw = motion_inside_raw
+            motion_outside, motion_inside, motion_outside_raw, motion_inside_raw = pir.get_states()
 
             # Update the motion timestamps
             if motion_outside == 1:
                 motion_outside_tm = tm.time()
             if motion_inside == 1:
                 motion_inside_tm = tm.time()
+            if motion_inside_raw == 1:
+                motion_inside_raw_tm = tm.time()
 
-            motion_outside = lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm)
+            motion_outside = lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm, LAZY_CAT_DELAY)
+            motion_inside = lazy_cat_workaround(motion_inside, last_inside, motion_inside_tm, LAZY_CAT_DELAY)
+            motion_inside_raw = lazy_cat_workaround(motion_inside_raw, last_inside_raw, motion_inside_raw_tm, LAZY_CAT_DELAY)
 
             previous_tag_id = tag_id
             tag_id, tag_timestamp = rfid.get_tag()
@@ -130,6 +155,28 @@ def backend_main(simulate_kittyflap = False):
                 if (magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and inside_manually_unlocked == False):
                     magnets.queue_command("lock_inside")
 
+                # Decide if the cat went in or out:
+                if first_motion_inside_raw_tm == 0.0 or (first_motion_outside_tm - first_motion_inside_raw_tm) > 60.0:
+                    if unlock_inside_tm > first_motion_outside_tm and tag_id is not None:
+                        logging.info("[BACKEND] Motion event conclusion: No motion inside detected but the inside was unlocked. Cat went probably to the inside (PIR interference issue).")
+                        event_type = EventType.CAT_WENT_PROBABLY_INSIDE
+                    elif mouse_check_conditions["no_mouse_detected"]:
+                        logging.info("[BACKEND] Motion event conclusion: No one went inside.")
+                        event_type = EventType.MOTION_OUTSIDE_ONLY
+                    else:
+                        logging.info("[BACKEND] Motion event conclusion: Motion outside with mouse detected and entry blocked.")
+                        event_type = EventType.MOTION_OUTSIDE_WITH_MOUSE
+                elif first_motion_outside_tm < first_motion_inside_raw_tm:
+                    if mouse_check_conditions["no_mouse_detected"]:
+                        logging.info("[BACKEND] Motion event conclusion: Cat went inside.")
+                        event_type = EventType.CAT_WENT_INSIDE
+                    else:
+                        logging.info("[BACKEND] Motion event conclusion: Cat went inside with mouse detected.")
+                        event_type = EventType.CAT_WENT_INSIDE_WITH_MOUSE
+                else:
+                    logging.info("[BACKEND] Motion event conclusion: Cat went outside.")
+                    event_type = EventType.CAT_WENT_OUTSIDE
+
                 # Update the motion_block_id and the tag_id for for all elements between first_motion_outside_tm and last_motion_outside_tm
                 img_ids_for_motion_block = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm)
                 logging.info(f"[BACKEND] Found {len(img_ids_for_motion_block)} elements between {first_motion_outside_tm} and {last_motion_outside_tm}")
@@ -140,13 +187,21 @@ def backend_main(simulate_kittyflap = False):
                             image_buffer.update_tag_id(element, tag_id)
                     logging.info(f"[BACKEND] Updated block ID for {len(img_ids_for_motion_block)} elements to '{motion_block_id}' and tag ID to '{tag_id if tag_id is not None else ''}'")
                     # Write to the database in a separate thread
-                    db_thread = threading.Thread(target=write_motion_block_to_db, args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id), daemon=True)
+                    db_thread = threading.Thread(target=write_motion_block_to_db, args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, event_type), daemon=True)
                     db_thread.start()
+                
+                # Reset the first motion timestamps
+                first_motion_outside_tm = 0.0
+                first_motion_inside_tm = 0.0
+                first_motion_inside_raw_tm = 0.0
 
             # Just double check that the inside magnet is released ( == inside locked) if no motion is detected outside
             if (motion_outside == 0 and magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME)):
                     magnets.queue_command("lock_inside")
-                    
+
+            if last_inside_raw == 1 and motion_inside_raw == 0: # Inside motion stopped (raw)
+                last_motion_inside_raw_tm = motion_inside_raw_tm
+                logging.debug(f"[BACKEND] Motion stopped INSIDE (raw)")
             
             if last_inside == 1 and motion_inside == 0: # Inside motion stopped
                 last_motion_inside_tm = motion_inside_tm
@@ -159,8 +214,13 @@ def backend_main(simulate_kittyflap = False):
                 tflite.resume()
                 known_rfid_tags = db_get_all_rfid_tags(CONFIG['KITTYHACK_DATABASE_PATH'])
             
+            if last_inside_raw == 0 and motion_inside_raw == 1: # Inside motion detected
+                logging.debug("[BACKEND] Motion detected INSIDE (raw)")
+                first_motion_inside_raw_tm = tm.time()
+
             if last_inside == 0 and motion_inside == 1: # Inside motion detected
                 logging.info("[BACKEND] Motion detected INSIDE")
+                first_motion_inside_tm = tm.time()
                 if CONFIG['ALLOWED_TO_EXIT'] == True:
                     if magnets.get_inside_state() == True:
                         logging.info("[BACKEND] Inside magnet is already unlocked. Only one magnet is allowed. --> Outside magnet will not be unlocked.")

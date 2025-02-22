@@ -11,8 +11,10 @@ import time as tm
 import base64
 import numpy as np
 import shutil
+import json
+from typing import TypedDict, List
 from src.helper import *
-from src.camera import image_buffer
+from src.camera import image_buffer, DetectedObject
 
 # database actions
 class db_action(Enum):
@@ -41,6 +43,36 @@ class ReturnDataCatDB(Enum):
 class ReturnDataConfigDB(Enum):
     all = 0
     all_except_password = 1
+
+# Detection object and Event data schema
+class DetectedObjectSchema(TypedDict):
+    object_name: str
+    probability: float
+    x: float
+    y: float
+    width: float
+    height: float
+
+class EventSchema(TypedDict):
+    detected_objects: List[DetectedObjectSchema]
+    event_text: str
+
+class LastImageBlockTimestamp:
+    _timestamp = tm.time()
+    _lock = Lock()
+
+    @classmethod
+    def get_timestamp(cls):
+        with cls._lock:
+            return cls._timestamp
+
+    @classmethod
+    def update_timestamp(cls, timestamp: float):
+        with cls._lock:
+            cls._timestamp = timestamp
+
+# Initialize the timestamp class
+last_imgblock_ts = LastImageBlockTimestamp()
 
 # Lock for database writes
 db_write_lock = Lock()
@@ -202,6 +234,30 @@ def db_get_photos(database: str,
 
     logging.debug(f"[DATABASE] query db_get_photos: return_data={return_data}, date_start={date_start}, date_end={date_end}, cats_only={cats_only}, mouse_only={mouse_only}, mouse_probability={mouse_probability}, page_index={page_index}, elements_per_page={elements_per_page}, ignore_deleted={ignore_deleted}")
 
+    return read_df_from_database(database, stmt)
+
+def db_get_photos_by_block_id(database: str, block_id: int, return_data: ReturnDataPhotosDB = ReturnDataPhotosDB.all):
+    """
+    this function returns all dataframes from the 'events' table, based on the
+    specified block_id.
+    
+    :param database: Path to the database file
+    :param block_id: ID of the block to retrieve
+    :param return_data: Type of data to return (ReturnDataPhotosDB enum)
+    :return: DataFrame containing the requested data
+    """
+    if return_data == ReturnDataPhotosDB.all:
+        columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, rfid, event_text"
+    elif return_data == ReturnDataPhotosDB.all_modified_image:
+        columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, rfid, event_text"
+    elif return_data == ReturnDataPhotosDB.all_original_image:
+        columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, rfid, event_text"
+    elif return_data == ReturnDataPhotosDB.all_except_photos:
+        columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, rfid, event_text"
+    elif return_data == ReturnDataPhotosDB.only_ids:
+        columns = "id"
+        
+    stmt = f"SELECT {columns} FROM events WHERE block_id = {block_id}"
     return read_df_from_database(database, stmt)
 
 def db_get_cats(database: str, return_data: ReturnDataCatDB):
@@ -503,7 +559,73 @@ def delete_photo_by_id(database: str, photo_id: int) -> Result:
         logging.info(f"[DATABASE] Photo with ID '{photo_id}' deleted successfully.")
     return result
 
-def write_motion_block_to_db(database: str, buffer_block_id: int, delete_from_buffer: bool = True):
+def delete_photos_by_block_id(database: str, block_id: int) -> Result:
+    """
+    This function deletes all dataframes based on the block_id from the source database.
+    """
+    stmt = f"UPDATE events SET original_image = NULL, modified_image = NULL, deleted = 1 WHERE block_id = {block_id}"
+    result = write_stmt_to_database(database, stmt)
+    if result.success == True:
+        logging.info(f"[DATABASE] Photos with block ID '{block_id}' deleted successfully.")
+    return result
+
+def create_json_from_event(detected_objects: List[DetectedObject]) -> str:
+    """
+    Create a JSON string from a list of detected objects.
+    
+    :param detected_objects: List of DetectedObject instances
+    :return: JSON string containing the event data
+    """
+    event_data: EventSchema = {
+        'detected_objects': [{
+            'object_name': obj.object_name,
+            'probability': round(float(obj.probability), 2),
+            'x': round(float(obj.x), 3),
+            'y': round(float(obj.y), 3),
+            'width': round(float(obj.width), 3),
+            'height': round(float(obj.height), 3)
+        } for obj in detected_objects],
+        'event_text': ''
+    }
+    return json.dumps(event_data)
+
+def read_event_from_json(event_json: str) -> List[DetectedObject]:
+    """
+    Parse a JSON string containing event data back into a list of DetectedObject instances.
+    
+    :param event_json: JSON string containing the event data
+    :return: List of DetectedObject instances
+    """
+    try:
+        event_data = json.loads(event_json)
+        detected_objects = []
+        for obj in event_data.get('detected_objects', []):
+            detected_objects.append(DetectedObject(
+                object_name=obj['object_name'],
+                probability=float(obj['probability']),
+                x=float(obj['x']),
+                y=float(obj['y']),
+                width=float(obj['width']),
+                height=float(obj['height'])
+            ))
+        return detected_objects
+    except Exception as e:
+        logging.error(f"[DATABASE] Failed to parse event JSON: {e}")
+        return []
+    
+def get_detected_object_by_index(detected_objects: List[DetectedObject], index: int) -> DetectedObject:
+    """
+    This function returns the values of a detected_object from a DetectedObject list.
+    
+    :param detected_objects: List of DetectedObject instances
+    :param index: Index of the detected object to return
+    :return: DetectedObject instance
+    """
+    if index < len(detected_objects):
+        return detected_objects[index]
+    return None
+
+def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: str = "image", delete_from_buffer: bool = True):
     """
     This function writes an image block from the image buffer to the database.
     """
@@ -534,20 +656,26 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, delete_from_bu
         elements = image_buffer.get_by_block_id(buffer_block_id)
         logging.info(f"[DATABASE] Writing {len(elements)} images from buffer image block '{buffer_block_id}' as database block '{db_block_id}' to '{database}'.")
 
-        for element in elements:        
+        for element in elements:
             # Write the image to the database
+            try:
+                detected_objects = element.detected_objects if element.detected_objects is not None else []
+                event_json = create_json_from_event(detected_objects)
+            except Exception as e:
+                event_json = json.dumps({'detected_objects': [], 'event_text': ''})
+                logging.error(f"[DATABASE] Failed to serialize event data: {e}")
             columns = "block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, rfid, event_text"
             values = ', '.join(['?' for _ in columns.split(', ')])
             values_list = [
                 db_block_id,
                 get_utc_date_string(element.timestamp),
-                "image",
-                element.original_image,
-                element.modified_image,
+                event_type,
+                None if element.original_image is None else element.original_image,
+                None if element.modified_image is None else element.modified_image,
                 element.mouse_probability,
                 element.no_mouse_probability,
                 element.tag_id,
-                ""
+                event_json
             ]
             cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
 
@@ -571,6 +699,9 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, delete_from_bu
 
         conn.commit()
         conn.close()
+        # Update the timestamp of the last added image block
+        last_imgblock_ts.update_timestamp(tm.time())
+        id += 1
     except Exception as e:
         error_message = f"[DATABASE] An error occurred while writing images to the database '{database}': {e}"
         logging.error(error_message)
@@ -578,6 +709,94 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, delete_from_bu
         logging.info(f"[DATABASE] Successfully wrote images to the database '{database}'.")
     finally:
         release_database()
+    
+def create_index_on_events(database: str) -> Result:
+    """
+    This function creates indexes in the events and cats tables.
+    """
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_id ON events (id)",
+        "CREATE INDEX IF NOT EXISTS idx_block_id_created_at ON events (block_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_events_block_id_deleted_created_at ON events (block_id, deleted, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_cats_rfid ON cats (rfid)"
+    ]
+    
+    for stmt in indexes:
+        result = write_stmt_to_database(database, stmt)
+        if not result.success:
+            return result
+    
+    logging.info("[DATABASE] Successfully created indexes.")
+    return Result(True, "")
+
+def db_get_motion_blocks(database: str, block_count: int = 0, date_start="2020-01-01 00:00:00", date_end="2100-12-31 23:59:59", cats_only=False, mouse_only=False, mouse_probability=0.0):
+    """
+    This function reads the last 'block_count' motion blocks from the database with specified filters.
+
+    :param database: Path to the database file
+    :param block_count: Number of motion blocks to return (0 for all)
+    :param date_start: Start date for filtering (format: 'YYYY-MM-DD HH:MM:SS')
+    :param date_end: End date for filtering (format: 'YYYY-MM-DD HH:MM:SS')
+    :param cats_only: If True, only return blocks with RFID tags
+    :param mouse_only: If True, only return blocks with mouse probability above threshold
+    :param mouse_probability: Minimum mouse probability threshold
+    :return: DataFrame containing the filtered motion blocks
+    """
+    columns = "block_id, created_at, event_type, rfid, event_text"
+    where_clauses = ["deleted != 1", f"created_at BETWEEN '{date_start}' AND '{date_end}'"]
+    
+    if cats_only:
+        where_clauses.append("rfid != ''")
+    if mouse_only:
+        where_clauses.append(f"mouse_probability >= {mouse_probability}")
+    
+    where_clause = " AND ".join(where_clauses)
+    
+    if block_count > 0:
+        stmt = f"""
+            SELECT {columns} FROM events 
+            WHERE {where_clause}
+            GROUP BY block_id 
+            ORDER BY block_id DESC 
+            LIMIT {block_count}
+        """
+    else:
+        stmt = f"""
+            SELECT {columns} FROM events 
+            WHERE {where_clause}
+            GROUP BY block_id 
+            ORDER BY block_id DESC
+        """
+    return read_df_from_database(database, stmt)
+
+def vacuum_database(database: str) -> Result:
+    """
+    This function performs a VACUUM operation on the database.
+    """
+    result = lock_database()
+    if not result.success:
+        return result
+
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute("VACUUM")
+        cursor.execute("ANALYZE")
+        conn.close()
+    except Exception as e:
+        error_message = f"[DATABASE] An error occurred while vacuuming and analyzing the database '{database}': {e}"
+        logging.error(error_message)
+        return Result(False, error_message)
+    else:
+        logging.info(f"[DATABASE] Successfully vacuumed and analyzed the database '{database}'.")
+        return Result(True, "")
+    finally:
+        release_database()
+
+def get_cat_name_rfid_dict(database: str):
+    stmt = "SELECT rfid, name FROM cats"
+    df_cats = read_df_from_database(database, stmt)
+    return dict(zip(df_cats['rfid'], df_cats['name']))
 
 def check_if_table_exists(database: str, table: str) -> bool:
     """

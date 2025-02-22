@@ -1,7 +1,8 @@
+import os
 import pandas as pd
 from datetime import datetime, timedelta
 import time as tm
-from shiny import render, ui, reactive
+from shiny import render, ui, reactive, module
 from shiny.types import FileInfo
 import logging
 from logging.handlers import RotatingFileHandler
@@ -11,13 +12,34 @@ from faicons import icon_svg
 import math
 import threading
 import subprocess
-import shutil
 import re
-from src.helper import *
+import hashlib
+import asyncio
+from typing import List
+from src.helper import (
+    AllowedToEnter, 
+    EventType, 
+    set_language, 
+    get_git_version, 
+    wait_for_network, 
+    get_free_disk_space, 
+    check_and_stop_kittyflap_services, 
+    read_latest_kittyhack_version, 
+    execute_update_step, 
+    get_file_size, 
+    get_local_date_from_utc_date, 
+    format_date_minmax, 
+    save_config,
+    _, 
+    sigterm_monitor, 
+    CONFIG, 
+    LOGFILE
+)
 from src.database import *
-from src.system import *
-from src.backend import *
+from src.system import switch_wlan_connection, get_wlan_connections, systemcmd
+from src.backend import backend_main, manual_door_override, tflite
 from src.magnets import Magnets
+from src.pir import Pir
 
 # LOGFILE SETUP
 # Convert the log level string from the configuration to the corresponding logging level constant
@@ -131,6 +153,9 @@ if check_if_table_exists(CONFIG['DATABASE_PATH'], "config") and CONFIG['KITTYFLA
     else:
         logging.error("Failed to read the configuration from the kittyflap database.")
 
+# Create indexes for the kittyhack database
+create_index_on_events(CONFIG['KITTYHACK_DATABASE_PATH'])
+
 # Wait for internet connectivity and NTP sync
 logging.info("Waiting for network connectivity...")
 if wait_for_network(timeout=10):
@@ -140,6 +165,15 @@ else:
     logging.info("Starting backend...")
 backend_thread = threading.Thread(target=backend_main, args=(CONFIG['SIMULATE_KITTYFLAP'],), daemon=True)
 backend_thread.start()
+
+# Log the relevant installed deb packages
+log_relevant_deb_packages()
+
+# Set the WLAN TX Power level
+logging.info(f"Setting WLAN TX Power to {CONFIG['WLAN_TX_POWER']} dBm...")
+systemcmd(["iwconfig", "wlan0", "txpower", f"{CONFIG['WLAN_TX_POWER']}"], CONFIG['SIMULATE_KITTYFLAP'])
+logging.info("Disabling WiFi power saving mode...")
+systemcmd(["iw", "dev", "wlan0", "set", "power_save", "off"], CONFIG['SIMULATE_KITTYFLAP'])
 
 logging.info("Starting frontend...")
 
@@ -199,10 +233,12 @@ def start_background_task():
             # Perform Scheduled VACUUM only if the last scheduled vacuum date is older than 24 hours
             if (datetime.now() - last_vacuum_date) > timedelta(days=1):
                 logging.info("[TRIGGER: background task] Start VACUUM of the kittyhack database...")
-                write_stmt_to_database(CONFIG['KITTYHACK_DATABASE_PATH'], "VACUUM")
-                logging.info("[TRIGGER: background task] VACUUM done")
+                vacuum_database(CONFIG['KITTYHACK_DATABASE_PATH'])
                 CONFIG['LAST_VACUUM_DATE'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 update_single_config_parameter("LAST_VACUUM_DATE")
+
+            # Log system information
+            log_system_information()
 
             # Use a shorter sleep interval and check for sigterm_monitor.stop_now to allow graceful shutdown
             for _ in range(int(CONFIG['PERIODIC_JOBS_INTERVAL'])):
@@ -226,51 +262,273 @@ def immediate_bg_task(trigger = "reload"):
 # Start the background task
 start_background_task()
 
-# The main server application
-def server(input, output, session):
+# Global reactive triggers
+reload_trigger_wlan = reactive.Value(0)
+reload_trigger_photos = reactive.Value(0)
 
-    # Create reactive triggers
-    reload_trigger_photos = reactive.Value(0)
-    reload_trigger_cats = reactive.Value(0)
-    reload_trigger_info = reactive.Value(0)
-    reload_trigger_wlan = reactive.Value(0)
+#######################################################################
+# Modules
+#######################################################################
+@module.ui
+def btn_wlan_modify():
+    return ui.input_action_button(id=f"btn_wlan_modify" , label="", icon=icon_svg("pencil", margin_left="-0.1em", margin_right="auto"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
 
-    # Show a notification if a new version of Kittyhack is available
-    if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
-        ui.notification_show(_("A new version of Kittyhack is available: {}. Go to the 'Info' section for update instructions.").format(CONFIG['LATEST_VERSION']), duration=10, type="message")
+@module.ui
+def btn_wlan_connect():
+    return ui.input_action_button(id=f"btn_wlan_connect" , label="", icon=icon_svg("wifi", margin_left="-0.2em", margin_right="auto"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
 
-    # Show a nag screen if the kittyflap database file still exists
-    kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
-    #if kittyflap_db_file_exists and CONFIG['KITTYFLAP_DB_NAGSCREEN']:
-    #    ui.notification_show(_("The original kittyflap database file still exists. Please consider deleting the photos in it to free up disk space. For more details, see the 'Info' section (NOTE: You can disable this message in the 'Configuration' section.)"), duration=10, type="warning")
+@module.ui
+def btn_show_event():
+    return ui.input_action_button(id=f"btn_show_event" , label="", icon=icon_svg("magnifying-glass", margin_left="-1", margin_right="auto"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
 
-    # Show a warning if the remaining disk space is below the critical threshold
-    if free_disk_space < 500:
-        if kittyflap_db_file_exists:
-            additional_info = _(" or consider deleting pictures from the original kittyflap database file. For more details, see the 'Info' section.")
+@module.server
+def show_event_server(input, output, session, block_id: int):
+
+    # Use standard Python list to store pictures and current frame index
+    pictures = []
+    timestamps = []
+    # Store lists of DetectedObjects, one list per event
+    event_datas: List[List[DetectedObject]] = []
+    frame_index = [0]  # Use list to allow modification in nested functions
+    fallback_mode = [False]
+
+    @render.ui
+    @reactive.effect
+    @reactive.event(input.btn_show_event)
+    async def show_event():
+        logging.info(f"Show event with block_id {block_id}")
+        picture_type = ReturnDataPhotosDB.all_original_image
+        blob_picture = "original_image"
+
+        # FALLBACK: The event_text column was added in version 1.4.0. If it is not present, show the "modified_image" with baked-in event data
+        event = db_get_photos_by_block_id(CONFIG['KITTYHACK_DATABASE_PATH'], block_id, ReturnDataPhotosDB.all_except_photos)
+        if not event.iloc[0]["event_text"]:
+            fallback_mode[0] = True
+            if CONFIG['SHOW_IMAGES_WITH_OVERLAY']:
+                blob_picture = "modified_image"
+                picture_type = ReturnDataPhotosDB.all_modified_image
+
+
+        event = db_get_photos_by_block_id(CONFIG['KITTYHACK_DATABASE_PATH'], block_id, picture_type)
+        
+        # Clear the pictures list
+        pictures.clear()
+        timestamps.clear()
+        event_datas.clear()
+
+        # Iterate over the rows and encode the pictures
+        async def process_event_row(row):
+            try:
+                event_text = row['event_text']
+                
+                encoded_picture = await asyncio.to_thread(process_image, row[blob_picture], 640, 480, 50)
+                if encoded_picture:
+                    pictures.append(encoded_picture)
+                    timestamps.append(pd.to_datetime(get_local_date_from_utc_date(row["created_at"])).strftime('%H:%M:%S.%f')[:-3])
+                    try:
+                        if event_text:
+                            event_datas.append(read_event_from_json(event_text))
+                        else:
+                            event_datas.append([])
+                    except Exception as e:
+                        logging.error(f"Failed to parse event data: {e}")
+                        event_datas.append([])
+            except Exception as e:
+                logging.error(f"Failed to encode picture: {e}")
+
+        # Process the event rows asynchronously
+        await asyncio.gather(*(process_event_row(row) for x, row in event.iterrows()))
+
+        # Sort the pictures, timestamps, and event_datas lists by the timestamps
+        sorted_data = sorted(zip(timestamps, pictures, event_datas), key=lambda x: x[0])
+        timestamps[:], pictures[:], event_datas[:] = zip(*sorted_data)
+
+        if int(CONFIG['SHOW_IMAGES_WITH_OVERLAY']):
+            overlay_icon = icon_svg_local('prey-frame-on', margin_left="-0.1em")
         else:
-            additional_info = ""
-        ui.notification_show(_("Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{}).").format(free_disk_space, additional_info), duration=20, type="warning")
+            overlay_icon = icon_svg_local('prey-frame-off', margin_left="-0.1em")
 
-    # WLAN enforce connect
-    def wlan_connect(id):
-        configured_wlans = get_wlan_connections()
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.card(
+                        ui.output_ui("show_event_picture"),
+                        ui.card_footer(
+                            ui.div(
+                                ui.div(
+                                    ui.tooltip(
+                                        ui.input_action_button(id=f"btn_delete_event", label="", icon=icon_svg("trash"), class_="btn-vertical-margin btn-narrow btn-danger", style_="width: 42px;"),
+                                        _("Delete all pictures of this event"),
+                                        id="tooltip_delete_event",
+                                    ),
+                                ),
+                                ui.div(
+                                    ui.input_action_button(id="btn_prev", label="", icon=icon_svg("chevron-left", margin_right="auto"), class_="btn-narrow", style_="width: 42px;"),
+                                    ui.input_action_button(id="btn_play_pause", label="", icon=icon_svg("pause", margin_right="auto"), class_="btn-narrow", style_="width: 42px;"),
+                                    ui.input_action_button(id="btn_next", label="", icon=icon_svg("chevron-right", margin_right="auto"), class_="btn-narrow", style_="width: 42px;"),
+                                    style_="display: flex; gap: 4px; position: absolute; right: 35px; transform: translateX(-50%);"
+                                ),
+                                ui.div(
+                                    ui.input_action_button(id="btn_toggle_overlay", label="", icon=overlay_icon, class_="btn-vertical-margin btn-narrow", style_=f"width: 42px; opacity: 0.5;" if fallback_mode[0] else "width: 42px;", disabled=fallback_mode[0]),
+                                    ui.input_action_button(id="btn_modal_cancel", label="", icon=icon_svg("xmark", margin_right="auto"), class_="btn-vertical-margin btn-narrow", style_="width: 42px;"),
+                                ),
+                                style_="display: flex; align-items: center; justify-content: space-between; position: relative;"
+                            ),
+                        ),
+                        full_screen=False,
+                        class_="image-container"
+                    ),
+                ),
+                footer=ui.div(),
+                size='l',
+                easy_close=False,
+                class_="transparent-modal-content"
+            )
+        )
+    @render.text
+    def show_event_picture():
+        reactive.invalidate_later(0.25)
+        try:
+            if len(pictures) > 0:
+                frame = pictures[frame_index[0]]
+                # Get the detection areas from the current frame's EventSchema object
+                detected_objects = event_datas[frame_index[0]]
+                if frame is not None:
+                    # Start the HTML for the container and image
+                    img_html = f'''
+                    <div style="position: relative; display: inline-block;">
+                        <img src="data:image/jpeg;base64,{frame}" style="min-width: 250px;" />'''
+
+                    # Iterate over the detected objects and draw bounding boxes
+                    if input.btn_toggle_overlay() % 2 == (1 - int(CONFIG['SHOW_IMAGES_WITH_OVERLAY'])):
+                        for detected_object in detected_objects:
+                            img_html += f'''
+                            <div style="position: absolute; 
+                                        left: {detected_object.x}%; 
+                                        top: {detected_object.y}%; 
+                                        width: {detected_object.width}%; 
+                                        height: {detected_object.height}%; 
+                                        border: 2px solid #ff0000; 
+                                        background-color: rgba(255, 0, 0, 0.05);
+                                        pointer-events: none;">
+                                <div style="position: absolute; 
+                                            {f'bottom: -26px' if detected_object.y < 16 else 'top: -26px'}; 
+                                            left: 0px; 
+                                            background-color: rgba(255, 0, 0, 0.7); 
+                                            color: white; 
+                                            padding: 2px 5px;
+                                            border-radius: 5px;
+                                            text-wrap-mode: nowrap;
+                                            font-size: 12px;">
+                                    {detected_object.object_name} ({detected_object.probability:.0f}%)
+                                </div>
+                            </div>'''
+
+                    # Add the timestamp and frame counter overlays
+                    # Remove the last 4 digits (decimal separator + 3 digits of precision) of the timestamp
+                    timestamp_display = timestamps[frame_index[0]][:-4]
+                    img_html += f'''
+                        <div style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px;">
+                            {timestamp_display}
+                        </div>
+                        <div style="position: absolute; bottom: 12px; right: 8px; background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px;">
+                            {frame_index[0] + 1}/{len(pictures)}
+                        </div>
+                    </div>
+                    '''
+                else:
+                    img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
+            else:
+                img_html = '<div class="placeholder-image"><strong>' + _('No pictures found for this event.') + '</strong></div>'
+        except Exception as e:
+            logging.error(f"Failed to show the picture for event: {e}")
+            img_html = '<div class="placeholder-image"><strong>' + _('An error occured while reading the image.') + '</strong></div>'
+        
+        # Update frame index using standard list, if the play/pause button is in play mode
+        if input.btn_play_pause() % 2 == 0:
+            frame_index[0] = (frame_index[0] + 1) % max(len(pictures), 1)
+        return ui.HTML(img_html)
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_cancel)
+    def modal_cancel():
+        ui.modal_remove()
+        # Clear pictures and timestamps lists and reset frame index
+        pictures.clear()
+        timestamps.clear()
+        event_datas.clear()
+        frame_index[0] = 0
+    
+    @reactive.effect
+    @reactive.event(input.btn_delete_event)
+    def delete_event():
+        logging.info(f"Delete all pictures of event with block_id {block_id}")
+        delete_photos_by_block_id(CONFIG['KITTYHACK_DATABASE_PATH'], block_id)
+        reload_trigger_photos.set(reload_trigger_photos.get() + 1)
+        ui.modal_remove()
+        # Clear pictures and timestamps lists and reset frame index
+        pictures.clear()
+        timestamps.clear()
+        frame_index[0] = 0
+
+    @reactive.effect
+    @reactive.event(input.btn_play_pause)
+    def play_pause():
+        # Toggle play/pause based on the click count
+        if input.btn_play_pause() % 2 == 0:
+            ui.update_action_button("btn_play_pause", label="", icon=icon_svg("pause", margin_right="auto"))
+        else:
+            ui.update_action_button("btn_play_pause", label="", icon=icon_svg("play", margin_right="auto"))
+
+    @reactive.effect
+    @reactive.event(input.btn_toggle_overlay)
+    def toggle_overlay():
+        # Toggle the overlay visibility based on the click count
+        if input.btn_toggle_overlay() % 2 == int(CONFIG['SHOW_IMAGES_WITH_OVERLAY']):
+            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg_local('prey-frame-off', margin_left="-0.1em"))
+        else:
+            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg_local('prey-frame-on', margin_left="-0.1em"))
+
+    @reactive.effect
+    @reactive.event(input.btn_prev)
+    def prev_picture():
+        frame_index[0] = (frame_index[0] - 1) % max(len(pictures), 1)
+
+    @reactive.effect
+    @reactive.event(input.btn_next)
+    def next_picture():
+        frame_index[0] = (frame_index[0] + 1) % max(len(pictures), 1)
+
+@module.server
+def wlan_connect_server(input, output, session, ssid: str):
+    @reactive.effect
+    @reactive.event(input.btn_wlan_connect)
+    def wlan_connect():
         ui.modal_show(
             ui.modal(
                 _("The WLAN connection will be interrupted now!"),
                 ui.br(),
-                _("You won't see any further progress here. Please wait a few seconds and reload the page."),
+                _("Please wait a few seconds. If the page does not reload automatically within 30 seconds, please reload it manually."),
                 title=_("Updating WLAN configuration..."),
                 footer=None
             )
         )
-        switch_wlan_connection(configured_wlans[id]['ssid'])
+        switch_wlan_connection(ssid)
         reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
+        ui.modal_remove()
 
-    # WLAN Change dialog
-    def wlan_change_dialog(id):
+@module.server
+def wlan_modify_server(input, output, session, ssid: str):
+    @reactive.effect
+    @reactive.event(input.btn_wlan_modify)
+    def wlan_modify():
+        # We need to read the configured wlans again here to get the current connection status
         configured_wlans = get_wlan_connections()
-        connected = configured_wlans[id]['connected']
+        wlan = next((w for w in configured_wlans if w['ssid'] == ssid), None)
+        if wlan is None:
+            logging.error(f"WLAN with SSID {ssid} not found.")
+            return
+        connected = wlan['connected']
         if connected:
             additional_note = ui.div(
                 _("This WLAN is currently connected. You can not delete it or change the password."),
@@ -281,9 +539,9 @@ def server(input, output, session):
             additional_note = ""
 
         m = ui.modal(
-            ui.div(ui.input_text("txtWlanSSID", _("SSID"), configured_wlans[id]['ssid']), class_="disabled-wrapper"),
+            ui.div(ui.input_text("txtWlanSSID", _("SSID"), wlan['ssid']), class_="disabled-wrapper"),
             ui.div(ui.input_password("txtWlanPassword", _("Password"), "", placeholder=_("Leave empty to keep the current password")), class_="disabled-wrapper" if connected else ""),
-            ui.input_numeric("numWlanPriority", _("Priority"), configured_wlans[id]['priority'], min=0, max=100, step=1),
+            ui.input_numeric("numWlanPriority", _("Priority"), wlan['priority'], min=0, max=100, step=1),
             ui.help_text(_("The priority determines the order in which the WLANs are tried to connect. Higher numbers are tried first.")),
             additional_note,
             title=_("Change WLAN configuration"),
@@ -308,6 +566,76 @@ def server(input, output, session):
             )
         )
         ui.modal_show(m)
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_save)
+    def wlan_save():
+        ssid = input.txtWlanSSID()
+        password = input.txtWlanPassword()
+        priority = input.numWlanPriority()
+        password_changed = True if password else False
+        logging.info(f"Updating WLAN configuration: SSID={ssid}, Priority={priority}, Password changed={password_changed}")
+        ui.modal_remove()
+        ui.modal_show(
+            ui.modal(
+                _("The WLAN connection will be interrupted now!"),
+                ui.br(),
+                _("Please wait a few seconds. If the page does not reload automatically within 30 seconds, please reload it manually."),
+                title=_("Updating WLAN configuration..."),
+                footer=None
+            )
+        )
+        success = manage_and_switch_wlan(ssid, password, priority, password_changed)
+        if success:
+            ui.notification_show(_("WLAN configuration for {} updated successfully.").format(ssid), duration=5, type="message")
+            reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
+        else:
+            ui.notification_show(_("Failed to update WLAN configuration for {}").format(ssid), duration=5, type="error")
+        ui.modal_remove()
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_cancel)
+    def modal_cancel():
+        ui.modal_remove()
+
+    @reactive.effect
+    @reactive.event(input.btn_wlan_delete)
+    def wlan_delete():
+        ssid = input.txtWlanSSID()
+        success = delete_wlan_connection(ssid)
+        if success:
+            ui.notification_show(_("WLAN connection {} deleted successfully.").format(ssid), duration=5, type="message")
+            ui.modal_remove()
+            reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
+        else:
+            ui.notification_show(_("Failed to delete WLAN connection {}").format(ssid), duration=5, type="error")
+
+#######################################################################
+# The main server application
+#######################################################################
+def server(input, output, session):
+
+    # Create reactive triggers
+    reload_trigger_cats = reactive.Value(0)
+    reload_trigger_info = reactive.Value(0)
+    
+
+    # Show a notification if a new version of Kittyhack is available
+    if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
+        ui.notification_show(_("A new version of Kittyhack is available: {}. Go to the 'Info' section for update instructions.").format(CONFIG['LATEST_VERSION']), duration=10, type="message")
+
+    # Show a nag screen if the kittyflap database file still exists
+    kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
+    #if kittyflap_db_file_exists and CONFIG['KITTYFLAP_DB_NAGSCREEN']:
+    #    ui.notification_show(_("The original kittyflap database file still exists. Please consider deleting the photos in it to free up disk space. For more details, see the 'Info' section (NOTE: You can disable this message in the 'Configuration' section.)"), duration=10, type="warning")
+
+    # Show a warning if the remaining disk space is below the critical threshold
+    if free_disk_space < 500:
+        if kittyflap_db_file_exists:
+            additional_info = _(" or consider deleting pictures from the original kittyflap database file. For more details, see the 'Info' section.")
+        else:
+            additional_info = ""
+        ui.notification_show(_("Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{}).").format(free_disk_space, additional_info), duration=20, type="warning")
     
     # Add new WLAN dialog
     def wlan_add_dialog():
@@ -333,6 +661,17 @@ def server(input, output, session):
         )
         ui.modal_show(m)
 
+    # Monitor updates of the database
+    sess_last_imgblock_ts = [last_imgblock_ts.get_timestamp()]
+
+    @reactive.effect
+    def ext_trigger_reload_photos():
+        reactive.invalidate_later(3)
+        if last_imgblock_ts.get_timestamp() != sess_last_imgblock_ts[0]:
+            sess_last_imgblock_ts[0] = last_imgblock_ts.get_timestamp()
+            reload_trigger_photos.set(reload_trigger_photos.get() + 1)
+            logging.info("Reloading photos due to external trigger.")
+
     @render.text
     def live_view_header():
         reactive.invalidate_later(0.25)
@@ -340,7 +679,7 @@ def server(input, output, session):
             inside_lock_state = Magnets.instance.get_inside_state()
             outside_lock_state = Magnets.instance.get_outside_state()
 
-            outside_pir_state, inside_pir_state = Pir.instance.get_states()
+            outside_pir_state, inside_pir_state, motion_outside_raw, motion_inside_raw = Pir.instance.get_states()
 
             if inside_lock_state:
                 ui.update_action_button("bManualOverride", label=_("Close inside now"), icon=icon_svg("lock"), disabled=False)
@@ -408,6 +747,12 @@ def server(input, output, session):
         CONFIG['SHOW_IMAGES_WITH_OVERLAY'] = input.button_detection_overlay()
         update_single_config_parameter("SHOW_IMAGES_WITH_OVERLAY")
 
+    @reactive.Effect
+    @reactive.event(input.button_events_view)
+    def update_config_group_pictures_to_events():
+        CONFIG['GROUP_PICTURES_TO_EVENTS'] = input.button_events_view()
+        update_single_config_parameter("GROUP_PICTURES_TO_EVENTS")
+
     @output
     @render.ui
     def ui_photos_date():
@@ -425,20 +770,21 @@ def server(input, output, session):
         uiDateBar = ui.div(
             ui.row(
                 ui.div(
-                    ui.div(button_decrement := ui.input_action_button("button_decrement", "", icon=icon_svg("angle-left"), class_="btn-date-control"), class_="col-auto px-1"),
-                    ui.div(date := ui.input_date("date_selector", "", format=CONFIG['DATE_FORMAT']), class_="col-auto px-1"),
-                    ui.div(button_increment := ui.input_action_button("button_increment", "", icon=icon_svg("angle-right"), class_="btn-date-control"), class_="col-auto px-1"),
+                    ui.div(ui.input_action_button("button_decrement", "", icon=icon_svg("angle-left", margin_right="auto"), class_="btn-date-control"), class_="col-auto px-1"),
+                    ui.div(ui.input_date("date_selector", "", format=CONFIG['DATE_FORMAT']), class_="col-auto px-1"),
+                    ui.div(ui.input_action_button("button_increment", "", icon=icon_svg("angle-right", margin_right="auto"), class_="btn-date-control"), class_="col-auto px-1"),
                     class_="d-flex justify-content-center align-items-center flex-nowrap"
                 ),
-                ui.div(button_today := ui.input_action_button("button_today", _("Today"), icon=icon_svg("calendar-day"), class_="btn-date-filter"), class_="col-auto px-1"),
-                ui.div(button_reload := ui.input_action_button("button_reload", "", icon=icon_svg("rotate"), class_="btn-date-filter"), class_="col-auto px-1"),
+                ui.div(ui.input_action_button("button_today", _("Today"), icon=icon_svg("calendar-day"), class_="btn-date-filter"), class_="col-auto px-1"),
+                ui.div(ui.input_action_button("button_reload", "", icon=icon_svg("rotate", margin_right="auto"), class_="btn-date-filter"), class_="col-auto px-1"),
                 class_="d-flex justify-content-center align-items-center"  # Centers elements horizontally and prevents wrapping
             ),
             ui.br(),
             ui.row(
-                ui.div(button_cat_only := ui.input_switch("button_cat_only", _("Show detected cats only")), class_="col-auto btn-date-filter px-1"),
-                ui.div(button_mouse_only := ui.input_switch("button_mouse_only", _("Show detected mice only")), class_="col-auto btn-date-filter px-1"),
-                ui.div(button_detection_overlay := ui.input_switch("button_detection_overlay", _("Show detection overlay"), CONFIG['SHOW_IMAGES_WITH_OVERLAY']), class_="col-auto btn-date-filter px-1"),
+                ui.div(ui.input_switch("button_cat_only", _("Show detected cats only")), class_="col-auto btn-date-filter px-1"),
+                ui.div(ui.input_switch("button_mouse_only", _("Show detected mice only")), class_="col-auto btn-date-filter px-1"),
+                ui.div(ui.input_switch("button_detection_overlay", _("Show detection overlay"), CONFIG['SHOW_IMAGES_WITH_OVERLAY']), class_="col-auto btn-date-filter px-1"),
+                ui.div(ui.input_switch("button_events_view", _("Group pictures to events"), CONFIG['GROUP_PICTURES_TO_EVENTS']), class_="col-auto btn-date-filter px-1"),
                 class_="d-flex justify-content-center align-items-center"  # Centers elements horizontally
             ),
             class_="container"  # Adds centering within a smaller container
@@ -491,6 +837,18 @@ def server(input, output, session):
         # Get the current date
         now = datetime.now()
         session.send_input_message("date_selector", {"value": now.strftime("%Y-%m-%d")})
+
+    @output
+    @render.ui
+    @reactive.event(input.button_events_view, ignore_none=True)
+    def ui_photos_events():
+        if input.button_events_view():
+            return ui.output_ui("ui_events_by_date")
+        else:
+            return ui.div(
+                ui.output_ui("ui_photos_cards_nav"),
+                ui.output_ui("ui_photos_cards"),
+            )
     
     @output
     @render.ui
@@ -543,16 +901,9 @@ def server(input, output, session):
         date_end = selected_page[1]
         page_index = int(selected_page[2])-1
 
-        if input.button_detection_overlay():
-            picture_type = ReturnDataPhotosDB.all_modified_image
-            blob_picture = "modified_image"
-        else:
-            picture_type = ReturnDataPhotosDB.all_original_image
-            blob_picture = "original_image"
-
         df_photos = db_get_photos(
             CONFIG['KITTYHACK_DATABASE_PATH'],
-            picture_type,
+            ReturnDataPhotosDB.all,
             date_start,
             date_end,
             input.button_cat_only(),
@@ -565,12 +916,24 @@ def server(input, output, session):
         df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all_except_photos)
 
         for index, data_row in df_photos.iterrows():
+            # FALLBACK: The event_text column was added in version 1.4.0. If it is not present, show the "modified_image" with baked-in event data
+            if not data_row["event_text"] and CONFIG['SHOW_IMAGES_WITH_OVERLAY']:
+                blob_picture = "modified_image"
+            else:
+                blob_picture = "original_image"
+            
             try:
                 decoded_picture = base64.b64encode(data_row[blob_picture]).decode('utf-8')
             except:
                 decoded_picture = None
             
             mouse_probability = data_row["mouse_probability"]
+
+            event_text = data_row['event_text']
+            if event_text:
+                detected_objects = read_event_from_json(event_text)
+            else:
+                detected_objects = []
 
             try:
                 photo_timestamp = pd.to_datetime(get_local_date_from_utc_date(data_row["created_at"])).strftime('%H:%M:%S')
@@ -593,7 +956,34 @@ def server(input, output, session):
             
 
             if decoded_picture:
-                img_html = f'<img src="data:image/jpeg;base64,{decoded_picture}" style="min-width: 250px;" />'
+                img_html = f'''
+                <div style="position: relative; display: inline-block;">
+                    <img src="data:image/jpeg;base64,{decoded_picture}" style="min-width: 250px;" />'''
+                
+                if input.button_detection_overlay():
+                    for detected_object in detected_objects:
+                        img_html += f'''
+                        <div style="position: absolute; 
+                                    left: {detected_object.x}%; 
+                                    top: {detected_object.y}%; 
+                                    width: {detected_object.width}%; 
+                                    height: {detected_object.height}%; 
+                                    border: 2px solid #ff0000; 
+                                    background-color: rgba(255, 0, 0, 0.05);
+                                    pointer-events: none;">
+                            <div style="position: absolute; 
+                                        {f'bottom: -26px' if detected_object.y < 16 else 'top: -26px'}; 
+                                        left: 0px; 
+                                        background-color: rgba(255, 0, 0, 0.7); 
+                                        color: white; 
+                                        padding: 2px 5px;
+                                        border-radius: 5px;
+                                        text-wrap-mode: nowrap;
+                                        font-size: 12px;">
+                                {detected_object.object_name} ({detected_object.probability:.0f}%)
+                            </div>
+                        </div>'''
+                img_html += "</div>"
             else:
                 img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
                 logging.warning(f"No blob_picture found for entry {photo_timestamp}")
@@ -697,6 +1087,134 @@ def server(input, output, session):
 
     @output
     @render.ui
+    def ui_last_events():
+        return ui.layout_column_wrap(
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.h5(_("Last events"))
+                    ),
+                    ui.output_ui("ui_last_events_table"),
+                    full_screen=False,
+                    class_="generic-container",
+                    min_height="150px"
+                ),
+                width="400px"
+            )
+        )
+    
+    @render.table
+    @reactive.event(reload_trigger_photos, ignore_none=True)
+    def ui_last_events_table():
+        return get_events_table(block_count=25)
+    
+    @output
+    @render.ui
+    def ui_events_by_date():
+        return ui.layout_column_wrap(
+            ui.div(
+                ui.card(
+                    ui.output_ui("ui_events_by_date_table"),
+                    full_screen=False,
+                    class_="generic-container",
+                    min_height="150px"
+                ),
+                width="400px"
+            )
+        )
+    
+    @render.table
+    @reactive.event(input.button_reload, input.date_selector, input.button_cat_only, input.button_mouse_only, reload_trigger_photos, ignore_none=True)
+    def ui_events_by_date_table():
+        date_start = format_date_minmax(input.date_selector(), True)
+        date_end = format_date_minmax(input.date_selector(), False)
+        timezone = ZoneInfo(CONFIG['TIMEZONE'])
+        # Convert date_start and date_end to timezone-aware datetime strings in the UTC timezone
+        date_start = datetime.strptime(date_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
+        date_end = datetime.strptime(date_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
+        return get_events_table(0, date_start, date_end, input.button_cat_only(), input.button_mouse_only(), CONFIG['MOUSE_THRESHOLD'])
+
+    def get_events_table(block_count = 0, date_start="2020-01-01 00:00:00", date_end="2100-12-31 23:59:59", cats_only=False, mouse_only=False, mouse_probability=0.0):
+        try:
+            logging.info(f"Reading events from the database for block_count={block_count}, date_start={date_start}, date_end={date_end}, cats_only={cats_only}, mouse_only={mouse_only}, mouse_probability={mouse_probability}")
+            df_events = db_get_motion_blocks(CONFIG['KITTYHACK_DATABASE_PATH'], block_count, date_start, date_end, cats_only, mouse_only, mouse_probability)
+
+            if df_events.empty:
+                return pd.DataFrame({
+                    '': [_('No events found.')]
+                })
+            # Convert UTC timestamps to local timezone
+            df_events['created_at'] = pd.to_datetime(df_events['created_at']).dt.tz_convert('UTC').dt.tz_convert(CONFIG['TIMEZONE'])
+            df_events = df_events.sort_values(by='created_at', ascending=False)
+            df_events['date'] = df_events['created_at'].dt.date
+            df_events['time'] = df_events['created_at'].dt.strftime('%H:%M:%S')
+
+            # Replace dates with "Today" and "Yesterday"
+            today = datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).date()
+            yesterday = today - timedelta(days=1)
+            # Convert dates to 'Today', 'Yesterday', or the date string
+            # Convert the config date format to Python's strftime format
+            date_format = CONFIG['DATE_FORMAT'].lower().replace('yyyy', '%Y').replace('mm', '%m').replace('dd', '%d')
+            df_events['date_display'] = df_events['date'].apply(
+                lambda date: _("Today") if date == today else (_("Yesterday") if date == yesterday else date.strftime(date_format))
+            )
+
+            # Show the cat name instead of the RFID
+            cat_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
+            df_events['cat_name'] = df_events['rfid'].apply(lambda rfid: cat_name_dict.get(rfid, _("Unknown RFID") + f": {rfid}" if rfid else _("No RFID found") ))
+
+            # Add a column 'event_pretty' to the events table with icon(s) and a tooltip            
+            df_events['event_pretty'] = df_events['event_type'].apply(lambda event_type: ui.tooltip(
+                ui.HTML("<div>" + " ".join(str(icon) for icon in EventType.to_icons(event_type)) + "</div>"),
+                EventType.to_pretty_string(event_type)
+            ))
+
+            # Add an 'inspect' column to the 'events' DataFrame
+            inspect_buttons = []
+            for index, row in df_events.iterrows():
+                unique_id = hashlib.md5(os.urandom(16)).hexdigest()
+                inspect_buttons.append(
+                    ui.div(btn_show_event(f"btn_show_event_{unique_id}"))
+                )
+                show_event_server(f"btn_show_event_{unique_id}", row['block_id'])
+            df_events['inspect'] = inspect_buttons
+
+            # Create a new DataFrame to hold the formatted events
+            formatted_events = pd.DataFrame(columns=['time', 'event', 'cat', 'action'])
+
+            # Iterate through the events and add date rows when the date changes
+            last_date = None
+            for x, row in df_events.iterrows():
+                if row['date_display'] != last_date:
+                    # Create a date separator row that spans all columns
+                    new_row = pd.DataFrame([{
+                        'time': ui.div(
+                            row["date_display"], 
+                            class_="event-date-separator",
+                        ),
+                        'event': '',
+                        'cat': '',
+                        'action': ''
+                    }])
+                    formatted_events = pd.concat([formatted_events, new_row], ignore_index=True)
+                    last_date = row['date_display']
+                new_row = pd.DataFrame([{'time': row['time'], 'event': row['event_pretty'], 'cat': row['cat_name'], 'action': row['inspect']}])
+                formatted_events = pd.concat([formatted_events, new_row], ignore_index=True)
+
+            return (
+                formatted_events.style.set_table_attributes('class="dataframe shiny-table table w-auto"')
+                .hide(axis="index")
+                .hide(axis="columns")
+            )
+        except Exception as e:
+            logging.error(f"Failed to read events from the database: {e}")
+            # Return an empty DataFrame with an error message
+            return pd.DataFrame({
+                'ERROR': [_('Failed to read events from the database.')]
+            })
+
+    @output
+    @render.ui
     def ui_system():
             return ui.div(
                 ui.column(12, ui.h3(_("Kittyflap System Actions"))),
@@ -710,7 +1228,7 @@ def server(input, output, session):
                 ui.column(12, ui.help_text(_("To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again."))),
                 ui.br(),
                 ui.br(),
-                ui.column(12, ui.input_task_button("reinstall_camera_driver", "Reinstall Camera Driver", icon=icon_svg("rotate-right"), class_="btn-primary")),
+                ui.column(12, ui.input_task_button("reinstall_camera_driver", _("Reinstall Camera Driver"), icon=icon_svg("rotate-right"), class_="btn-primary")),
                 ui.column(12, ui.help_text(_("Reinstall the camera driver if the live view does not work properly."))),
                 ui.hr(),
                 ui.br(),
@@ -1045,11 +1563,17 @@ def server(input, output, session):
             ui.column(12, ui.help_text(_("Automatically check for new versions of Kittyhack."))),
             ui.br(),
             #ui.column(12, ui.input_switch("btnShowKittyflapDbNagscreen", _("Show nag screen, if the original kittyflap database file exists and has a very large size"), CONFIG['KITTYFLAP_DB_NAGSCREEN'])),
-            #ui.hr(),
+            ui.column(12, ui.input_slider("sldWlanTxPower", _("WLAN TX power (in dBm)"), min=0, max=20, value=CONFIG['WLAN_TX_POWER'], step=1)),
+            ui.column(12, ui.help_text(_("Set the WLAN transmission power in dBm."))),
+            ui.column(12, ui.help_text(_("WARNING: You should keep this as low as possible to avoid interference with the PIR Sensors! You should only increase this value, if you have problems with the WLAN connection."))),
+            ui.column(12, ui.help_text(_("NOTE: 0dBm = 1mW, 10dBm = 10mW, 20dBm = 100mW"))),
+            ui.hr(),
+
 
             ui.column(12, ui.h5(_("Door control settings"))),
             ui.column(12, ui.input_slider("sldMouseThreshold", _("Mouse detection threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
             ui.column(12, ui.help_text(_("Kittyhack decides based on this value, if a picture contains a mouse."))),
+            ui.column(12, ui.help_text(_("If the detected mouse probability of a picture exceeds this value, the flap will remain closed."))),
             ui.br(),
             ui.column(12, ui.input_slider("sldMinThreshold", _("Minimum detection threshold"), min=0, max=80, value=CONFIG['MIN_THRESHOLD'])),
             ui.column(12, ui.help_text(_("Pictures with a detection probability below this value (for both 'Mouse' and 'No Mouse' check) are not saved in the database."))),
@@ -1058,6 +1582,8 @@ def server(input, output, session):
             ui.column(12, ui.help_text(_("Number of pictures that must be analyzed before deciding to unlock the flap. If a picture exceeds the mouse threshold, the flap will remain closed."))),
             ui.br(),
             ui.column(12, ui.input_switch("btnDetectPrey", _("Detect prey"), CONFIG['MOUSE_CHECK_ENABLED'])),
+            ui.column(12, ui.help_text(_("If this is set to 'Yes', and the mouse detection threshold is exceeded in a picture, the flap will remain closed."))),
+            ui.column(12, ui.help_text(_("NOTE: The zones and the probability of detected mice will be stored independently of this setting for every picture."))),
             ui.br(),
             ui.column(12, ui.input_select(
                 "txtAllowedToEnter",
@@ -1148,6 +1674,7 @@ def server(input, output, session):
         # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
         #CONFIG['PIR_OUTSIDE_THRESHOLD'] = 10-int(input.sldPirOutsideThreshold())
         CONFIG['PIR_INSIDE_THRESHOLD'] = float(input.sldPirInsideThreshold())
+        CONFIG['WLAN_TX_POWER'] = int(input.sldWlanTxPower())
 
         loglevel = logging._nameToLevel.get(input.txtLoglevel(), logging.INFO)
         logger.setLevel(loglevel)
@@ -1162,7 +1689,6 @@ def server(input, output, session):
 
     @output
     @render.ui
-    @reactive.event(reload_trigger_wlan, ignore_none=True)
     def ui_wlan_configured_connections():
         return ui.layout_column_wrap(
             ui.div(
@@ -1181,30 +1707,35 @@ def server(input, output, session):
                 width="400px"
             )
         )
-    
+
     @render.table
     @reactive.event(reload_trigger_wlan, ignore_none=True)
     def configured_wlans_table():
+        # Properly handle SSIDs with special characters
         try:
             configured_wlans = get_wlan_connections()
             i = 0
             for wlan in configured_wlans:
+                unique_id = hashlib.md5(os.urandom(16)).hexdigest()
                 if wlan['connected']:
                     wlan['connected_icon'] = "🟢"
                 else:
                     wlan['connected_icon'] = "⚫"
                 wlan['actions'] = ui.div(
                     ui.tooltip(
-                        ui.input_action_button(id=f"btn_wlan_connect_{i}" , label="", icon=icon_svg("wifi"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;"),
+                        btn_wlan_connect(f"btn_wlan_connect_{unique_id}"),
                         _("Enforce connection to this WLAN"),
-                        id=f"tooltip_wlan_connect_{i}"
+                        id=f"tooltip_wlan_connect_{unique_id}"
                     ),
                     ui.tooltip(
-                        ui.input_action_button(id=f"btn_wlan_modify_{i}" , label="", icon=icon_svg("pencil"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;"),
+                        btn_wlan_modify(f"btn_wlan_modify_{unique_id}"),
                         _("Modify this WLAN"),
-                        id=f"tooltip_wlan_modify_{i}"
+                        id=f"tooltip_wlan_modify_{unique_id}"
                     ),
                 )
+                # Add new event listeners for the buttons
+                wlan_modify_server(f"btn_wlan_modify_{unique_id}", wlan["ssid"])
+                wlan_connect_server(f"btn_wlan_connect_{unique_id}", wlan["ssid"])
                 i += 1
 
             # Create a pandas DataFrame from the available WLANs
@@ -1230,121 +1761,6 @@ def server(input, output, session):
     def wlan_add():
         wlan_add_dialog()
 
-    # Unfortunately there seems to be no way to create reactive events for dynamically created elements.
-    # And if not all buttons are created, the event will not be triggered.
-    # Therefore we have to create a separate event for each button.
-    # We will support up to 10 configured WLANs. This should be sufficient for most users.
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_0)
-    def wlan_modify_0():
-        wlan_change_dialog(0)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_0)
-    def wlan_connect_0():
-        wlan_connect(0)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_1)
-    def wlan_modify_1():
-        wlan_change_dialog(1)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_1)
-    def wlan_connect_1():
-        wlan_connect(1)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_2)
-    def wlan_modify_2():
-        wlan_change_dialog(2)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_2)
-    def wlan_connect_2():
-        wlan_connect(2)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_3)
-    def wlan_modify_3():
-        wlan_change_dialog(3)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_3)
-    def wlan_connect_3():
-        wlan_connect(3)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_4)
-    def wlan_modify_4():
-        wlan_change_dialog(4)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_4)
-    def wlan_connect_4():
-        wlan_connect(4)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_5)
-    def wlan_modify_5():
-        wlan_change_dialog(5)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_5)
-    def wlan_connect_5():
-        wlan_connect(5)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_6)
-    def wlan_modify_6():
-        wlan_change_dialog(6)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_6)
-    def wlan_connect_6():
-        wlan_connect(6)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_7)
-    def wlan_modify_7():
-        wlan_change_dialog(7)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_7)
-    def wlan_connect_7():
-        wlan_connect(7)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_8)
-    def wlan_modify_8():
-        wlan_change_dialog(8)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_8)
-    def wlan_connect_8():
-        wlan_connect(8)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_9)
-    def wlan_modify_9():
-        wlan_change_dialog(9)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_9)
-    def wlan_connect_9():
-        wlan_connect(9)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_modify_10)
-    def wlan_modify_10():
-        wlan_change_dialog(10)
-    @reactive.effect
-    @reactive.event(input.btn_wlan_connect_10)
-    def wlan_connect_10():
-        wlan_connect(10)
-
-    @reactive.effect
-    @reactive.event(input.btn_wlan_delete)
-    def wlan_delete():
-        ssid = input.txtWlanSSID()
-        success = delete_wlan_connection(ssid)
-        if success:
-            ui.notification_show(_("WLAN connection {} deleted successfully.").format(ssid), duration=5, type="message")
-            ui.modal_remove()
-            reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
-        else:
-            ui.notification_show(_("Failed to delete WLAN connection {}: {}").format(ssid, success.message), duration=5, type="error")
-
     @reactive.effect
     @reactive.event(input.btn_wlan_save)
     def wlan_save():
@@ -1358,22 +1774,21 @@ def server(input, output, session):
             ui.modal(
                 _("The WLAN connection will be interrupted now!"),
                 ui.br(),
-                _("You won't see any further progress here. Please wait a few seconds and reload the page."),
+                _("Please wait a few seconds. If the page does not reload automatically within 30 seconds, please reload it manually."),
                 title=_("Updating WLAN configuration..."),
                 footer=None
             )
         )
-        result = manage_and_switch_wlan(ssid, password, priority, password_changed)
-        if result:
+        success = manage_and_switch_wlan(ssid, password, priority, password_changed)
+        if success:
             ui.notification_show(_("WLAN configuration for {} updated successfully.").format(ssid), duration=5, type="message")
             reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
         else:
-            ui.notification_show(_("Failed to update WLAN configuration for {}: {}").format(ssid, result.message), duration=5, type="error")
+            ui.notification_show(_("Failed to update WLAN configuration for {}").format(ssid), duration=5, type="error")
         ui.modal_remove()
 
     @output
     @render.ui
-    @reactive.event(reload_trigger_wlan, ignore_none=True)
     def ui_wlan_available_networks():
         return ui.layout_column_wrap(
             ui.div(
@@ -1414,7 +1829,6 @@ def server(input, output, session):
             df = pd.DataFrame(available_wlans)
             df = df[['ssid', 'channel', 'signal_icon']]  # Select only the columns we want to display
             df.columns = ['SSID', _('Channel'), _('Signal')]  # Rename columns for display
-
             return (
                 df.style.set_table_attributes('class="dataframe shiny-table table w-auto"')
                 .hide(axis="index")
@@ -1445,34 +1859,26 @@ def server(input, output, session):
         
     @render.download(filename="kittyhack.db")
     def download_kittyhack_db():
-        # Try to acquire database lock
-        result = lock_database()
-        if not result.success:
-            logging.error(f"Failed to lock database: {result.message}")
+        try:
+            sigterm_monitor.halt_backend()
+            tm.sleep(1.0)
+            return CONFIG['KITTYHACK_DATABASE_PATH']
+        except Exception as e:
+            logging.error(f"Failed to halt the backend processes: {e}")
+            ui.notification_show(_("Failed to halt the backend processes: {}").format(e), duration=5, type="error")
             return None
-        else:
-            try:
-                if os.path.exists("/tmp/kittyhack.db"):
-                    os.remove("/tmp/kittyhack.db")
-
-                # Check if there is enough free disk space to copy the database
-                kittyhack_db_size = get_database_size()
-                free_disk_space = get_free_disk_space()
-                required_space = kittyhack_db_size + 250
-                if free_disk_space < required_space:
-                    ui.notification_show(_("Not enough free disk space to download the database. Required: {} MB, Free: {} MB").format(required_space, free_disk_space), duration=5, type="error")
-                    return None
-                
-                # Copy the database file to /tmp
-                shutil.copy2(CONFIG['KITTYHACK_DATABASE_PATH'], "/tmp/kittyhack.db")
-                return "/tmp/kittyhack.db"
-            except Exception as e:
-                logging.error(f"Failed to copy database file: {e}")
-                ui.notification_show(_("Failed to copy the database file: {}").format(e), duration=5, type="error")
-                return None
-            finally:
-                # Release the database lock
-                release_database()
+        finally:
+            logging.info(f"A download of the kittyhack database was requested --> Restart pending.")
+            # Show the restart dialog
+            m = ui.modal(
+                _("Please click the 'Reboot' button to restart the Kittyflap **after** the download has finished.\n\nNOTE: The download will start in the background, so check your browser's download section."),
+                title=_("Download started..."),
+                easy_close=False,
+                footer=ui.div(
+                    ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
+                )
+            )
+            ui.modal_show(m)
     
     @render.download(filename="kittyflap.db")
     def download_kittyflap_db():
@@ -1576,7 +1982,7 @@ def server(input, output, session):
                 """
             ),
             ui.download_button("download_kittyhack_db", "Download Kittyhack Database"),
-            ui.markdown("NOTE: Click the download button just once. Depending on the size of the database, it may take a while until the download starts."),
+            ui.markdown("**WARNING:** To download the database, the Kittyhack software will be stopped and the flap will be locked. You have to restart the Kittyflap afterwards to return to normal operation."),
             ui.br(),
             ui.output_ui("wlan_info"),
             ui.hr(),

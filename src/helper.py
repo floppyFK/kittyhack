@@ -17,6 +17,8 @@ import numpy as np
 import base64
 import socket
 import sys
+import re
+import htmltools
 from faicons import icon_svg
 from src.system import *
 
@@ -65,7 +67,7 @@ DEFAULT_CONFIG = {
         "kittyhack_database_backup_path": "../kittyhack_backup.db",
         "pir_outside_threshold": 0.5,
         "pir_inside_threshold": 3.0,
-        "wlan_tx_power": 10,
+        "wlan_tx_power": 7,
         "group_pictures_to_events": True
     }
 }
@@ -112,7 +114,7 @@ class EventType:
             EventType.CAT_WENT_OUTSIDE: [str(icon_svg("circle-up"))]
         }.get(event_type, [str(icon_svg("circle-question"))])
 
-def icon_svg_local(svg: str) -> str:
+def icon_svg_local(svg: str, margin_left: str | None = "auto", margin_right: str | None = "0.2em",) -> htmltools.TagChild:
     """
     Creates an HTML img tag with the path to a local SVG file.
     
@@ -120,9 +122,25 @@ def icon_svg_local(svg: str) -> str:
         svg (str): Name of the SVG file without extension
         
     Returns:
-        str: HTML img tag with the SVG file as source
+        htmltools.TagChild: HTML img tag with the SVG file as source
     """
-    return f'<img src="icons/{svg}.svg" alt="{svg}" style="fill:currentColor;height:1em;width:1.0em;margin-left:auto;margin-right:0.2em;position:relative;vertical-align:-0.125em;overflow:visible;">'
+    return htmltools.img(
+        src=f"icons/{svg}.svg",
+        alt=svg,
+        style=f"""
+        fill:currentColor;
+        height:1em;
+        width:1.0em;
+        margin-left: {margin_left};
+        margin-right: {margin_right};
+        position:relative;
+        vertical-align:-0.125em;
+        overflow:visible;
+        outline-width: 0px;
+        margin-top: 0;
+        margin-bottom: 0;
+        """
+    )
 
 class GracefulKiller:
     stop_now = False
@@ -700,7 +718,7 @@ def log_system_information():
     Logs relevant system information.
     """
     info_lines = []
-    info_lines.append("---- System information: ------------------------------------------------")
+    info_lines.append("\n---- System information: ------------------------------------------------")
     info_lines.append(f"System: {os.uname().sysname} {os.uname().release} {os.uname().machine}")
     info_lines.append(f"Python version: {sys.version}")
     info_lines.append(f"Git version: {get_git_version()}")

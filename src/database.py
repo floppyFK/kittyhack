@@ -57,6 +57,23 @@ class EventSchema(TypedDict):
     detected_objects: List[DetectedObjectSchema]
     event_text: str
 
+class LastImageBlockTimestamp:
+    _timestamp = tm.time()
+    _lock = Lock()
+
+    @classmethod
+    def get_timestamp(cls):
+        with cls._lock:
+            return cls._timestamp
+
+    @classmethod
+    def update_timestamp(cls, timestamp: float):
+        with cls._lock:
+            cls._timestamp = timestamp
+
+# Initialize the timestamp class
+last_imgblock_ts = LastImageBlockTimestamp()
+
 # Lock for database writes
 db_write_lock = Lock()
 
@@ -596,7 +613,6 @@ def read_event_from_json(event_json: str) -> List[DetectedObject]:
         logging.error(f"[DATABASE] Failed to parse event JSON: {e}")
         return []
     
-# FIXME: We need also a function which returns the values of a detected_object from a DetectedObject list (the function shall offer an index to select the object)
 def get_detected_object_by_index(detected_objects: List[DetectedObject], index: int) -> DetectedObject:
     """
     This function returns the values of a detected_object from a DetectedObject list.
@@ -683,6 +699,9 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
 
         conn.commit()
         conn.close()
+        # Update the timestamp of the last added image block
+        last_imgblock_ts.update_timestamp(tm.time())
+        id += 1
     except Exception as e:
         error_message = f"[DATABASE] An error occurred while writing images to the database '{database}': {e}"
         logging.error(error_message)

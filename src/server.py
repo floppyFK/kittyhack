@@ -14,7 +14,7 @@ import threading
 import subprocess
 import re
 import hashlib
-import json
+import asyncio
 from typing import List
 from src.helper import (
     AllowedToEnter, 
@@ -290,14 +290,24 @@ def show_event_server(input, output, session, block_id: int):
     # Store lists of DetectedObjects, one list per event
     event_datas: List[List[DetectedObject]] = []
     frame_index = [0]  # Use list to allow modification in nested functions
+    fallback_mode = [False]
 
     @render.ui
     @reactive.effect
     @reactive.event(input.btn_show_event)
-    def show_event():
+    async def show_event():
         logging.info(f"Show event with block_id {block_id}")
         picture_type = ReturnDataPhotosDB.all_original_image
         blob_picture = "original_image"
+
+        # FALLBACK: The event_text column was added in version 1.4.0. If it is not present, show the "modified_image" with baked-in event data
+        event = db_get_photos_by_block_id(CONFIG['KITTYHACK_DATABASE_PATH'], block_id, ReturnDataPhotosDB.all_except_photos)
+        if not event.iloc[0]["event_text"]:
+            fallback_mode[0] = True
+            if CONFIG['SHOW_IMAGES_WITH_OVERLAY']:
+                blob_picture = "modified_image"
+                picture_type = ReturnDataPhotosDB.all_modified_image
+
 
         event = db_get_photos_by_block_id(CONFIG['KITTYHACK_DATABASE_PATH'], block_id, picture_type)
         
@@ -307,25 +317,36 @@ def show_event_server(input, output, session, block_id: int):
         event_datas.clear()
 
         # Iterate over the rows and encode the pictures
-        for x, row in event.iterrows():
-            if row[blob_picture] is not None:
-                try:
-                    encoded_picture = process_image(row[blob_picture], 640, 480, 50)
-                    if encoded_picture:
-                        pictures.append(encoded_picture)
-                        timestamps.append(pd.to_datetime(get_local_date_from_utc_date(row["created_at"])).strftime('%H:%M:%S'))
-                        try:
-                            event_text = row['event_text']
-                            if event_text:
-                                event_datas.append(read_event_from_json(event_text))
-                            else:
-                                event_datas.append([])
-                        except Exception as e:
-                            logging.error(f"Failed to parse event data: {e}")
+        async def process_event_row(row):
+            try:
+                event_text = row['event_text']
+                
+                encoded_picture = await asyncio.to_thread(process_image, row[blob_picture], 640, 480, 50)
+                if encoded_picture:
+                    pictures.append(encoded_picture)
+                    timestamps.append(pd.to_datetime(get_local_date_from_utc_date(row["created_at"])).strftime('%H:%M:%S.%f')[:-3])
+                    try:
+                        if event_text:
+                            event_datas.append(read_event_from_json(event_text))
+                        else:
                             event_datas.append([])
-                            
-                except Exception as e:
-                    logging.error(f"Failed to encode picture: {e}")
+                    except Exception as e:
+                        logging.error(f"Failed to parse event data: {e}")
+                        event_datas.append([])
+            except Exception as e:
+                logging.error(f"Failed to encode picture: {e}")
+
+        # Process the event rows asynchronously
+        await asyncio.gather(*(process_event_row(row) for x, row in event.iterrows()))
+
+        # Sort the pictures, timestamps, and event_datas lists by the timestamps
+        sorted_data = sorted(zip(timestamps, pictures, event_datas), key=lambda x: x[0])
+        timestamps[:], pictures[:], event_datas[:] = zip(*sorted_data)
+
+        if int(CONFIG['SHOW_IMAGES_WITH_OVERLAY']):
+            overlay_icon = icon_svg_local('prey-frame-on', margin_left="-0.1em")
+        else:
+            overlay_icon = icon_svg_local('prey-frame-off', margin_left="-0.1em")
 
         ui.modal_show(
             ui.modal(
@@ -348,7 +369,7 @@ def show_event_server(input, output, session, block_id: int):
                                     style_="display: flex; gap: 4px; position: absolute; right: 35px; transform: translateX(-50%);"
                                 ),
                                 ui.div(
-                                    ui.input_action_button(id="btn_toggle_overlay", label="", icon=icon_svg("expand", margin_left="-0.05em", margin_right="auto"), class_="btn-vertical-margin btn-narrow", style_="width: 42px;"),
+                                    ui.input_action_button(id="btn_toggle_overlay", label="", icon=overlay_icon, class_="btn-vertical-margin btn-narrow", style_=f"width: 42px; opacity: 0.5;" if fallback_mode[0] else "width: 42px;", disabled=fallback_mode[0]),
                                     ui.input_action_button(id="btn_modal_cancel", label="", icon=icon_svg("xmark", margin_right="auto"), class_="btn-vertical-margin btn-narrow", style_="width: 42px;"),
                                 ),
                                 style_="display: flex; align-items: center; justify-content: space-between; position: relative;"
@@ -379,7 +400,7 @@ def show_event_server(input, output, session, block_id: int):
                         <img src="data:image/jpeg;base64,{frame}" style="min-width: 250px;" />'''
 
                     # Iterate over the detected objects and draw bounding boxes
-                    if input.btn_toggle_overlay() % 2 == 1:
+                    if input.btn_toggle_overlay() % 2 == (1 - int(CONFIG['SHOW_IMAGES_WITH_OVERLAY'])):
                         for detected_object in detected_objects:
                             img_html += f'''
                             <div style="position: absolute; 
@@ -404,9 +425,11 @@ def show_event_server(input, output, session, block_id: int):
                             </div>'''
 
                     # Add the timestamp and frame counter overlays
+                    # Remove the last 4 digits (decimal separator + 3 digits of precision) of the timestamp
+                    timestamp_display = timestamps[frame_index[0]][:-4]
                     img_html += f'''
                         <div style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px;">
-                            {timestamps[frame_index[0]]}
+                            {timestamp_display}
                         </div>
                         <div style="position: absolute; bottom: 12px; right: 8px; background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px;">
                             {frame_index[0] + 1}/{len(pictures)}
@@ -428,7 +451,7 @@ def show_event_server(input, output, session, block_id: int):
 
     @reactive.effect
     @reactive.event(input.btn_modal_cancel)
-    def modal_cancel():  
+    def modal_cancel():
         ui.modal_remove()
         # Clear pictures and timestamps lists and reset frame index
         pictures.clear()
@@ -461,10 +484,10 @@ def show_event_server(input, output, session, block_id: int):
     @reactive.event(input.btn_toggle_overlay)
     def toggle_overlay():
         # Toggle the overlay visibility based on the click count
-        if input.btn_toggle_overlay() % 2 == 0:
-            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg("expand", margin_left="-0.05em", margin_right="auto"))
+        if input.btn_toggle_overlay() % 2 == int(CONFIG['SHOW_IMAGES_WITH_OVERLAY']):
+            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg_local('prey-frame-off', margin_left="-0.1em"))
         else:
-            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg("users-viewfinder", margin_left="-0.22em", margin_right="auto"))
+            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg_local('prey-frame-on', margin_left="-0.1em"))
 
     @reactive.effect
     @reactive.event(input.btn_prev)
@@ -637,6 +660,17 @@ def server(input, output, session):
             )
         )
         ui.modal_show(m)
+
+    # Monitor updates of the database
+    sess_last_imgblock_ts = [last_imgblock_ts.get_timestamp()]
+
+    @reactive.effect
+    def ext_trigger_reload_photos():
+        reactive.invalidate_later(3)
+        if last_imgblock_ts.get_timestamp() != sess_last_imgblock_ts[0]:
+            sess_last_imgblock_ts[0] = last_imgblock_ts.get_timestamp()
+            reload_trigger_photos.set(reload_trigger_photos.get() + 1)
+            logging.info("Reloading photos due to external trigger.")
 
     @render.text
     def live_view_header():
@@ -867,12 +901,9 @@ def server(input, output, session):
         date_end = selected_page[1]
         page_index = int(selected_page[2])-1
 
-        picture_type = ReturnDataPhotosDB.all_original_image
-        blob_picture = "original_image"
-
         df_photos = db_get_photos(
             CONFIG['KITTYHACK_DATABASE_PATH'],
-            picture_type,
+            ReturnDataPhotosDB.all,
             date_start,
             date_end,
             input.button_cat_only(),
@@ -885,6 +916,12 @@ def server(input, output, session):
         df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all_except_photos)
 
         for index, data_row in df_photos.iterrows():
+            # FALLBACK: The event_text column was added in version 1.4.0. If it is not present, show the "modified_image" with baked-in event data
+            if not data_row["event_text"] and CONFIG['SHOW_IMAGES_WITH_OVERLAY']:
+                blob_picture = "modified_image"
+            else:
+                blob_picture = "original_image"
+            
             try:
                 decoded_picture = base64.b64encode(data_row[blob_picture]).decode('utf-8')
             except:
@@ -1116,8 +1153,10 @@ def server(input, output, session):
             today = datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).date()
             yesterday = today - timedelta(days=1)
             # Convert dates to 'Today', 'Yesterday', or the date string
+            # Convert the config date format to Python's strftime format
+            date_format = CONFIG['DATE_FORMAT'].lower().replace('yyyy', '%Y').replace('mm', '%m').replace('dd', '%d')
             df_events['date_display'] = df_events['date'].apply(
-                lambda date: _("Today") if date == today else (_("Yesterday") if date == yesterday else date.strftime("%Y-%m-%d"))
+                lambda date: _("Today") if date == today else (_("Yesterday") if date == yesterday else date.strftime(date_format))
             )
 
             # Show the cat name instead of the RFID
@@ -1189,7 +1228,7 @@ def server(input, output, session):
                 ui.column(12, ui.help_text(_("To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again."))),
                 ui.br(),
                 ui.br(),
-                ui.column(12, ui.input_task_button("reinstall_camera_driver", "Reinstall Camera Driver", icon=icon_svg("rotate-right"), class_="btn-primary")),
+                ui.column(12, ui.input_task_button("reinstall_camera_driver", _("Reinstall Camera Driver"), icon=icon_svg("rotate-right"), class_="btn-primary")),
                 ui.column(12, ui.help_text(_("Reinstall the camera driver if the live view does not work properly."))),
                 ui.hr(),
                 ui.br(),
@@ -1534,6 +1573,7 @@ def server(input, output, session):
             ui.column(12, ui.h5(_("Door control settings"))),
             ui.column(12, ui.input_slider("sldMouseThreshold", _("Mouse detection threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
             ui.column(12, ui.help_text(_("Kittyhack decides based on this value, if a picture contains a mouse."))),
+            ui.column(12, ui.help_text(_("If the detected mouse probability of a picture exceeds this value, the flap will remain closed."))),
             ui.br(),
             ui.column(12, ui.input_slider("sldMinThreshold", _("Minimum detection threshold"), min=0, max=80, value=CONFIG['MIN_THRESHOLD'])),
             ui.column(12, ui.help_text(_("Pictures with a detection probability below this value (for both 'Mouse' and 'No Mouse' check) are not saved in the database."))),
@@ -1542,6 +1582,8 @@ def server(input, output, session):
             ui.column(12, ui.help_text(_("Number of pictures that must be analyzed before deciding to unlock the flap. If a picture exceeds the mouse threshold, the flap will remain closed."))),
             ui.br(),
             ui.column(12, ui.input_switch("btnDetectPrey", _("Detect prey"), CONFIG['MOUSE_CHECK_ENABLED'])),
+            ui.column(12, ui.help_text(_("If this is set to 'Yes', and the mouse detection threshold is exceeded in a picture, the flap will remain closed."))),
+            ui.column(12, ui.help_text(_("NOTE: The zones and the probability of detected mice will be stored independently of this setting for every picture."))),
             ui.br(),
             ui.column(12, ui.input_select(
                 "txtAllowedToEnter",
@@ -1669,8 +1711,6 @@ def server(input, output, session):
     @render.table
     @reactive.event(reload_trigger_wlan, ignore_none=True)
     def configured_wlans_table():
-        # FIXME: There is an error if one of the SSIDs contains special characters ( e.g.: TEST1 -_!"#$%&'()*+,./:;=?@[\] )
-        # This is the error which is thrown: invalid literal for int() with base 10: ';=?@[\\\\]'
         # Properly handle SSIDs with special characters
         try:
             configured_wlans = get_wlan_connections()

@@ -45,7 +45,7 @@ DEFAULT_CONFIG = {
         "date_format": "yyyy-mm-dd",
         "database_path": "../kittyflap.db",
         "kittyhack_database_path": "./kittyhack.db",
-        "max_photos_count": 2000,
+        "max_photos_count": 6000,
         "simulate_kittyflap": False,
         "mouse_threshold": 70.0,
         "no_mouse_threshold": 70.0,
@@ -68,7 +68,10 @@ DEFAULT_CONFIG = {
         "pir_outside_threshold": 0.5,
         "pir_inside_threshold": 3.0,
         "wlan_tx_power": 7,
-        "group_pictures_to_events": True
+        "group_pictures_to_events": True,
+        "tflite_model_version": "original_kittyflap_model_v2",
+        "lock_duration_after_prey_detection": 300,
+        "last_read_changelogs": "v1.0.0"
     }
 }
 
@@ -260,7 +263,10 @@ def load_config():
         "PIR_OUTSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_outside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_outside_threshold']),
         "PIR_INSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_inside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_inside_threshold']),
         "WLAN_TX_POWER": parser.getint('Settings', 'wlan_tx_power', fallback=DEFAULT_CONFIG['Settings']['wlan_tx_power']),
-        "GROUP_PICTURES_TO_EVENTS": parser.getboolean('Settings', 'group_pictures_to_events', fallback=DEFAULT_CONFIG['Settings']['group_pictures_to_events'])
+        "GROUP_PICTURES_TO_EVENTS": parser.getboolean('Settings', 'group_pictures_to_events', fallback=DEFAULT_CONFIG['Settings']['group_pictures_to_events']),
+        "TFLITE_MODEL_VERSION": parser.get('Settings', 'tflite_model_version', fallback=DEFAULT_CONFIG['Settings']['tflite_model_version']),
+        "LOCK_DURATION_AFTER_PREY_DETECTION": parser.getint('Settings', 'lock_duration_after_prey_detection', fallback=DEFAULT_CONFIG['Settings']['lock_duration_after_prey_detection']),
+        "LAST_READ_CHANGELOGS": parser.get('Settings', 'last_read_changelogs', fallback=DEFAULT_CONFIG['Settings']['last_read_changelogs'])
     }
 
 def save_config():
@@ -302,6 +308,9 @@ def save_config():
     settings['pir_inside_threshold'] = CONFIG['PIR_INSIDE_THRESHOLD']
     settings['wlan_tx_power'] = CONFIG['WLAN_TX_POWER']
     settings['group_pictures_to_events'] = CONFIG['GROUP_PICTURES_TO_EVENTS']
+    settings['tflite_model_version'] = CONFIG['TFLITE_MODEL_VERSION']
+    settings['lock_duration_after_prey_detection'] = CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION']
+    settings['last_read_changelogs'] = CONFIG['LAST_READ_CHANGELOGS']
 
     # Write updated configuration back to the file
     try:
@@ -345,7 +354,7 @@ def update_single_config_parameter(parameter: str):
     try:
         with open(CONFIGFILE, 'w') as configfile:
             updater.write(configfile)
-        logging.info(f"Updated {parameter.upper()} in the configfile")
+        logging.info(f"Updated {parameter.upper()} in the configfile to: {CONFIG[parameter.upper()]}")
     except Exception as e:
         logging.error(f"Failed to update {parameter.upper()} in the configfile: {e}")
 
@@ -795,3 +804,93 @@ def log_system_information():
 
     # Log all information at once
     logging.info('\n'.join(info_lines))
+
+def get_changelogs(after_version: str = "v1.0.0", language: str = "en") -> str:
+    """
+    Returns the changelogs from local files that match the specified language and are newer than the specified version.
+    
+    Args:
+        after_version (str): Only return changelogs for versions newer than this one. Allowed formats: "X.Y.Z", "vX.Y.Z", "vX.Y.Z-1234abcd"
+        language (str): The language code for the changelogs (defaults to "en")
+    
+    Returns:
+        str: A string containing all changelog entries separated by horizontal lines
+    """
+    
+    changelog_dir = "doc/changelogs/"
+    changelog_entries = []
+    
+    # If the directory doesn't exist, return an empty list
+    if not os.path.exists(changelog_dir):
+        logging.warning(f"Changelog directory '{changelog_dir}' not found")
+        return []
+    
+    # Get all changelog files
+    try:
+        files = os.listdir(changelog_dir)
+    except Exception as e:
+        logging.error(f"Failed to list changelog directory: {e}")
+        return []
+    
+    # First try to find files in the requested language
+    matching_files = [f for f in files if f.startswith("changelog_v") and f.endswith(f"_{language}.md")]
+    
+    # If no files found in the requested language, fall back to English
+    if not matching_files and language != "en":
+        matching_files = [f for f in files if f.startswith("changelog_v") and f.endswith("_en.md")]
+        logging.info(f"No changelogs found for language '{language}', falling back to English")
+    
+    if not matching_files:
+        logging.warning("No changelog files found")
+        return []
+    
+    # Extract version from filename pattern "changelog_vX.Y.Z_lang.md"
+    version_pattern = re.compile(r"changelog_v([0-9]+\.[0-9]+\.[0-9]+)_")
+    
+    # Filter files for versions newer than after_version
+    newer_files = []
+    after_version_tuple = parse_version(after_version) if after_version != "unknown" else (0, 0, 0)
+    
+    for file in matching_files:
+        match = version_pattern.search(file)
+        if match:
+            file_version = match.group(1)
+            file_version_tuple = parse_version(file_version)
+            
+            # Only include if this version is newer than after_version
+            if after_version == "unknown" or file_version_tuple > after_version_tuple:
+                newer_files.append((file_version_tuple, file))
+    
+    # Sort files by version (newest first)
+    newer_files.sort(reverse=True)
+    
+    # Read contents of each file and add to changelog entries
+    for _, filename in newer_files:
+        try:
+            with open(os.path.join(changelog_dir, filename), 'r', encoding='utf-8') as f:
+                changelog_entries.append(f.read())
+        except Exception as e:
+            logging.error(f"Failed to read changelog file {filename}: {e}")
+    
+    # Join all entries with a horizontal line separator
+    separator = "\n\n" + "-" * 80 + "\n\n"
+    return separator.join(changelog_entries)
+
+def parse_version(v_str):
+    """
+    Parse a version string to a comparable tuple.
+    Handles formats X.Y.Z, vX.Y.Z, VX.Y.Z, and also git hashes like vX.Y.Z-1234abcd.
+    The "v" prefix and the git hash suffix are ignored for comparison.
+    """
+    try:
+        # Remove 'v' or 'V' prefix if present
+        if v_str and v_str[0].lower() == 'v':
+            v_str = v_str[1:]
+            
+        # Remove git hash suffix if present
+        v_str = v_str.split('-')[0]
+        
+        # Parse the version components
+        return tuple(map(int, v_str.split('.')))
+    except:
+        return (0, 0, 0)  # Default for unparseable versions

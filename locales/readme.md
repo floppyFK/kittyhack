@@ -7,6 +7,7 @@ The steps below require gettext (on ubuntu systems install it with `apt install 
 ```
 xgettext -d messages -o locales/messages.pot src/server.py --from-code UTF-8
 xgettext -d messages -o locales/messages.pot src/ui.py --from-code UTF-8 --join-existing
+xgettext -d messages -o locales/messages.pot src/helper.py --from-code UTF-8 --join-existing
 ```
 
 ##### Initially create po file:
@@ -27,6 +28,7 @@ msgfmt -o locales/en/LC_MESSAGES/messages.mo locales/en/LC_MESSAGES/messages.po
 ```
 xgettext -d messages -o locales/messages.pot src/server.py --from-code UTF-8
 xgettext -d messages -o locales/messages.pot src/ui.py --from-code UTF-8 --join-existing
+xgettext -d messages -o locales/messages.pot src/helper.py --from-code UTF-8 --join-existing
 ```
 
 ##### Merge existing po file with new values from POT:

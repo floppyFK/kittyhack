@@ -7,6 +7,10 @@
     margin: 0 auto;
 }
 
+.align-left {
+    text-align: left;
+}
+
 .image-container img {
     border-radius: .5rem;
     width: 100%;
@@ -269,3 +273,7 @@ tr:has(.event-date-separator) {
     max-width: 80%;
     white-space: pre-wrap;
   }
+
+.card:has(#bResetPreyCooldown:disabled) {
+    display: none;
+}

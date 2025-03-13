@@ -15,6 +15,8 @@ import subprocess
 import re
 import hashlib
 import asyncio
+import io
+import zipfile
 from typing import List
 from src.helper import (
     AllowedToEnter, 
@@ -76,7 +78,10 @@ set_language(CONFIG['LANGUAGE'])
 
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
 
-logging.info(f"Current version: {get_git_version()}")
+# Read the GIT version
+git_version = get_git_version()
+
+logging.info(f"Current version: {git_version}")
 
 # Log all configuration values from CONFIG dictionary
 logging.info("Configuration values:")
@@ -110,6 +115,10 @@ if os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
                 logging.error("Failed to delete the kittyhack database file.")
             else:
                 logging.info("Kittyhack Database file deleted.")
+else:
+    logging.warning(f"Database '{CONFIG['KITTYHACK_DATABASE_PATH']}' not found. This is probably the first start of the application.")
+    CONFIG['LAST_READ_CHANGELOGS'] = git_version
+    update_single_config_parameter("LAST_READ_CHANGELOGS")
 
 # Check, if the kittyhack database file exists. If not, create it.
 if not os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
@@ -176,9 +185,6 @@ logging.info("Disabling WiFi power saving mode...")
 systemcmd(["iw", "dev", "wlan0", "set", "power_save", "off"], CONFIG['SIMULATE_KITTYFLAP'])
 
 logging.info("Starting frontend...")
-
-# Read the GIT version
-git_version = get_git_version()
 
 # Global for the free disk space:
 free_disk_space = get_free_disk_space()
@@ -286,11 +292,13 @@ def show_event_server(input, output, session, block_id: int):
 
     # Use standard Python list to store pictures and current frame index
     pictures = []
+    orig_pictures = []
     timestamps = []
     # Store lists of DetectedObjects, one list per event
     event_datas: List[List[DetectedObject]] = []
     frame_index = [0]  # Use list to allow modification in nested functions
     fallback_mode = [False]
+    slideshow_running = [True]
 
     @render.ui
     @reactive.effect
@@ -313,6 +321,7 @@ def show_event_server(input, output, session, block_id: int):
         
         # Clear the pictures list
         pictures.clear()
+        orig_pictures.clear()
         timestamps.clear()
         event_datas.clear()
 
@@ -324,7 +333,8 @@ def show_event_server(input, output, session, block_id: int):
                 encoded_picture = await asyncio.to_thread(process_image, row[blob_picture], 640, 480, 50)
                 if encoded_picture:
                     pictures.append(encoded_picture)
-                    timestamps.append(pd.to_datetime(get_local_date_from_utc_date(row["created_at"])).strftime('%H:%M:%S.%f')[:-3])
+                    orig_pictures.append(row[blob_picture])
+                    timestamps.append(pd.to_datetime(get_local_date_from_utc_date(row["created_at"])).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
                     try:
                         if event_text:
                             event_datas.append(read_event_from_json(event_text))
@@ -339,9 +349,9 @@ def show_event_server(input, output, session, block_id: int):
         # Process the event rows asynchronously
         await asyncio.gather(*(process_event_row(row) for x, row in event.iterrows()))
 
-        # Sort the pictures, timestamps, and event_datas lists by the timestamps
-        sorted_data = sorted(zip(timestamps, pictures, event_datas), key=lambda x: x[0])
-        timestamps[:], pictures[:], event_datas[:] = zip(*sorted_data)
+        # Sort the pictures, timestamps, event_datas, and orig_pictures lists by the timestamps
+        sorted_data = sorted(zip(timestamps, pictures, event_datas, orig_pictures), key=lambda x: x[0])
+        timestamps[:], pictures[:], event_datas[:], orig_pictures[:] = zip(*sorted_data)
 
         if int(CONFIG['SHOW_IMAGES_WITH_OVERLAY']):
             overlay_icon = icon_svg_local('prey-frame-on', margin_left="-0.1em")
@@ -350,34 +360,57 @@ def show_event_server(input, output, session, block_id: int):
 
         ui.modal_show(
             ui.modal(
-                ui.div(
-                    ui.card(
-                        ui.output_ui("show_event_picture"),
-                        ui.card_footer(
+                ui.card(
+                    ui.output_ui("show_event_picture"),
+                    ui.card_footer(
+                        ui.div(
+                            # left button group
+                            ui.div(
+                                ui.tooltip(
+                                    ui.input_action_button(id="btn_delete_event", label="", icon=icon_svg("trash"), 
+                                                        class_="btn-vertical-margin btn-narrow btn-danger", 
+                                                        style_="width: 42px;"),
+                                    _("Delete all pictures of this event"),
+                                    id="tooltip_delete_event",
+                                ),
+                                style_="padding-top: 6px;",
+                                class_="d-flex justify-content-start flex-shrink-0"
+                            ),
+
+                            # center button group with right alignment
                             ui.div(
                                 ui.div(
-                                    ui.tooltip(
-                                        ui.input_action_button(id=f"btn_delete_event", label="", icon=icon_svg("trash"), class_="btn-vertical-margin btn-narrow btn-danger", style_="width: 42px;"),
-                                        _("Delete all pictures of this event"),
-                                        id="tooltip_delete_event",
-                                    ),
+                                    ui.input_action_button(id="btn_prev", label="", icon=icon_svg("chevron-left"), 
+                                                        class_="btn-narrow", style_="width: 42px;"),
+                                    ui.input_action_button(id="btn_play_pause", label="", icon=icon_svg("pause"), 
+                                                        class_="btn-narrow", style_="width: 42px;"),
+                                    ui.input_action_button(id="btn_next", label="", icon=icon_svg("chevron-right"), 
+                                                        class_="btn-narrow", style_="width: 42px;"),
+                                    style_="padding-left: 12px; padding-top: 6px;",
+                                    class_="d-flex gap-1"
                                 ),
-                                ui.div(
-                                    ui.input_action_button(id="btn_prev", label="", icon=icon_svg("chevron-left", margin_right="auto"), class_="btn-narrow", style_="width: 42px;"),
-                                    ui.input_action_button(id="btn_play_pause", label="", icon=icon_svg("pause", margin_right="auto"), class_="btn-narrow", style_="width: 42px;"),
-                                    ui.input_action_button(id="btn_next", label="", icon=icon_svg("chevron-right", margin_right="auto"), class_="btn-narrow", style_="width: 42px;"),
-                                    style_="display: flex; gap: 4px; position: absolute; right: 35px; transform: translateX(-50%);"
-                                ),
-                                ui.div(
-                                    ui.input_action_button(id="btn_toggle_overlay", label="", icon=overlay_icon, class_="btn-vertical-margin btn-narrow", style_=f"width: 42px; opacity: 0.5;" if fallback_mode[0] else "width: 42px;", disabled=fallback_mode[0]),
-                                    ui.input_action_button(id="btn_modal_cancel", label="", icon=icon_svg("xmark", margin_right="auto"), class_="btn-vertical-margin btn-narrow", style_="width: 42px;"),
-                                ),
-                                style_="display: flex; align-items: center; justify-content: space-between; position: relative;"
+                                class_="flex-grow-1 d-flex justify-content-end"
                             ),
+
+                            # right button group
+                            ui.div(
+                                ui.download_button(id="btn_download", label="", icon=icon_svg("download", margin_left="-0.1em"),
+                                                    class_="btn-vertical-margin btn-narrow", style_="width: 42px;"),
+                                ui.input_action_button(id="btn_toggle_overlay", label="", icon=overlay_icon, 
+                                                    class_="btn-vertical-margin btn-narrow", 
+                                                    style_=f"width: 42px; opacity: 0.5;" if fallback_mode[0] else "width: 42px;", 
+                                                    disabled=fallback_mode[0]),
+                                ui.input_action_button(id="btn_modal_cancel", label="", icon=icon_svg("xmark"), 
+                                                    class_="btn-vertical-margin btn-narrow", style_="width: 42px;"),
+                                style_="padding-left: 12px; padding-top: 6px;",
+                                class_="d-flex gap-1 justify-content-end flex-shrink-0 ms-auto"
+                            ),
+
+                            class_="d-flex flex-wrap align-items-center justify-content-center w-100 position-relative"
                         ),
-                        full_screen=False,
-                        class_="image-container"
                     ),
+                    full_screen=False,
+                    class_="image-container"
                 ),
                 footer=ui.div(),
                 size='l',
@@ -385,9 +418,10 @@ def show_event_server(input, output, session, block_id: int):
                 class_="transparent-modal-content"
             )
         )
+    
     @render.text
     def show_event_picture():
-        reactive.invalidate_later(0.25)
+        reactive.invalidate_later(0.2)
         try:
             if len(pictures) > 0:
                 frame = pictures[frame_index[0]]
@@ -402,31 +436,32 @@ def show_event_server(input, output, session, block_id: int):
                     # Iterate over the detected objects and draw bounding boxes
                     if input.btn_toggle_overlay() % 2 == (1 - int(CONFIG['SHOW_IMAGES_WITH_OVERLAY'])):
                         for detected_object in detected_objects:
-                            img_html += f'''
-                            <div style="position: absolute; 
-                                        left: {detected_object.x}%; 
-                                        top: {detected_object.y}%; 
-                                        width: {detected_object.width}%; 
-                                        height: {detected_object.height}%; 
-                                        border: 2px solid #ff0000; 
-                                        background-color: rgba(255, 0, 0, 0.05);
-                                        pointer-events: none;">
+                            if detected_object.object_name != "false-accept":
+                                img_html += f'''
                                 <div style="position: absolute; 
-                                            {f'bottom: -26px' if detected_object.y < 16 else 'top: -26px'}; 
-                                            left: 0px; 
-                                            background-color: rgba(255, 0, 0, 0.7); 
-                                            color: white; 
-                                            padding: 2px 5px;
-                                            border-radius: 5px;
-                                            text-wrap-mode: nowrap;
-                                            font-size: 12px;">
-                                    {detected_object.object_name} ({detected_object.probability:.0f}%)
-                                </div>
-                            </div>'''
+                                            left: {detected_object.x}%; 
+                                            top: {detected_object.y}%; 
+                                            width: {detected_object.width}%; 
+                                            height: {detected_object.height}%; 
+                                            border: 2px solid #ff0000; 
+                                            background-color: rgba(255, 0, 0, 0.05);
+                                            pointer-events: none;">
+                                    <div style="position: absolute; 
+                                                {f'bottom: -26px' if detected_object.y < 16 else 'top: -26px'}; 
+                                                left: 0px; 
+                                                background-color: rgba(255, 0, 0, 0.7); 
+                                                color: white; 
+                                                padding: 2px 5px;
+                                                border-radius: 5px;
+                                                text-wrap-mode: nowrap;
+                                                font-size: 12px;">
+                                        {detected_object.object_name} ({detected_object.probability:.0f}%)
+                                    </div>
+                                </div>'''
 
                     # Add the timestamp and frame counter overlays
-                    # Remove the last 4 digits (decimal separator + 3 digits of precision) of the timestamp
-                    timestamp_display = timestamps[frame_index[0]][:-4]
+                    # Remove the date part and the milliseconds from the timestamp
+                    timestamp_display = timestamps[frame_index[0]][11:-4]
                     img_html += f'''
                         <div style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px;">
                             {timestamp_display}
@@ -445,7 +480,7 @@ def show_event_server(input, output, session, block_id: int):
             img_html = '<div class="placeholder-image"><strong>' + _('An error occured while reading the image.') + '</strong></div>'
         
         # Update frame index using standard list, if the play/pause button is in play mode
-        if input.btn_play_pause() % 2 == 0:
+        if slideshow_running[0] and len(pictures) > 0:
             frame_index[0] = (frame_index[0] + 1) % max(len(pictures), 1)
         return ui.HTML(img_html)
 
@@ -455,6 +490,7 @@ def show_event_server(input, output, session, block_id: int):
         ui.modal_remove()
         # Clear pictures and timestamps lists and reset frame index
         pictures.clear()
+        orig_pictures.clear()
         timestamps.clear()
         event_datas.clear()
         frame_index[0] = 0
@@ -468,16 +504,42 @@ def show_event_server(input, output, session, block_id: int):
         ui.modal_remove()
         # Clear pictures and timestamps lists and reset frame index
         pictures.clear()
+        orig_pictures.clear()
         timestamps.clear()
         frame_index[0] = 0
 
+    @render.download(filename=f"kittyhack_event_{block_id}.zip")
+    def btn_download():
+        if slideshow_running[0]:
+            slideshow_running[0] = False
+        
+        # Create a BytesIO object to store the zip file
+        zip_buffer = io.BytesIO()
+        try:
+            # Create a ZipFile object
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                # Add each picture to the zip file
+                for i, (timestamp, picture, _, _) in enumerate(zip(timestamps, orig_pictures, event_datas, pictures)):
+                    # Create filename from timestamp
+                    filename = f"{timestamp.replace(':', '-')}.jpg"
+                    zip_file.writestr(filename, picture)
+            
+            # Reset buffer position to the beginning
+            zip_buffer.seek(0)
+            return zip_buffer
+        except Exception as e:
+            logging.error(f"Failed to create the zip file for event with block_id {block_id}: {e}")
+            return None
+    
     @reactive.effect
     @reactive.event(input.btn_play_pause)
     def play_pause():
         # Toggle play/pause based on the click count
-        if input.btn_play_pause() % 2 == 0:
+        if slideshow_running[0] == False:
+            slideshow_running[0] = True
             ui.update_action_button("btn_play_pause", label="", icon=icon_svg("pause", margin_right="auto"))
         else:
+            slideshow_running[0] = False
             ui.update_action_button("btn_play_pause", label="", icon=icon_svg("play", margin_right="auto"))
 
     @reactive.effect
@@ -619,23 +681,38 @@ def server(input, output, session):
     reload_trigger_cats = reactive.Value(0)
     reload_trigger_info = reactive.Value(0)
     
-
     # Show a notification if a new version of Kittyhack is available
     if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
         ui.notification_show(_("A new version of Kittyhack is available: {}. Go to the 'Info' section for update instructions.").format(CONFIG['LATEST_VERSION']), duration=10, type="message")
 
-    # Show a nag screen if the kittyflap database file still exists
-    kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
-    #if kittyflap_db_file_exists and CONFIG['KITTYFLAP_DB_NAGSCREEN']:
-    #    ui.notification_show(_("The original kittyflap database file still exists. Please consider deleting the photos in it to free up disk space. For more details, see the 'Info' section (NOTE: You can disable this message in the 'Configuration' section.)"), duration=10, type="warning")
-
     # Show a warning if the remaining disk space is below the critical threshold
+    kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
     if free_disk_space < 500:
         if kittyflap_db_file_exists:
             additional_info = _(" or consider deleting pictures from the original kittyflap database file. For more details, see the 'Info' section.")
         else:
             additional_info = ""
         ui.notification_show(_("Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{}).").format(free_disk_space, additional_info), duration=20, type="warning")
+
+    # Show changelogs, if the version was updated
+    changelog_text = get_changelogs(after_version=CONFIG['LAST_READ_CHANGELOGS'], language=CONFIG['LANGUAGE'])
+    if changelog_text:
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.markdown(changelog_text),
+                    ui.markdown("\n\n---------\n\n" + _("**NOTE**: You can find the changelogs also in the 'Info' section.")),
+                ),
+                title=_("Changelog"),
+                easy_close=True,
+                size="xl",
+                footer=ui.div(
+                    ui.input_action_button("btn_modal_cancel", _("Close")),
+                )
+            )
+        )
+        CONFIG['LAST_READ_CHANGELOGS'] = git_version
+        update_single_config_parameter("LAST_READ_CHANGELOGS")
     
     # Add new WLAN dialog
     def wlan_add_dialog():
@@ -681,6 +758,15 @@ def server(input, output, session):
 
             outside_pir_state, inside_pir_state, motion_outside_raw, motion_inside_raw = Pir.instance.get_states()
 
+            if hasattr(backend_main, "prey_detection_tm"):
+                delta_to_last_prey_detection = tm.time() - float(backend_main.prey_detection_tm)
+                time_until_release = CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'] - delta_to_last_prey_detection
+                forced_lock_due_prey = time_until_release > 0
+            else:
+                delta_to_last_prey_detection = tm.time()
+                time_until_release = 0
+                forced_lock_due_prey = False
+
             if inside_lock_state:
                 ui.update_action_button("bManualOverride", label=_("Close inside now"), icon=icon_svg("lock"), disabled=False)
             else:
@@ -691,6 +777,11 @@ def server(input, output, session):
             outside_pir_state_icon = "🟢" if outside_pir_state else "⚫"
             inside_pir_state_icon = "🟢" if inside_pir_state else "⚫"
             ui_html = ui.HTML(_("<b>Locks:</b> Inside {} | Outside {}<br><b>Motion:</b> Inside {} | Outside {}").format(inside_lock_icon, outside_lock_icon, inside_pir_state_icon, outside_pir_state_icon))
+            if forced_lock_due_prey:
+                ui.update_action_button("bResetPreyCooldown", disabled=False)
+                ui_html += ui.HTML(_("<br>Prey detected {0:.0f}s ago. Inside lock remains closed for {1:.0f}s.").format(delta_to_last_prey_detection, time_until_release))
+            else:
+                ui.update_action_button("bResetPreyCooldown", disabled=True)
         except:
             ui_html = ui.markdown(_("Failed to fetch the current status of the locks and motion sensors."))
         
@@ -1072,6 +1163,11 @@ def server(input, output, session):
                 class_="image-container",
                 style_="margin-top: 0px;"
             ),
+            ui.card(
+                ui.input_action_button(id="bResetPreyCooldown", label=_("Reset prey cooldown now"), icon=icon_svg("clock-rotate-left"), disabled=True),
+                class_="image-container",
+                style_="margin-top: 10px;"
+            ),
         ),
     
     @reactive.Effect
@@ -1084,6 +1180,12 @@ def server(input, output, session):
         else:
             logging.info(f"[SERVER] Manual override from Live View - close inside now")
             manual_door_override['lock_inside'] = True
+
+    @reactive.Effect
+    @reactive.event(input.bResetPreyCooldown)
+    def on_action_reset_prey_cooldown():
+        logging.info(f"[SERVER] Resetting prey cooldown now")
+        backend_main.prey_detection_tm = 0.0
 
     @output
     @render.ui
@@ -1544,91 +1646,274 @@ def server(input, output, session):
     @output
     @render.ui
     def ui_configuration():
+        # Build a dictionary with TFLite model versions from the tflite folder
+        tflite_models = {}
+        try:
+            for folder in os.listdir("./tflite"):
+                if os.path.isdir(os.path.join("./tflite", folder)):
+                    tflite_models[folder] = folder.replace('_', ' ').title()
+        except Exception as e:
+            logging.error(f"Failed to read TFLite model versions: {e}")
+        
+
         ui_config =  ui.div(
-            ui.column(12, ui.h3(_("Kittyhack configuration"))),
-            ui.column(12, ui.help_text(_("In this section you can change the behaviour of the Kittyhack user interface"))),
-            ui.br(),
+            # --- General settings ---
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.h4(_("General settings"), style_="text-align: center;"),
+                    ),
+                    ui.br(),
+                    ui.row(
+                        ui.column(6, ui.input_select("txtLanguage", _("Language"), {"en":"English", "de":"Deutsch"}, selected=CONFIG['LANGUAGE'])),
+                        ui.column(6, ui.input_text("txtConfigTimezone", _("Timezone"), CONFIG['TIMEZONE'])),
+                        ui.column(6, ui.markdown("")),
+                        ui.column(6, ui.HTML('<span class="help-block">' + _('See') +  ' <a href="https://en.wikipedia.org/wiki/List_of_tz_database_time_zones" target="_blank">Wikipedia</a> ' + _('for valid timezone strings') + '</span>')),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(6, ui.input_text("txtConfigDateformat", _("Date format"), CONFIG['DATE_FORMAT'])),
+                        ui.column(
+                            6,
+                            ui.markdown(
+                                _("Valid placeholders: `yyyy`, `mm`, `dd`") + "\n\n" +
+                                _("Example:") + "\n" +
+                                "- `yyyy-mm-dd` " + _("for") + " `2025-02-28`\n" +
+                                "- `dd.mm.yyyy` " + _("for") + " `28.02.2025`"
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(4, ui.input_numeric("numElementsPerPage", _("Maximum pictures per page"), CONFIG['ELEMENTS_PER_PAGE'], min=1)),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("This setting applies only to the pictures panel in the ungrouped view mode.") + "  \n" +
+                                _("NOTE: Too many pictures per page could slow down the performance drastically!")
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(12, ui.input_switch("btnPeriodicVersionCheck", _("Periodic version check"), CONFIG['PERIODIC_VERSION_CHECK'])),
+                        ui.column(12, ui.markdown(_("Automatically check for new versions of Kittyhack.")), style_="color: grey;"),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(4, ui.input_slider("sldWlanTxPower", _("WLAN TX power (in dBm)"), min=0, max=20, value=CONFIG['WLAN_TX_POWER'], step=1)),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                "> " + _("WARNING: You should keep the TX power as low as possible to avoid interference with the PIR Sensors! You should only increase this value, if you have problems with the WLAN connection.") + "  \n" +
+                                "> " + _("NOTE: 0dBm = 1mW, 10dBm = 10mW, 20dBm = 100mW") + "\n\n" +
+                                "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['wlan_tx_power']) + ")*"
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    full_screen=False,
+                    class_="generic-container align-left",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
 
-            ui.column(12, ui.h5(_("General settings"))),
-            ui.column(12, ui.input_select("txtLanguage", _("Language"), {"en":"English", "de":"Deutsch"}, selected=CONFIG['LANGUAGE'])),
-            ui.column(12, ui.input_text("txtConfigTimezone", _("Timezone"), CONFIG['TIMEZONE'])),
-            ui.column(12, ui.HTML('<span class="help-block">' + _('See') +  ' <a href="https://en.wikipedia.org/wiki/List_of_tz_database_time_zones" target="_blank">Wikipedia</a> ' + _('for valid timezone strings') + '</span>')),
-            ui.br(),
-            ui.column(12, ui.input_text("txtConfigDateformat", _("Date format"), CONFIG['DATE_FORMAT'])),
-            ui.br(),
-            ui.column(12, ui.input_numeric("numElementsPerPage", _("Maximum pictures per page"), CONFIG['ELEMENTS_PER_PAGE'], min=1)),
-            ui.column(12, ui.help_text(_("NOTE: Too many pictures per page could slow down the performance drastically!"))),
-            ui.br(),
-            ui.column(12, ui.input_switch("btnPeriodicVersionCheck", _("Periodic version check"), CONFIG['PERIODIC_VERSION_CHECK'])),
-            ui.column(12, ui.help_text(_("Automatically check for new versions of Kittyhack."))),
-            ui.br(),
-            #ui.column(12, ui.input_switch("btnShowKittyflapDbNagscreen", _("Show nag screen, if the original kittyflap database file exists and has a very large size"), CONFIG['KITTYFLAP_DB_NAGSCREEN'])),
-            ui.column(12, ui.input_slider("sldWlanTxPower", _("WLAN TX power (in dBm)"), min=0, max=20, value=CONFIG['WLAN_TX_POWER'], step=1)),
-            ui.column(12, ui.help_text(_("Set the WLAN transmission power in dBm."))),
-            ui.column(12, ui.help_text(_("WARNING: You should keep this as low as possible to avoid interference with the PIR Sensors! You should only increase this value, if you have problems with the WLAN connection."))),
-            ui.column(12, ui.help_text(_("NOTE: 0dBm = 1mW, 10dBm = 10mW, 20dBm = 100mW"))),
-            ui.hr(),
+            # --- Door control settings ---
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.h4(_("Door control settings"), style_="text-align: center;"),
+                    ),
+                    ui.br(),
+                    ui.row(
+                        ui.column(4, ui.input_slider("sldMouseThreshold", _("Mouse detection threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("Kittyhack decides based on this value, if a picture contains a mouse.") + "  \n" + 
+                                _("If the detected mouse probability of a picture exceeds this value, the flap will remain closed.") + "  \n" + 
+                                "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['mouse_threshold']) + ")*"
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(4, ui.input_slider("sldMinThreshold", _("Minimum detection threshold"), min=0, max=80, value=CONFIG['MIN_THRESHOLD'])),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("This threshold will only be used for the decision, if an motion event on the outside shall be logged or not:") + "\n\n" +
+                                _("The detected probability for `Mouse` or `No Mouse` must exceed this threshold at least in one picture of a motion event. Otherwise the pictures will be discarded and the event will not be logged.") + "\n\n" +
+                                "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['min_threshold']) + ")*"
+                            ), style_="color: grey;"
+                        )
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(4, ui.input_numeric("numMinPicturesToAnalyze", _("Minimum pictures before unlock decision"), CONFIG['MIN_PICTURES_TO_ANALYZE'], min=1)),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("Number of pictures that must be analyzed before deciding to unlock the flap. If a picture exceeds the mouse threshold, the flap will remain closed.") + "  \n" +
+                                _("If a picture after this minimum number of pictures exceeds the mouse threshold, the flap will be closed again.") + "  \n" +
+                                "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['min_pictures_to_analyze']) + ")*"
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(4, ui.input_slider("sldLockAfterPreyDetect", _("Lock duration after prey detection (in s)"), min=30, max=600, step=5, value=CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'])),
+                        ui.column(8, ui.markdown(_("The flap will remain closed for this time after a prey detection.")), style_="color: grey;")
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(12, ui.input_switch("btnDetectPrey", _("Detect prey"), CONFIG['MOUSE_CHECK_ENABLED'])),
+                        ui.column(
+                            12,
+                            ui.markdown(
+                                _("If the prey detection is enabled and the mouse detection threshold is exceeded in a picture, the flap will remain closed.") + "  \n" +
+                                _("> The zones and the probability of detected mice will be stored independently of this setting for every picture.")
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(4, ui.input_select("TfLiteModelVersion", _("Version of the TFLite model for the object detection"), tflite_models, selected=CONFIG['TFLITE_MODEL_VERSION'])),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                "- **" + _("Original Kittyflap Model v1:") + "** " + _("Always tries to detect objects `Mouse` and `No Mouse`, even if there is no such object in the picture (this was the default in Kittyhack v1.4.0 and lower)") + "\n\n" +
+                                "- **" + _("Original Kittyflap Model v2:") + "** " + _("Only tries to detect objects `Mouse` and `No Mouse` if there is a cat in the picture.") + "\n\n" +
+                                "> " + _("If you change this setting, the Kittyflap must be restarted to apply the new model version.")
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(12, ui.input_select(
+                            "txtAllowedToEnter",
+                            _("Open inside direction for:"),
+                            {
+                                AllowedToEnter.ALL.value: _("All cats"), AllowedToEnter.ALL_RFIDS.value: _("All cats with a RFID chip"), AllowedToEnter.KNOWN.value: _("Only registered cats"), AllowedToEnter.NONE.value: _("No cats"),
+                            },
+                            selected=str(CONFIG['ALLOWED_TO_ENTER'].value),
+                        )),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(12, ui.input_switch("btnAllowedToExit", _("Allow cats to exit"), CONFIG['ALLOWED_TO_EXIT'])),
+                        ui.column(12, ui.markdown(_("If this is disabled, the direction to the outside remains closed. Useful for e.g. new year's eve or an upcoming vet visit.")), style_="color: grey;"),
+                    ),
+                    ui.hr(),
+                    # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
+                    #ui.column(12, ui.input_slider("sldPirOutsideThreshold", _("Sensitivity of the motion sensor on the outside"), min=0.1, max=6, step=0.1, value=CONFIG['PIR_OUTSIDE_THRESHOLD'])),
+                    ui.row(
+                        ui.column(4, ui.input_slider("sldPirInsideThreshold", _("Reaction speed (in s) of the motion sensor on the inside"), min=0.1, max=6, step=0.1, value=CONFIG['PIR_INSIDE_THRESHOLD'])),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                f"""
+                                {_("A low value means a fast reaction, but also a higher probability of false alarms. A high value means a slow reaction, but also a lower probability of false alarms.")}  
+                                {_("The default setting should be a good value for most cases.")}  
+                                *({_("Default value: {}").format(DEFAULT_CONFIG['Settings']['pir_inside_threshold'])})*
+                                """
+                                ), style_="color: grey;"
+                        )
+                    ),
+                    full_screen=False,
+                    class_="generic-container align-left",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
 
+            # --- Live view settings ---
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.h4(_("Live view settings"), style_="text-align: center;"),
+                    ),
+                    ui.br(),
+                    ui.row(
+                        ui.column(
+                            4,
+                            ui.input_select(
+                                "numLiveViewUpdateInterval",
+                                _("Live-View update interval:"),
+                                {
+                                    _("Refresh the live view every..."):
+                                    {
+                                        0.1: "100ms", 0.2: "200ms", 0.5: "500ms", 1.0: "1s", 2.0: "2s", 3.0: "3s", 5.0: "5s", 10.0: "10s"
+                                    },
+                                },
+                                selected=CONFIG['LIVE_VIEW_REFRESH_INTERVAL'],
+                            )
+                        ),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("NOTE: A high refresh rate could slow down the performance, especially if several users are connected at the same time. Values below 1s require a fast and stable WLAN connection.") +
+                                "  \n" +
+                                _("This setting affects only the view in the WebUI and has no impact on the detection process.")
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container align-left",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
 
-            ui.column(12, ui.h5(_("Door control settings"))),
-            ui.column(12, ui.input_slider("sldMouseThreshold", _("Mouse detection threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
-            ui.column(12, ui.help_text(_("Kittyhack decides based on this value, if a picture contains a mouse."))),
-            ui.column(12, ui.help_text(_("If the detected mouse probability of a picture exceeds this value, the flap will remain closed."))),
-            ui.br(),
-            ui.column(12, ui.input_slider("sldMinThreshold", _("Minimum detection threshold"), min=0, max=80, value=CONFIG['MIN_THRESHOLD'])),
-            ui.column(12, ui.help_text(_("Pictures with a detection probability below this value (for both 'Mouse' and 'No Mouse' check) are not saved in the database."))),
-            ui.br(),
-            ui.column(12, ui.input_numeric("numMinPicturesToAnalyze", _("Minimum pictures before unlock decision"), CONFIG['MIN_PICTURES_TO_ANALYZE'], min=1)),
-            ui.column(12, ui.help_text(_("Number of pictures that must be analyzed before deciding to unlock the flap. If a picture exceeds the mouse threshold, the flap will remain closed."))),
-            ui.br(),
-            ui.column(12, ui.input_switch("btnDetectPrey", _("Detect prey"), CONFIG['MOUSE_CHECK_ENABLED'])),
-            ui.column(12, ui.help_text(_("If this is set to 'Yes', and the mouse detection threshold is exceeded in a picture, the flap will remain closed."))),
-            ui.column(12, ui.help_text(_("NOTE: The zones and the probability of detected mice will be stored independently of this setting for every picture."))),
-            ui.br(),
-            ui.column(12, ui.input_select(
-                "txtAllowedToEnter",
-                _("Open inside direction for:"),
-                {
-                    AllowedToEnter.ALL.value: _("All cats"), AllowedToEnter.ALL_RFIDS.value: _("All cats with a RFID chip"), AllowedToEnter.KNOWN.value: _("Only registered cats"), AllowedToEnter.NONE.value: _("No cats"),
-                },
-                selected=str(CONFIG['ALLOWED_TO_ENTER'].value),
-            )),
-            ui.br(),
-            ui.column(12, ui.input_switch("btnAllowedToExit", _("Allow cats to exit"), CONFIG['ALLOWED_TO_EXIT'])),
-            ui.column(12, ui.help_text(_("If this is set to 'No', the direction to the outside remains closed. Useful for e.g. new year's eve or an upcoming vet visit."))),
-            ui.br(),
-            # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
-            #ui.column(12, ui.input_slider("sldPirOutsideThreshold", _("Sensitivity of the motion sensor on the outside"), min=0.1, max=6, step=0.1, value=CONFIG['PIR_OUTSIDE_THRESHOLD'])),
-            ui.column(12, ui.input_slider("sldPirInsideThreshold", _("Reaction speed (in s) of the motion sensor on the inside"), min=0.1, max=6, step=0.1, value=CONFIG['PIR_INSIDE_THRESHOLD'])),
-            ui.column(12, ui.help_text(_("A low value means a fast reaction, but also a higher probability of false alarms. A high value means a slow reaction, but also a lower probability of false alarms."))),
-            ui.column(12, ui.help_text(_("NOTE: The motion sensor on the outside is not yet configurable. This will be implemented soon."))),
-            ui.hr(),
+            # --- Pictures view settings ---
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.h4(_("Pictures view settings"), style_="text-align: center;"),
+                    ),
+                    ui.br(),
+                    ui.row(
+                        ui.column(4, ui.input_numeric("numMaxPhotosCount", _("Maximum number of photos to retain in the database"), CONFIG['MAX_PHOTOS_COUNT'], min=100)),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("The oldest pictures will be deleted if the number of pictures exceeds this value.") + "  \n" +
+                                _("The maximum number of pictures depends on the type of the Raspberry Pi, since some kittyflaps are equipped with 16GB and some with 32GB.") + "  \n" +
+                                _("As a rule of thumb, you can calculate with 200MB per 1000 pictures. You can check the free disk space in the `Info` section.") + "  \n" +
+                                "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['max_photos_count']) + ")*"
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container align-left",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
 
-            ui.column(12, ui.h5(_("Live view settings"))),
-            ui.column(12, ui.input_select(
-                "numLiveViewUpdateInterval",
-                _("Live-View update interval:"),
-                {
-                    _("Refresh the live view every..."):
-                    {
-                        0.1: "100ms", 0.2: "200ms", 0.5: "500ms", 1.0: "1s", 2.0: "2s", 3.0: "3s", 5.0: "5s", 10.0: "10s"
-                    },
-                },
-                selected=CONFIG['LIVE_VIEW_REFRESH_INTERVAL'],
-            )),
-            ui.column(12, ui.help_text(_("NOTE: A high refresh rate could slow down the performance, especially if several users are connected at the same time. Values below 1s require a fast and stable WLAN connection."))),
-            ui.column(12, ui.help_text(_("This setting affects only the view in the WebUI and has no impact on the detection process."))),
-            ui.hr(),
+            # --- Advanced settings ---
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.h4(_("Advanced settings"), style_="text-align: center;"),
+                    ),
+                    ui.br(),
+                    ui.row(
+                        ui.column(4, ui.input_select("txtLoglevel", "Loglevel", {"DEBUG": "DEBUG", "INFO": "INFO", "WARN": "WARN", "ERROR": "ERROR", "CRITICAL": "CRITICAL"}, selected=CONFIG['LOGLEVEL'])),
+                        ui.column(8, ui.markdown(_("`INFO` is the default log level and should be used in normal operation. `DEBUG` should only be used if it is really necessary!")), style_="color: grey;"),
+                    ),
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container align-left",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
 
-            ui.column(12, ui.h5(_("Pictures view settings"))),
-            ui.column(12, ui.input_numeric("numMaxPhotosCount", _("Maximum number of photos to retain in the database"), CONFIG['MAX_PHOTOS_COUNT'], min=100)),
-            ui.hr(),
-
-            ui.column(12, ui.h5(_("Advanced settings"))),
-            ui.column(12, ui.input_select("txtLoglevel", "Loglevel", {"DEBUG": "DEBUG", "INFO": "INFO", "WARN": "WARN", "ERROR": "ERROR", "CRITICAL": "CRITICAL"}, selected=CONFIG['LOGLEVEL'])),
             ui.br(),
-
-            #ui.input_action_button("bSaveKittyhackConfig", _("Save Kittyhack Config")),
+            ui.br(),
             ui.br(),
             ui.br(),
             ui.br(),
@@ -1656,6 +1941,7 @@ def server(input, output, session):
     def on_save_kittyhack_config():
         # override the variable with the data from the configuration page
         language_changed = CONFIG['LANGUAGE'] != input.txtLanguage()
+        tflite_model_changed = CONFIG['TFLITE_MODEL_VERSION'] != input.TfLiteModelVersion()
         CONFIG['LANGUAGE'] = input.txtLanguage()
         CONFIG['TIMEZONE'] = input.txtConfigTimezone()
         CONFIG['DATE_FORMAT'] = input.txtConfigDateformat()
@@ -1666,11 +1952,11 @@ def server(input, output, session):
         CONFIG['MAX_PHOTOS_COUNT'] = int(input.numMaxPhotosCount())
         CONFIG['LOGLEVEL'] = input.txtLoglevel()
         CONFIG['MOUSE_CHECK_ENABLED'] = input.btnDetectPrey()
+        CONFIG['TFLITE_MODEL_VERSION'] = input.TfLiteModelVersion()
         CONFIG['ALLOWED_TO_ENTER'] = AllowedToEnter(input.txtAllowedToEnter())
         CONFIG['LIVE_VIEW_REFRESH_INTERVAL'] = float(input.numLiveViewUpdateInterval())
         CONFIG['ALLOWED_TO_EXIT'] = input.btnAllowedToExit()
         CONFIG['PERIODIC_VERSION_CHECK'] = input.btnPeriodicVersionCheck()
-        #CONFIG['KITTYFLAP_DB_NAGSCREEN'] = input.btnShowKittyflapDbNagscreen()
         # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
         #CONFIG['PIR_OUTSIDE_THRESHOLD'] = 10-int(input.sldPirOutsideThreshold())
         CONFIG['PIR_INSIDE_THRESHOLD'] = float(input.sldPirInsideThreshold())
@@ -1683,7 +1969,10 @@ def server(input, output, session):
         if save_config():
             ui.notification_show(_("Kittyhack configuration updated successfully."), duration=5, type="message")
             if language_changed:
-                ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the new language."), duration=15, type="message")
+                ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the new language."), duration=30, type="message")
+
+            if tflite_model_changed:
+                ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the new TFLite model version."), duration=30, type="message")
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=5, type="error")
 
@@ -1973,6 +2262,10 @@ def server(input, output, session):
             ui.HTML(f"<center><p>Latest Version: <code>{latest_version}</code></p></center>"),
             ui_update_kittyhack,
             ui.hr(),
+            ui.h5("Changelogs"),
+            ui.input_action_button("btn_changelogs", "Show Changelogs", icon=icon_svg("info")),
+            ui.br(),
+            ui.hr(),
             ui.h5("System Information"),
             ui.markdown(
                 f"""
@@ -2021,6 +2314,24 @@ def server(input, output, session):
                 return ui.markdown(f"###### WLAN Connection Status:\n- **Link Quality:** {wlan_icon} {quality}\n- **Signal Level:** {signal} dBm")
         except:
             return ui.markdown("###### WLAN Connection Status:\n Unable to determine")
+        
+    @reactive.Effect
+    @reactive.event(input.btn_changelogs)
+    def show_changelogs():
+        changelog_text = get_changelogs(after_version="v1.0.0", language=CONFIG['LANGUAGE'])
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.markdown(changelog_text),
+                ),
+                title=_("Changelogs"),
+                easy_close=True,
+                size="xl",
+                footer=ui.div(
+                    ui.input_action_button("btn_modal_cancel", _("Close")),
+                )
+            )
+        )
 
     @reactive.Effect
     @reactive.event(input.clear_kittyflap_db)

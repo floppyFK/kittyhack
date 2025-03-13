@@ -17,7 +17,7 @@ MAX_UNLOCK_TIME = 45.0           # Maximum time the door is allowed to stay open
 LAZY_CAT_DELAY = 6.0             # Keep the PIR active for an additional 6 seconds after the last detected motion
 
 # Initialize TfLite
-tflite = TfLite(modeldir = "./tflite/",
+tflite = TfLite(modeldir = f"./tflite/{CONFIG['TFLITE_MODEL_VERSION']}",
                 graph = "cv-lite-model.tflite",
                 labelfile = "labels.txt",
                 resolution = "800x600",
@@ -54,8 +54,10 @@ def backend_main(simulate_kittyflap = False):
     ids_of_current_motion_block = []
     known_rfid_tags = []
     unlock_inside_tm = 0.0
+    unlock_inside = False
     unlock_outside_tm = 0.0
     inside_manually_unlocked = False
+    backend_main.prey_detection_tm = 0.0
 
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
@@ -179,8 +181,12 @@ def backend_main(simulate_kittyflap = False):
 
                 # Update the motion_block_id and the tag_id for for all elements between first_motion_outside_tm and last_motion_outside_tm
                 img_ids_for_motion_block = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm)
+                ids_exceeding_mouse_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_mouse_probability=CONFIG['MIN_THRESHOLD'])
+                ids_exceeding_nomouse_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_no_mouse_probability=CONFIG['MIN_THRESHOLD'])
                 logging.info(f"[BACKEND] Found {len(img_ids_for_motion_block)} elements between {first_motion_outside_tm} and {last_motion_outside_tm}")
-                if len(img_ids_for_motion_block) > 0:
+                # Log all events to the database, where either the mouse threshold is exceeded or the no-mouse threshold is exceeded,
+                # as well as all outgoing events
+                if (len(ids_exceeding_mouse_th) + len(ids_exceeding_nomouse_th) > 0) or (event_type in [EventType.CAT_WENT_OUTSIDE]):
                     for element in img_ids_for_motion_block:
                         image_buffer.update_block_id(element, motion_block_id)
                         if tag_id is not None:
@@ -189,6 +195,11 @@ def backend_main(simulate_kittyflap = False):
                     # Write to the database in a separate thread
                     db_thread = threading.Thread(target=write_motion_block_to_db, args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, event_type), daemon=True)
                     db_thread.start()
+                else:
+                    logging.info("[BACKEND] No elements found that exceed the mouse threshold. No database entry will be created.")
+                    if len(img_ids_for_motion_block) > 0:
+                        for element in img_ids_for_motion_block:
+                            image_buffer.delete_by_id(element)
                 
                 # Reset the first motion timestamps
                 first_motion_outside_tm = 0.0
@@ -311,7 +322,8 @@ def backend_main(simulate_kittyflap = False):
                 "inside_locked": magnets.get_inside_state() == False,
                 "mouse_check": mouse_check,
                 "outside_locked": magnets.get_outside_state() == False,
-                "no_unlock_queued": magnets.check_queued("unlock_inside") == False
+                "no_unlock_queued": magnets.check_queued("unlock_inside") == False,
+                "no_prey_within_timeout": (tm.time() - backend_main.prey_detection_tm) > CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION']
             }
 
             if not hasattr(backend_main, "previous_mouse_check_conditions"):
@@ -320,6 +332,12 @@ def backend_main(simulate_kittyflap = False):
                 for key, value in mouse_check_conditions.items():
                     if backend_main.previous_mouse_check_conditions[key] != value:
                         logging.info(f"[BACKEND] Mouse check condition '{key}' changed to {value}.")
+                
+                # If the prey detection is enabled, check if this is the first iteration with detected prey
+                if mouse_check == False and mouse_check_conditions["no_mouse_detected"] == False and backend_main.previous_mouse_check_conditions["no_mouse_detected"] == True:
+                    backend_main.prey_detection_tm = tm.time()
+                    logging.info(f"[BACKEND] Detected prey in the images. Set the timestamp for prey detection to {backend_main.prey_detection_tm}.")
+
                 if backend_main.previous_mouse_check_conditions != mouse_check_conditions:
                     logging.info(f"[BACKEND] Mouse check conditions: {mouse_check_conditions}")
                     backend_main.previous_mouse_check_conditions = mouse_check_conditions
@@ -327,15 +345,19 @@ def backend_main(simulate_kittyflap = False):
             if not hasattr(backend_main, "previous_unlock_inside_conditions"):
                 backend_main.previous_unlock_inside_conditions = unlock_inside_conditions
             else:
-                total_unlock_inside_conditions = len(unlock_inside_conditions)
                 for key, value in unlock_inside_conditions.items():
                     if backend_main.previous_unlock_inside_conditions[key] != value:
-                        logging.info(f"[BACKEND] Unlock inside Condition '{key}' changed to {value}. ({sum(unlock_inside_conditions.values())}/{total_unlock_inside_conditions} conditions fulfilled)")
+                        logging.info(f"[BACKEND] Unlock inside Condition '{key}' changed to {value}. ({sum(unlock_inside_conditions.values())}/{len(unlock_inside_conditions)} conditions fulfilled)")
                 if backend_main.previous_unlock_inside_conditions != unlock_inside_conditions:
                     logging.info(f"[BACKEND] Unlock inside conditions: {unlock_inside_conditions}")
                     backend_main.previous_unlock_inside_conditions = unlock_inside_conditions
 
             unlock_inside = all(unlock_inside_conditions.values())
+
+            # Lock the inside if there was a mouse detected after the door was already unlocked
+            if (mouse_check == False and magnets.get_inside_state() and magnets.check_queued("lock_inside") == False and inside_manually_unlocked == False):
+                    magnets.queue_command("lock_inside")
+                    unlock_inside_tm = 0.0
 
             if unlock_inside or manual_door_override['unlock_inside']:
                 logging.info(f"[BACKEND] Door unlock requested {'(manual override)' if manual_door_override['unlock_inside'] else ''}")
@@ -370,11 +392,11 @@ def backend_main(simulate_kittyflap = False):
                 manual_door_override['lock_inside'] = False
                 
             # Check if maximum unlock time is exceeded
-            if magnets.get_inside_state() and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME):
+            if magnets.get_inside_state() and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_inside") == False:
                 logging.warning("[BACKEND] Maximum unlock time exceeded for inside door. Forcing lock.")
                 magnets.queue_command("lock_inside")
                 
-            if magnets.get_outside_state() and (tm.time() - unlock_outside_tm > MAX_UNLOCK_TIME):
+            if magnets.get_outside_state() and (tm.time() - unlock_outside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_outside") == False:
                 logging.warning("[BACKEND] Maximum unlock time exceeded for outside door. Forcing lock.")
                 magnets.queue_command("lock_outside")
                 

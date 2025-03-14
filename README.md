@@ -27,10 +27,10 @@ Current features:
 - **Show overlay with detected objects**
 - **Live camera feed**
 - **Manage cats and add new cats**
+- **Show incoming/outgoing Events** 
 
 ### Planned Features
-- **Display of events**: A journal showing when the flap was opened in which direction, when it was locked, etc.
-- **Additional filters for image display**: e.g., grouping all images of an event (cat entering / cat exiting)
+- **Train your own "AI"**: Create a custom object detection model using your own images.
 
 ---
 
@@ -70,6 +70,7 @@ The setup is quite simple:
    ```
    Username: `pi`
    Default password: `kittyflap`  
+   > **NOTE:** You have to enter the password "blindly", as no characters will be displayed while typing.
 
 2. **Check available disk space**
    If your cat flap was still active for an extended period after the Kittyflap servers were shut down, the file system might be full.
@@ -217,10 +218,10 @@ Aktuelle Features:
 - **Overlay mit erkannten Objekten anzeigen**
 - **Live-Bild der Kamera**
 - **Katzen verwalten und neue Katzen hinzufügen**
+- **Ereignisse von ankommenden/rausgehenden Katzen anzeigen**
 
 ### Geplante Features
-- **Anzeige von Events**: Ein Journal darüber, wann die Klappe in welche Richtung geöffnet wurde, wann sie gesperrt hat usw.
-- **Weitere Filter für die Bildanzeige**: z.B. alle Bilder eines Events (Katze kommt rein / Katze geht raus) zusammenfassen
+- **Trainieren einer eigenen "KI"**: Ein individuelles Objekterkennungsmodell anhand der eigenen Bildern erstellen lassen.
 
 ---
 
@@ -260,6 +261,7 @@ Die Installation ist kinderleicht:
    ```
    Benutzername: `pi`
    Standardpasswort: `kittyflap`  
+   > **HINWEIS:** Du musst das Passwort "blind" eingeben, da beim Tippen keine Zeichen angezeigt werden.
 
 2. **Freien Speicherplatz überprüfen**
    Falls deine Katzenklappe nach der Abschaltung der Kittyflap-Server noch längere Zeit aktiv war, kann es sein, dass das Dateisystem vollgeschrieben ist.

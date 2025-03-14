@@ -643,7 +643,7 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
         if id is None:
             id = 0
         else:
-            id += 1        
+            id += 1
         
         # Read the max value of the coumn 'block_id' and increment it
         cursor.execute("SELECT MAX(block_id) FROM events")

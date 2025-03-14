@@ -12,10 +12,21 @@ import time as tm
 import threading
 import importlib.util
 import logging
+import multiprocessing
+import concurrent.futures
 from typing import List, Optional
 from src.helper import CONFIG, sigterm_monitor
 
+# Import TensorFlow libraries
+# If tflite_runtime is installed, import interpreter from tflite_runtime, else import from regular tensorflow
+pkg = importlib.util.find_spec('tflite_runtime')
+if pkg:
+    from tflite_runtime.interpreter import Interpreter
+else:
+    from tensorflow.lite.python.interpreter import Interpreter
+
 class VideoStream:
+    # FIXME: self.frame shall be changed to a list of frames. The last frame is always the most recent one. The list can be used to store the last N frames. If the list is full, the oldest frame is removed.
     """Camera object that controls video streaming from the Picamera"""
     def __init__(self, resolution=(640, 480), framerate=15, jpeg_quality=75, tuning_file="/usr/share/libcamera/ipa/rpi/vc4/ov5647_noir.json"):
         self.resolution = resolution
@@ -23,7 +34,8 @@ class VideoStream:
         self.jpeg_quality = jpeg_quality
         self.tuning_file = tuning_file  # Path to the tuning file
         self.stopped = False
-        self.frame = None
+        self.frames = []
+        self.buffer_size = 30
         self.process = None
         self.lock = threading.Lock()
 
@@ -66,7 +78,9 @@ class VideoStream:
                 if frame is not None:
                     frame = cv2.rotate(frame, cv2.ROTATE_180)
                     with self.lock:
-                        self.frame = frame
+                        self.frames.append(frame)
+                        if len(self.frames) > self.buffer_size:
+                            self.frames.pop(0)  # Remove oldest frame
                 else:
                     logging.error("[CAMERA] Failed to decode frame")
 
@@ -87,18 +101,26 @@ class VideoStream:
             cv2.rectangle(final_frame, (text_x - 10, text_y - text_size[1] - 10), 
                           (text_x + text_size[0] + 10, text_y + 10), (128, 128, 128), cv2.FILLED)
 
-            # Draw text
-            cv2.putText(final_frame, text, (text_x, text_y), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+            with self.lock:
+                self.frames = [final_frame]
             with self.lock:
                 self.frame = final_frame
             logging.info("[CAMERA] Added final frame to indicate stream ended.")
 
-        self.process.terminate()
-
     def read(self):
         # Return the most recent frame
         with self.lock:
-            return self.frame
+            return self.frames[-1] if self.frames else None
+        
+    def read_oldest(self):
+        # Return and remove the oldest frame from the list, but keep the last frame
+        with self.lock:
+            if len(self.frames) > 1:
+                return self.frames.pop(0)
+            elif len(self.frames) == 1:
+                return self.frames[0]
+            else:
+                return None
 
     def stop(self):
         # Stop the video stream
@@ -334,23 +356,14 @@ class TfLite:
                         # Simulate a image
                         timestamp = tm.time()
                         frame = np.zeros((imH, imW, 3), dtype=np.uint8)
-                        frame_with_overlay = frame.copy()
                         mouse_probability = np.random.uniform(CONFIG['MIN_THRESHOLD']/100, 1.0)
                         no_mouse_probability = np.random.uniform(CONFIG['MIN_THRESHOLD']/100, 1.0)
-                        image_buffer.append(timestamp, self.encode_jpg_image(frame), self.encode_jpg_image(frame_with_overlay), mouse_probability, no_mouse_probability)
+                        image_buffer.append(timestamp, self.encode_jpg_image(frame), None, mouse_probability, no_mouse_probability)
                 tm.sleep(0.1)
             return
 
-        # Import TensorFlow libraries
-        # If tflite_runtime is installed, import interpreter from tflite_runtime, else import from regular tensorflow
-        pkg = importlib.util.find_spec('tflite_runtime')
-        if pkg:
-            from tflite_runtime.interpreter import Interpreter
-        else:
-            from tensorflow.lite.python.interpreter import Interpreter
-
         # Path to .tflite file, which contains the model that is used for object detection
-        PATH_TO_CKPT = os.path.join(self.modeldir, self.graph)
+        PATH_TO_TFLITE = os.path.join(self.modeldir, self.graph)
 
         # Path to label map file
         PATH_TO_LABELS = os.path.join(self.modeldir, self.labelfile)
@@ -360,10 +373,10 @@ class TfLite:
             labels = [line.strip() for line in f.readlines()]
 
         logging.info(f"[CAMERA] Labels loaded: {labels}")
-        logging.info(f"[CAMERA] Preparing to run TFLite model {PATH_TO_CKPT} on video stream with resolution {imW}x{imH} @ {self.framerate}fps and quality {self.jpeg_quality}%")
+        logging.info(f"[CAMERA] Preparing to run TFLite model {PATH_TO_TFLITE} on video stream with resolution {imW}x{imH} @ {self.framerate}fps and quality {self.jpeg_quality}%")
 
         # Load the Tensorflow Lite model.
-        interpreter = Interpreter(model_path=PATH_TO_CKPT)
+        interpreter = Interpreter(model_path=PATH_TO_TFLITE, num_threads=multiprocessing.cpu_count())
         interpreter.allocate_tensors()
 
         # Get model details
@@ -373,6 +386,7 @@ class TfLite:
         width = input_details[0]['shape'][2]
 
         floating_model = (input_details[0]['dtype'] == np.float32)
+        logging.info(f"[CAMERA] Floating model: {floating_model}")
 
         input_mean = 127.5
         input_std = 127.5
@@ -395,14 +409,13 @@ class TfLite:
         # Initialize video stream
         videostream = VideoStream(resolution=(imW, imH), framerate=self.framerate, jpeg_quality=self.jpeg_quality).start()
         logging.info(f"[CAMERA] Starting video stream...")
-        #tm.sleep(5)
 
         # Wait for the camera to warm up
         detected_objects = []
         frame = None
         stream_start_time = tm.time()
         while frame is None:
-            frame = videostream.read()
+            frame = videostream.read_oldest()
             if tm.time() - stream_start_time > 10:
                 logging.error("[CAMERA] Camera stream failed to start within 10 seconds!")
                 break
@@ -416,109 +429,38 @@ class TfLite:
             # Start timer (for calculating frame rate)
             t1 = cv2.getTickCount()
 
-            # Grab frame from video stream
-            frame = videostream.read()
+            if not self.paused:
+                # Grab frame from video stream
+                frame = videostream.read_oldest()
 
-            # Acquire frame and resize to expected shape [1xHxWx3]
-            if frame is not None:
-                # Run the CPU intensive TFLite only if paused is not set
-                if not self.paused:
-                    frame_with_overlay = frame.copy()
-                    frame_rgb = cv2.cvtColor(frame_with_overlay, cv2.COLOR_BGR2RGB)
-                    frame_resized = cv2.resize(frame_rgb, (width, height))
-                    input_data = np.expand_dims(frame_resized, axis=0)
-
+                if frame is not None:
+                    # Run the CPU intensive TFLite only if paused is not set
                     timestamp = tm.time()
+                    _timestamp, mouse_probability, no_mouse_probability, detected_objects = self._process_frame(
+                        frame, width, height, input_mean, input_std, floating_model, interpreter,
+                        input_details, output_details, boxes_idx, classes_idx, scores_idx, labels
+                    )
+                    
+                    image_buffer.append(timestamp, self.encode_jpg_image(frame), None, 
+                                        mouse_probability, no_mouse_probability, detected_objects=detected_objects)
 
-                    # Normalize pixel values if using a floating model (i.e. if model is non-quantized)
-                    if floating_model:
-                        input_data = (np.float32(input_data) - input_mean) / input_std
+                    # Calculate framerate
+                    t2 = cv2.getTickCount()
+                    time1 = (t2 - t1) / freq
+                    frame_rate_calc = 1 / time1
+                    logging.info(f"[CAMERA] Model processing time: {time1:.2f} sec, Frame Rate: {frame_rate_calc:.2f} fps")
 
-                    # Perform the actual detection by running the model with the image as input
-                    interpreter.set_tensor(input_details[0]['index'], input_data)
-                    interpreter.invoke()
-
-                    # Retrieve detection results
-                    boxes = interpreter.get_tensor(output_details[boxes_idx]['index'])[0] # Bounding box coordinates of detected objects
-                    classes = interpreter.get_tensor(output_details[classes_idx]['index'])[0] # Class index of detected objects
-                    scores = interpreter.get_tensor(output_details[scores_idx]['index'])[0] # Confidence of detected objects
-
-                    # Ensure scores is an array
-                    if np.isscalar(scores):
-                        scores = np.array([scores])
-
-                    # Ensure classes is an array
-                    if np.isscalar(classes):
-                        classes = np.array([classes])
-
-                    # Ensure boxes is a 2-dimensional array
-                    if boxes.ndim == 1:
-                        boxes = np.expand_dims(boxes, axis=0)
-
-                    # Loop over all detections and draw detection box if confidence is above minimum threshold
-                    save_image = False
-                    no_mouse_probability = 0.0
-                    mouse_probability = 0.0
-                    detected_objects = []
-                    for i in range(len(scores)):
-                        if ((scores[i] > (CONFIG['MIN_THRESHOLD']/100)) and (scores[i] <= 1.0)):
-                            save_image = True
-
-                            # Get bounding box coordinates and draw box
-                            # Interpreter can return coordinates that are outside of image dimensions, need to force them to be within image using max() and min()
-                            ymin = int(max(1, (boxes[i][0] * imH)))
-                            xmin = int(max(1, (boxes[i][1] * imW)))
-                            ymax = int(min(imH, (boxes[i][2] * imH)))
-                            xmax = int(min(imW, (boxes[i][3] * imW)))
-
-                            object_name = str(labels[int(classes[i])]) # Look up object name from "labels" array using class index
-                            probability = float(scores[i] * 100)
-                            
-                            # Add the detected object to the list with coordinates as percentages
-                            detected_objects.append(DetectedObject(
-                                float(xmin / imW * 100),  # x as percentage
-                                float(ymin / imH * 100),  # y as percentage
-                                float((xmax - xmin) / imW * 100),  # width as percentage
-                                float((ymax - ymin) / imH * 100),  # height as percentage
-                                object_name,
-                                probability
-                            ))
-
-                            #cv2.rectangle(frame_with_overlay, (xmin, ymin), (xmax, ymax), (10, 255, 0), 2)
-
-                            # Draw label
-                            probability = int(scores[i] * 100)
-                            label = '%s: %d%%' % (object_name, probability) # Example: 'person: 72%'
-                            labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2) # Get font size
-                            label_ymin = max(ymin, labelSize[1] + 10) # Make sure not to draw label too close to top of window
-                            #cv2.rectangle(frame_with_overlay, (xmin, label_ymin - labelSize[1] - 10), (xmin + labelSize[0], label_ymin + baseLine - 10), (255, 255, 255), cv2.FILLED) # Draw white box to put label text in
-                            #cv2.putText(frame_with_overlay, label, (xmin, label_ymin - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2) # Draw label text
-
-                            if object_name == "Maus":
-                                mouse_probability = int(probability)
-                            elif object_name == "Keine Maus":
-                                no_mouse_probability = int(probability)
-
-                    if save_image:
-                        image_buffer.append(timestamp, self.encode_jpg_image(frame), None, mouse_probability, no_mouse_probability, detected_objects=detected_objects)
-
-                # To avoid intensive CPU load, wait here until we reached the desired framerate
-                elapsed_time = (cv2.getTickCount() - t1) / freq
-                sleep_time = max(0, (1.0 / self.framerate) - elapsed_time)
-                tm.sleep(sleep_time)
-
-                # Calculate framerate
-                t2 = cv2.getTickCount()
-                time1 = (t2 - t1) / freq
-                frame_rate_calc = 1 / time1
-                #logging.debug(f"[CAMERA] Frame rate: {frame_rate_calc:.2f}")
-
-            else:
-                # Log warning only once every 10 seconds to avoid flooding the log
-                current_time = tm.time()
-                if current_time - self.last_log_time > 10:
-                    logging.warning("[CAMERA] No frame received!")
-                    self.last_log_time = current_time
+                else:
+                    # Log warning only once every 10 seconds to avoid flooding the log
+                    current_time = tm.time()
+                    if current_time - self.last_log_time > 10:
+                        logging.warning("[CAMERA] No frame received!")
+                        self.last_log_time = current_time
+            
+            # To avoid intensive CPU load, wait here until we reached the desired framerate
+            elapsed_time = (cv2.getTickCount() - t1) / freq
+            sleep_time = max(0, (1.0 / self.framerate) - elapsed_time)
+            tm.sleep(sleep_time)
             
         # Stop the video stream
         videostream.stop()
@@ -535,6 +477,114 @@ class TfLite:
 
     def get_run_state(self):
         return not self.paused
+
+    def _process_frame(self, 
+                       frame: np.ndarray, 
+                       width: int, 
+                       height: int, 
+                       input_mean: float, 
+                       input_std: float, 
+                       floating_model: bool, 
+                       interpreter: Interpreter, 
+                       input_details: list, 
+                       output_details: list, 
+                       boxes_idx: int, 
+                       classes_idx: int, 
+                       scores_idx: int, 
+                       labels: list
+    ) -> tuple:
+        """
+        Process a single frame for object detection using TensorFlow Lite.
+        This method handles the preprocessing of the frame, performs inference using the TensorFlow Lite
+        interpreter, and processes the detection results.
+        Args:
+            frame (np.ndarray): Input frame in BGR format
+            width (int): Target width for model input
+            height (int): Target height for model input
+            input_mean (float): Mean value for input normalization
+            input_std (float): Standard deviation for input normalization
+            floating_model (bool): Whether the model uses floating point numbers
+            interpreter (tensorflow.lite.python.interpreter.Interpreter): TFLite interpreter
+            input_details (list): Model input details
+            output_details (list): Model output details
+            boxes_idx (int): Index for bounding boxes in output
+            classes_idx (int): Index for classes in output
+            scores_idx (int): Index for scores in output
+            labels (list): List of label names
+        Returns:
+            tuple: Contains:
+                - timestamp (float): Processing timestamp
+                - mouse_probability (float): Probability of mouse detection (0-100)
+                - no_mouse_probability (float): Probability of no mouse present (0-100)
+                - detected_objects (list): List of DetectedObject instances containing detection results
+        """
+        
+        #frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        #h, w, __ = frame_rgb.shape
+        #scale = max(width / w, height / h)
+        #resized_w = int(w * scale)
+        #resized_h = int(h * scale)
+        #frame_resized = cv2.resize(frame_rgb, (resized_w, resized_h))
+
+        #start_x = (resized_w - width) // 2
+        #start_y = (resized_h - height) // 2
+        #frame_cropped = frame_resized[start_y:start_y + height, start_x:start_x + width]
+        #input_data = np.expand_dims(frame_cropped, axis=0)
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_resized = cv2.resize(frame_rgb, (width, height))
+        input_data = np.expand_dims(frame_resized, axis=0)
+
+        original_h, original_w, __ = frame.shape
+
+        timestamp = tm.time()
+
+        if floating_model:
+            input_data = (np.float32(input_data) - input_mean) / input_std
+
+        interpreter.set_tensor(input_details[0]['index'], input_data)
+        interpreter.invoke()
+
+        boxes = interpreter.get_tensor(output_details[boxes_idx]['index'])[0]
+        classes = interpreter.get_tensor(output_details[classes_idx]['index'])[0]
+        scores = interpreter.get_tensor(output_details[scores_idx]['index'])[0]
+
+        if np.isscalar(scores):
+            scores = np.array([scores])
+        if np.isscalar(classes):
+            classes = np.array([classes])
+        if boxes.ndim == 1:
+            boxes = np.expand_dims(boxes, axis=0)
+        
+        no_mouse_probability = 0.0
+        mouse_probability = 0.0
+        detected_objects = []
+
+        for i in range(len(scores)):
+            ymin = int(max(1, (boxes[i][0] * original_h)))
+            xmin = int(max(1, (boxes[i][1] * original_w)))
+            ymax = int(min(original_h, (boxes[i][2] * original_h)))
+            xmax = int(min(original_w, (boxes[i][3] * original_w)))
+
+            object_name = str(labels[int(classes[i])])
+            probability = float(scores[i] * 100)
+            
+            detected_objects.append(DetectedObject(
+                float(xmin / original_w * 100),
+                float(ymin / original_h * 100),
+                float((xmax - xmin) / original_w * 100),
+                float((ymax - ymin) / original_h * 100),
+                object_name,
+                probability
+            ))
+
+            if object_name == "Maus":
+                mouse_probability = int(probability)
+            elif object_name == "Keine Maus":
+                no_mouse_probability = int(probability)
+
+
+        return timestamp, mouse_probability, no_mouse_probability, detected_objects
 
     def get_camera_frame(self):
         if videostream is not None:

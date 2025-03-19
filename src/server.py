@@ -1762,6 +1762,30 @@ def server(input, output, session):
                     ),
                     ui.hr(),
                     ui.row(
+                        ui.column(4, ui.input_numeric("numMaxPicturesPerEventWithRfid", _("Maximal pictures per event with RFID"), CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID'], min=0)),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("Maximal number of pictures that will be stored to the database for a motion event, if a cat with a RFID chip is detected.") + "  \n" +
+                                _("NOTE: The internal prey detection will still be active for all pictures of this event. This number just limits the number of pictures that will be stored to the database.") + "  \n" +
+                                _("If you set this to 0, no event will be logged to the database. Too many pictures can slow down the performance drastically.")
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(4, ui.input_numeric("numMaxPicturesPerEventWithoutRfid", _("Maximal pictures per event without RFID"), CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID'], min=0)),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("Maximal number of pictures that will be stored to the database for a motion event, if a motion event without a detected RFID occurs.") + "  \n" +
+                                _("NOTE: The internal prey detection will still be active for all pictures of this event. This number just limits the number of pictures that will be stored to the database.") + " \n" +
+                                _("If you set this to 0, no event will be logged to the database. Too many pictures can slow down the performance drastically.")
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
                         ui.column(4, ui.input_slider("sldLockAfterPreyDetect", _("Lock duration after prey detection (in s)"), min=30, max=600, step=5, value=CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'])),
                         ui.column(8, ui.markdown(_("The flap will remain closed for this time after a prey detection.")), style_="color: grey;")
                     ),
@@ -1904,6 +1928,18 @@ def server(input, output, session):
                         ui.column(4, ui.input_select("txtLoglevel", "Loglevel", {"DEBUG": "DEBUG", "INFO": "INFO", "WARN": "WARN", "ERROR": "ERROR", "CRITICAL": "CRITICAL"}, selected=CONFIG['LOGLEVEL'])),
                         ui.column(8, ui.markdown(_("`INFO` is the default log level and should be used in normal operation. `DEBUG` should only be used if it is really necessary!")), style_="color: grey;"),
                     ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(12, ui.input_switch("btnUseAllCoresForImageProcessing", _("Use all CPU cores for image processing"), CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'])),
+                        ui.column(
+                            12,
+                            ui.markdown(
+                                _("If this is disabled, only one CPU core will be used for image processing, which results in a slower analysis of the pictures, and therefore also a little bit slower prey detection.") + "  \n" +
+                                _("If your kittyflap freezes or restarts frequently, you could try to disable this setting.") + "  \n" +
+                                _("NOTE: This setting requires a restart of the kittyflap to take effect.")
+                            ), style_="color: grey;"
+                        ),
+                    ),
                     ui.br(),
                     full_screen=False,
                     class_="generic-container align-left",
@@ -1942,6 +1978,7 @@ def server(input, output, session):
         # override the variable with the data from the configuration page
         language_changed = CONFIG['LANGUAGE'] != input.txtLanguage()
         tflite_model_changed = CONFIG['TFLITE_MODEL_VERSION'] != input.TfLiteModelVersion()
+        img_processing_cores_changed = CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] != input.btnUseAllCoresForImageProcessing()
         CONFIG['LANGUAGE'] = input.txtLanguage()
         CONFIG['TIMEZONE'] = input.txtConfigTimezone()
         CONFIG['DATE_FORMAT'] = input.txtConfigDateformat()
@@ -1962,6 +1999,9 @@ def server(input, output, session):
         CONFIG['PIR_INSIDE_THRESHOLD'] = float(input.sldPirInsideThreshold())
         CONFIG['WLAN_TX_POWER'] = int(input.sldWlanTxPower())
         CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'] = int(input.sldLockAfterPreyDetect())
+        CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID'] = int(input.numMaxPicturesPerEventWithRfid())
+        CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID'] = int(input.numMaxPicturesPerEventWithoutRfid())
+        CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = input.btnUseAllCoresForImageProcessing()
 
         loglevel = logging._nameToLevel.get(input.txtLoglevel(), logging.INFO)
         logger.setLevel(loglevel)
@@ -1974,6 +2014,9 @@ def server(input, output, session):
 
             if tflite_model_changed:
                 ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the new TFLite model version."), duration=30, type="message")
+            
+            if img_processing_cores_changed:
+                ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the changed configuration."), duration=30, type="message")
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=5, type="error")
 

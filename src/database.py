@@ -656,28 +656,35 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
         elements = image_buffer.get_by_block_id(buffer_block_id)
         logging.info(f"[DATABASE] Writing {len(elements)} images from buffer image block '{buffer_block_id}' as database block '{db_block_id}' to '{database}'.")
 
+        # Decide the max number of pictures to write to the database, based on the content of the first element.tag_id
+        # (every element of the block has the same tag_id)
+        max_images = CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID'] if elements[0].tag_id else CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID']
+
+        idx = 0
         for element in elements:
-            # Write the image to the database
-            try:
-                detected_objects = element.detected_objects if element.detected_objects is not None else []
-                event_json = create_json_from_event(detected_objects)
-            except Exception as e:
-                event_json = json.dumps({'detected_objects': [], 'event_text': ''})
-                logging.error(f"[DATABASE] Failed to serialize event data: {e}")
-            columns = "block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, rfid, event_text"
-            values = ', '.join(['?' for _ in columns.split(', ')])
-            values_list = [
-                db_block_id,
-                get_utc_date_string(element.timestamp),
-                event_type,
-                None if element.original_image is None else element.original_image,
-                None if element.modified_image is None else element.modified_image,
-                element.mouse_probability,
-                element.no_mouse_probability,
-                element.tag_id,
-                event_json
-            ]
-            cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
+            # Write the image to the database, if the index is less than the maximum number of images
+            if idx < max_images:
+                try:
+                    detected_objects = element.detected_objects if element.detected_objects is not None else []
+                    event_json = create_json_from_event(detected_objects)
+                except Exception as e:
+                    event_json = json.dumps({'detected_objects': [], 'event_text': ''})
+                    logging.error(f"[DATABASE] Failed to serialize event data: {e}")
+                columns = "block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, rfid, event_text"
+                values = ', '.join(['?' for _ in columns.split(', ')])
+                values_list = [
+                    db_block_id,
+                    get_utc_date_string(element.timestamp),
+                    event_type,
+                    None if element.original_image is None else element.original_image,
+                    None if element.modified_image is None else element.modified_image,
+                    element.mouse_probability,
+                    element.no_mouse_probability,
+                    element.tag_id,
+                    event_json
+                ]
+                cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
+            idx += 1
 
             # Delete the image from the buffer
             if delete_from_buffer:

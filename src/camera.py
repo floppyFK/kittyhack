@@ -158,6 +158,8 @@ class ImageBufferElement:
                 f"no_mouse_probability={self.no_mouse_probability}, tag_id={self.tag_id}, detected_objects={self.detected_objects})")
 
 class ImageBuffer:
+    MAX_IMAGE_BUFFER_SIZE = 2000
+
     def __init__(self):
         """Initialize an empty buffer."""
         self._buffer: List[ImageBufferElement] = []
@@ -168,6 +170,9 @@ class ImageBuffer:
         """
         Append a new element to the buffer.
         """
+        if len(self._buffer) >= self.MAX_IMAGE_BUFFER_SIZE:
+            logging.warning(f"[IMAGEBUFFER] Buffer is full. Discarding the oldest element with ID {self._buffer[0].id}.")
+            self._buffer.pop(0)
         element = ImageBufferElement(self._next_id, 0, timestamp, original_image, modified_image, mouse_probability, no_mouse_probability, detected_objects=detected_objects)
         self._buffer.append(element)
         logging.info(f"[IMAGEBUFFER] Appended new element with ID {self._next_id}, timestamp: {timestamp}, Mouse probability: {mouse_probability}, No mouse probability: {no_mouse_probability} to the buffer.")
@@ -376,7 +381,10 @@ class TfLite:
         logging.info(f"[CAMERA] Preparing to run TFLite model {PATH_TO_TFLITE} on video stream with resolution {imW}x{imH} @ {self.framerate}fps and quality {self.jpeg_quality}%")
 
         # Load the Tensorflow Lite model.
-        interpreter = Interpreter(model_path=PATH_TO_TFLITE, num_threads=multiprocessing.cpu_count())
+        if CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']:
+            interpreter = Interpreter(model_path=PATH_TO_TFLITE, num_threads=multiprocessing.cpu_count())
+        else:
+            interpreter = Interpreter(model_path=PATH_TO_TFLITE)
         interpreter.allocate_tensors()
 
         # Get model details

@@ -247,11 +247,11 @@ def db_get_photos_by_block_id(database: str, block_id: int, return_data: ReturnD
     :return: DataFrame containing the requested data
     """
     if return_data == ReturnDataPhotosDB.all:
-        columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, rfid, event_text"
+        columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, rfid, event_text, thumbnail"
     elif return_data == ReturnDataPhotosDB.all_modified_image:
-        columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, rfid, event_text"
+        columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, rfid, event_text, thumbnail"
     elif return_data == ReturnDataPhotosDB.all_original_image:
-        columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, rfid, event_text"
+        columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, rfid, event_text, thumbnail"
     elif return_data == ReturnDataPhotosDB.all_except_photos:
         columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, rfid, event_text"
     elif return_data == ReturnDataPhotosDB.only_ids:
@@ -259,6 +259,66 @@ def db_get_photos_by_block_id(database: str, block_id: int, return_data: ReturnD
         
     stmt = f"SELECT {columns} FROM events WHERE block_id = {block_id}"
     return read_df_from_database(database, stmt)
+
+def get_ids_without_thumbnail(database: str):
+    """
+    This function returns the IDs of the images that do not have a thumbnail.
+    
+    :param database: Path to the database file
+    :return: List of IDs without thumbnails
+    """
+    stmt = "SELECT id FROM events WHERE thumbnail IS NULL AND deleted != 1"
+    df = read_df_from_database(database, stmt)
+    return df['id'].tolist() if not df.empty else []
+
+def get_thubmnail_by_id(database: str, photo_id: int):
+    """
+    This function reads a specific thumbnail image based on the ID from the source database.
+    If no thumbnail exists, it creates one from the original image.
+    """
+    stmt = f"SELECT thumbnail, original_image FROM events WHERE id = {photo_id}"
+    df = read_df_from_database(database, stmt)
+    
+    if df.empty:
+        logging.error(f"[DATABASE] Photo with ID {photo_id} not found")
+        return None
+        
+    # Check if thumbnail exists
+    if df.iloc[0]['thumbnail'] is not None:
+        return df.iloc[0]['thumbnail']
+    
+    # If no thumbnail exists, create one from the original image
+    original_image = df.iloc[0]['original_image']
+    if original_image is None:
+        logging.error(f"[DATABASE] Original image not found for photo ID {photo_id}")
+        return None
+        
+    try:
+        # Create thumbnail
+        thumbnail = process_image(original_image, 640, 480, 50)
+        
+        # Store thumbnail in database
+        result = lock_database()
+        if not result.success:
+            logging.error(f"[DATABASE] Failed to acquire lock to update thumbnail: {result.message}")
+            return thumbnail
+            
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE events SET thumbnail = ? WHERE id = ?", (thumbnail, photo_id))
+            conn.commit()
+            conn.close()
+            logging.info(f"[DATABASE] Created and stored thumbnail for photo ID {photo_id}")
+        except Exception as e:
+            logging.error(f"[DATABASE] Failed to store thumbnail in database: {e}")
+        finally:
+            release_database()
+            
+        return thumbnail
+    except Exception as e:
+        logging.error(f"[DATABASE] Failed to create thumbnail from original image: {e}")
+        return None
 
 def db_get_cats(database: str, return_data: ReturnDataCatDB):
     """
@@ -553,7 +613,7 @@ def delete_photo_by_id(database: str, photo_id: int) -> Result:
     """
     This function deletes a specific dataframe based on the ID from the source database.
     """
-    stmt = f"UPDATE events SET original_image = NULL, modified_image = NULL, deleted = 1 WHERE id = {photo_id}"
+    stmt = f"UPDATE events SET original_image = NULL, modified_image = NULL, thumbnail = NULL, deleted = 1 WHERE id = {photo_id}"
     result = write_stmt_to_database(database, stmt)
     if result.success == True:
         logging.info(f"[DATABASE] Photo with ID '{photo_id}' deleted successfully.")
@@ -563,7 +623,7 @@ def delete_photos_by_block_id(database: str, block_id: int) -> Result:
     """
     This function deletes all dataframes based on the block_id from the source database.
     """
-    stmt = f"UPDATE events SET original_image = NULL, modified_image = NULL, deleted = 1 WHERE block_id = {block_id}"
+    stmt = f"UPDATE events SET original_image = NULL, modified_image = NULL, thumbnail = NULL, deleted = 1 WHERE block_id = {block_id}"
     result = write_stmt_to_database(database, stmt)
     if result.success == True:
         logging.info(f"[DATABASE] Photos with block ID '{block_id}' deleted successfully.")
@@ -702,7 +762,7 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
             photos_to_delete = cursor.fetchall()
             for photo in photos_to_delete:
                 logging.info(f"[DATABASE] Deleting photo ID: {photo[0]}, created_at: {photo[1]}")
-                cursor.execute(f"UPDATE events SET deleted = 1, original_image = NULL, modified_image = NULL WHERE id = {photo[0]}")
+                cursor.execute(f"UPDATE events SET deleted = 1, original_image = NULL, modified_image = NULL, thumbnail = NULL WHERE id = {photo[0]}")
 
         conn.commit()
         conn.close()
@@ -828,6 +888,59 @@ def check_if_table_exists(database: str, table: str) -> bool:
         return False
     else:
         return True if result else False
+    finally:
+        release_database()
+
+def check_if_column_exists(database: str, table: str, column: str) -> bool:
+    """
+    This function checks if the given column exists in the table of the database.
+    """
+    if not os.path.exists(database):
+        return False
+    
+    result = lock_database()
+    if not result.success:
+        logging.error(f"[DATABASE] Failed to acquire lock for checking if column '{column}' exists in the table '{table}' of the database '{database}': {result.message}")
+        return False
+
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute(f"PRAGMA table_info({table})")
+        columns = cursor.fetchall()
+        conn.close()
+    except Exception as e:
+        logging.error(f"[DATABASE] Failed to check if column '{column}' exists in the table '{table}' of the database '{database}': {e}")
+        return False
+    else:
+        return True if any(column[1] == column for column in columns) else False
+    finally:
+        release_database()
+
+def add_column_to_table(database: str, table: str, column: str, column_type: str) -> Result:
+    """
+    This function adds a new column to the table of the database.
+    """
+    if not os.path.exists(database):
+        return Result(False, f"[DATABASE] Database '{database}' does not exist.")
+    
+    result = lock_database()
+    if not result.success:
+        return result
+
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        error_message = f"[DATABASE] An error occurred while adding column '{column}' to the table '{table}' of the database '{database}': {e}"
+        logging.error(error_message)
+        return Result(False, error_message)
+    else:
+        logging.info(f"[DATABASE] Successfully added column '{column}' to the table '{table}' of the database '{database}'.")
+        return Result(True, "")
     finally:
         release_database()
     

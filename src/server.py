@@ -129,6 +129,11 @@ if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events"):
     logging.warning(f"Table 'events' not found in the kittyhack database. Creating it...")
     create_kittyhack_events_table(CONFIG['KITTYHACK_DATABASE_PATH'])
 
+# v1.5.1: Check if the "thumbnails" column exists in the "events" table. If not, add it
+if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "thumbnail"):
+    logging.warning(f"Column 'thumbnail' not found in the 'events' table. Adding it...")
+    add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "thumbnail", "BLOB")
+
 if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
     logging.warning(f"Legacy table 'photo' not found in the kittyhack database. Creating it...")
     create_kittyhack_photo_table(CONFIG['KITTYHACK_DATABASE_PATH'])
@@ -205,6 +210,17 @@ def start_background_task():
 
             # Cleanup the events table
             cleanup_deleted_events(CONFIG['KITTYHACK_DATABASE_PATH'])
+
+            ids_without_thumbnail = get_ids_without_thumbnail(CONFIG['KITTYHACK_DATABASE_PATH'])
+            if ids_without_thumbnail:
+                # Limit the number of thumbnails to generate in one run to 250 to avoid high CPU load
+                ids_without_thumbnail.reverse()
+                thumbnails_to_process = ids_without_thumbnail[:250]
+                logging.info(f"[TRIGGER: background task] Start generating thumbnails for {len(thumbnails_to_process)} events (out of {len(ids_without_thumbnail)} total)...")
+                for id in thumbnails_to_process:
+                    get_thubmnail_by_id(database=CONFIG['KITTYHACK_DATABASE_PATH'], photo_id=id)
+            else:
+                logging.info("[TRIGGER: background task] No events found without thumbnail.")
 
             # Check the free disk space
             free_disk_space = get_free_disk_space()
@@ -330,9 +346,13 @@ def show_event_server(input, output, session, block_id: int):
             try:
                 event_text = row['event_text']
                 
-                encoded_picture = await asyncio.to_thread(process_image, row[blob_picture], 640, 480, 50)
-                if encoded_picture:
-                    pictures.append(encoded_picture)
+                if row['thumbnail'] is not None:
+                    thumbnail = row['thumbnail']
+                else:
+                    thumbnail = get_thubmnail_by_id(database=CONFIG['KITTYHACK_DATABASE_PATH'], photo_id=row['id'])
+                
+                if thumbnail:
+                    pictures.append(thumbnail)
                     orig_pictures.append(row[blob_picture])
                     timestamps.append(pd.to_datetime(get_local_date_from_utc_date(row["created_at"])).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
                     try:

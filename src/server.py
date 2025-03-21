@@ -133,6 +133,9 @@ if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events"):
 if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "thumbnail"):
     logging.warning(f"Column 'thumbnail' not found in the 'events' table. Adding it...")
     add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "thumbnail", "BLOB")
+if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'], "events", "thumbnail"):
+    logging.warning(f"Column 'thumbnail' not found in the 'events' table of the backup database. Adding it...")
+    add_column_to_table(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'], "events", "thumbnail", "BLOB")
 
 if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
     logging.warning(f"Legacy table 'photo' not found in the kittyhack database. Creating it...")
@@ -213,9 +216,9 @@ def start_background_task():
 
             ids_without_thumbnail = get_ids_without_thumbnail(CONFIG['KITTYHACK_DATABASE_PATH'])
             if ids_without_thumbnail:
-                # Limit the number of thumbnails to generate in one run to 250 to avoid high CPU load
+                # Limit the number of thumbnails to generate in one run to 200 to avoid high CPU load
                 ids_without_thumbnail.reverse()
-                thumbnails_to_process = ids_without_thumbnail[:250]
+                thumbnails_to_process = ids_without_thumbnail[:200]
                 logging.info(f"[TRIGGER: background task] Start generating thumbnails for {len(thumbnails_to_process)} events (out of {len(ids_without_thumbnail)} total)...")
                 for id in thumbnails_to_process:
                     get_thubmnail_by_id(database=CONFIG['KITTYHACK_DATABASE_PATH'], photo_id=id)
@@ -346,13 +349,27 @@ def show_event_server(input, output, session, block_id: int):
             try:
                 event_text = row['event_text']
                 
+                # Handle thumbnail data correctly
                 if row['thumbnail'] is not None:
-                    thumbnail = row['thumbnail']
+                    # If thumbnail already exists in the row, use it directly
+                    thumbnail_bytes = row['thumbnail']
                 else:
-                    thumbnail = get_thubmnail_by_id(database=CONFIG['KITTYHACK_DATABASE_PATH'], photo_id=row['id'])
+                    # Generate thumbnail and store it in the database
+                    thumbnail_bytes = get_thubmnail_by_id(database=CONFIG['KITTYHACK_DATABASE_PATH'], photo_id=row['id'])
                 
-                if thumbnail:
-                    pictures.append(thumbnail)
+                if thumbnail_bytes:
+                    # Ensure we're encoding bytes, not a string
+                    if isinstance(thumbnail_bytes, str):
+                        try:
+                            # Convert string to bytes if needed (in case it's a base64 string)
+                            thumbnail_bytes = base64.b64decode(thumbnail_bytes)
+                        except:
+                            logging.error(f"Failed to decode thumbnail string for photo ID {row['id']}")
+                            thumbnail_bytes = None
+                    
+                    if thumbnail_bytes:
+                        # Encode the bytes to base64 and then to string for HTML
+                        pictures.append(base64.b64encode(thumbnail_bytes).decode('utf-8'))
                     orig_pictures.append(row[blob_picture])
                     timestamps.append(pd.to_datetime(get_local_date_from_utc_date(row["created_at"])).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
                     try:

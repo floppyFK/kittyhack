@@ -588,8 +588,8 @@ def process_image(image_blob, target_width, target_height, quality):
         quality (int): The quality of the output JPEG image (0 to 100).
 
     Returns:
-        str: The base64 encoded string of the processed image, or None if an error occurs.
-    """
+        bytes: The processed image as a bytes object, or None if an error occurs.
+    """    
     try:
         # Convert the blob to a numpy array for OpenCV
         nparr = np.frombuffer(image_blob, np.uint8)
@@ -607,7 +607,7 @@ def process_image(image_blob, target_width, target_height, quality):
         # Encode the resized image with reduced quality
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
         _, encoded_img = cv2.imencode('.jpg', resized, encode_param)
-        return base64.b64encode(encoded_img).decode('utf-8')
+        return encoded_img.tobytes()
     except Exception as e:
         logging.error(f"Failed to process image: {e}")
         return None

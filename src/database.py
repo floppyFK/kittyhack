@@ -388,7 +388,8 @@ def create_kittyhack_events_table(database: str):
             no_mouse_probability REAL,
             rfid TEXT,
             event_text TEXT,
-            deleted BOOLEAN DEFAULT 0
+            deleted BOOLEAN DEFAULT 0,
+            thumbnail BLOB
         )
     """
     result = write_stmt_to_database(database, stmt)
@@ -685,7 +686,7 @@ def get_detected_object_by_index(detected_objects: List[DetectedObject], index: 
         return detected_objects[index]
     return None
 
-def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: str = "image", delete_from_buffer: bool = True):
+def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: str = "image", delete_from_buffer: bool = True, generate_thumbnails: bool = True):
     """
     This function writes an image block from the image buffer to the database.
     """
@@ -696,14 +697,6 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
     try:
         conn = sqlite3.connect(database, timeout=30)
         cursor = conn.cursor()
-
-        # Read the max value of the column 'id' and increment it
-        cursor.execute("SELECT MAX(id) FROM events")
-        id = cursor.fetchone()[0]
-        if id is None:
-            id = 0
-        else:
-            id += 1
         
         # Read the max value of the coumn 'block_id' and increment it
         cursor.execute("SELECT MAX(block_id) FROM events")
@@ -720,10 +713,10 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
         # (every element of the block has the same tag_id)
         max_images = CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID'] if elements[0].tag_id else CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID']
 
-        idx = 0
+        index = 0
         for element in elements:
             # Write the image to the database, if the index is less than the maximum number of images
-            if idx < max_images:
+            if index < max_images:
                 try:
                     detected_objects = element.detected_objects if element.detected_objects is not None else []
                     event_json = create_json_from_event(detected_objects)
@@ -744,13 +737,13 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
                     event_json
                 ]
                 cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
-            idx += 1
+            index += 1
 
             # Delete the image from the buffer
             if delete_from_buffer:
                 image_buffer.delete_by_id(element.id)
 
-            id += 1
+        logging.info(f"[DATABASE] Wrote {index}/{len(elements)} images to the database (Limit per event: {max_images}).")
 
         # Check if the number of photos exceeds the maximum allowed number
         cursor.execute("SELECT COUNT(*) FROM events WHERE deleted != 1")
@@ -768,7 +761,6 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
         conn.close()
         # Update the timestamp of the last added image block
         last_imgblock_ts.update_timestamp(tm.time())
-        id += 1
     except Exception as e:
         error_message = f"[DATABASE] An error occurred while writing images to the database '{database}': {e}"
         logging.error(error_message)
@@ -776,6 +768,11 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
         logging.info(f"[DATABASE] Successfully wrote images to the database '{database}'.")
     finally:
         release_database()
+
+    if generate_thumbnails:
+        db_photo_ids = db_get_photos_by_block_id(database, db_block_id, ReturnDataPhotosDB.only_ids)
+        for db_photo_id in db_photo_ids['id']:
+            get_thubmnail_by_id(database, db_photo_id)
     
 def create_index_on_events(database: str) -> Result:
     """
@@ -913,7 +910,9 @@ def check_if_column_exists(database: str, table: str, column: str) -> bool:
         logging.error(f"[DATABASE] Failed to check if column '{column}' exists in the table '{table}' of the database '{database}': {e}")
         return False
     else:
-        return True if any(column[1] == column for column in columns) else False
+        # Check if the column exists in the table
+        column_names = [col[1] for col in columns]  # Column name is the second item in each row
+        return column in column_names
     finally:
         release_database()
 
@@ -1157,11 +1156,11 @@ def backup_database(database: str, backup_path: str) -> Result:
                 if src_id not in events_dst_dict:
                     cursor_src.execute("SELECT * FROM events WHERE id = ?", (src_id,))
                     full_row = cursor_src.fetchone()
-                    cursor_dst.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", full_row)
+                    cursor_dst.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", full_row)
                 elif events_dst_dict[src_id] != src_deleted:
                     cursor_src.execute("SELECT * FROM events WHERE id = ?", (src_id,))
                     full_row = cursor_src.fetchone()
-                    cursor_dst.execute("UPDATE events SET block_id = ?, created_at = ?, event_type = ?, original_image = ?, modified_image = ?, mouse_probability = ?, no_mouse_probability = ?, rfid = ?, event_text = ?, deleted = ? WHERE id = ?", full_row[1:] + (src_id,))
+                    cursor_dst.execute("UPDATE events SET block_id = ?, created_at = ?, event_type = ?, original_image = ?, modified_image = ?, mouse_probability = ?, no_mouse_probability = ?, rfid = ?, event_text = ?, deleted = ?, thumbnail = ? WHERE id = ?", full_row[1:] + (src_id,))
 
             # Delete events from backup that don't exist in source
             cursor_src.execute("SELECT id FROM events")

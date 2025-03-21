@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-03-13 16:54+0000\n"
+"POT-Creation-Date: 2025-03-21 07:30+0000\n"
 "PO-Revision-Date: 2024-11-14 20:14+0000\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -17,27 +17,27 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: src/server.py:373
+#: src/server.py:396
 msgid "Delete all pictures of this event"
 msgstr "Alle Bilder von diesem Ereignis löschen"
 
-#: src/server.py:475 src/server.py:1079 src/server.py:1506
+#: src/server.py:498 src/server.py:1102 src/server.py:1529
 msgid "No picture found!"
 msgstr "Kein Bild gefunden!"
 
-#: src/server.py:477
+#: src/server.py:500
 msgid "No pictures found for this event."
 msgstr "Keine Bilder für dieses Ereignis gefunden."
 
-#: src/server.py:480
+#: src/server.py:503
 msgid "An error occured while reading the image."
 msgstr "Fehler beim lesen des Bildes."
 
-#: src/server.py:571 src/server.py:643 src/server.py:2064
+#: src/server.py:594 src/server.py:666 src/server.py:2131
 msgid "The WLAN connection will be interrupted now!"
 msgstr "Die WLAN-Verbindung wird jetzt unterbrochen!"
 
-#: src/server.py:573 src/server.py:645 src/server.py:2066
+#: src/server.py:596 src/server.py:668 src/server.py:2133
 msgid ""
 "Please wait a few seconds. If the page does not reload automatically within "
 "30 seconds, please reload it manually."
@@ -45,11 +45,11 @@ msgstr ""
 "Bitte warte ein paar Sekunden. Wenn die Seite nicht innerhalb von 30 "
 "Sekunden automatisch neu lädt, lade sie bitte manuell neu."
 
-#: src/server.py:574 src/server.py:646 src/server.py:2067
+#: src/server.py:597 src/server.py:669 src/server.py:2134
 msgid "Updating WLAN configuration..."
 msgstr "WLAN-Konfiguration wird aktualisiert..."
 
-#: src/server.py:596
+#: src/server.py:619
 msgid ""
 "This WLAN is currently connected. You can not delete it or change the "
 "password."
@@ -57,23 +57,23 @@ msgstr ""
 "Dieses WLAN ist derzeit verbunden. Du kannst es nicht löschen oder das "
 "Passwort ändern."
 
-#: src/server.py:604 src/server.py:720
+#: src/server.py:627 src/server.py:743
 msgid "SSID"
 msgstr "SSID"
 
-#: src/server.py:605 src/server.py:721
+#: src/server.py:628 src/server.py:744
 msgid "Password"
 msgstr "Passwort"
 
-#: src/server.py:605
+#: src/server.py:628
 msgid "Leave empty to keep the current password"
 msgstr "Leer lassen, um akt. Passwort zu behalten"
 
-#: src/server.py:606 src/server.py:722 src/server.py:2033
+#: src/server.py:629 src/server.py:745 src/server.py:2100
 msgid "Priority"
 msgstr "Priorität"
 
-#: src/server.py:607 src/server.py:723
+#: src/server.py:630 src/server.py:746
 msgid ""
 "The priority determines the order in which the WLANs are tried to connect. "
 "Higher numbers are tried first."
@@ -81,40 +81,40 @@ msgstr ""
 "Die Priorität bestimmt die Reihenfolge, in der versucht wird, eine "
 "Verbindung zu den WLANs herzustellen. Höhere Werte werden zuerst versucht."
 
-#: src/server.py:609
+#: src/server.py:632
 msgid "Change WLAN configuration"
 msgstr "WLAN-Konfiguration ändern"
 
-#: src/server.py:614 src/server.py:729 src/server.py:1614
+#: src/server.py:637 src/server.py:752 src/server.py:1637
 msgid "Save"
 msgstr "Speichern"
 
-#: src/server.py:619 src/server.py:734 src/server.py:1435 src/server.py:1461
-#: src/server.py:1482 src/server.py:2456
+#: src/server.py:642 src/server.py:757 src/server.py:1458 src/server.py:1484
+#: src/server.py:1505 src/server.py:2523
 msgid "Cancel"
 msgstr "Abbrechen"
 
-#: src/server.py:624
+#: src/server.py:647
 msgid "Delete"
 msgstr "Löschen"
 
-#: src/server.py:652 src/server.py:2073
+#: src/server.py:675 src/server.py:2140
 msgid "WLAN configuration for {} updated successfully."
 msgstr "WLAN-Konfiguration für {} erfolgreich aktualisiert."
 
-#: src/server.py:655 src/server.py:2076
+#: src/server.py:678 src/server.py:2143
 msgid "Failed to update WLAN configuration for {}"
 msgstr "Fehler beim aktualisieren der WLAN-Konfiguration für {}"
 
-#: src/server.py:669
+#: src/server.py:692
 msgid "WLAN connection {} deleted successfully."
 msgstr "WLAN-Verbindung {} erfolgreich gelöscht."
 
-#: src/server.py:673
+#: src/server.py:696
 msgid "Failed to delete WLAN connection {}"
 msgstr "Fehler beim löschen der WLAN-Verbindung {}"
 
-#: src/server.py:686
+#: src/server.py:709
 msgid ""
 "A new version of Kittyhack is available: {}. Go to the 'Info' section for "
 "update instructions."
@@ -122,7 +122,7 @@ msgstr ""
 "Eine neue Version von Kittyhack ist verfügbar: {}. Gehe zur 'Info' Sektion "
 "für Update-Anweisungen."
 
-#: src/server.py:692
+#: src/server.py:715
 msgid ""
 " or consider deleting pictures from the original kittyflap database file. "
 "For more details, see the 'Info' section."
@@ -130,7 +130,7 @@ msgstr ""
 " oder lösche die Bilder aus der alten Kittyflap Datenbank. Weitere Details "
 "findest du in der 'Info' Sektion."
 
-#: src/server.py:695
+#: src/server.py:718
 msgid ""
 "Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. "
 "reduce the max amount of pictures in the database{})."
@@ -139,56 +139,56 @@ msgstr ""
 "frei (z.B. durch Reduzierung der maximalen Anzahl an Bildern in der "
 "Datenbank{})."
 
-#: src/server.py:704
+#: src/server.py:727
 msgid "**NOTE**: You can find the changelogs also in the 'Info' section."
 msgstr ""
 "**HINWEIS**: Du findest die Änderungsprotokolle auch in der 'Info' Sektion."
 
-#: src/server.py:706
+#: src/server.py:729
 msgid "Changelog"
 msgstr "Changelog"
 
-#: src/server.py:710 src/server.py:2331
+#: src/server.py:733 src/server.py:2398
 msgid "Close"
 msgstr "Schließen"
 
-#: src/server.py:724
+#: src/server.py:747
 msgid "Add new WLAN configuration"
 msgstr "Neue WLAN-Konfiguration hinzufügen"
 
-#: src/server.py:771
+#: src/server.py:794
 msgid "Close inside now"
 msgstr "Eingangsrichtung schließen"
 
-#: src/server.py:773
+#: src/server.py:796
 msgid "Open inside now"
 msgstr "Eingangsrichtung öffnen"
 
-#: src/server.py:779
+#: src/server.py:802
 msgid ""
 "<b>Locks:</b> Inside {} | Outside {}<br><b>Motion:</b> Inside {} | Outside {}"
 msgstr ""
 "<b>Verriegelung:</b> Innen {} | Außen {}<br><b>Bewegungsmelder:</b> Innen {} "
 "| Außen {}"
 
-#: src/server.py:782
+#: src/server.py:805
 #, python-brace-format
 msgid ""
 "<br>Prey detected {0:.0f}s ago. Inside lock remains closed for {1:.0f}s."
 msgstr ""
 "<br>Beute vor {0:.0f}s erkannt. Innenseite bleibt für {1:.0f}s verriegelt."
 
-#: src/server.py:786
+#: src/server.py:809
 msgid "Failed to fetch the current status of the locks and motion sensors."
 msgstr ""
 "Aktuellen Status der Verriegelung und Bewegungsmelder konnte nicht abgerufen "
 "werden."
 
-#: src/server.py:804
+#: src/server.py:827
 msgid "Connection to the camera failed."
 msgstr "Verbindung zur Kamera fehlgeschlagen."
 
-#: src/server.py:805
+#: src/server.py:828
 msgid ""
 "If this message does not disappear within 10 seconds, please (re-)install "
 "the required camera drivers with the \"Reinstall Camera Driver\" button in "
@@ -198,111 +198,111 @@ msgstr ""
 "die erforderlichen Kameratreiber mit dem \"Kameratreiber neu installieren\" "
 "Button in der \"System\" Sektion."
 
-#: src/server.py:815
+#: src/server.py:838
 msgid "Could not read the picture from the camera."
 msgstr "Bild konnte nicht von der Kamera gelesen werden."
 
-#: src/server.py:818
+#: src/server.py:841
 msgid "An error occured while fetching the live view image."
 msgstr "Fehler beim Abrufen des Live-Bildes."
 
-#: src/server.py:869 src/server.py:1261
+#: src/server.py:892 src/server.py:1284
 msgid "Today"
 msgstr "Heute"
 
-#: src/server.py:875
+#: src/server.py:898
 msgid "Show detected cats only"
 msgstr "Nur erkannte Katzen anzeigen"
 
-#: src/server.py:876
+#: src/server.py:899
 msgid "Show detected mice only"
 msgstr "Nur erkannte Mäuse anzeigen"
 
-#: src/server.py:877
+#: src/server.py:900
 msgid "Show detection overlay"
 msgstr "Overlay in Bildern anzeigen"
 
-#: src/server.py:878
+#: src/server.py:901
 msgid "Group pictures to events"
 msgstr "Bilder zu Ereignissen gruppieren"
 
-#: src/server.py:986
+#: src/server.py:1009
 msgid "No pictures for the selected filter criteria found."
 msgstr "Keine Bilder für die ausgewählten Filter gefunden."
 
-#: src/server.py:1038
+#: src/server.py:1061
 msgid "Unknown RFID: {}"
 msgstr "Unbekannte RFID: {}"
 
-#: src/server.py:1040 src/server.py:1266
+#: src/server.py:1063 src/server.py:1289
 msgid "No RFID found"
 msgstr "Keine RFID gefunden"
 
-#: src/server.py:1093
+#: src/server.py:1116
 msgid "Mouse probability"
 msgstr "Maus-Wahrscheinlichkeit"
 
-#: src/server.py:1106
+#: src/server.py:1129
 msgid "Delete selected photos"
 msgstr "Ausgewählte Bilder löschen"
 
-#: src/server.py:1133
+#: src/server.py:1156
 msgid "Photo {} deleted successfully."
 msgstr "Bild {} erfolgreich gelöscht."
 
-#: src/server.py:1135
+#: src/server.py:1158
 msgid "An error occurred while deleting the photo: {}"
 msgstr "Beim löschen des Bildes trat ein Fehler auf: {}"
 
-#: src/server.py:1141
+#: src/server.py:1164
 msgid "No photos selected for deletion."
 msgstr "Kein(e) Bild(er) zum löschen ausgewählt."
 
-#: src/server.py:1162
+#: src/server.py:1185
 msgid "Manual unlock not yet initialized..."
 msgstr "Manuelles Entsperren noch nicht initialisiert..."
 
-#: src/server.py:1167
+#: src/server.py:1190
 msgid "Reset prey cooldown now"
 msgstr "Verriegeleung wegen Beute jetzt zurücksetzen"
 
-#: src/server.py:1197
+#: src/server.py:1220
 msgid "Last events"
 msgstr "Letzte Ereignisse"
 
-#: src/server.py:1246
+#: src/server.py:1269
 msgid "No events found."
 msgstr "Keine Ereignisse gefunden."
 
-#: src/server.py:1261
+#: src/server.py:1284
 msgid "Yesterday"
 msgstr "Gestern"
 
-#: src/server.py:1266
+#: src/server.py:1289
 msgid "Unknown RFID"
 msgstr "Unbekannte RFID"
 
-#: src/server.py:1315
+#: src/server.py:1338
 msgid "Failed to read events from the database."
 msgstr "Fehler beim lesen der Ereignisse aus der Datenbank."
 
-#: src/server.py:1322
+#: src/server.py:1345
 msgid "Kittyflap System Actions"
 msgstr "Kittyflap Systemverwaltung"
 
-#: src/server.py:1323
+#: src/server.py:1346
 msgid "Start tasks/actions on the Kittyflap"
 msgstr "Verwaltung des Betriebssystems"
 
-#: src/server.py:1326 src/server.py:1449 src/server.py:1457
+#: src/server.py:1349 src/server.py:1472 src/server.py:1480
 msgid "Restart Kittyflap"
 msgstr "Kittyflap neu starten"
 
-#: src/server.py:1329 src/server.py:1470 src/server.py:1478
+#: src/server.py:1352 src/server.py:1493 src/server.py:1501
 msgid "Shutdown Kittyflap"
 msgstr "Kittyflap herunterfahren"
 
-#: src/server.py:1330
+#: src/server.py:1353
 msgid ""
 "To avoid data loss, always shut down the Kittyflap properly before "
 "unplugging the power cable. After a shutdown, wait 30 seconds before "
@@ -314,45 +314,45 @@ msgstr ""
 "30 Sekunden, bevor du das Stromkabel abziehst. Um die Kittyflap wieder zu "
 "starten, stecke einfach das Stromkabel wieder ein."
 
-#: src/server.py:1333
+#: src/server.py:1356
 msgid "Reinstall Camera Driver"
 msgstr "Kameratreiber neu installieren"
 
-#: src/server.py:1334
+#: src/server.py:1357
 msgid "Reinstall the camera driver if the live view does not work properly."
 msgstr ""
 "Kamera-Treiber neu installieren, wenn die Live-Ansicht nicht richtig "
 "funktioniert."
 
-#: src/server.py:1353
+#: src/server.py:1376
 msgid "Reinstall Camera Driver in progress."
 msgstr "Neuinstallation des Kameratreibers läuft."
 
-#: src/server.py:1353
+#: src/server.py:1376
 msgid "This may take a while..."
 msgstr "Dies kann eine Weile dauern..."
 
-#: src/server.py:1359
+#: src/server.py:1382
 msgid "Stopping the camera"
 msgstr "Kamera wird gestoppt"
 
-#: src/server.py:1368
+#: src/server.py:1391
 msgid "Downloading all dependencies"
 msgstr "Alle Abhängigkeiten werden heruntergeladen"
 
-#: src/server.py:1382
+#: src/server.py:1405
 msgid "Download"
 msgstr "Download"
 
-#: src/server.py:1391
+#: src/server.py:1414
 msgid "Uninstalling libcamera packages above version 0.3"
 msgstr "Deinstalliere libcamera Pakete über Version 0.3"
 
-#: src/server.py:1414
+#: src/server.py:1437
 msgid "Installing all dependencies"
 msgstr "Alle Abhängigkeiten werden installiert"
 
-#: src/server.py:1424
+#: src/server.py:1447
 msgid ""
 "An error occurred during the installation process. Please check the logs for "
 "details."
@@ -360,7 +360,7 @@ msgstr ""
 "Ein Fehler ist während des Installationsprozesses aufgetreten. Bitte "
 "überprüfe die Logs für Details."
 
-#: src/server.py:1430 src/server.py:2451
+#: src/server.py:1453 src/server.py:2518
 msgid ""
 "A restart is required to apply the update. Do you want to restart the "
 "Kittyflap now?"
@@ -368,15 +368,15 @@ msgstr ""
 "Ein Neustart ist erforderlich, um das Update anzuwenden. Möchtest du die "
 "Kittyflap jetzt neu starten?"
 
-#: src/server.py:1431 src/server.py:2452
+#: src/server.py:1454 src/server.py:2519
 msgid "Restart required"
 msgstr "Neustart erforderlich"
 
-#: src/server.py:1434 src/server.py:1460 src/server.py:1481 src/server.py:2455
+#: src/server.py:1457 src/server.py:1483 src/server.py:1504 src/server.py:2522
 msgid "OK"
 msgstr "OK"
 
-#: src/server.py:1449
+#: src/server.py:1472
 msgid ""
 "Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reload "
 "the page after the restart."
@@ -384,11 +384,11 @@ msgstr ""
 "Die Kittyflap wird jetzt neu gestartet... Dies dauert 1 oder 2 Minuten. "
 "Bitte lade die Seite nach dem Neustart neu."
 
-#: src/server.py:1456
+#: src/server.py:1479
 msgid "Do you really want to restart the Kittyflap?"
 msgstr "Möchtest du die Kittyflap wirklich neu starten?"
 
-#: src/server.py:1470
+#: src/server.py:1493
 msgid ""
 "Kittyflap is shutting down now... Please wait 30 seconds before unplugging "
 "the power."
@@ -396,19 +396,19 @@ msgstr ""
 "Kittyflap wird jetzt heruntergefahren... Bitte warte 30 Sekunden, bevor du "
 "das Stromkabel abziehst."
 
-#: src/server.py:1477
+#: src/server.py:1500
 msgid "Do you really want to shut down the Kittyflap?"
 msgstr "Möchtest du die Kittyflap wirklich herunterfahren?"
 
-#: src/server.py:1512 src/server.py:1606
+#: src/server.py:1535 src/server.py:1629
 msgid "Name"
 msgstr "Name"
 
-#: src/server.py:1514 src/server.py:1608
+#: src/server.py:1537 src/server.py:1631
 msgid "RFID"
 msgstr "RFID"
 
-#: src/server.py:1515 src/server.py:1610
+#: src/server.py:1538 src/server.py:1633
 msgid ""
 "NOTE: This is NOT the number which stands in the booklet of your vet! You "
 "must use the the ID, which is read by the Kittyflap. It is 16 characters "
@@ -418,7 +418,7 @@ msgstr ""
 "musst die ID verwenden, die von der Kittyflap gelesen wird. Sie ist 16 "
 "Zeichen lang und besteht aus Zahlen (0-9) und Buchstaben (A-F)."
 
-#: src/server.py:1516
+#: src/server.py:1539
 msgid ""
 "If you have entered the RFID correctly here, the name of the cat will be "
 "displayed in the 'Pictures' section."
@@ -426,19 +426,19 @@ msgstr ""
 "Wenn du die RFID hier korrekt eingegeben hast, wird der Name der Katze in "
 "der 'Bilder' Sektion angezeigt."
 
-#: src/server.py:1518
+#: src/server.py:1541
 msgid "Change Picture"
 msgstr "Bild ändern"
 
-#: src/server.py:1524
+#: src/server.py:1547
 msgid "Delete {} from the database"
 msgstr "{} aus der Datenbank löschen"
 
-#: src/server.py:1536 src/server.py:1922
+#: src/server.py:1559 src/server.py:1981
 msgid "Save all changes"
 msgstr "Alle Änderungen speichern"
 
-#: src/server.py:1543
+#: src/server.py:1566
 msgid ""
 "No cats found in the database. Please go to the 'Add new cat' section to add "
 "a new cat."
@@ -446,31 +446,31 @@ msgstr ""
 "Es wurden keine Katzen in der Datenbank gefunden. Gehe zur 'Neue Katze "
 "hinzufügen' Sektion, um eine neue Katze hinzuzufügen."
 
-#: src/server.py:1569
+#: src/server.py:1592
 msgid "{} deleted successfully from the database."
 msgstr "{} erfolgreich aus der Datenbank gelöscht."
 
-#: src/server.py:1571
+#: src/server.py:1594
 msgid "Failed to delete {} from the database: {}"
 msgstr "Fehler beim löschen von {} aus der Datenbank: {}"
 
-#: src/server.py:1587
+#: src/server.py:1610
 msgid "Data for {} updated successfully."
 msgstr "Daten für {} erfolgreich aktualisiert."
 
-#: src/server.py:1589
+#: src/server.py:1612
 msgid "Failed to update cat details: {}"
 msgstr "Feher beim aktualisieren der Katzen-Details: {}"
 
-#: src/server.py:1592
+#: src/server.py:1615
 msgid "No changes detected. Nothing to save."
 msgstr "Keine Änderungen erkannt. Nichts zu speichern."
 
-#: src/server.py:1605 src/ui.py:30
+#: src/server.py:1628 src/ui.py:35
 msgid "Add new cat"
 msgstr "Neue Katze hinzufügen"
 
-#: src/server.py:1609
+#: src/server.py:1632
 msgid ""
 "You can find the RFID in the 'Pictures' section, if the chip of your cat was "
 "recognized by the Kittyflap. To read the RFID, just set the entrance mode to "
@@ -481,84 +481,84 @@ msgstr ""
 "Eingangsmodus auf 'Alle Katzen' und lasse deine Katze durch die Kittyflap "
 "gehen."
 
-#: src/server.py:1612
+#: src/server.py:1635
 msgid "Upload Picture"
 msgstr "Bild hochladen"
 
-#: src/server.py:1639
+#: src/server.py:1662
 msgid "New cat {} added successfully."
 msgstr "Neue Katze {} erfolgreich hinzugefügt."
 
-#: src/server.py:1644
+#: src/server.py:1667
 msgid "An error occurred while adding the new cat: {}"
 msgstr "Beim Hinzufügen der neuen Katze trat ein Fehler auf: {}"
 
-#: src/server.py:1664
+#: src/server.py:1687
 msgid "General settings"
 msgstr "Allgemeine Einstellungen"
 
-#: src/server.py:1668
+#: src/server.py:1691
 msgid "Language"
 msgstr "Sprache"
 
-#: src/server.py:1669
+#: src/server.py:1692
 msgid "Timezone"
 msgstr "Zeitzone"
 
-#: src/server.py:1671
+#: src/server.py:1694
 msgid "See"
 msgstr "Siehe"
 
-#: src/server.py:1671
+#: src/server.py:1694
 msgid "for valid timezone strings"
 msgstr "für gültige Zeitzonen Strings"
 
-#: src/server.py:1675
+#: src/server.py:1698
 msgid "Date format"
 msgstr "Datumsformat"
 
-#: src/server.py:1679
+#: src/server.py:1702
 msgid "Valid placeholders: `yyyy`, `mm`, `dd`"
 msgstr "Gültige Platzhalter: `yyyy`, `mm`, `dd`"
 
-#: src/server.py:1680
+#: src/server.py:1703
 msgid "Example:"
 msgstr "Beispiel:"
 
-#: src/server.py:1681 src/server.py:1682
+#: src/server.py:1704 src/server.py:1705
 msgid "for"
 msgstr "für"
 
-#: src/server.py:1688
+#: src/server.py:1711
 msgid "Maximum pictures per page"
 msgstr "Maximale Anzahl an Bildern pro Seite"
 
-#: src/server.py:1692
+#: src/server.py:1715
 msgid ""
 "This setting applies only to the pictures panel in the ungrouped view mode."
 msgstr ""
 "Diese Einstellung gilt nur für die Bilder-Ansicht im ungruppierten "
 "Ansichtsmodus."
 
-#: src/server.py:1693
+#: src/server.py:1716
 msgid ""
 "NOTE: Too many pictures per page could slow down the performance drastically!"
 msgstr ""
 "HINWEIS: Zu viele Bilder pro Seite können die Performance drastisch senken!"
 
-#: src/server.py:1699
+#: src/server.py:1722
 msgid "Periodic version check"
 msgstr "Nach updates suchen"
 
-#: src/server.py:1700
+#: src/server.py:1723
 msgid "Automatically check for new versions of Kittyhack."
 msgstr "Automatisch nach neuen Versionen von Kittyhack suchen."
 
-#: src/server.py:1704
+#: src/server.py:1727
 msgid "WLAN TX power (in dBm)"
 msgstr "WLAN Sendeleistung (in dBm)"
 
-#: src/server.py:1708
+#: src/server.py:1731
 msgid ""
 "WARNING: You should keep the TX power as low as possible to avoid "
 "interference with the PIR Sensors! You should only increase this value, if "
@@ -568,30 +568,30 @@ msgstr ""
 "Interferenzen mit den PIR-Sensoren zu vermeiden! Du solltest diesen Wert nur "
 "erhöhen, wenn du Probleme mit der WLAN-Verbindung hast."
 
-#: src/server.py:1709
+#: src/server.py:1732
 msgid "NOTE: 0dBm = 1mW, 10dBm = 10mW, 20dBm = 100mW"
 msgstr "HINWEIS: 0dBm = 1mW, 10dBm = 10mW, 20dBm = 100mW"
 
-#: src/server.py:1710 src/server.py:1735 src/server.py:1747 src/server.py:1759
-#: src/server.py:1884
+#: src/server.py:1733 src/server.py:1758 src/server.py:1770 src/server.py:1782
+#: src/server.py:1931
 msgid "Default value: {}"
 msgstr "Standardwert: {}"
 
-#: src/server.py:1725
+#: src/server.py:1748
 msgid "Door control settings"
 msgstr "Einstellungen für die Klappensteuerung"
 
-#: src/server.py:1729
+#: src/server.py:1752
 msgid "Mouse detection threshold"
 msgstr "Schwellwert für die Mauserkennung"
 
-#: src/server.py:1733
+#: src/server.py:1756
 msgid "Kittyhack decides based on this value, if a picture contains a mouse."
 msgstr ""
 "Kittyhack entscheidet basierend auf diesem Wert, ob ein Bild eine Maus "
 "enthält."
 
-#: src/server.py:1734
+#: src/server.py:1757
 msgid ""
 "If the detected mouse probability of a picture exceeds this value, the flap "
 "will remain closed."
@@ -599,33 +599,34 @@ msgstr ""
 "Wenn die erkannte Mauswahrscheinlichkeit eines Bildes diesen Wert "
 "überschreitet, bleibt die Klappe geschlossen."
 
-#: src/server.py:1741
+#: src/server.py:1764
 msgid "Minimum detection threshold"
 msgstr "Minimale Erkennungsschwelle"
 
-#: src/server.py:1745
+#: src/server.py:1768
 msgid ""
 "This threshold will only be used for the decision, if an motion event on the "
 "outside shall be logged or not:"
 msgstr ""
-"Dieser Schwellwert wird nur für die Entscheidung verwendet, ob ein Bewegungsereignis "
-"außen protokolliert werden soll oder nicht:"
+"Dieser Schwellwert wird nur für die Entscheidung verwendet, ob ein "
+"Bewegungsereignis außen protokolliert werden soll oder nicht:"
 
-#: src/server.py:1746
+#: src/server.py:1769
 msgid ""
 "The detected probability for `Mouse` or `No Mouse` must exceed this "
 "threshold at least in one picture of a motion event. Otherwise the pictures "
 "will be discarded and the event will not be logged."
 msgstr ""
 "Die erkannte Wahrscheinlichkeit für `Maus` oder `Keine Maus` muss diesen "
-"Schwellwert in mindestens einem Bild eines Bewegungsereignisses überschreiten. "
-"Andernfalls werden die Bilder verworfen und das Ereignis wird nicht protokolliert."
+"Schwellwert in mindestens einem Bild eines Bewegungsereignisses "
+"überschreiten. Andernfalls werden die Bilder verworfen und das Ereignis wird "
+"nicht protokolliert."
 
-#: src/server.py:1753
+#: src/server.py:1776
 msgid "Minimum pictures before unlock decision"
 msgstr "Minimale Anzahl an Bildern vor Entscheidung zur Freigabe"
 
-#: src/server.py:1757
+#: src/server.py:1780
 msgid ""
 "Number of pictures that must be analyzed before deciding to unlock the flap. "
 "If a picture exceeds the mouse threshold, the flap will remain closed."
@@ -634,7 +635,7 @@ msgstr ""
 "Klappe zu öffnen. Wenn ein Bild den Mausschwellwert überschreitet, bleibt "
 "die Klappe geschlossen."
 
-#: src/server.py:1758
+#: src/server.py:1781
 msgid ""
 "If a picture after this minimum number of pictures exceeds the mouse "
 "threshold, the flap will be closed again."
@@ -642,20 +643,62 @@ msgstr ""
 "Wenn ein Bild nach dieser Mindestanzahl von Bildern den Mausschwellwert "
 "überschreitet, wird die Klappe wieder geschlossen."
 
-#: src/server.py:1765
+#: src/server.py:1788
+msgid "Maximal pictures per event with RFID"
+msgstr "Maximale Anzahl an Bildern pro Ereignis mit RFID"
+
+#: src/server.py:1792
+msgid ""
+"Maximal number of pictures that will be stored to the database for a motion "
+"event, if a cat with a RFID chip is detected."
+msgstr ""
+"Maximale Anzahl an Bildern, die für ein Bewegungsereignis in der Datenbank "
+"gespeichert werden, wenn eine Katze mit einem RFID-Chip erkannt wird."
+
+#: src/server.py:1793 src/server.py:1805
+msgid ""
+"NOTE: The internal prey detection will still be active for all pictures of "
+"this event. This number just limits the number of pictures that will be "
+"stored to the database."
+msgstr ""
+"HINWEIS: Die interne Beuteerkennung bleibt für alle Bilder dieses Ereignisses "
+"aktiv. Diese Zahl begrenzt nur die Anzahl der Bilder, die in der Datenbank "
+"gespeichert werden."
+
+#: src/server.py:1794 src/server.py:1806
+msgid ""
+"If you set this to 0, no event will be logged to the database. Too many "
+"pictures can slow down the performance drastically."
+msgstr ""
+"Wenn du dies auf 0 setzt, wird kein Ereignis in der Datenbank protokolliert. "
+"Zu viele Bilder können die Leistung drastisch verlangsamen."
+
+#: src/server.py:1800
+msgid "Maximal pictures per event without RFID"
+msgstr "Maximale Anzahl an Bildern pro Ereignis ohne RFID"
+
+#: src/server.py:1804
+msgid ""
+"Maximal number of pictures that will be stored to the database for a motion "
+"event, if a motion event without a detected RFID occurs."
+msgstr ""
+"Maximale Anzahl an Bildern, die für ein Bewegungsereignis in der Datenbank "
+"gespeichert werden, wenn ein Bewegungsereignis ohne erkanntes RFID auftritt."
+
+#: src/server.py:1812
 msgid "Lock duration after prey detection (in s)"
 msgstr "Verriegelungsdauer nach Beuteerkennung (in s)"
 
-#: src/server.py:1766
+#: src/server.py:1813
 msgid "The flap will remain closed for this time after a prey detection."
 msgstr ""
 "Die Klappe bleibt nach einer Beuteerkennung für diese Zeit geschlossen."
 
-#: src/server.py:1770
+#: src/server.py:1817
 msgid "Detect prey"
 msgstr "Beuteerkennung"
 
-#: src/server.py:1774
+#: src/server.py:1821
 msgid ""
 "If the prey detection is enabled and the mouse detection threshold is "
 "exceeded in a picture, the flap will remain closed."
@@ -663,7 +706,7 @@ msgstr ""
 "Wenn die Beuteerkennung aktiviert ist und der Mauserkennungsschwellwert in "
 "einem Bild überschritten wird, bleibt die Klappe geschlossen."
 
-#: src/server.py:1775
+#: src/server.py:1822
 msgid ""
 "> The zones and the probability of detected mice will be stored "
 "independently of this setting for every picture."
@@ -671,15 +714,15 @@ msgstr ""
 "> Die Zonen und die Wahrscheinlichkeit der erkannten Mäuse werden unabhängig "
 "dieser Einstellung für jedes Bild gespeichert."
 
-#: src/server.py:1781
+#: src/server.py:1828
 msgid "Version of the TFLite model for the object detection"
 msgstr "Version des TFLite Modells für die Objekterkennung"
 
-#: src/server.py:1785
+#: src/server.py:1832
 msgid "Original Kittyflap Model v1:"
 msgstr "Original Kittyflap Modell v1:"
 
-#: src/server.py:1785
+#: src/server.py:1832
 msgid ""
 "Always tries to detect objects `Mouse` and `No Mouse`, even if there is no "
 "such object in the picture (this was the default in Kittyhack v1.4.0 and "
@@ -689,11 +732,11 @@ msgstr ""
 "kein solches Objekt im Bild gibt (dies war der Standard in Kittyhack v1.4.0 "
 "und niedriger)"
 
-#: src/server.py:1786
+#: src/server.py:1833
 msgid "Original Kittyflap Model v2:"
 msgstr "Original Kittyflap Modell v2:"
 
-#: src/server.py:1786
+#: src/server.py:1833
 msgid ""
 "Only tries to detect objects `Mouse` and `No Mouse` if there is a cat in the "
 "picture."
@@ -701,7 +744,7 @@ msgstr ""
 "Versucht nur, Objekte `Maus` und `Keine Maus` zu erkennen, wenn eine Katze "
 "im Bild erkannt wird."
 
-#: src/server.py:1787
+#: src/server.py:1834
 msgid ""
 "If you change this setting, the Kittyflap must be restarted to apply the new "
 "model version."
@@ -709,31 +752,31 @@ msgstr ""
 "Wenn du diese Einstellung änderst, muss die Kittyflap neu gestartet werden, "
 "um die neue Modellversion anzuwenden."
 
-#: src/server.py:1795
+#: src/server.py:1842
 msgid "Open inside direction for:"
 msgstr "Eingangsrichtung öffnen für:"
 
-#: src/server.py:1797
+#: src/server.py:1844
 msgid "All cats"
 msgstr "Alle Katzen"
 
-#: src/server.py:1797
+#: src/server.py:1844
 msgid "All cats with a RFID chip"
 msgstr "Alle Katzen mit RFID Chip"
 
-#: src/server.py:1797
+#: src/server.py:1844
 msgid "Only registered cats"
 msgstr "Nur registrierte Katzen"
 
-#: src/server.py:1797
+#: src/server.py:1844
 msgid "No cats"
 msgstr "Keine Katzen"
 
-#: src/server.py:1804
+#: src/server.py:1851
 msgid "Allow cats to exit"
 msgstr "Ausgang für Katzen erlauben"
 
-#: src/server.py:1805
+#: src/server.py:1852
 msgid ""
 "If this is disabled, the direction to the outside remains closed. Useful for "
 "e.g. new year's eve or an upcoming vet visit."
@@ -742,24 +785,24 @@ msgstr ""
 "geschlossen. Nützlich z.B. für Silvester oder einen bevorstehenden "
 "Tierarztbesuch."
 
-#: src/server.py:1811
+#: src/server.py:1858
 msgid "Reaction speed (in s) of the motion sensor on the inside"
 msgstr ""
 "Reaktionsgeschwindigkeit (in s) des Bewegungssensors auf der Innenseite"
 
-#: src/server.py:1834
+#: src/server.py:1881
 msgid "Live view settings"
 msgstr "Live-Ansicht Einstellungen"
 
-#: src/server.py:1842
+#: src/server.py:1889
 msgid "Live-View update interval:"
 msgstr "Live-Ansicht Aktualisierungsintervall:"
 
-#: src/server.py:1844
+#: src/server.py:1891
 msgid "Refresh the live view every..."
 msgstr "Aktualisiere die Live-Ansicht alle..."
 
-#: src/server.py:1855
+#: src/server.py:1902
 msgid ""
 "NOTE: A high refresh rate could slow down the performance, especially if "
 "several users are connected at the same time. Values below 1s require a fast "
@@ -769,7 +812,7 @@ msgstr ""
 "insbesondere wenn mehrere Benutzer gleichzeitig verbunden sind. Werte unter "
 "1s erfordern eine schnelle und stabile WLAN-Verbindung."
 
-#: src/server.py:1857
+#: src/server.py:1904
 msgid ""
 "This setting affects only the view in the WebUI and has no impact on the "
 "detection process."
@@ -777,15 +820,15 @@ msgstr ""
 "Diese Einstellung betrifft nur die Ansicht in der WebUI und hat keinen "
 "Einfluss auf den Erkennungsprozess und die Auswertung der Bilder."
 
-#: src/server.py:1873
+#: src/server.py:1920
 msgid "Pictures view settings"
 msgstr "Bilder-Ansicht Einstellungen"
 
-#: src/server.py:1877
+#: src/server.py:1924
 msgid "Maximum number of photos to retain in the database"
 msgstr "Maximale Anzahl an Bildern in der Datenbank"
 
-#: src/server.py:1881
+#: src/server.py:1928
 msgid ""
 "The oldest pictures will be deleted if the number of pictures exceeds this "
 "value."
@@ -793,7 +836,7 @@ msgstr ""
 "Wenn die Anzahl der Bilder diesen Wert überschreitet, werden die ältesten "
 "Bilder gelöscht."
 
-#: src/server.py:1882
+#: src/server.py:1929
 msgid ""
 "The maximum number of pictures depends on the type of the Raspberry Pi, "
 "since some kittyflaps are equipped with 16GB and some with 32GB."
@@ -801,7 +844,7 @@ msgstr ""
 "Die maximale Anzahl an Bildern hängt vom Typ des Raspberry Pi ab, da einige "
 "Kittyflaps mit 16GB und einige mit 32GB ausgestattet sind."
 
-#: src/server.py:1883
+#: src/server.py:1930
 msgid ""
 "As a rule of thumb, you can calculate with 200MB per 1000 pictures. You can "
 "check the free disk space in the `Info` section."
@@ -809,11 +852,11 @@ msgstr ""
 "Als Faustregel kannst du mit 200MB pro 1000 Bildern rechnen. Du kannst den "
 "freien Speicherplatz in der `Info` Sektion überprüfen."
 
-#: src/server.py:1900
+#: src/server.py:1947
 msgid "Advanced settings"
 msgstr "Erweiterte Einstellungen"
 
-#: src/server.py:1905
+#: src/server.py:1952
 msgid ""
 "`INFO` is the default log level and should be used in normal operation. "
 "`DEBUG` should only be used if it is really necessary!"
@@ -821,11 +864,37 @@ msgstr ""
 "`INFO` ist das Standard-Log-Level und sollte im normalen Betrieb verwendet "
 "werden. `DEBUG` sollte nur verwendet werden, wenn es wirklich notwendig ist!"
 
-#: src/server.py:1970
+#: src/server.py:1956
+msgid "Use all CPU cores for image processing"
+msgstr "Verwende alle CPU-Kerne für die Bildverarbeitung"
+
+#: src/server.py:1960
+msgid ""
+"If this is disabled, only one CPU core will be used for image processing, "
+"which results in a slower analysis of the pictures, and therefore also a "
+"little bit slower prey detection."
+msgstr ""
+"Wenn diese Einstellung deaktiviert ist, wird nur ein CPU-Kern für die "
+"Bildverarbeitung verwendet, was zu einer langsameren Analyse der Bilder und "
+"daher auch zu einer etwas langsameren Beuteerkennung führt."
+
+#: src/server.py:1961
+msgid ""
+"If your kittyflap freezes or restarts frequently, you could try to disable "
+"this setting."
+msgstr ""
+"Wenn deine Kittyflap häufig einfriert oder neu startet, könntest du versuchen, "
+"diese Einstellung zu deaktivieren."
+
+#: src/server.py:1962
+msgid "NOTE: This setting requires a restart of the kittyflap to take effect."
+msgstr "HINWEIS: Diese Einstellung erfordert einen Neustart der Kittyflap."
+
+#: src/server.py:2034
 msgid "Kittyhack configuration updated successfully."
 msgstr "Kittyhack Konfiguration erfolgreich aktualisiert."
 
-#: src/server.py:1972
+#: src/server.py:2036
 msgid ""
 "Please restart the kittyflap in the 'System' section, to apply the new "
 "language."
@@ -833,7 +902,7 @@ msgstr ""
 "Bitte starte die Kittyflap in der 'System' Sektion neu, um die neue Sprache "
 "anzuwenden."
 
-#: src/server.py:1975
+#: src/server.py:2039
 msgid ""
 "Please restart the kittyflap in the 'System' section, to apply the new "
 "TFLite model version."
@@ -841,51 +910,59 @@ msgstr ""
 "Bitte starte die Kittyflap in der 'System' Sektion neu, um die neue TFLite "
 "Modellversion anzuwenden."
 
-#: src/server.py:1977
+#: src/server.py:2042
+msgid ""
+"Please restart the kittyflap in the 'System' section, to apply the changed "
+"configuration."
+msgstr ""
+"Bitte starte die Kittyflap in der 'System' Sektion neu, um die geänderte "
+"Konfiguration anzuwenden."
+
+#: src/server.py:2044
 msgid "Failed to save the Kittyhack configuration."
 msgstr "Kittyhack Konfiguration konnte nicht gespeichert werden."
 
-#: src/server.py:1986
+#: src/server.py:2053
 msgid "Configured WLANs"
 msgstr "Konfigurierte WLANs"
 
-#: src/server.py:1991
+#: src/server.py:2058
 msgid "Add new WLAN"
 msgstr "Neues WLAN hinzufügen"
 
-#: src/server.py:2016
+#: src/server.py:2083
 msgid "Enforce connection to this WLAN"
 msgstr "Verbindung zu diesem WLAN erzwingen"
 
-#: src/server.py:2021
+#: src/server.py:2088
 msgid "Modify this WLAN"
 msgstr "Dieses WLAN ändern"
 
-#: src/server.py:2043 src/server.py:2129
+#: src/server.py:2110 src/server.py:2196
 msgid "Failed to scan for available WLANs"
 msgstr "Fehler beim scannen nach verfügbaren WLANs"
 
-#: src/server.py:2086
+#: src/server.py:2153
 msgid "Available WLANs"
 msgstr "Verfügbare WLANs"
 
-#: src/server.py:2120
+#: src/server.py:2187
 msgid "Channel"
 msgstr "Kanal"
 
-#: src/server.py:2120
+#: src/server.py:2187
 msgid "Signal"
 msgstr "Signal"
 
-#: src/server.py:2146
+#: src/server.py:2213
 msgid "Failed to create the journal file: {}"
 msgstr "Feher beim erstellen der Journal-Datei: {}"
 
-#: src/server.py:2157
+#: src/server.py:2224
 msgid "Failed to halt the backend processes: {}"
 msgstr "Fehler beim stoppen der Hintergrundprozesse: {}"
 
-#: src/server.py:2163
+#: src/server.py:2230
 msgid ""
 "Please click the 'Reboot' button to restart the Kittyflap **after** the "
 "download has finished.\n"
@@ -899,29 +976,29 @@ msgstr ""
 "HINWEIS: Der Download wird im Hintergrund gestartet, also überprüfe den "
 "Download-Bereich deines Browsers."
 
-#: src/server.py:2164
+#: src/server.py:2231
 msgid "Download started..."
 msgstr "Download gestartet..."
 
-#: src/server.py:2167
+#: src/server.py:2234
 msgid "Reboot"
 msgstr "Neustart"
 
-#: src/server.py:2177
+#: src/server.py:2244
 msgid "The original kittyflap database file does not exist."
 msgstr "Die originale Kittyflap Datenbank-Datei existiert nicht mehr."
 
-#: src/server.py:2327
+#: src/server.py:2394
 msgid "Changelogs"
 msgstr "Changelogs"
 
-#: src/server.py:2344
+#: src/server.py:2411
 msgid ""
 "The pictures from the original kittyflap database were removed successfully."
 msgstr ""
 "Die Bilder aus der originalen Kittyflap Datenbank wurde erfolgreich gelöscht."
 
-#: src/server.py:2347
+#: src/server.py:2414
 msgid ""
 "An error occurred while deleting the pictures from the original kittyflap "
 "database: {}"
@@ -929,51 +1006,51 @@ msgstr ""
 "Beim löschen der Bilder aus der originalen Kittyflap Datenbank-Datei trat "
 "ein Fehler auf: {}"
 
-#: src/server.py:2349
+#: src/server.py:2416
 msgid "The original kittyflap database file does not exist anymore."
 msgstr "Die originale Kittyflap Datenbank-Datei existiert nicht mehr."
 
-#: src/ui.py:13
+#: src/ui.py:18
 msgid "Live view"
 msgstr "Live-Ansicht"
 
-#: src/ui.py:19
+#: src/ui.py:24
 msgid "Pictures"
 msgstr "Bilder"
 
-#: src/ui.py:25
+#: src/ui.py:30
 msgid "Manage cats"
 msgstr "Katzen verwalten"
 
-#: src/ui.py:35
+#: src/ui.py:40
 msgid "System"
 msgstr "System"
 
-#: src/ui.py:39
+#: src/ui.py:44
 msgid "Configuration"
 msgstr "Konfiguration"
 
-#: src/ui.py:43
+#: src/ui.py:48
 msgid "WLAN Configuration"
 msgstr "WLAN Konfiguration"
 
-#: src/ui.py:48
+#: src/ui.py:53
 msgid "Info"
 msgstr "Info"
 
-#: src/helper.py:101
+#: src/helper.py:104
 msgid "Motion outside only"
 msgstr "Nur Bewegung außen"
 
-#: src/helper.py:102
+#: src/helper.py:105
 msgid "Motion outside with mouse"
 msgstr "Bewegung außen mit Maus"
 
-#: src/helper.py:103
+#: src/helper.py:106
 msgid "Cat went inside"
 msgstr "Katze ist rein gegangen"
 
-#: src/helper.py:104
+#: src/helper.py:107
 msgid ""
 "Cat went probably inside (no motion inside detected, but the flap was "
 "unlocked)"
@@ -981,15 +1058,15 @@ msgstr ""
 "Katze ist wahrscheinlich rein gegangen (keine Bewegung innen erkannt, aber "
 "die Klappe war entriegelt)"
 
-#: src/helper.py:105
+#: src/helper.py:108
 msgid "Cat went inside with mouse"
 msgstr "Katze ist mit Maus rein gegangen"
 
-#: src/helper.py:106
+#: src/helper.py:109
 msgid "Cat went outside"
 msgstr "Katze ist raus gegangen"
 
-#: src/helper.py:107
+#: src/helper.py:110
 msgid "Unknown event"
 msgstr "Unbekanntes Ereignis"
 

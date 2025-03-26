@@ -74,7 +74,8 @@ DEFAULT_CONFIG = {
         "last_read_changelogs": "v1.0.0",
         "max_pictures_per_event_with_rfid": 100,
         "max_pictures_per_event_without_rfid": 30,
-        "use_all_cores_for_image_processing": True
+        "use_all_cores_for_image_processing": False,
+        "last_booted_version": "v1.5.1" # Parameter introduced in v1.5.1
     }
 }
 
@@ -272,7 +273,8 @@ def load_config():
         "LAST_READ_CHANGELOGS": parser.get('Settings', 'last_read_changelogs', fallback=DEFAULT_CONFIG['Settings']['last_read_changelogs']),
         "MAX_PICTURES_PER_EVENT_WITH_RFID": parser.getint('Settings', 'max_pictures_per_event_with_rfid', fallback=DEFAULT_CONFIG['Settings']['max_pictures_per_event_with_rfid']),
         "MAX_PICTURES_PER_EVENT_WITHOUT_RFID": parser.getint('Settings', 'max_pictures_per_event_without_rfid', fallback=DEFAULT_CONFIG['Settings']['max_pictures_per_event_without_rfid']),
-        "USE_ALL_CORES_FOR_IMAGE_PROCESSING": parser.getboolean('Settings', 'use_all_cores_for_image_processing', fallback=DEFAULT_CONFIG['Settings']['use_all_cores_for_image_processing'])
+        "USE_ALL_CORES_FOR_IMAGE_PROCESSING": parser.getboolean('Settings', 'use_all_cores_for_image_processing', fallback=DEFAULT_CONFIG['Settings']['use_all_cores_for_image_processing']),
+        "LAST_BOOTED_VERSION": parser.get('Settings', 'last_booted_version', fallback=DEFAULT_CONFIG['Settings']['last_booted_version'])
     }
 
 def save_config():
@@ -320,6 +322,7 @@ def save_config():
     settings['max_pictures_per_event_with_rfid'] = CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID']
     settings['max_pictures_per_event_without_rfid'] = CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID']
     settings['use_all_cores_for_image_processing'] = CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']
+    settings['last_booted_version'] = CONFIG['LAST_BOOTED_VERSION']
 
     # Write updated configuration back to the file
     try:
@@ -423,6 +426,18 @@ def get_git_version():
             text=True
         ).strip()
         return commit_hash
+    
+def normalize_version(version_str):
+    """
+    Normalizes a version string by removing the 'v' prefix and commit hash suffix.
+    """
+    # Remove 'v' prefix if present
+    if version_str.startswith('v'):
+        version_str = version_str[1:]
+    # Remove commit hash if present
+    if '-' in version_str:
+        version_str = version_str.split('-')[0]
+    return version_str
     
 def get_timezone():
     """

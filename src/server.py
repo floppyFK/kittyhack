@@ -81,6 +81,22 @@ logging.info("----- Startup ----------------------------------------------------
 # Read the GIT version
 git_version = get_git_version()
 
+# MIGRATION RULES ##################################################################################################
+
+last_booted_version = CONFIG['LAST_BOOTED_VERSION']
+# Check if we need to update the USE_ALL_CORES_FOR_IMAGE_PROCESSING setting
+# This is only needed once after updating to version 1.5.2 or higher
+if normalize_version(last_booted_version) < '1.5.2' and normalize_version(git_version) >= '1.5.2':
+    logging.info("First run after update to 1.5.2 or higher. Setting USE_ALL_CORES_FOR_IMAGE_PROCESSING to the new default value.")
+    CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = False
+    update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
+
+# Now update the last booted version in the configuration
+CONFIG['LAST_BOOTED_VERSION'] = git_version
+update_single_config_parameter("LAST_BOOTED_VERSION")
+
+# END OF MIGRATION RULES ############################################################################################
+
 logging.info(f"Current version: {git_version}")
 
 # Log all configuration values from CONFIG dictionary
@@ -1972,7 +1988,7 @@ def server(input, output, session):
                             12,
                             ui.markdown(
                                 _("If this is disabled, only one CPU core will be used for image processing, which results in a slower analysis of the pictures, and therefore also a little bit slower prey detection.") + "  \n" +
-                                _("If your kittyflap freezes or restarts frequently, you could try to disable this setting.") + "  \n" +
+                                _("Some users have reported that this option causes reboots or system freezes. If you encounter the same issue, it's recommended to disable this setting.") + "  \n" +
                                 _("NOTE: This setting requires a restart of the kittyflap to take effect.")
                             ), style_="color: grey;"
                         ),

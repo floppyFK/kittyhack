@@ -1,7 +1,7 @@
 # v1.5.2
 
 ## Bugfixes
-- **Objekterkennung auf allen CPU-Kernen**: Diese Option ist nun standardmäßig deaktiviert, da sie bei mehreren Kittyflaps zu unerwarteten Neustarts führte. Wenn sie bei dir bisher sicher funktioniert hat, kannst du sie einfach wieder im Konfigurations-Panel aktivieren.
+- **Objekterkennung auf allen CPU-Kernen**: Diese Option ist nun standardmäßig deaktiviert, da sie bei einigen Kittyflaps zu unerwarteten Neustarts führte. Wenn sie bei dir bisher sicher funktioniert hat, kannst du sie einfach wieder im Konfigurations-Panel aktivieren.
 
 ---------
 

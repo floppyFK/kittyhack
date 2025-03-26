@@ -196,7 +196,7 @@ def backend_main(simulate_kittyflap = False):
                     db_thread = threading.Thread(target=write_motion_block_to_db, args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, event_type), daemon=True)
                     db_thread.start()
                 else:
-                    logging.info("[BACKEND] No elements found that exceed the mouse threshold. No database entry will be created.")
+                    logging.info(f"[BACKEND] No elements found that exceed the minimal threshold '{CONFIG['MIN_THRESHOLD']}'. No database entry will be created.")
                     if len(img_ids_for_motion_block) > 0:
                         for element in img_ids_for_motion_block:
                             image_buffer.delete_by_id(element)

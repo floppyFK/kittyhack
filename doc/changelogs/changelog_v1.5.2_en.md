@@ -1,7 +1,7 @@
 # v1.5.2
 
 ## Bugfixes
-- **Object detection on all CPU cores**: This option is now disabled by default, as it caused unexpected reboots when multiple Kittyflaps were in use. If it has been working reliably for you, you can simply re-enable it in the configuration panel.
+- **Object detection on all CPU cores**: This option is now disabled by default, as it caused unexpected reboots on some Kittyflaps. If it has been working reliably for you, you can simply re-enable it in the configuration panel.
 
 ---------
 

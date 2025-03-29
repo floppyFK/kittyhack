@@ -1,12 +1,16 @@
 from shiny import ui
 from faicons import icon_svg
+from pathlib import Path
 from src.helper import *
+
+js_file = Path(__file__).parent / "js" / "app.js"
 
 # Prepare gettext for translations
 set_language(CONFIG['LANGUAGE'])
 
 # the main kittyhack ui
 app_ui = ui.page_fillable(
+    ui.include_js(js_file),
     ui.include_css("styles.css"),
     ui.head_content(
         ui.tags.link(rel="icon", type="image/png", sizes="64x64", href="favicon-64x64.png"),

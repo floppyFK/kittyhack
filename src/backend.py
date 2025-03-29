@@ -232,7 +232,7 @@ def backend_main(simulate_kittyflap = False):
             if last_inside == 0 and motion_inside == 1: # Inside motion detected
                 logging.info("[BACKEND] Motion detected INSIDE")
                 first_motion_inside_tm = tm.time()
-                if CONFIG['ALLOWED_TO_EXIT'] == True:
+                if check_allowed_to_exit() == True:
                     if magnets.get_inside_state() == True:
                         logging.info("[BACKEND] Inside magnet is already unlocked. Only one magnet is allowed. --> Outside magnet will not be unlocked.")
                     else:

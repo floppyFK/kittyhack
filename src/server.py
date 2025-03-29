@@ -1879,7 +1879,38 @@ def server(input, output, session):
                     ui.hr(),
                     ui.row(
                         ui.column(12, ui.input_switch("btnAllowedToExit", _("Allow cats to exit"), CONFIG['ALLOWED_TO_EXIT'])),
-                        ui.column(12, ui.markdown(_("If this is disabled, the direction to the outside remains closed. Useful for e.g. new year's eve or an upcoming vet visit.")), style_="color: grey;"),
+                        ui.column(12, ui.markdown( _("If this is disabled, the direction to the outside remains closed. Useful for e.g. new year's eve or an upcoming vet visit.")), style_="color: grey;"),
+                    ),
+                    ui.div(
+                        ui.row(
+                            ui.column(
+                                12, 
+                                ui.markdown(
+                                    _("You can specify here up to 3 time ranges, in which your cats are **allowed to exit**.") + "  \n" +
+                                    _("If no time range is activated, the cats are allowed to exit at any time.") + "  \n" +
+                                    _("Please set the time in 24h format with `:` (e.g. `13:00`)")
+                                )
+                            )
+                        ),
+                        ui.br(),
+                        ui.row(
+                            ui.column(12, ui.input_switch("btnAllowedToExitRange1", "\n" + _("Time range 1"), CONFIG['ALLOWED_TO_EXIT_RANGE1'])),
+                            ui.column(4, ui.input_text("txtAllowedToExitRange1From", label=_("From"), placeholder="00:00", value=CONFIG['ALLOWED_TO_EXIT_RANGE1_FROM'])),
+                            ui.column(4, ui.input_text("txtAllowedToExitRange1To", label=_("To"), placeholder="00:00", value=CONFIG['ALLOWED_TO_EXIT_RANGE1_TO']))
+                        ),
+                        ui.br(),
+                        ui.row(
+                            ui.column(12, ui.input_switch("btnAllowedToExitRange2", _("Time range 2"), CONFIG['ALLOWED_TO_EXIT_RANGE2'])),
+                            ui.column(4, ui.input_text("txtAllowedToExitRange2From", label=_("From"), placeholder="00:00", value=CONFIG['ALLOWED_TO_EXIT_RANGE2_FROM'])),
+                            ui.column(4, ui.input_text("txtAllowedToExitRange2To", label=_("To"), placeholder="00:00", value=CONFIG['ALLOWED_TO_EXIT_RANGE2_TO']))
+                        ),
+                        ui.br(),
+                        ui.row(
+                            ui.column(12, ui.input_switch("btnAllowedToExitRange3", _("Time range 3"), CONFIG['ALLOWED_TO_EXIT_RANGE3'])),
+                            ui.column(4, ui.input_text("txtAllowedToExitRange3From", label=_("From"), placeholder="00:00", value=CONFIG['ALLOWED_TO_EXIT_RANGE3_FROM'])),
+                            ui.column(4, ui.input_text("txtAllowedToExitRange3To", label=_("To"), placeholder="00:00", value=CONFIG['ALLOWED_TO_EXIT_RANGE3_TO']))
+                        ),
+                        id_="allowed_to_exit_ranges",
                     ),
                     ui.hr(),
                     # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
@@ -2028,6 +2059,52 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.bSaveKittyhackConfig)
     def on_save_kittyhack_config():
+        # Check the time ranges for allowed to exit
+        def validate_time_format(field_id):
+            # Get the value from the input field
+            value = input[field_id]()
+            # Check if value exists and doesn't match the time format
+            if value and not re.match(r"^\d{2}:\d{2}$", value):
+                ui.notification_show(
+                    _("Allowed to exit time ranges: ") +
+                    _("Invalid time format. Please use HH:MM format.") + "\n" + 
+                    _("Changes were not saved."), 
+                    duration=5, type="error"
+                )
+                return False
+            # Check if the time is in the valid range
+            try:
+                hour, minute = map(int, value.split(':'))
+                if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+                    ui.notification_show(
+                        _("Allowed to exit time ranges: ") +
+                        _("Time must be between 00:00 and 23:59.") + "\n" + 
+                        _("Changes were not saved."), 
+                        duration=5, type="error"
+                    )
+                    return False
+            except ValueError:
+                ui.notification_show(
+                    _("Allowed to exit time ranges: ") +
+                    _("Invalid time value.") + "\n" +
+                    _("Changes were not saved."),
+                    duration=5, type="error"
+                )
+                return False
+            return True
+        
+        # Validate all time input fields
+        time_fields = [
+            "txtAllowedToExitRange1From", "txtAllowedToExitRange1To",
+            "txtAllowedToExitRange2From", "txtAllowedToExitRange2To",
+            "txtAllowedToExitRange3From", "txtAllowedToExitRange3To"
+        ]
+        
+        for field_id in time_fields:
+            valid = validate_time_format(field_id)
+            if not valid:
+                return
+
         # override the variable with the data from the configuration page
         language_changed = CONFIG['LANGUAGE'] != input.txtLanguage()
         tflite_model_changed = CONFIG['TFLITE_MODEL_VERSION'] != input.TfLiteModelVersion()
@@ -2055,6 +2132,15 @@ def server(input, output, session):
         CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID'] = int(input.numMaxPicturesPerEventWithRfid())
         CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID'] = int(input.numMaxPicturesPerEventWithoutRfid())
         CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = input.btnUseAllCoresForImageProcessing()
+        CONFIG['ALLOWED_TO_EXIT_RANGE1'] = input.btnAllowedToExitRange1()
+        CONFIG['ALLOWED_TO_EXIT_RANGE1_FROM'] = input.txtAllowedToExitRange1From()
+        CONFIG['ALLOWED_TO_EXIT_RANGE1_TO'] = input.txtAllowedToExitRange1To()
+        CONFIG['ALLOWED_TO_EXIT_RANGE2'] = input.btnAllowedToExitRange2()
+        CONFIG['ALLOWED_TO_EXIT_RANGE2_FROM'] = input.txtAllowedToExitRange2From()
+        CONFIG['ALLOWED_TO_EXIT_RANGE2_TO'] = input.txtAllowedToExitRange2To()
+        CONFIG['ALLOWED_TO_EXIT_RANGE3'] = input.btnAllowedToExitRange3()
+        CONFIG['ALLOWED_TO_EXIT_RANGE3_FROM'] = input.txtAllowedToExitRange3From()
+        CONFIG['ALLOWED_TO_EXIT_RANGE3_TO'] = input.txtAllowedToExitRange3To()
 
         loglevel = logging._nameToLevel.get(input.txtLoglevel(), logging.INFO)
         logger.setLevel(loglevel)

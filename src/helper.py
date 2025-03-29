@@ -75,7 +75,16 @@ DEFAULT_CONFIG = {
         "max_pictures_per_event_with_rfid": 100,
         "max_pictures_per_event_without_rfid": 30,
         "use_all_cores_for_image_processing": False,
-        "last_booted_version": "v1.5.1" # Parameter introduced in v1.5.1
+        "last_booted_version": "v1.5.1", # Parameter introduced in v1.5.1
+        "allowed_to_exit_range1": False,
+        "allowed_to_exit_range1_from": "00:00",
+        "allowed_to_exit_range1_to": "23:59",
+        "allowed_to_exit_range2": False,
+        "allowed_to_exit_range2_from": "00:00",
+        "allowed_to_exit_range2_to": "23:59",
+        "allowed_to_exit_range3": False,
+        "allowed_to_exit_range3_from": "00:00",
+        "allowed_to_exit_range3_to": "23:59"
     }
 }
 
@@ -274,7 +283,16 @@ def load_config():
         "MAX_PICTURES_PER_EVENT_WITH_RFID": parser.getint('Settings', 'max_pictures_per_event_with_rfid', fallback=DEFAULT_CONFIG['Settings']['max_pictures_per_event_with_rfid']),
         "MAX_PICTURES_PER_EVENT_WITHOUT_RFID": parser.getint('Settings', 'max_pictures_per_event_without_rfid', fallback=DEFAULT_CONFIG['Settings']['max_pictures_per_event_without_rfid']),
         "USE_ALL_CORES_FOR_IMAGE_PROCESSING": parser.getboolean('Settings', 'use_all_cores_for_image_processing', fallback=DEFAULT_CONFIG['Settings']['use_all_cores_for_image_processing']),
-        "LAST_BOOTED_VERSION": parser.get('Settings', 'last_booted_version', fallback=DEFAULT_CONFIG['Settings']['last_booted_version'])
+        "LAST_BOOTED_VERSION": parser.get('Settings', 'last_booted_version', fallback=DEFAULT_CONFIG['Settings']['last_booted_version']),
+        "ALLOWED_TO_EXIT_RANGE1": parser.getboolean('Settings', 'allowed_to_exit_range1', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range1']),
+        "ALLOWED_TO_EXIT_RANGE1_FROM": parser.get('Settings', 'allowed_to_exit_range1_from', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range1_from']),
+        "ALLOWED_TO_EXIT_RANGE1_TO": parser.get('Settings', 'allowed_to_exit_range1_to', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range1_to']),
+        "ALLOWED_TO_EXIT_RANGE2": parser.getboolean('Settings', 'allowed_to_exit_range2', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range2']),
+        "ALLOWED_TO_EXIT_RANGE2_FROM": parser.get('Settings', 'allowed_to_exit_range2_from', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range2_from']),
+        "ALLOWED_TO_EXIT_RANGE2_TO": parser.get('Settings', 'allowed_to_exit_range2_to', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range2_to']),
+        "ALLOWED_TO_EXIT_RANGE3": parser.getboolean('Settings', 'allowed_to_exit_range3', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range3']),
+        "ALLOWED_TO_EXIT_RANGE3_FROM": parser.get('Settings', 'allowed_to_exit_range3_from', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range3_from']),
+        "ALLOWED_TO_EXIT_RANGE3_TO": parser.get('Settings', 'allowed_to_exit_range3_to', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range3_to'])
     }
 
 def save_config():
@@ -323,6 +341,15 @@ def save_config():
     settings['max_pictures_per_event_without_rfid'] = CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID']
     settings['use_all_cores_for_image_processing'] = CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']
     settings['last_booted_version'] = CONFIG['LAST_BOOTED_VERSION']
+    settings['allowed_to_exit_range1'] = CONFIG['ALLOWED_TO_EXIT_RANGE1']
+    settings['allowed_to_exit_range1_from'] = CONFIG['ALLOWED_TO_EXIT_RANGE1_FROM']
+    settings['allowed_to_exit_range1_to'] = CONFIG['ALLOWED_TO_EXIT_RANGE1_TO']
+    settings['allowed_to_exit_range2'] = CONFIG['ALLOWED_TO_EXIT_RANGE2']
+    settings['allowed_to_exit_range2_from'] = CONFIG['ALLOWED_TO_EXIT_RANGE2_FROM']
+    settings['allowed_to_exit_range2_to'] = CONFIG['ALLOWED_TO_EXIT_RANGE2_TO']
+    settings['allowed_to_exit_range3'] = CONFIG['ALLOWED_TO_EXIT_RANGE3']
+    settings['allowed_to_exit_range3_from'] = CONFIG['ALLOWED_TO_EXIT_RANGE3_FROM']
+    settings['allowed_to_exit_range3_to'] = CONFIG['ALLOWED_TO_EXIT_RANGE3_TO']
 
     # Write updated configuration back to the file
     try:
@@ -918,3 +945,55 @@ def parse_version(v_str):
         return tuple(map(int, v_str.split('.')))
     except:
         return (0, 0, 0)  # Default for unparseable versions
+    
+def check_allowed_to_exit():
+    """
+    Checks if the cat is allowed to exit based on the current time and the configured ranges and the general allowed_to_exit setting.
+    Returns:
+        bool: True if the cat is allowed to exit, False otherwise.
+    """
+    if CONFIG['ALLOWED_TO_EXIT']:
+        now = datetime.now(get_timezone())
+        current_time = now.strftime("%H:%M")
+
+        # Check if the cat is allowed to exit based on the configured ranges
+        # If any configured range allows exit, then exit is permitted
+        any_range_configured = False
+        allowed = False
+        
+        for i in [1, 2, 3]:
+            # Check if the range is configured
+            if CONFIG[f'ALLOWED_TO_EXIT_RANGE{i}']:
+                any_range_configured = True
+                start_time = CONFIG[f'ALLOWED_TO_EXIT_RANGE{i}_FROM']
+                end_time = CONFIG[f'ALLOWED_TO_EXIT_RANGE{i}_TO']
+                
+                # Handle overnight ranges (e.g., 23:00-01:00)
+                if start_time > end_time:  # This is an overnight range
+                    if current_time >= start_time or current_time <= end_time:
+                        logging.info(f"[CAT_EXIT_CHECK] Allowed to exit in overnight range {i} from {start_time} to {end_time} (current time: {current_time})")
+                        allowed = True
+                        break  # One allowed range is enough
+                    else:
+                        logging.info(f"[CAT_EXIT_CHECK] Not allowed to exit in overnight range {i} from {start_time} to {end_time} (current time: {current_time})")
+                else:  # Regular range within same day
+                    if start_time <= current_time <= end_time:
+                        logging.info(f"[CAT_EXIT_CHECK] Allowed to exit in range {i} from {start_time} to {end_time} (current time: {current_time})")
+                        allowed = True
+                        break  # One allowed range is enough
+                    else:
+                        logging.info(f"[CAT_EXIT_CHECK] Not allowed to exit in range {i} from {start_time} to {end_time} (current time: {current_time})")
+        
+        # If no ranges are configured, default to allowed
+        if not any_range_configured:
+            allowed = True
+            
+        if allowed:
+            logging.info("[CAT_EXIT_CHECK] Allowed to exit based on configured ranges.")
+            return True
+        else:
+            logging.info("[CAT_EXIT_CHECK] Not allowed to exit based on configured ranges.")
+            return False
+    else:
+        logging.info("[CAT_EXIT_CHECK] Not allowed to exit, as the setting is disabled.")
+        return False

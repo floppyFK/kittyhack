@@ -387,7 +387,13 @@ def show_event_server(input, output, session, block_id: int):
                         # Encode the bytes to base64 and then to string for HTML
                         pictures.append(base64.b64encode(thumbnail_bytes).decode('utf-8'))
                     orig_pictures.append(row[blob_picture])
-                    timestamps.append(pd.to_datetime(get_local_date_from_utc_date(row["created_at"])).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+                    # Convert the timestamp to the local timezone and format it
+                    try:
+                        timestamp = pd.to_datetime(row["created_at"])
+                        timestamps.append(timestamp.tz_convert(CONFIG['TIMEZONE']).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+                    except Exception as e:
+                        logging.error(f"Failed to process timestamp: {e}")
+                        timestamps.append("")
                     try:
                         if event_text:
                             event_datas.append(read_event_from_json(event_text))
@@ -1299,7 +1305,7 @@ def server(input, output, session):
                     '': [_('No events found.')]
                 })
             # Convert UTC timestamps to local timezone
-            df_events['created_at'] = pd.to_datetime(df_events['created_at']).dt.tz_convert('UTC').dt.tz_convert(CONFIG['TIMEZONE'])
+            df_events['created_at'] = pd.to_datetime(df_events['created_at']).dt.tz_convert(CONFIG['TIMEZONE'])
             df_events = df_events.sort_values(by='created_at', ascending=False)
             df_events['date'] = df_events['created_at'].dt.date
             df_events['time'] = df_events['created_at'].dt.strftime('%H:%M:%S')

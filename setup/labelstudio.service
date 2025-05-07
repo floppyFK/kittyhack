@@ -1,0 +1,15 @@
+[Unit]
+Description=Label Studio Annotation Tool
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/labelstudio
+ExecStart=/root/labelstudio/venv/bin/label-studio --port 8080 --host 0.0.0.0 --log-level INFO
+Restart=always
+Environment="LABEL_STUDIO_DATABASE_DIR=/root/labelstudio/data"
+Environment="LABEL_STUDIO_ACCESS_LOGS=1"
+
+[Install]
+WantedBy=multi-user.target

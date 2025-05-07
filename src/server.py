@@ -18,10 +18,17 @@ import asyncio
 import io
 import zipfile
 from typing import List
-from src.helper import (
-    AllowedToEnter, 
-    EventType, 
-    set_language, 
+from src.baseconfig import (
+    CONFIG,
+    AllowedToEnter,
+    set_language,
+    save_config,
+    DEFAULT_CONFIG,
+    JOURNAL_LOG,
+    LOGFILE
+)
+from src.helper import ( 
+    EventType,  
     get_git_version, 
     wait_for_network, 
     get_free_disk_space, 
@@ -31,17 +38,40 @@ from src.helper import (
     get_file_size, 
     get_local_date_from_utc_date, 
     format_date_minmax, 
-    save_config,
-    _, 
-    sigterm_monitor, 
-    CONFIG, 
-    LOGFILE
+    normalize_version,
+    log_relevant_deb_packages,
+    log_system_information,
+    icon_svg_local,
+    get_changelogs,
+    get_current_ip,
+    is_valid_uuid4,
+    is_port_open,
+    get_total_disk_space,
+    get_used_ram_space,
+    get_total_ram_space,
+    sigterm_monitor
 )
 from src.database import *
-from src.system import switch_wlan_connection, get_wlan_connections, systemcmd
-from src.backend import backend_main, manual_door_override, tflite
+from src.system import (
+    switch_wlan_connection, 
+    get_wlan_connections, 
+    systemcmd, 
+    manage_and_switch_wlan, 
+    delete_wlan_connection,
+    get_labelstudio_status,
+    get_labelstudio_installed_version,
+    get_labelstudio_latest_version,
+    install_labelstudio,
+    update_labelstudio,
+    remove_labelstudio,
+    systemctl,
+    scan_wlan_networks
+)
+from src.backend import backend_main, manual_door_override, model_hanlder
 from src.magnets import Magnets
 from src.pir import Pir
+from src.model import RemoteModelTrainer, YoloModel
+from src.shiny_wrappers import uix
 
 # LOGFILE SETUP
 # Convert the log level string from the configuration to the corresponding logging level constant
@@ -74,7 +104,7 @@ logger.setLevel(loglevel)
 logger.addHandler(handler)
 
 # Prepare gettext for translations based on the configured language
-set_language(CONFIG['LANGUAGE'])
+_ = set_language(CONFIG['LANGUAGE'])
 
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
 
@@ -153,6 +183,14 @@ if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'], "events"
     logging.warning(f"Column 'thumbnail' not found in the 'events' table of the backup database. Adding it...")
     add_column_to_table(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'], "events", "thumbnail", "BLOB")
 
+# v2.0.0: Check if the "own_cat_probability" column exists in the "events" table. If not, add it
+if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "own_cat_probability"):
+    logging.warning(f"Column 'own_cat_probability' not found in the 'events' table. Adding it...")
+    add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "own_cat_probability", "REAL")
+if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'], "events", "own_cat_probability"):
+    logging.warning(f"Column 'own_cat_probability' not found in the 'events' table of the backup database. Adding it...")
+    add_column_to_table(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'], "events", "own_cat_probability", "REAL")
+
 if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
     logging.warning(f"Legacy table 'photo' not found in the kittyhack database. Creating it...")
     create_kittyhack_photo_table(CONFIG['KITTYHACK_DATABASE_PATH'])
@@ -209,6 +247,9 @@ logging.info("Disabling WiFi power saving mode...")
 systemcmd(["iw", "dev", "wlan0", "set", "power_save", "off"], CONFIG['SIMULATE_KITTYFLAP'])
 
 logging.info("Starting frontend...")
+
+# Check if the label-studio version is installed
+CONFIG["LABELSTUDIO_VERSION"] = get_labelstudio_installed_version()
 
 # Global for the free disk space:
 free_disk_space = get_free_disk_space()
@@ -306,6 +347,8 @@ start_background_task()
 # Global reactive triggers
 reload_trigger_wlan = reactive.Value(0)
 reload_trigger_photos = reactive.Value(0)
+reload_trigger_ai = reactive.Value(0)
+reload_trigger_config = reactive.Value(0)
 
 #######################################################################
 # Modules
@@ -321,6 +364,10 @@ def btn_wlan_connect():
 @module.ui
 def btn_show_event():
     return ui.input_action_button(id=f"btn_show_event" , label="", icon=icon_svg("magnifying-glass", margin_left="-1", margin_right="auto"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
+
+@module.ui
+def btn_yolo_modify():
+    return ui.input_action_button(id=f"btn_yolo_modify" , label="", icon=icon_svg("pencil", margin_left="-0.1em", margin_right="auto"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
 
 @module.server
 def show_event_server(input, output, session, block_id: int):
@@ -731,6 +778,119 @@ def wlan_modify_server(input, output, session, ssid: str):
         else:
             ui.notification_show(_("Failed to delete WLAN connection {}").format(ssid), duration=5, type="error")
 
+@module.server
+def manage_yolo_model_server(input, output, session, unique_id: str):
+    @reactive.effect
+    @reactive.event(input.btn_yolo_modify)
+    def on_modify_yolo_model():
+        # We need to read the available models again here to get the metadata
+        available_models = YoloModel.get_model_list()
+        model = next((mdl for mdl in available_models if mdl['unique_id'] == unique_id), None)
+        if model is None:
+            logging.error(f"YOLO model with unique_id {unique_id} not found.")
+            return
+        model_in_use = model['unique_id'] == CONFIG['YOLO_MODEL']
+        if model_in_use:
+            additional_note = ui.div(
+                _("This model is currently in use. You can not delete it."),
+                class_="alert alert-info",
+                style_="margin-bottom: 0px; margin-top: 10px; padding: 10px"
+            )
+        else:
+            additional_note = ""
+
+        m = ui.modal(
+            ui.div(ui.input_text("txtModelName", _("Name"), model['display_name'], width="100%"), style_="width: 100%;"),
+            ui.div(ui.input_text("txtModelUniqueID", _("Unique ID"), model['unique_id'], width="100%"), class_="disabled-wrapper", style_="width: 100%;"),
+            ui.hr(),
+            ui.markdown(_("Model created at: {}").format(model['creation_date'])),
+            additional_note,
+            title=_("Change model configuration"),
+            easy_close=False,
+            footer=ui.div(
+                ui.input_action_button(
+                    id="btn_model_save",
+                    label=_("Save"),
+                    class_="btn-vertical-margin btn-narrow"
+                ),
+                ui.input_action_button(
+                    id="btn_modal_cancel",
+                    label=_("Cancel"),
+                    class_="btn-vertical-margin btn-narrow"
+                ),
+                ui.input_action_button(
+                    id=f"btn_model_delete", 
+                    label=_("Delete"), 
+                    icon=icon_svg("trash"), 
+                    class_=f"btn-vertical-margin btn-narrow btn-danger {'disabled-wrapper' if model_in_use else ''}"
+                ),
+            )
+        )
+        ui.modal_show(m)
+
+    @reactive.effect
+    @reactive.event(input.btn_model_save)
+    def model_save():
+        unique_id = input.txtModelUniqueID()
+        model_name = input.txtModelName()
+        logging.info(f"Updating Model configuration for Unique ID {unique_id}: Name={model_name}")
+        ui.modal_remove()
+        success = YoloModel.rename_model(unique_id, model_name)
+        if success:
+            ui.notification_show(_("Model configuration {} updated successfully.").format(model_name), duration=5, type="message")
+            reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+            reload_trigger_config.set(reload_trigger_config.get() + 1)
+        else:
+            ui.notification_show(_("Failed to update model configuration {}").format(model_name), duration=5, type="error")
+        ui.modal_remove()
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_cancel)
+    def modal_cancel():
+        ui.modal_remove()
+
+    # Ask the user for confirmation before deleting the model
+    @reactive.effect
+    @reactive.event(input.btn_model_delete)
+    def model_delete():
+        # First remove the previous modal correctly to avoid multiple modals
+        unique_id = input.txtModelUniqueID()
+        model_name = input.txtModelName()
+        ui.modal_remove()
+
+        m = ui.modal(
+            _("Do you really want to delete this model?"),
+            title=_("Delete Model"),
+            easy_close=False,
+            footer=ui.div(
+                ui.div(
+                    ui.input_action_button("btn_modal_delete_model_ok", _("OK")),
+                    ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                ),
+                ui.div(
+                    # Helper input to pass the unique_id to the delete function
+                    ui.input_text("txtModelName", "", model_name),
+                    ui.input_text("txtModelUniqueID", "", unique_id),
+                    style_="display:none;"
+                )
+            ), 
+        )
+        ui.modal_show(m)
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_delete_model_ok)
+    def modal_delete_model_ok():
+        unique_id = input.txtModelUniqueID()
+        success = YoloModel.delete_model(unique_id)
+        if success:
+            ui.notification_show(_("Model {} deleted successfully.").format(input.txtModelName()), duration=5, type="message")
+            ui.modal_remove()
+            reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+            reload_trigger_config.set(reload_trigger_config.get() + 1)
+        else:
+            ui.notification_show(_("Failed to delete Model {}").format(input.txtModelName()), duration=5, type="error")
+        ui.modal_remove()
+
 #######################################################################
 # The main server application
 #######################################################################
@@ -800,6 +960,9 @@ def server(input, output, session):
     # Monitor updates of the database
     sess_last_imgblock_ts = [last_imgblock_ts.get_timestamp()]
 
+    # When a new WebGUI session is opened, check if a model training is in progress:
+    RemoteModelTrainer.check_model_training_result(show_notification=True)
+
     @reactive.effect
     def ext_trigger_reload_photos():
         reactive.invalidate_later(3)
@@ -855,7 +1018,7 @@ def server(input, output, session):
     def live_view_main():
         reactive.invalidate_later(CONFIG['LIVE_VIEW_REFRESH_INTERVAL'])
         try:
-            frame = tflite.get_camera_frame()
+            frame = model_hanlder.get_camera_frame()
             if frame is None:
                 img_html = (
                     '<div class="placeholder-image">' +
@@ -866,7 +1029,7 @@ def server(input, output, session):
                     '</div>'
                 )
             else:
-                frame_jpg = tflite.encode_jpg_image(frame)
+                frame_jpg = model_hanlder.encode_jpg_image(frame)
                 if frame_jpg:
                     frame_b64 = base64.b64encode(frame_jpg).decode('utf-8')
                     img_html = f'<img src="data:image/jpeg;base64,{frame_b64}" />'
@@ -1201,7 +1364,7 @@ def server(input, output, session):
 
     @output
     @render.ui
-    def ui_live_view():        
+    def ui_live_view():
         return ui.div(
             ui.card(
                 ui.card_header(
@@ -1574,7 +1737,7 @@ def server(input, output, session):
                                 ui.column(12, ui.help_text(_("NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."))),
                                 ui.column(12, ui.help_text(_("If you have entered the RFID correctly here, the name of the cat will be displayed in the 'Pictures' section."))),
                                 ui.br(),
-                                ui.column(12, ui.input_file(id=f"mng_cat_pic_{data_row['id']}", label=_("Change Picture"), accept=[".jpg", ".png"], width="100%")),
+                                ui.column(12, uix.input_file(id=f"mng_cat_pic_{data_row['id']}", label=_("Change Picture"), accept=[".jpg", ".png"], width="100%")),
                             )
                         ),
                         ui.HTML(img_html),
@@ -1668,7 +1831,7 @@ def server(input, output, session):
                         ui.column(12, ui.help_text(_("You can find the RFID in the 'Pictures' section, if the chip of your cat was recognized by the Kittyflap. To read the RFID, just set the entrance mode to 'All Cats' and let pass your cat through the Kittyflap."))),
                         ui.column(12, ui.help_text(_("NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."))),
                         ui.br(),
-                        ui.column(12, ui.input_file(id=f"add_new_cat_pic", label=_("Upload Picture"), accept=".jpg", width="100%")),
+                        ui.column(12, uix.input_file(id=f"add_new_cat_pic", label=_("Upload Picture"), accept=".jpg", width="100%")),
                         ui.hr(),
                         ui.column(12, ui.input_action_button(id=f"add_new_cat_save", label=_("Save"), icon=icon_svg("floppy-disk"))),
                     )
@@ -1700,10 +1863,486 @@ def server(input, output, session):
             ui.update_text(id="add_new_cat_rfid", value="")
             reload_trigger_cats.set(reload_trigger_cats.get() + 1)
         else:
-            ui.notification_show(_("An error occurred while adding the new cat: {}").format(result.message), duration=5, type="error") 
+            ui.notification_show(_("An error occurred while adding the new cat: {}").format(result.message), duration=5, type="error")
 
     @output
     @render.ui
+    @reactive.event(reload_trigger_ai, ignore_none=True)
+    def ui_ai_training():
+
+        # Check labelstudio
+        if CONFIG["LABELSTUDIO_VERSION"] is not None:
+            # Check if labelstudio is running
+            if get_labelstudio_status() == True:
+                ui_labelstudio = ui.div(
+                    ui.row(
+                        ui.column(
+                            12,
+                            ui.input_task_button("btn_labelstudio_stop", _("Stop Label Studio"), icon=icon_svg("stop")),
+                            ui.br(),
+                            ui.help_text(_("Label Studio is running. Click the button to stop Label Studio.")),
+                            style_="text-align: center;"
+                        ),
+                    ),
+                    ui.row(
+                        ui.column(
+                            12,
+                            # Inject an HTML button that links to the Label Studio web interface
+                            ui.HTML('<a href="http://{}:8080" target="_blank" class="btn btn-default">{}</a>'.format(get_current_ip(), _("Open Label Studio"))),
+                            style_="text-align: center;"
+                        ),
+                        ui.column(
+                            12,
+                            ui.help_text(_("Installed Version: ") + CONFIG["LABELSTUDIO_VERSION"]),
+                            style_="text-align: center; padding-top: 20px;"
+                        ),
+                        ui.column(
+                            12,
+                            ui.help_text(_("Latest version: ") + get_labelstudio_latest_version()),
+                            style_="text-align: center;"
+                        ),
+                        style_ ="padding-top: 50px;"
+                    )
+                )
+            else:
+                ui_labelstudio = ui.row(
+                    ui.column(
+                        12,
+                        ui.input_task_button("btn_labelstudio_start", _("Start Label Studio"), icon=icon_svg("play")),
+                        ui.br(),
+                        ui.help_text(_("Label Studio is not running. Click the button to start Label Studio.")),
+                        style_="text-align: center;"
+                    ),
+                )
+
+            if get_labelstudio_latest_version() != CONFIG["LABELSTUDIO_VERSION"]:
+                ui_labelstudio = ui_labelstudio, ui.row(
+                    ui.column(
+                        12,
+                        ui.input_task_button("btn_labelstudio_update", _("Update Label Studio"), icon=icon_svg("circle-up"), class_="btn-primary"),
+                        ui.br(),
+                        ui.help_text(_("Click the button to update Label Studio to the latest version.")),
+                        style_="text-align: center;"
+                    ),
+                    style_ ="padding-top: 50px;"
+                )
+
+            ui_labelstudio = ui_labelstudio, ui.hr(), ui.row(
+                ui.column(
+                    12,
+                    ui.input_task_button("btn_labelstudio_remove", _("Remove Label Studio"), icon=icon_svg("trash"), class_="btn-danger"),
+                    ui.br(),
+                    ui.help_text(_("Click the button to remove Label Studio.")),
+                    ui.br(),
+                    ui.help_text(_("(Your project data will not be deleted. You can re-install Label Studio later.)")),
+                    style_="text-align: center;"
+                ),
+                style_ ="padding-top: 20px;"
+
+            )
+
+        # If labelstudio is not installed, show the install button
+        else:
+            ui_labelstudio = ui.div(
+                ui.markdown(
+                    _("#### You have two choices:") + "  \n" +
+                    _("1. `EASY` **Install Label Studio automatically on the Kittyflap**:") + "  \n" +
+                    _("Easy, but you may be limited in the number of images you can label. The performance may vary, depending on the wlan connection to the Kittyflap.") + "  \n" +
+                    _("2. `EXPERT` **Install Label Studio on your own computer**:") + "  \n" +
+                    _("This is a bit harder, but you are more flexible and the performance is way better. Also, you don't need to worry about the limited disk space on the Kittyflap. See the [Label Studio](https://labelstud.io/) website for instructions.") + "  \n" +
+                    _("> **Please note, if you want to install Label Studio on the Kittyflap:**") + "  \n" +
+                    _("Some Kittyflaps have only 1GB of RAM. In this case, it is strongly recommended to always stop the Label Studio server after you are done with the labeling process, otherwise the Kittyflap may run out of memory.") + "  \n" +
+                    _("You can check the available disk space and the RAM configuration in the 'Info' section.")
+                ),
+                ui.hr(),
+                ui.column(
+                    12,
+                    ui.input_task_button("btn_labelstudio_install", _("Install Label Studio on the Kittyflap")),
+                    ui.br(),
+                    ui.help_text(_("Click the button to install Label Studio.")),
+                    ui.br(),
+                    ui.help_text(_("This will take several minutes, so please be patient.")),
+                    ui.br(),
+                    ui.help_text(_("The Kittyflap may not be reachable during the installation. This is normal.")),
+                    style_="text-align: center;"
+                ),
+            )
+
+        # Check if a model training is in progress
+        training_status = RemoteModelTrainer.check_model_training_result(show_notification=True, show_in_progress=True, return_pretty_status=True)
+
+        ui_ai_training =  ui.div(
+            # --- Description ---
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.h4(_("Description"), style_="text-align: center;"),
+                    ),
+                    ui.br(),
+                    ui.markdown(
+                        _("In this section, you can train your own individual AI model for the Kittyflap. The training process consists of two steps:") + "  \n" +
+                        _("1. **Label Studio**: In this step, you can label your cat(s) and their prey in the captured images. This is done using the Label Studio tool.") + "  \n" +
+                        _("2. **Model Training**: In this step, the labeled images are used to train a new AI model.") + "  \n" +
+                        _("To achieve the best results, it is recommended to label at least 100 images of each cat and their prey. The more images you label, the better the model will be.") + " " +
+                        _("The training process can take several hours, depending on the number of images.") + "  \n\n" +
+                        _("You can watch this Youtube video for a introduction, how to use Label Studio and train your own model:") + "[YOUTUBE_VIDEO_LINK_TODO](https://www.youtube.com/watch?v=0x0x0x0x0x)"
+                    ),
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container align-left",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
+
+            # --- Label Studio ---
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.h4("Label Studio", style_="text-align: center;"),
+                    ),
+                    ui.br(),
+                    ui_labelstudio,
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container align-left",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
+
+            # --- Model Training ---
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.h4(_("Model Training"), style_="text-align: center;"),
+                    ),
+                    ui.br(),
+                    ui.div(
+                        ui.div(
+                            ui.div(
+                                uix.input_file("model_training_data", _("Upload Label-Studio Training Data (ZIP file)"), accept=".zip", multiple=False, width="90%"),
+                                ui.input_text("model_name", _("Model Name (optional)"), placeholder=_("Enter a name for your model"), width="90%"),
+                                ui.input_text("user_name", _("Username (optional)"), value=CONFIG['USER_NAME'],placeholder=_("Enter your name"), width="90%"),
+                                ui.input_text("email_notification", _("Email for Notification (optional)"), value=CONFIG['EMAIL'],placeholder=_("Enter your email address"), width="90%"),
+                                ui.help_text(_("If you provide an email address, you will be notified when the model training is finished.")),
+                                ui.br(),
+                                ui.input_task_button("submit_model_training", _("Submit Model for Training"), class_="btn-primary"),
+                                id="model_training_form",
+                                style_="display: flex; flex-direction: column; align-items: center; justify-content: center;"
+                            ),
+                            style_="text-align: center;"
+                        ) if not is_valid_uuid4(CONFIG["MODEL_TRAINING"]) else ui.div(
+                            ui.markdown(_("A model training is currently in progress. This can take several hours.") + _("You will be notified by email when the training is finished.") if CONFIG['EMAIL'] else ""),
+                            ui.markdown(_("Current status: {}").format(training_status)),
+                            ui.br(),
+                            ui.br(),
+                            ui.input_task_button("btn_reload_model_training_status", _("Reload Model Training Status"), class_="btn-primary"),
+                            ui.hr(),
+                            ui.markdown(_("Your individual Training ID:") + "\n\n" + f"`{CONFIG['MODEL_TRAINING']}`"),
+                            ui.help_text(_("(use this ID for support requests)")),
+                            ui.br(),
+                            ui.br(),
+                            ui.input_task_button("btn_cancel_model_training", _("Cancel Model Training"), class_="btn-danger"),
+                            id="model_training_status",
+                            style_="text-align: center;"
+                        ),
+                    ),
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container align-left",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
+
+            # --- Model Management ---
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.h4(_("Model Management"), style_="text-align: center;"),
+                    ),
+                    ui.br(),
+                    ui.div(_("Here you can rename or remove your own models. To activate a model, go to the 'Configuration' section.")),
+                    ui.output_ui("manage_yolo_models_table"),
+                    full_screen=False,
+                    class_="generic-container align-left",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
+
+            ui.br(),
+            ui.br(),
+            ui.br(),
+            ui.br(),
+            ui.br(),
+        )
+        return ui_ai_training
+    
+    @render.table
+    @reactive.event(reload_trigger_ai, ignore_none=True)
+    def manage_yolo_models_table():
+        try:
+            available_models = YoloModel.get_model_list()
+            for model in available_models:
+                unique_btn_id = hashlib.md5(os.urandom(16)).hexdigest()
+                unique_model_id = model['unique_id']
+
+                model['actions'] = ui.div(
+                    ui.tooltip(
+                        btn_yolo_modify(f"btn_yolo_modify_{unique_btn_id}"),
+                        _("Modify or delete this model"),
+                        id=f"tooltip_yolo_modify_{unique_btn_id}"
+                    ),
+                )
+                # Add new event listeners for the buttons
+                manage_yolo_model_server(f"btn_yolo_modify_{unique_btn_id}", unique_model_id)
+
+            # Create a pandas DataFrame from the available models
+            df = pd.DataFrame(available_models)
+            df = df[['display_name', 'creation_date', 'actions']]  # Select only the columns we want to display
+            df.columns = [_('Name'), _('Creation date'), ""]  # Rename columns for display
+
+            return (
+                df.style.set_table_attributes('class="dataframe shiny-table table w-auto table_models_overview"')
+                .hide(axis="index")
+            )
+        except Exception as e:
+            # Return an empty DataFrame with an error message
+            return pd.DataFrame({
+                'INFO': [_('Nothing here yet. Please train a model first.')]
+            })
+    
+    @reactive.Effect
+    @reactive.event(input.btn_reload_model_training_status)
+    def on_reload_model_training_status():
+        reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+        reload_trigger_config.set(reload_trigger_config.get() + 1)
+    
+    @reactive.Effect
+    @reactive.event(input.btn_cancel_model_training)
+    def on_cancel_model_training():
+        # Check if a model training is in progress
+        if not is_valid_uuid4(CONFIG["MODEL_TRAINING"]):
+            ui.notification_show(_("No model training in progress."), duration=15, type="error")
+            CONFIG["MODEL_TRAINING"] = ""
+            update_single_config_parameter("MODEL_TRAINING")
+            reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+            return
+    
+        # Show confirmation dialog
+        m = ui.modal(
+            _("Do you really want to cancel the model training?"),
+            title=_("Cancel Model Training"),
+            easy_close=True,
+            footer=ui.div(
+                ui.input_action_button("btn_modal_cancel_training_ok", _("OK")),
+                ui.input_action_button("btn_modal_cancel", _("Cancel")),
+            )
+        )
+        ui.modal_show(m)
+    
+    @reactive.effect
+    @reactive.event(input.btn_modal_cancel_training_ok)
+    def modal_cancel_training():
+        ui.modal_remove()
+        # Cancel the model training
+        RemoteModelTrainer.cancel_model_training(CONFIG["MODEL_TRAINING"])
+        CONFIG["MODEL_TRAINING"] = ""
+        update_single_config_parameter("MODEL_TRAINING")
+        ui.notification_show(_("Model training cancelled."), duration=15, type="message")
+        reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+    
+    @reactive.Effect
+    @reactive.event(input.submit_model_training)
+    def on_submit_model_training():
+        # Check if a file was uploaded
+        if input.model_training_data() is None:
+            ui.notification_show(_("Please upload a ZIP file with the Label Studio training data."), duration=5, type="error")
+            return
+
+        # Check if the file is a ZIP file
+        if not input.model_training_data()[0]['name'].endswith('.zip'):
+            ui.notification_show(_("The uploaded file is not a ZIP file. Please upload a valid ZIP file."), duration=5, type="error")
+            return
+
+        # Get the uploaded file path
+        zip_file_path = input.model_training_data()[0]['datapath']
+        model_name = input.model_name()
+        email_notification = input.email_notification()
+        user_name = input.user_name()
+
+        if email_notification:
+            # Validate the email address
+            if not re.match(r"[^@]+@[^@]+\.[^@]+", email_notification):
+                ui.notification_show(_("Please enter a valid email address."), duration=5, type="error")
+                return
+            if email_notification != CONFIG['EMAIL']:
+                # Update the email address in the config
+                CONFIG['EMAIL'] = email_notification
+                update_single_config_parameter("EMAIL")
+
+        if user_name and (user_name != CONFIG['USER_NAME']):
+            CONFIG['USER_NAME'] = user_name
+            update_single_config_parameter("USER_NAME")
+            
+        logging.info(f"Enqueued model training: Model Name: '{model_name}', Email: '{email_notification}', ZIP file: '{zip_file_path}'")
+        
+        # Start the model training process
+        result = RemoteModelTrainer.enqueue_model_training(zip_file_path, model_name, user_name, email_notification)
+        if is_valid_uuid4(result):
+            # Update the config with the training details
+            CONFIG["MODEL_TRAINING"] = result
+            update_single_config_parameter("MODEL_TRAINING")
+        elif result == "invalid_file":
+            ui.notification_show(_("The uploaded file is not a valid Label Studio training data ZIP file."), duration=15, type="error")
+            return
+        elif result in ["destination_unreachable", "destination_not_found"]:
+            ui.notification_show(_("The destination for the model training is unreachable. Please check your network connection or try again later."), duration=15, type="error")
+            return
+        else:
+            ui.notification_show(_("An error occurred while starting the model training: {}").format(result), duration=15, type="error")
+            return
+
+        reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+
+    # --- Label Studio installation and update ---
+    @reactive.Effect
+    @reactive.event(input.btn_labelstudio_install)
+    def btn_labelstudio_install():
+        with ui.Progress(min=1, max=5) as p:
+            # Check available disk space
+            if get_free_disk_space() < 1500:
+                ui.notification_show(
+                    _("Insufficient disk space. At least 1.5GB of free space is required to install Label Studio. Please free up some space and try again."),
+                    duration=15,
+                    type="error"
+                )
+                return
+                
+            def update_progress(step, message, detail):
+                p.set(step, message=message, detail=detail)
+                
+            # Start the installation with progress updates
+            success = install_labelstudio(progress_callback=update_progress)
+            
+            if success:
+                ui.notification_show(_("Label Studio installed successfully! You can start it now."), duration=15, type="message")
+                CONFIG["LABELSTUDIO_VERSION"] = get_labelstudio_installed_version()
+            else:
+                ui.notification_show(_("Label Studio installation failed. Please check the logs for details."), duration=None, type="error")
+                
+        reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+    
+    @reactive.Effect
+    @reactive.event(input.btn_labelstudio_update)
+    def btn_labelstudio_update():
+        with ui.Progress(min=1, max=2) as p:
+            def update_progress(step, message, detail):
+                p.set(step, message=message, detail=detail)
+                
+            # Start the installation with progress updates
+            success = update_labelstudio(progress_callback=update_progress)
+            
+            if success:
+                ui.notification_show(_("Label Studio updated successfully! You can start it now."), duration=15, type="message")
+                CONFIG["LABELSTUDIO_VERSION"] = get_labelstudio_latest_version()
+            else:
+                ui.notification_show(_("Label Studio update failed. Please check the logs for details."), duration=None, type="error")
+                
+        reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+
+    @reactive.Effect
+    @reactive.event(input.btn_labelstudio_remove)
+    def btn_labelstudio_remove():
+        m = ui.modal(
+            _("Do you really want to remove Label Studio?"),
+            title=_("Remove Label Studio"),
+            easy_close=True,
+            footer=ui.div(
+                ui.input_task_button("btn_labelstudio_remove_ok", _("OK"), class_="btn-default"),
+                ui.input_action_button("btn_modal_cancel", _("Cancel")),
+            )
+        )
+        ui.modal_show(m)
+
+    @reactive.effect
+    @reactive.event(input.btn_labelstudio_remove_ok)
+    def btn_labelstudio_remove_ok():
+        with ui.Progress(min=1, max=2) as p:
+            p.set(1, message=_("Removing Label Studio"), detail=_("Please wait..."))
+            success = remove_labelstudio()
+            p.set(2)
+            
+            if success:
+                ui.notification_show(_("Label Studio removed successfully."), duration=5, type="message")
+                CONFIG["LABELSTUDIO_VERSION"] = None
+            else:
+                ui.notification_show(_("Label Studio removal failed. Please check the logs for details."), duration=None, type="error")
+        ui.modal_remove()
+        
+        reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+
+    @reactive.Effect
+    @reactive.event(input.btn_labelstudio_stop)
+    def stop_labelstudio():
+        systemctl("stop", "labelstudio")
+        
+        # Wait up to 10 seconds for the process to stop
+        max_wait_time = 10  # seconds
+        start_time = tm.time()
+        
+        with ui.Progress(min=0, max=100) as p:
+            p.set(message=_("Stopping Label Studio..."), detail=_("Please wait..."))
+            
+            while tm.time() - start_time < max_wait_time:
+                if not get_labelstudio_status():
+                    ui.notification_show(_("Label Studio stopped successfully."), duration=5, type="message")
+                    reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+                    return
+                
+                # Update progress
+                progress_percent = int(((tm.time() - start_time) / max_wait_time) * 100)
+                p.set(progress_percent)
+                tm.sleep(0.5)
+        
+        # If we get here, the process didn't stop within the timeout period
+        ui.notification_show(_("Label Studio may not have stopped completely. Please check the logs."), duration=5, type="warning")
+        reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+
+    @reactive.Effect
+    @reactive.event(input.btn_labelstudio_start)
+    def start_labelstudio():
+        systemctl("start", "labelstudio")
+        
+        # Wait up to 45 seconds for the process to start
+        max_wait_time = 45  # seconds
+        start_time = tm.time()
+        
+        with ui.Progress(min=0, max=100) as p:
+            p.set(message=_("Starting Label Studio..."), detail=_("Please wait..."))
+            
+            while tm.time() - start_time < max_wait_time:
+                # Check if service is running and the web server is responding on port 8080
+                if get_labelstudio_status():
+                    if is_port_open(8080):
+                        ui.notification_show(_("Label Studio started successfully."), duration=5, type="message")
+                        reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+                        return
+                
+                # Update progress
+                progress_percent = int(((tm.time() - start_time) / max_wait_time) * 100)
+                p.set(progress_percent)
+                tm.sleep(0.5)
+        
+        # If we get here, the process didn't start within the timeout period
+        ui.notification_show(_("Label Studio may not have started completely. Please check the logs."), duration=5, type="warning")
+        reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+
+    @output
+    @render.ui
+    @reactive.event(reload_trigger_config, ignore_none=True)
     def ui_configuration():
         # Build a dictionary with TFLite model versions from the tflite folder
         tflite_models = {}
@@ -1713,6 +2352,20 @@ def server(input, output, session):
                     tflite_models[folder] = folder.replace('_', ' ').title()
         except Exception as e:
             logging.error(f"Failed to read TFLite model versions: {e}")
+
+        # Create a dict from the yolo_models list, where the key is the "unique_id" and the value is the "full_display_name"
+        yolo_models = {model["unique_id"]: model["full_display_name"] for model in YoloModel.get_model_list()}
+
+        # Combine the tflite and yolo models into one list, so that the user can select between both models in the dropdown.
+        # Prefix tflite model keys to avoid collision with yolo model unique_ids
+        combined_models = {}
+        for key, value in tflite_models.items():
+            combined_models[f"tflite::{key}"] = value
+        if tflite_models and yolo_models:
+            # Insert a separator if both types exist
+            combined_models["__separator__"] = "────────────"
+        for unique_id, display_name in yolo_models.items():
+            combined_models[f"yolo::{unique_id}"] = display_name
         
 
         ui_config =  ui.div(
@@ -1748,7 +2401,7 @@ def server(input, output, session):
                         ui.column(
                             8,
                             ui.markdown(
-                                _("This setting applies only to the pictures panel in the ungrouped view mode.") + "  \n" +
+                                _("This setting applies only to the pictures section in the ungrouped view mode.") + "  \n" +
                                 _("NOTE: Too many pictures per page could slow down the performance drastically!")
                             ), style_="color: grey;"
                         ),
@@ -1861,12 +2514,26 @@ def server(input, output, session):
                     ),
                     ui.hr(),
                     ui.row(
-                        ui.column(4, ui.input_select("TfLiteModelVersion", _("Version of the TFLite model for the object detection"), tflite_models, selected=CONFIG['TFLITE_MODEL_VERSION'])),
+                        ui.column(4, ui.input_select(
+                            "selectedModel",
+                            _("Version of the object detection model"),
+                            combined_models,
+                            selected=(
+                                f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}"
+                                if f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}" in combined_models
+                                else (
+                                    f"yolo::{CONFIG['YOLO_MODEL']}"
+                                    if f"yolo::{CONFIG['YOLO_MODEL']}" in combined_models
+                                    else next(iter(combined_models), "")
+                                )
+                            )
+                        )),
                         ui.column(
                             8,
                             ui.markdown(
                                 "- **" + _("Original Kittyflap Model v1:") + "** " + _("Always tries to detect objects `Mouse` and `No Mouse`, even if there is no such object in the picture (this was the default in Kittyhack v1.4.0 and lower)") + "\n\n" +
                                 "- **" + _("Original Kittyflap Model v2:") + "** " + _("Only tries to detect objects `Mouse` and `No Mouse` if there is a cat in the picture.") + "\n\n" +
+                                "- **" + _("Custom Models:") + "** " + _("These are your own trained models, which you have created in the AI Training section.") + "\n\n" +
                                 "> " + _("If you change this setting, the Kittyflap must be restarted to apply the new model version.")
                             ), style_="color: grey;"
                         ),
@@ -2065,6 +2732,8 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.bSaveKittyhackConfig)
     def on_save_kittyhack_config():
+        global _
+
         # Check the time ranges for allowed to exit
         def validate_time_format(field_id):
             # Get the value from the input field
@@ -2113,8 +2782,17 @@ def server(input, output, session):
 
         # override the variable with the data from the configuration page
         language_changed = CONFIG['LANGUAGE'] != input.txtLanguage()
-        tflite_model_changed = CONFIG['TFLITE_MODEL_VERSION'] != input.TfLiteModelVersion()
+        if (input.selectedModel().startswith("tflite::") and
+            input.selectedModel() != f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}"):
+            selected_model_changed = True
+        elif (input.selectedModel().startswith("yolo::") and
+              input.selectedModel() != f"yolo::{CONFIG['YOLO_MODEL']}"):
+            selected_model_changed = True
+        else:
+            selected_model_changed = False
         img_processing_cores_changed = CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] != input.btnUseAllCoresForImageProcessing()
+
+        # Update the configuration dictionary with the new values
         CONFIG['LANGUAGE'] = input.txtLanguage()
         CONFIG['TIMEZONE'] = input.txtConfigTimezone()
         CONFIG['DATE_FORMAT'] = input.txtConfigDateformat()
@@ -2125,7 +2803,19 @@ def server(input, output, session):
         CONFIG['MAX_PHOTOS_COUNT'] = int(input.numMaxPhotosCount())
         CONFIG['LOGLEVEL'] = input.txtLoglevel()
         CONFIG['MOUSE_CHECK_ENABLED'] = input.btnDetectPrey()
-        CONFIG['TFLITE_MODEL_VERSION'] = input.TfLiteModelVersion()
+
+        # Check if the selected model is a TFLite model or a YOLO model
+        if selected_model_changed:
+            if (input.selectedModel().startswith("tflite::")):
+                CONFIG['TFLITE_MODEL_VERSION'] = input.selectedModel().replace("tflite::", "")
+                CONFIG['YOLO_MODEL'] = ""
+            elif (input.selectedModel().startswith("yolo::")):
+                CONFIG['YOLO_MODEL'] = input.selectedModel().replace("yolo::", "")
+                CONFIG['TFLITE_MODEL_VERSION'] = ""
+            else:
+                CONFIG['YOLO_MODEL'] = ""
+                CONFIG['TFLITE_MODEL_VERSION'] = ""
+        
         CONFIG['ALLOWED_TO_ENTER'] = AllowedToEnter(input.txtAllowedToEnter())
         CONFIG['LIVE_VIEW_REFRESH_INTERVAL'] = float(input.numLiveViewUpdateInterval())
         CONFIG['ALLOWED_TO_EXIT'] = input.btnAllowedToExit()
@@ -2148,17 +2838,20 @@ def server(input, output, session):
         CONFIG['ALLOWED_TO_EXIT_RANGE3_FROM'] = input.txtAllowedToExitRange3From()
         CONFIG['ALLOWED_TO_EXIT_RANGE3_TO'] = input.txtAllowedToExitRange3To()
 
+        # Update the log level
         loglevel = logging._nameToLevel.get(input.txtLoglevel(), logging.INFO)
         logger.setLevel(loglevel)
-        set_language(input.txtLanguage())
+
+        # Save the configuration to the config file
+        _ = set_language(CONFIG['LANGUAGE'])
         
         if save_config():
             ui.notification_show(_("Kittyhack configuration updated successfully."), duration=5, type="message")
             if language_changed:
                 ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the new language."), duration=30, type="message")
 
-            if tflite_model_changed:
-                ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the new TFLite model version."), duration=30, type="message")
+            if selected_model_changed:
+                ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the new detection model."), duration=30, type="message")
             
             if img_processing_cores_changed:
                 ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the changed configuration."), duration=30, type="message")
@@ -2373,18 +3066,18 @@ def server(input, output, session):
         # Check if the current version is different from the latest version
         latest_version = CONFIG['LATEST_VERSION']
         if latest_version == "unknown":
-            ui_update_kittyhack = ui.markdown("Unable to fetch the latest version from github. Please try it again later or check your internet connection.")
+            ui_update_kittyhack = ui.markdown(_("Unable to fetch the latest version from github. Please try it again later or check your internet connection."))
         elif git_version != latest_version:
             # Check for local changes in the git repository
             try:
                 ui_update_kittyhack = ui.div(
-                    ui.markdown(f"Automatic update to **{latest_version}**:"),
-                    ui.input_task_button("update_kittyhack", "Update Kittyhack", icon=icon_svg("download"), class_="btn-primary"),
+                    ui.markdown(_("Automatic update to **{}**:").format(latest_version)),
+                    ui.input_task_button("update_kittyhack", _("Update Kittyhack"), icon=icon_svg("download"), class_="btn-primary"),
                     ui.br(),
-                    ui.help_text("Please note: A stable WLAN connection is required for the update process."),
+                    ui.help_text(_("Important: A stable WLAN connection is required for the update process.")),
                     ui.br(),
-                    ui.help_text("The update will end with a reboot of the Kittyflap."),
-                    ui.markdown("Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to see what's new in the latest version."),
+                    ui.help_text(_("The update will end with a reboot of the Kittyflap.")),
+                    ui.markdown(_("Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to see what's new in the latest version.")),
                 )
 
                 # Check for local changes in the git repository and warn the user
@@ -2395,20 +3088,20 @@ def server(input, output, session):
                     ui_update_kittyhack = ui_update_kittyhack, ui.div(
                         ui.br(),
                         ui.markdown(
-                            """
+                            _("""
                             ⚠️ WARNING: Local changes detected in the git repository in `/root/kittyhack`.
                             If you proceed with the update, these changes will be lost (the database and configuration will not be affected).
                             Please commit or stash your changes manually before updating, if you want to keep them.
-                            """
+                            """)
                         ),
-                        ui.h6("Local changes:"),
+                        ui.h6(_("Local changes:")),
                         ui.tags.pre(result.stdout)
                     )
                     
             except Exception as e:
-                ui_update_kittyhack = ui.markdown(f"An error occurred while checking for local changes in the git repository: {e}\n\nNo automatic update possible.")
+                ui_update_kittyhack = ui.markdown(_("An error occurred while checking for local changes in the git repository: {}\n\nNo automatic update possible.").format(e))
         else:
-            ui_update_kittyhack = ui.markdown("You are already using the latest version of Kittyhack.")
+            ui_update_kittyhack = ui.markdown(_("You are already using the latest version of Kittyhack."))
 
         # Check if the original kittyflap database file still exists
         kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
@@ -2416,75 +3109,122 @@ def server(input, output, session):
             if get_file_size(CONFIG['DATABASE_PATH']) > 100:
                 ui_kittyflap_db = ui.div(
                     ui.markdown(
-                        f"""
-                        The original kittyflap database file consumes currently **{get_file_size(CONFIG['DATABASE_PATH']):.1f} MB** of disk space.  
+                        _("""
+                        The original kittyflap database file consumes currently **{:.1f} MB** of disk space.  
                         The file contains a lot pictures which could not be uploaded to the original kittyflap servers anymore.
                         You could delete the pictures from it to free up disk space.  
-                        """
+                        """).format(get_file_size(CONFIG['DATABASE_PATH']))
                     ),
-                    ui.input_task_button("clear_kittyflap_db", "Remove pictures from original Kittyflap Database", icon=icon_svg("trash")),
-                    ui.download_button("download_kittyflap_db", "Download Kittyflap Database"),
+                    ui.input_task_button("clear_kittyflap_db", _("Remove pictures from original Kittyflap Database"), icon=icon_svg("trash")),
+                    ui.download_button("download_kittyflap_db", _("Download Kittyflap Database"), icon=icon_svg("download")),
                 )
             elif get_file_size(CONFIG['DATABASE_PATH']) > 0:
                     ui_kittyflap_db = ui.div(
-                        ui.markdown(f"The original kittyflap database file exists and has a regular size of **{get_file_size(CONFIG['DATABASE_PATH']):.1f} MB**. Nothing to do here."),
-                        ui.download_button("download_kittyflap_db", "Download Kittyflap Database"),
+                        ui.markdown(_("The original kittyflap database file exists and has a regular size of **{:.1f} MB**. Nothing to do here.").format(get_file_size(CONFIG['DATABASE_PATH']))),
+                        ui.download_button("download_kittyflap_db", _("Download Kittyflap Database"), icon=icon_svg("download")),
                     )
             else:
-                ui_kittyflap_db = ui.markdown("The original kittyflap database seems to be empty. **WARNING:** A downgrade to Kittyhack v1.1.0 will probably not work!")
+                ui_kittyflap_db = ui.markdown(_("The original kittyflap database seems to be empty. **WARNING:** A downgrade to Kittyhack v1.1.0 will probably not work!"))
         else:
-            ui_kittyflap_db = ui.markdown("The original kittyflap database file does not exist anymore.\n **WARNING:** A downgrade to Kittyhack v1.1.0 is not possible without the original database file!")
-
-        # Render the UI
+            ui_kittyflap_db = ui.markdown(_("The original kittyflap database file does not exist anymore.\n **WARNING:** A downgrade to Kittyhack v1.1.0 is not possible without the original database file!"))
         return ui.div(
-            ui.h3("Information"),
-            ui.p("Kittyhack is an open-source project that enables offline use of the Kittyflap cat door—completely without internet access. It was created after the manufacturer of Kittyflap filed for bankruptcy, rendering the associated app non-functional."),
-            ui.h5("Important Notes"),
-            ui.p("I have no connection to the manufacturer of Kittyflap. This project was developed on my own initiative to continue using my Kittyflap."),
-            ui.p("Additionally, this project is in a early stage! The planned features are not fully implemented yet, and bugs are to be expected!"),
-            ui.p("Please report any bugs or feature requests on the GitHub repository."),
-            ui.br(),
-            ui.HTML(f"<center><p><a href='https://github.com/floppyFK/kittyhack' target='_blank'>{icon_svg('square-github')} GitHub Repository</a></p></center>"),
-            ui.hr(),
-            ui.h5("Version Information"),
-            ui.HTML(f"<center><p>Current Version: <code>{git_version}</code></p></center>"),            
-            ui.HTML(f"<center><p>Latest Version: <code>{latest_version}</code></p></center>"),
-            ui_update_kittyhack,
-            ui.hr(),
-            ui.h5("Changelogs"),
-            ui.input_action_button("btn_changelogs", "Show Changelogs", icon=icon_svg("info")),
-            ui.br(),
-            ui.hr(),
-            ui.h5("System Information"),
-            ui.markdown(
-                f"""
-                ###### Filesystem:
-                - **Free disk space:** {get_free_disk_space():.1f} MB / {get_total_disk_space():.1f} MB
-                - **Database size:** {get_database_size():.1f} MB
-                """
+            ui.div(
+                ui.card(
+                    ui.card_header(ui.h4(_("Information"), style_="text-align: center;")),
+                    ui.br(),
+                    ui.markdown(
+                        _("Kittyhack is an open-source project that enables offline use of the Kittyflap cat door—completely without internet access. "
+                        "It was created after the manufacturer of Kittyflap filed for bankruptcy, rendering the associated app non-functional.")
+                    ),
+                    ui.hr(),
+                    ui.markdown(
+                        _("**Important Notes**  \n"
+                        "I have no connection to the manufacturer of Kittyflap. This project was developed on my own initiative to continue using my Kittyflap.  \n"
+                        "Additionally, this project is in an early stage! The planned features are not fully implemented yet, and bugs are to be expected!  \n"
+                        "Please report any bugs or feature requests on the GitHub repository.")
+                    ),
+                    ui.HTML(f"<center><p><a href='https://github.com/floppyFK/kittyhack' target='_blank'>{icon_svg('square-github')} {_('GitHub Repository')}</a></p></center>"),
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
             ),
-            ui.download_button("download_kittyhack_db", "Download Kittyhack Database"),
-            ui.markdown("**WARNING:** To download the database, the Kittyhack software will be stopped and the flap will be locked. You have to restart the Kittyflap afterwards to return to normal operation."),
+            ui.div(
+                ui.card(
+                    ui.card_header(ui.h4(_("Version Information"), style_="text-align: center;")),
+                    ui.br(),
+                    ui.markdown("**" + _("Current Version") + ":** `" + git_version + "`" + "  \n" \
+                                "**" + _("Latest Version") + ":** `" + latest_version + "`"),
+                    ui_update_kittyhack,
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
+            ui.div(
+                ui.card(
+                    ui.card_header(ui.h4(_("System Information"), style_="text-align: center;")),
+                    ui.br(),
+                    ui.output_ui("ui_system_info"),
+                    ui.div(ui.download_button("download_kittyhack_db", _("Download Kittyhack Database"), icon=icon_svg("download"))),
+                    ui.markdown(
+                        _("**WARNING:** To download the database, the Kittyhack software will be stopped and the flap will be locked. "
+                        "You have to restart the Kittyflap afterwards to return to normal operation.")
+                    ),
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
+            ui.div(
+                ui.card(
+                    ui.card_header(ui.h4(_("Original Kittyflap Database"), style_="text-align: center;")),
+                    ui.br(),
+                    ui_kittyflap_db,
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
+            ui.div(
+                ui.card(
+                    ui.card_header(ui.h4(_("Logfiles"), style_="text-align: center;")),
+                    ui.br(),
+                    ui.div(ui.download_button("download_logfile", _("Download Kittyhack Logfile"), icon=icon_svg("download"))),
+                    ui.div(ui.download_button("download_journal", _("Download Kittyhack Journal"), icon=icon_svg("download"))),
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
             ui.br(),
-            ui.output_ui("wlan_info"),
-            ui.hr(),
-            ui.h5("Original Kittyflap Database"),
-            ui_kittyflap_db,
-            ui.hr(),
-            ui.h5("Logfiles"),
-            ui.download_button("download_logfile", "Download Kittyhack Logfile"),
-            ui.br(),
-            ui.br(),
-            ui.download_button("download_journal", "Download Kittyhack Journal"),
             ui.br(),
             ui.br(),
             ui.br(),
         )
     
-    @render.text
-    def wlan_info():
-        # Get WLAN connection status
-        reactive.invalidate_later(5.0)
+    @render.table
+    def ui_system_info():
+        reactive.invalidate_later(10.0)
+
+        database_size = get_database_size()
+        free_disk_space = get_free_disk_space()
+        total_disk_space = get_total_disk_space()
+        used_ram_space = get_used_ram_space()
+        total_ram_space = get_total_ram_space()
+        ram_usage_percentage = (used_ram_space / total_ram_space) * 100
+
+        # Get WLAN status information
         try:
             wlan = subprocess.run(["/sbin/iwconfig", "wlan0"], capture_output=True, text=True, check=True)
             if "Link Quality=" in wlan.stdout:
@@ -2499,10 +3239,26 @@ def server(input, output, session):
                     wlan_icon = "🟡"
                 else:
                     wlan_icon = "🔴"
-                
-                return ui.markdown(f"###### WLAN Connection Status:\n- **Link Quality:** {wlan_icon} {quality}\n- **Signal Level:** {signal} dBm")
+                wlan_info = f"{wlan_icon} " + _("Quality: {}, Signal: {} dBm").format(quality, signal)
+            else:
+                wlan_info = _("Not connected")
         except:
-            return ui.markdown("###### WLAN Connection Status:\n Unable to determine")
+            wlan_info = _("Unable to determine")
+
+        # Create a DataFrame with the system information
+        df = pd.DataFrame({
+            'Property': [_('Kittyhack database size'), _('Free disk space'), _('Used RAM'), _('WLAN Status')],
+            'Value': [
+                f'{database_size:.1f} MB',
+                f'{free_disk_space:.1f} MB / {total_disk_space:.1f} MB',
+                f'{used_ram_space:.1f} MB / {total_ram_space:.1f} MB ({ram_usage_percentage:.1f}%)',
+                wlan_info
+            ]
+        })
+        return (
+            df.style.set_table_attributes('class="dataframe shiny-table table w-auto"')
+            .hide(axis="index")
+        )
         
     @reactive.Effect
     @reactive.event(input.btn_changelogs)

@@ -3,9 +3,16 @@ import logging
 import subprocess
 import os
 import re
+import requests
 import time as tm
+from src.baseconfig import CONFIG, set_language
 
 GPIO_BASE_PATH = "/sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/"
+
+LABELSTUDIO_PATH = "/root/labelstudio/"
+LABELSTUDIO_VENV = "venv/"
+
+_ = set_language(CONFIG['LANGUAGE'])
 
 def systemctl(mode: str, service: str, simulate_operations=False):
     """
@@ -379,7 +386,199 @@ def get_wlan_connections():
     except subprocess.CalledProcessError as e:
         logging.error(f"[SYSTEM] Error getting WLAN connections: {e.stderr}")
         return []
+    
+def get_labelstudio_installed_version():
+    """
+    Get the installed version of Label Studio.
+    
+    Returns:
+        str | None: The installed version of Label Studio, or None if not found.
+    """
+    try:
+        venv_python = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV, "bin", "python")
+        
+        # Check if Label Studio is installed
+        if not os.path.exists(LABELSTUDIO_PATH) or not os.path.exists(venv_python):
+            logging.info("[SYSTEM] Label Studio is not installed.")
+            return None
+        
+        # Get the installed version using the venv Python binary
+        result = subprocess.run(
+            [venv_python, "-m", "pip", "show", "label-studio"],
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+        
+        # Parse the output to find the version
+        for line in result.stdout.splitlines():
+            if line.startswith("Version:"):
+                version = line.split(":", 1)[1].strip()
+                logging.info(f"[SYSTEM] Label Studio version: {version}")
+                return version
+        
+        logging.info("[SYSTEM] Label Studio version not found in pip output.")
+        return None
+    except Exception as e:
+        logging.error(f"[SYSTEM] Error getting Label Studio version: {e}")
+        return None
+    
+def get_labelstudio_latest_version():
+    """
+    Get the latest available version of Label Studio from PyPI.
 
+    Returns:
+        str | None: The latest version of Label Studio, or None if not found.
+    """
+    try:
+        response = requests.get("https://pypi.org/pypi/label-studio/json")
+        response.raise_for_status()
+        data = response.json()
+        version = data.get("info", {}).get("version", None)
+        if version:
+            return version
+        else:
+            logging.info("[SYSTEM] Latest Label Studio version not found in PyPI response.")
+            return None
+    except Exception as e:
+        logging.error(f"[SYSTEM] Error fetching latest Label Studio version: {e}")
+        return None
+    
+def get_labelstudio_status():
+    """
+    Check if Label Studio is running.
+
+    Returns:
+        bool: True if Label Studio is running, False otherwise.
+    """
+    try:
+        result = subprocess.run(
+            ["/usr/bin/systemctl", "is-active", "labelstudio"],
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+        return result.stdout.strip() == "active"
+    except subprocess.CalledProcessError:
+        return False
+    
+def install_labelstudio(progress_callback=None):
+    """
+    Install Label Studio by creating a virtual environment, installing the package,
+    and setting up a systemd service.
+
+    Args:
+        progress_callback (callable, optional): A callback function to report progress.
+            The function should accept (step, message, detail) parameters.
+
+    Returns:
+        bool: True if installation is successful, False otherwise.
+    """
+    try:
+        # Step 1: Create a virtual environment
+        if progress_callback:
+            progress_callback(1, _("Creating virtual environment..."), _("This may take a moment..."))
+        venv_path = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV)
+        if not os.path.exists(venv_path):
+            subprocess.run(["python3", "-m", "venv", venv_path], check=True)
+            logging.info("[SYSTEM] Label Studio virtual environment created.")
+
+        # Step 2: Install pip and dependencies
+        if progress_callback:
+            progress_callback(2, _("Upgrading pip..."), _("This may take a few minutes..."))
+        venv_python = os.path.join(venv_path, "bin", "python")
+        subprocess.run([venv_python, "-m", "pip", "install", "--upgrade", "pip"], check=True)
+        
+        # Step 3: Install Label Studio
+        if progress_callback:
+            progress_callback(3, _("Installing Label Studio..."), _("This takes several minutes... Do not turn off the power or reload the page!"))
+        subprocess.run([venv_python, "-m", "pip", "install", "label-studio"], check=True)
+        logging.info("[SYSTEM] Label Studio installed in virtual environment.")
+
+        # Step 4: Create a systemd service file
+        if progress_callback:
+            progress_callback(4, _("Creating systemd service..."), _("Almost done..."))
+        service_template_path = "/root/kittyhack/setup/labelstudio.service"
+        service_file_path = "/etc/systemd/system/labelstudio.service"
+        if os.path.exists(service_template_path):
+            with open(service_template_path, "r") as template_file:
+                service_content = template_file.read().replace("{{VENV_PATH}}", venv_path)
+            with open(service_file_path, "w") as service_file:
+                service_file.write(service_content)
+            logging.info("[SYSTEM] Label Studio systemd service file created.")
+
+        # Step 5: Reload systemd daemon
+        if progress_callback:
+            progress_callback(5, _("Reloading systemd services..."), _("Almost done..."))
+        subprocess.run(["/usr/bin/systemctl", "daemon-reload"], check=True)
+        logging.info("[SYSTEM] Label Studio systemd daemon reloaded.")
+
+        return True
+    except Exception as e:
+        logging.error(f"[SYSTEM] Error installing Label Studio: {e}")
+        return False
+    
+def update_labelstudio(progress_callback=None):
+    """
+    Update Label Studio by upgrading the package in the virtual environment.
+
+    Args:
+        progress_callback (callable, optional): A callback function to report progress.
+            The function should accept (step, message, detail) parameters.
+
+    Returns:
+        bool: True if update is successful, False otherwise.
+    """
+    # FIXME: We need to stop the service before updating
+    try:
+        systemctl("stop", "labelstudio")
+        logging.info("[SYSTEM] Label Studio service stopped.")
+    except Exception as e:
+        logging.error(f"[SYSTEM] Error stopping Label Studio service: {e}")
+
+    try:
+        # Step 1: Upgrade Label Studio
+        if progress_callback:
+            progress_callback(1, _("Upgrading Label Studio..."), _("This takes several minutes... Do not turn off the power or reload the page!"))
+        venv_python = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV, "bin", "python")
+        subprocess.run([venv_python, "-m", "pip", "install", "--upgrade", "label-studio"], check=True)
+        logging.info("[SYSTEM] Label Studio upgraded in virtual environment.")
+
+        return True
+    except Exception as e:
+        logging.error(f"[SYSTEM] Error updating Label Studio: {e}")
+        return False
+    
+def remove_labelstudio():
+    """
+    Remove Label Studio by deleting the virtual environment and systemd service.
+
+    Returns:
+        bool: True if removal is successful, False otherwise.
+    """
+    try:
+        systemctl("stop", "labelstudio")
+        logging.info("[SYSTEM] Label Studio service stopped.")
+    except Exception as e:
+        logging.error(f"[SYSTEM] Error stopping Label Studio service: {e}")
+    
+    try:
+        # Remove the virtual environment
+        venv_path = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV)
+        if os.path.exists(venv_path):
+            subprocess.run(["rm", "-rf", venv_path], check=True)
+            logging.info("[SYSTEM] Label Studio virtual environment removed.")
+
+        # Remove the systemd service
+        service_file_path = "/etc/systemd/system/labelstudio.service"
+        if os.path.exists(service_file_path):
+            subprocess.run(["rm", "-f", service_file_path], check=True)
+            logging.info("[SYSTEM] Label Studio systemd service file removed.")
+
+        return True
+    except Exception as e:
+        logging.error(f"[SYSTEM] Error removing Label Studio: {e}")
+        return False
 
 class I2C:
     # Fixed constants

@@ -277,3 +277,36 @@ tr:has(.event-date-separator) {
 .card:has(#bResetPreyCooldown:disabled) {
     display: none;
 }
+
+.table_models_overview {
+    table-layout: auto;
+    width: 100%;
+}
+
+.table_models_overview td {
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+}
+
+.table_models_overview th:first-child,
+.table_models_overview td:first-child {
+    /* Name column */
+    max-width: 70%;
+    width: 70%;
+}
+
+.table_models_overview th:nth-child(2),
+.table_models_overview td:nth-child(2) {
+    /* Date column */
+    min-width: 110px;
+}
+
+.table_models_overview th:last-child,
+.table_models_overview td:last-child {
+    /* Action button column */
+    width: 55px;
+    min-width: 55px;
+    max-width: 55px;
+    text-align: center;
+}

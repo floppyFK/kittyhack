@@ -1,7 +1,8 @@
 __pycache__/
-kittyhack.log
+kittyhack.log*
 *.db
 .venv/
 *.po~
 config.ini
 sync-to-kittyflap.sh
+*.code-workspace

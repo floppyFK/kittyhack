@@ -6,6 +6,8 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from enum import Enum
+import uuid
+import json
 from configupdater import ConfigUpdater
 
 ###### ENUM DEFINITIONS ######
@@ -81,7 +83,9 @@ DEFAULT_CONFIG = {
         "email": "",
         "user_name": "",
         "model_training": "",
-        "yolo_model": ""
+        "yolo_model": "",
+        "startup_shutdown_flag": False,
+        "not_graceful_shutdowns": 0
     }
 }
 
@@ -148,7 +152,9 @@ def load_config():
         "EMAIL": parser.get('Settings', 'email', fallback=DEFAULT_CONFIG['Settings']['email']),
         "USER_NAME": parser.get('Settings', 'user_name', fallback=DEFAULT_CONFIG['Settings']['user_name']),
         "MODEL_TRAINING": parser.get('Settings', 'model_training', fallback=DEFAULT_CONFIG['Settings']['model_training']),
-        "YOLO_MODEL": parser.get('Settings', 'yolo_model', fallback=DEFAULT_CONFIG['Settings']['yolo_model'])
+        "YOLO_MODEL": parser.get('Settings', 'yolo_model', fallback=DEFAULT_CONFIG['Settings']['yolo_model']),
+        "STARTUP_SHUTDOWN_FLAG": parser.getboolean('Settings', 'startup_shutdown_flag', fallback=DEFAULT_CONFIG['Settings']['startup_shutdown_flag']),
+        "NOT_GRACEFUL_SHUTDOWNS": parser.getint('Settings', 'not_graceful_shutdowns', fallback=DEFAULT_CONFIG['Settings']['not_graceful_shutdowns'])
     }
 
 def save_config():
@@ -211,6 +217,8 @@ def save_config():
     settings['user_name'] = CONFIG['USER_NAME']
     settings['model_training'] = CONFIG['MODEL_TRAINING']
     settings['yolo_model'] = CONFIG['YOLO_MODEL']
+    settings['startup_shutdown_flag'] = CONFIG['STARTUP_SHUTDOWN_FLAG']
+    settings['not_graceful_shutdowns'] = CONFIG['NOT_GRACEFUL_SHUTDOWNS']
 
     # Write updated configuration back to the file
     try:
@@ -312,6 +320,108 @@ class TimeZoneFormatter(logging.Formatter):
         timezone = local_time.strftime('%z (%Z)')
 
         return f"{timestamp}.{milliseconds} {timezone}"
+    
+class UserNotifications:
+    """
+    Class to handle user notifications.
+    The notifications are stored in a json file and will be displayed to the user when he opens the web interface.
+    """
+    notifications = []
+
+    def __init__(cls):
+        cls.load()
+
+    @classmethod
+    def load(cls):
+        """
+        Load notifications from the json file.
+        """
+        try:
+            with open("notifications.json", "r") as f:
+                cls.notifications = json.load(f)
+        except FileNotFoundError:
+            cls.notifications = []
+        except json.JSONDecodeError:
+            logging.error("[USR_NOTIFICATIONS] Failed to decode notifications.json. Starting with an empty list.")
+            cls.notifications = []
+
+    @classmethod
+    def save(cls):
+        """
+        Save notifications to the json file.
+        """
+        with open("notifications.json", "w") as f:
+            json.dump(cls.notifications, f, indent=4)
+
+    @classmethod
+    def add(cls, header, message, type="default", id=None, skip_if_id_exists=False):
+        """
+        Add a notification to the list.
+        Args:
+            header (str): The header of the notification.
+            message (str): The message of the notification.
+            type (str): The type of the notification. Can be "default", "message", "warning", "error"
+            id (str): The id of the notification. If None, a random id will be generated.
+            skip_if_id_exists (bool): If True, skip adding the notification if the id already exists.
+        """
+        if id is None:
+            id = str(uuid.uuid4())
+        if skip_if_id_exists and any(n['id'] == id for n in cls.notifications):
+            return
+        cls.notifications.append({
+            "id": id,
+            "header": header,
+            "message": message,
+            "type": type
+        })
+        cls.save()
+        logging.info(f"[USR_NOTIFICATIONS] Added notification: {header} - {message} (type: {type})")
+        return id
+
+    @classmethod
+    def remove(cls, id: str):
+        """
+        Remove a notification from the list.
+        Args:
+            id (str): The id of the notification to remove.
+        """
+        cls.notifications = [n for n in cls.notifications if n['id'] != id]
+        cls.save()
+        logging.info(f"[USR_NOTIFICATIONS] Removed notification with id: {id}")
+        return True
+
+    @classmethod
+    def clear(cls):
+        """
+        Clear all notifications.
+        """
+        cls.notifications = []
+        cls.save()
+        logging.info("[USR_NOTIFICATIONS] Cleared all notifications")
+        return True
+
+    @classmethod
+    def get_all(cls):
+        """
+        Get all notifications.
+        Returns:
+            list: A list of notifications.
+        """
+        return cls.notifications
+
+    @classmethod
+    def get_by_id(cls, id: str):
+        """
+        Get a notification by its id.
+        Args:
+            id (str): The id of the notification to get.
+        Returns:
+            dict: The notification with the given id.
+        """
+        for n in cls.notifications:
+            if n['id'] == id:
+                return n
+        return None
 
 # -------------------------------------------------------------------------------------------------
 
@@ -320,3 +430,6 @@ load_config()
 
 # Configure logging
 configure_logging()
+
+# Initialize user notifications
+UserNotifications()

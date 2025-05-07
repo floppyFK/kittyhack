@@ -25,7 +25,8 @@ from src.baseconfig import (
     configure_logging,
     DEFAULT_CONFIG,
     JOURNAL_LOG,
-    LOGFILE
+    LOGFILE,
+    UserNotifications
 )
 from src.helper import ( 
     EventType,  
@@ -67,16 +68,47 @@ from src.system import (
     systemctl,
     scan_wlan_networks
 )
-from src.backend import backend_main, manual_door_override, model_hanlder
-from src.magnets import Magnets
-from src.pir import Pir
-from src.model import RemoteModelTrainer, YoloModel
-from src.shiny_wrappers import uix
 
 # Prepare gettext for translations based on the configured language
 _ = set_language(CONFIG['LANGUAGE'])
 
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
+
+# Check and set the startup flag - this must be done before loading the model
+if CONFIG['STARTUP_SHUTDOWN_FLAG'] == True:
+    logging.warning("!!!!!!!!!! STARTUP FLAG WAS ACTIVE - NOT GRACEFUL SHUTDOWN DETECTED !!!!!!!!!!")
+    CONFIG['NOT_GRACEFUL_SHUTDOWNS'] = CONFIG['NOT_GRACEFUL_SHUTDOWNS'] + 1
+else:
+    CONFIG['NOT_GRACEFUL_SHUTDOWNS'] = 0
+CONFIG['STARTUP_SHUTDOWN_FLAG'] = True
+update_single_config_parameter("NOT_GRACEFUL_SHUTDOWNS")
+update_single_config_parameter("STARTUP_SHUTDOWN_FLAG")
+
+if CONFIG['NOT_GRACEFUL_SHUTDOWNS'] >= 3:
+    logging.error("Not graceful shutdown detected 3 times in a row! We will disable the 'use all cores' setting, if it was enabled.")
+    CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = False
+    CONFIG['NOT_GRACEFUL_SHUTDOWNS'] = 0
+    update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
+    update_single_config_parameter("NOT_GRACEFUL_SHUTDOWNS")
+
+    # Add a entry to the user notifications, which will be shown at the next login in the frontend
+    UserNotifications.add(
+        header=_("⚠️ Several crashes detected!"),
+        message=_("The kittyflap was not shut down gracefully several times in a row. Please do not power off the device without shutting it down first!") + "\n\n" +
+                _("If you did not unplug the Kittyflap from power without shutting it down, please report your log files on the GitHub issue tracker, thanks!") + "\n\n" +
+                _("> **NOTE:** The option 'Use all CPU cores for image processing' has been disabled now automatically, since this could cause the issue on some devices.") + "\n" +
+                _("Please check the settings and enable it again, if you want to use it."),
+                type="warning",
+                id="not_graceful_shutdown",
+                skip_if_id_exists=True
+        )
+    
+# Now proceed with the startup
+from src.backend import backend_main, manual_door_override, model_hanlder
+from src.magnets import Magnets
+from src.pir import Pir
+from src.model import RemoteModelTrainer, YoloModel
+from src.shiny_wrappers import uix
 
 # Read the GIT version
 git_version = get_git_version()
@@ -882,6 +914,33 @@ def server(input, output, session):
         else:
             additional_info = ""
         ui.notification_show(_("Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{}).").format(free_disk_space, additional_info), duration=20, type="warning")
+
+    # Show user notification if available
+    user_notifications = UserNotifications.get_all()
+    if len(user_notifications) > 0:
+        # Create a combined message from all notifications
+        combined_message = ""
+        for i, notification in enumerate(user_notifications):
+            combined_message += f"## {notification['header']}\n\n{notification['message']}"
+            # Add a separator between notifications, but not after the last one
+            if i < len(user_notifications) - 1:
+                combined_message += "\n\n---\n\n"
+            UserNotifications.remove(notification['id'])
+        
+        # Show all notifications in a single modal
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.markdown(combined_message),
+                ),
+                title=_("Notifications"),
+                easy_close=False,
+                size="lg",
+                footer=ui.div(
+                    ui.input_action_button("btn_modal_cancel", _("Close")),
+                )
+            )
+        )
 
     # Show changelogs, if the version was updated
     changelog_text = get_changelogs(after_version=CONFIG['LAST_READ_CHANGELOGS'], language=CONFIG['LANGUAGE'])

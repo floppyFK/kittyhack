@@ -10,7 +10,6 @@ import requests
 import shlex
 import cv2
 import numpy as np
-import base64
 import socket
 import sys
 import re
@@ -20,12 +19,12 @@ import struct
 import uuid
 import time as tm
 from faicons import icon_svg
+from src.baseconfig import set_language, update_single_config_parameter, CONFIG
 from src.system import (
     is_service_running, 
     systemctl, 
     is_service_masked
 )
-from src.baseconfig import set_language, CONFIG
 
 
 _ = set_language(CONFIG['LANGUAGE'])
@@ -121,6 +120,10 @@ class GracefulKiller:
                 self.tasks_done.clear()
         while self.tasks_count > 0:
             self.tasks_done.wait(timeout=1)  # Wait until all tasks signal they are done
+        
+        # Set the shutdown flag
+        CONFIG['STARTUP_SHUTDOWN_FLAG'] = False
+        update_single_config_parameter("STARTUP_SHUTDOWN_FLAG")
         logging.info("All tasks finished. Exiting now.")
         subprocess.run(["/usr/bin/pkill", "-9", "-f", "shiny"])  # Send SIGKILL to "shiny" process
 

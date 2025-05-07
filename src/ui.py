@@ -1,12 +1,12 @@
 from shiny import ui
 from faicons import icon_svg
 from pathlib import Path
-from src.helper import *
+from src.baseconfig import CONFIG, set_language
 
 js_file = Path(__file__).parent / "js" / "app.js"
 
 # Prepare gettext for translations
-set_language(CONFIG['LANGUAGE'])
+_ = set_language(CONFIG['LANGUAGE'])
 
 # the main kittyhack ui
 app_ui = ui.page_fillable(
@@ -41,6 +41,11 @@ app_ui = ui.page_fillable(
             ui.br(),
         ),
         ui.nav_panel(
+            _("AI Training"),
+            ui.output_ui("ui_ai_training"),
+            ui.br(),
+        ),
+        ui.nav_panel(
             _("System"),
             ui.output_ui("ui_system")
         ),
@@ -59,6 +64,6 @@ app_ui = ui.page_fillable(
         ),
         title=ui.HTML("<span style='font-weight: bold;'>KITTY " + str(icon_svg("shield-cat")) + "HACK</span>"),
         position="fixed-top",
-        padding="3rem"
+        padding="3rem",
     ),
 )

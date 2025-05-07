@@ -1,14 +1,14 @@
-import os
 import threading
 import time as tm
 import logging
-import cv2
+from src.baseconfig import AllowedToEnter, CONFIG
 from src.pir import Pir
 from src.rfid import Rfid, RfidRunState
 from src.database import *
 from src.magnets import Magnets
-from src.camera import image_buffer, TfLite
-from src.helper import CONFIG, sigterm_monitor
+from src.camera import image_buffer
+from src.helper import sigterm_monitor, EventType, check_allowed_to_exit
+from src.model import ModelHandler, YoloModel
 
 TAG_TIMEOUT = 30.0               # after 30 seconds, a detected tag is considered invalid
 RFID_READER_OFF_DELAY = 15.0     # Turn the RFID reader off 15 seconds after the last detected motion outside
@@ -16,14 +16,28 @@ OPEN_OUTSIDE_TIMEOUT = 6.0 + CONFIG['PIR_INSIDE_THRESHOLD'] # Keep the magnet to
 MAX_UNLOCK_TIME = 45.0           # Maximum time the door is allowed to stay open
 LAZY_CAT_DELAY = 6.0             # Keep the PIR active for an additional 6 seconds after the last detected motion
 
-# Initialize TfLite
-tflite = TfLite(modeldir = f"./tflite/{CONFIG['TFLITE_MODEL_VERSION']}",
-                graph = "cv-lite-model.tflite",
-                labelfile = "labels.txt",
-                resolution = "800x600",
-                framerate = 10,
-                jpeg_quality = 75,
-                simulate_kittyflap = CONFIG['SIMULATE_KITTYFLAP'])
+# Initialize Model
+if CONFIG['TFLITE_MODEL_VERSION']:
+    logging.info(f"[BACKEND] Using TFLite model version {CONFIG['TFLITE_MODEL_VERSION']}")
+    model_hanlder = ModelHandler(model="tflite",
+                                 modeldir = f"./tflite/{CONFIG['TFLITE_MODEL_VERSION']}",
+                                  graph = "cv-lite-model.tflite",
+                                  labelfile = "labels.txt",
+                                  resolution = "800x600",
+                                  framerate = 10,
+                                  jpeg_quality = 75,
+                                  model_image_size = 320)
+else:
+    logging.info(f"[BACKEND] Using YOLO model {YoloModel.get_model_path(CONFIG['YOLO_MODEL'])}")
+    model_hanlder = ModelHandler(model="yolo",
+                                 modeldir = YoloModel.get_model_path(CONFIG['YOLO_MODEL']),
+                                  graph = "",
+                                  labelfile = "labels.txt",
+                                  resolution = "800x600",
+                                  framerate = 10,
+                                  jpeg_quality = 75,
+                                  model_image_size = YoloModel.get_model_image_size(CONFIG['YOLO_MODEL']),
+                                  num_threads=8)
 
 # Global variable for manual door control
 manual_door_override = {'unlock_inside': False, 'unlock_outside': False, 'lock_inside': False, 'lock_outside': False}
@@ -65,12 +79,12 @@ def backend_main(simulate_kittyflap = False):
     # Start the camera
     logging.info("[BACKEND] Start the camera...")
     def run_camera():
-        tflite.run()
+        model_hanlder.run()
 
     # Run the camera in a separate thread
     camera_thread = threading.Thread(target=run_camera, daemon=True)
     camera_thread.start()
-    tflite.pause()
+    model_hanlder.pause()
 
     # Initialize PIRs, Magnets and RFID
     pir = Pir(simulate_kittyflap=simulate_kittyflap)
@@ -146,8 +160,8 @@ def backend_main(simulate_kittyflap = False):
 
             # Outside motion stopped
             if last_outside == 1 and motion_outside == 0:
-                if tflite.get_run_state() == True:
-                    tflite.pause()
+                if model_hanlder.get_run_state() == True:
+                    model_hanlder.pause()
                     # Wait for the last image to be processed
                     tm.sleep(0.5)
                 unlock_inside_decision_made = False
@@ -183,10 +197,11 @@ def backend_main(simulate_kittyflap = False):
                 img_ids_for_motion_block = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm)
                 ids_exceeding_mouse_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_mouse_probability=CONFIG['MIN_THRESHOLD'])
                 ids_exceeding_nomouse_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_no_mouse_probability=CONFIG['MIN_THRESHOLD'])
+                ids_exceeding_own_cat_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_own_cat_probability=CONFIG['MIN_THRESHOLD'])
                 logging.info(f"[BACKEND] Found {len(img_ids_for_motion_block)} elements between {first_motion_outside_tm} and {last_motion_outside_tm}")
                 # Log all events to the database, where either the mouse threshold is exceeded or the no-mouse threshold is exceeded,
                 # as well as all outgoing events
-                if (len(ids_exceeding_mouse_th) + len(ids_exceeding_nomouse_th) > 0) or (event_type in [EventType.CAT_WENT_OUTSIDE]):
+                if (len(ids_exceeding_mouse_th) + len(ids_exceeding_nomouse_th) +len(ids_exceeding_own_cat_th) > 0) or (event_type in [EventType.CAT_WENT_OUTSIDE]):
                     for element in img_ids_for_motion_block:
                         image_buffer.update_block_id(element, motion_block_id)
                         if tag_id is not None:
@@ -222,7 +237,7 @@ def backend_main(simulate_kittyflap = False):
                 motion_block_id += 1
                 logging.info(f"[BACKEND] Motion detected OUTSIDE (Block ID: {motion_block_id})")
                 first_motion_outside_tm = tm.time()
-                tflite.resume()
+                model_hanlder.resume()
                 known_rfid_tags = db_get_all_rfid_tags(CONFIG['KITTYHACK_DATABASE_PATH'])
             
             if last_inside_raw == 0 and motion_inside_raw == 1: # Inside motion detected

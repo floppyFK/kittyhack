@@ -1,10 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
-import gettext
-import configparser
-from enum import Enum
-from configupdater import ConfigUpdater
 import subprocess
 import logging
 import signal
@@ -19,86 +15,25 @@ import socket
 import sys
 import re
 import htmltools
+import fcntl
+import struct
+import uuid
+import time as tm
 from faicons import icon_svg
-from src.system import *
+from src.system import (
+    is_service_running, 
+    systemctl, 
+    is_service_masked
+)
+from src.baseconfig import set_language, CONFIG
 
 
-###### CONSTANT DEFINITIONS ######
-
-# Files
-CONFIGFILE = 'config.ini'
-LOGFILE = "kittyhack.log"
-JOURNAL_LOG = "/tmp/kittyhack-journal.log"
-
-# Gettext constants
-LOCALE_DIR = "locales"
-DOMAIN = "messages"
-
-# Global dictionary to store configuration settings
-CONFIG = {}
-
-# Default configuration values
-DEFAULT_CONFIG = {
-    "Settings": {
-        "timezone": "Europe/Berlin",
-        "language": "en",
-        "date_format": "yyyy-mm-dd",
-        "database_path": "../kittyflap.db",
-        "kittyhack_database_path": "./kittyhack.db",
-        "max_photos_count": 6000,
-        "simulate_kittyflap": False,
-        "mouse_threshold": 70.0,
-        "no_mouse_threshold": 70.0,
-        "min_threshold": 30.0,
-        "elements_per_page": 20,
-        "loglevel": "INFO",
-        "periodic_jobs_interval": 900,
-        "allowed_to_enter": "all",
-        "mouse_check_enabled": True,
-        "min_pictures_to_analyze": 5,
-        "show_images_with_overlay": True,
-        "live_view_refresh_interval": 5.0,
-        "kittyflap_config_migrated": False,
-        "allowed_to_exit": True,
-        "last_vacuum_date": "",
-        "periodic_version_check": True,
-        "kittyflap_db_nagscreen": False,
-        "last_db_backup_date": "",
-        "kittyhack_database_backup_path": "../kittyhack_backup.db",
-        "pir_outside_threshold": 0.5,
-        "pir_inside_threshold": 3.0,
-        "wlan_tx_power": 7,
-        "group_pictures_to_events": True,
-        "tflite_model_version": "original_kittyflap_model_v2",
-        "lock_duration_after_prey_detection": 300,
-        "last_read_changelogs": "v1.0.0",
-        "max_pictures_per_event_with_rfid": 100,
-        "max_pictures_per_event_without_rfid": 30,
-        "use_all_cores_for_image_processing": False,
-        "last_booted_version": "v1.5.1", # Parameter introduced in v1.5.1
-        "allowed_to_exit_range1": False,
-        "allowed_to_exit_range1_from": "00:00",
-        "allowed_to_exit_range1_to": "23:59",
-        "allowed_to_exit_range2": False,
-        "allowed_to_exit_range2_from": "00:00",
-        "allowed_to_exit_range2_to": "23:59",
-        "allowed_to_exit_range3": False,
-        "allowed_to_exit_range3_from": "00:00",
-        "allowed_to_exit_range3_to": "23:59"
-    }
-}
-
+_ = set_language(CONFIG['LANGUAGE'])
 
 @dataclass
 class Result:
     success: bool
     message: str
-
-class AllowedToEnter(Enum):
-    ALL = 'all'
-    ALL_RFIDS = 'all_rfids'
-    KNOWN = 'known'
-    NONE = 'none'
 
 class EventType:
     MOTION_OUTSIDE_ONLY = "motion_outside_only"
@@ -223,192 +158,6 @@ class GracefulKiller:
             self.tasks_count += 1
 
 sigterm_monitor = GracefulKiller()
-
-def create_default_config():
-    """
-    Creates the configuration file with default values.
-    """
-    parser = configparser.ConfigParser()
-    parser.read_dict(DEFAULT_CONFIG)
-    with open(CONFIGFILE, 'w') as configfile:
-        parser.write(configfile)
-    logging.info(f"Default configuration written to {CONFIGFILE}")
-
-def load_config():
-    """
-    Loads the configuration file and populates the CONFIG dictionary.
-    """
-    global CONFIG
-    if not os.path.exists(CONFIGFILE):
-        print(f"Configuration file '{CONFIGFILE}' not found. Creating with default values...")
-        create_default_config()
-    
-    parser = configparser.ConfigParser()
-    parser.read(CONFIGFILE)
-    
-    CONFIG = {
-        "TIMEZONE": parser.get('Settings', 'timezone', fallback=DEFAULT_CONFIG['Settings']['timezone']),
-        "LANGUAGE": parser.get('Settings', 'language', fallback=DEFAULT_CONFIG['Settings']['language']),
-        "DATE_FORMAT": parser.get('Settings', 'date_format', fallback=DEFAULT_CONFIG['Settings']['date_format']),
-        "DATABASE_PATH": parser.get('Settings', 'database_path', fallback=DEFAULT_CONFIG['Settings']['database_path']),
-        "KITTYHACK_DATABASE_PATH": parser.get('Settings', 'kittyhack_database_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_path']),
-        "MAX_PHOTOS_COUNT": parser.getint('Settings', 'max_photos_count', fallback=DEFAULT_CONFIG['Settings']['max_photos_count']),
-        "SIMULATE_KITTYFLAP": parser.getboolean('Settings', 'simulate_kittyflap', fallback=DEFAULT_CONFIG['Settings']['simulate_kittyflap']),
-        "MOUSE_THRESHOLD": parser.getfloat('Settings', 'mouse_threshold', fallback=DEFAULT_CONFIG['Settings']['mouse_threshold']), # Currently not used
-        "NO_MOUSE_THRESHOLD": parser.getfloat('Settings', 'no_mouse_threshold', fallback=DEFAULT_CONFIG['Settings']['no_mouse_threshold']),
-        "MIN_THRESHOLD": parser.getfloat('Settings', 'min_threshold', fallback=DEFAULT_CONFIG['Settings']['min_threshold']),
-        "ELEMENTS_PER_PAGE": parser.getint('Settings', 'elements_per_page', fallback=DEFAULT_CONFIG['Settings']['elements_per_page']),
-        "LOGLEVEL": parser.get('Settings', 'loglevel', fallback=DEFAULT_CONFIG['Settings']['loglevel']),
-        "PERIODIC_JOBS_INTERVAL": parser.getint('Settings', 'periodic_jobs_interval', fallback=DEFAULT_CONFIG['Settings']['periodic_jobs_interval']),
-        "ALLOWED_TO_ENTER": AllowedToEnter(parser.get('Settings', 'allowed_to_enter', fallback=DEFAULT_CONFIG['Settings']['allowed_to_enter'])),
-        "MOUSE_CHECK_ENABLED": parser.getboolean('Settings', 'mouse_check_enabled', fallback=DEFAULT_CONFIG['Settings']['mouse_check_enabled']),
-        "MIN_PICTURES_TO_ANALYZE": parser.getint('Settings', 'min_pictures_to_analyze', fallback=DEFAULT_CONFIG['Settings']['min_pictures_to_analyze']),
-        "SHOW_IMAGES_WITH_OVERLAY": parser.getboolean('Settings', 'show_images_with_overlay', fallback=DEFAULT_CONFIG['Settings']['show_images_with_overlay']),
-        "LIVE_VIEW_REFRESH_INTERVAL": parser.getfloat('Settings', 'live_view_refresh_interval', fallback=DEFAULT_CONFIG['Settings']['live_view_refresh_interval']),
-        "KITTYFLAP_CONFIG_MIGRATED": parser.getboolean('Settings', 'kittyflap_config_migrated', fallback=DEFAULT_CONFIG['Settings']['kittyflap_config_migrated']),
-        "ALLOWED_TO_EXIT": parser.getboolean('Settings', 'allowed_to_exit', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit']),
-        "LAST_VACUUM_DATE": parser.get('Settings', 'last_vacuum_date', fallback=DEFAULT_CONFIG['Settings']['last_vacuum_date']),
-        "PERIODIC_VERSION_CHECK": parser.getboolean('Settings', 'periodic_version_check', fallback=DEFAULT_CONFIG['Settings']['periodic_version_check']),
-        "KITTYFLAP_DB_NAGSCREEN": parser.getboolean('Settings', 'kittyflap_db_nagscreen', fallback=DEFAULT_CONFIG['Settings']['kittyflap_db_nagscreen']),
-        "LATEST_VERSION": "unknown", # This value will not be written to the config file
-        "LAST_DB_BACKUP_DATE": parser.get('Settings', 'last_db_backup_date', fallback=DEFAULT_CONFIG['Settings']['last_db_backup_date']),
-        "KITTYHACK_DATABASE_BACKUP_PATH": parser.get('Settings', 'kittyhack_database_backup_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_backup_path']),
-        "PIR_OUTSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_outside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_outside_threshold']),
-        "PIR_INSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_inside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_inside_threshold']),
-        "WLAN_TX_POWER": parser.getint('Settings', 'wlan_tx_power', fallback=DEFAULT_CONFIG['Settings']['wlan_tx_power']),
-        "GROUP_PICTURES_TO_EVENTS": parser.getboolean('Settings', 'group_pictures_to_events', fallback=DEFAULT_CONFIG['Settings']['group_pictures_to_events']),
-        "TFLITE_MODEL_VERSION": parser.get('Settings', 'tflite_model_version', fallback=DEFAULT_CONFIG['Settings']['tflite_model_version']),
-        "LOCK_DURATION_AFTER_PREY_DETECTION": parser.getint('Settings', 'lock_duration_after_prey_detection', fallback=DEFAULT_CONFIG['Settings']['lock_duration_after_prey_detection']),
-        "LAST_READ_CHANGELOGS": parser.get('Settings', 'last_read_changelogs', fallback=DEFAULT_CONFIG['Settings']['last_read_changelogs']),
-        "MAX_PICTURES_PER_EVENT_WITH_RFID": parser.getint('Settings', 'max_pictures_per_event_with_rfid', fallback=DEFAULT_CONFIG['Settings']['max_pictures_per_event_with_rfid']),
-        "MAX_PICTURES_PER_EVENT_WITHOUT_RFID": parser.getint('Settings', 'max_pictures_per_event_without_rfid', fallback=DEFAULT_CONFIG['Settings']['max_pictures_per_event_without_rfid']),
-        "USE_ALL_CORES_FOR_IMAGE_PROCESSING": parser.getboolean('Settings', 'use_all_cores_for_image_processing', fallback=DEFAULT_CONFIG['Settings']['use_all_cores_for_image_processing']),
-        "LAST_BOOTED_VERSION": parser.get('Settings', 'last_booted_version', fallback=DEFAULT_CONFIG['Settings']['last_booted_version']),
-        "ALLOWED_TO_EXIT_RANGE1": parser.getboolean('Settings', 'allowed_to_exit_range1', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range1']),
-        "ALLOWED_TO_EXIT_RANGE1_FROM": parser.get('Settings', 'allowed_to_exit_range1_from', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range1_from']),
-        "ALLOWED_TO_EXIT_RANGE1_TO": parser.get('Settings', 'allowed_to_exit_range1_to', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range1_to']),
-        "ALLOWED_TO_EXIT_RANGE2": parser.getboolean('Settings', 'allowed_to_exit_range2', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range2']),
-        "ALLOWED_TO_EXIT_RANGE2_FROM": parser.get('Settings', 'allowed_to_exit_range2_from', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range2_from']),
-        "ALLOWED_TO_EXIT_RANGE2_TO": parser.get('Settings', 'allowed_to_exit_range2_to', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range2_to']),
-        "ALLOWED_TO_EXIT_RANGE3": parser.getboolean('Settings', 'allowed_to_exit_range3', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range3']),
-        "ALLOWED_TO_EXIT_RANGE3_FROM": parser.get('Settings', 'allowed_to_exit_range3_from', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range3_from']),
-        "ALLOWED_TO_EXIT_RANGE3_TO": parser.get('Settings', 'allowed_to_exit_range3_to', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range3_to'])
-    }
-
-def save_config():
-    """
-    Saves the configuration file.
-    Requires the CONFIG
-    """
-    # prepare the updated values for the configfile
-    updater = ConfigUpdater()
-    updater.read(CONFIGFILE)
-
-    settings = updater['Settings']
-    settings['timezone'] = CONFIG['TIMEZONE']
-    settings['language'] = CONFIG['LANGUAGE']
-    settings['date_format'] = CONFIG['DATE_FORMAT']
-    settings['database_path'] = CONFIG['DATABASE_PATH']
-    settings['kittyhack_database_path'] = CONFIG['KITTYHACK_DATABASE_PATH']
-    settings['max_photos_count'] = CONFIG['MAX_PHOTOS_COUNT']
-    settings['simulate_kittyflap'] = CONFIG['SIMULATE_KITTYFLAP']
-    settings['mouse_threshold'] = CONFIG['MOUSE_THRESHOLD']
-    settings['no_mouse_threshold'] = CONFIG['NO_MOUSE_THRESHOLD']
-    settings['min_threshold'] = CONFIG['MIN_THRESHOLD']
-    settings['elements_per_page'] = CONFIG['ELEMENTS_PER_PAGE']
-    settings['loglevel'] = CONFIG['LOGLEVEL']
-    settings['periodic_jobs_interval'] = CONFIG['PERIODIC_JOBS_INTERVAL']
-    settings['allowed_to_enter'] = CONFIG['ALLOWED_TO_ENTER'].value
-    settings['mouse_check_enabled'] = str(CONFIG['MOUSE_CHECK_ENABLED'])
-    settings['min_pictures_to_analyze'] = CONFIG['MIN_PICTURES_TO_ANALYZE']
-    settings['show_images_with_overlay'] = CONFIG['SHOW_IMAGES_WITH_OVERLAY']
-    settings['live_view_refresh_interval'] = CONFIG['LIVE_VIEW_REFRESH_INTERVAL']
-    settings['kittyflap_config_migrated'] = CONFIG['KITTYFLAP_CONFIG_MIGRATED']
-    settings['allowed_to_exit'] = CONFIG['ALLOWED_TO_EXIT']
-    settings['last_vacuum_date'] = CONFIG['LAST_VACUUM_DATE']
-    settings['periodic_version_check'] = CONFIG['PERIODIC_VERSION_CHECK']
-    settings['kittyflap_db_nagscreen'] = CONFIG['KITTYFLAP_DB_NAGSCREEN']
-    settings['last_db_backup_date'] = CONFIG['LAST_DB_BACKUP_DATE']
-    settings['kittyhack_database_backup_path'] = CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']
-    settings['pir_outside_threshold'] = CONFIG['PIR_OUTSIDE_THRESHOLD']
-    settings['pir_inside_threshold'] = CONFIG['PIR_INSIDE_THRESHOLD']
-    settings['wlan_tx_power'] = CONFIG['WLAN_TX_POWER']
-    settings['group_pictures_to_events'] = CONFIG['GROUP_PICTURES_TO_EVENTS']
-    settings['tflite_model_version'] = CONFIG['TFLITE_MODEL_VERSION']
-    settings['lock_duration_after_prey_detection'] = CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION']
-    settings['last_read_changelogs'] = CONFIG['LAST_READ_CHANGELOGS']
-    settings['max_pictures_per_event_with_rfid'] = CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID']
-    settings['max_pictures_per_event_without_rfid'] = CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID']
-    settings['use_all_cores_for_image_processing'] = CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']
-    settings['last_booted_version'] = CONFIG['LAST_BOOTED_VERSION']
-    settings['allowed_to_exit_range1'] = CONFIG['ALLOWED_TO_EXIT_RANGE1']
-    settings['allowed_to_exit_range1_from'] = CONFIG['ALLOWED_TO_EXIT_RANGE1_FROM']
-    settings['allowed_to_exit_range1_to'] = CONFIG['ALLOWED_TO_EXIT_RANGE1_TO']
-    settings['allowed_to_exit_range2'] = CONFIG['ALLOWED_TO_EXIT_RANGE2']
-    settings['allowed_to_exit_range2_from'] = CONFIG['ALLOWED_TO_EXIT_RANGE2_FROM']
-    settings['allowed_to_exit_range2_to'] = CONFIG['ALLOWED_TO_EXIT_RANGE2_TO']
-    settings['allowed_to_exit_range3'] = CONFIG['ALLOWED_TO_EXIT_RANGE3']
-    settings['allowed_to_exit_range3_from'] = CONFIG['ALLOWED_TO_EXIT_RANGE3_FROM']
-    settings['allowed_to_exit_range3_to'] = CONFIG['ALLOWED_TO_EXIT_RANGE3_TO']
-
-    # Write updated configuration back to the file
-    try:
-        with open(CONFIGFILE, 'w') as configfile:
-            updater.write(configfile)
-    except:
-        logging.error("Failed to update the values in the configfile.")
-        return False
-    
-    logging.info("Updated the values in the configfile")
-    return True
-
-def update_config_images_overlay():
-    """
-    Updates only the SHOW_IMAGES_WITH_OVERLAY setting in the configuration file.
-    """
-    updater = ConfigUpdater()
-    updater.read(CONFIGFILE)
-    updater['Settings']['show_images_with_overlay'] = CONFIG['SHOW_IMAGES_WITH_OVERLAY']
-
-    # Write updated configuration back to the file
-    try:
-        with open(CONFIGFILE, 'w') as configfile:
-            updater.write(configfile)
-        logging.info("Updated SHOW_IMAGES_WITH_OVERLAY in the configfile")
-    except Exception as e:
-        logging.error(f"Failed to update SHOW_IMAGES_WITH_OVERLAY in the configfile: {e}")
-
-def update_single_config_parameter(parameter: str):
-    """
-    Updates only a single config parameter in the configuration file.
-
-    Args:
-        parameter (str): The parameter name, which shall be updated.
-    """
-    updater = ConfigUpdater()
-    updater.read(CONFIGFILE)
-    updater['Settings'][parameter.lower()] = CONFIG[parameter.upper()]
-
-    # Write updated configuration back to the file
-    try:
-        with open(CONFIGFILE, 'w') as configfile:
-            updater.write(configfile)
-        logging.info(f"Updated {parameter.upper()} in the configfile to: {CONFIG[parameter.upper()]}")
-    except Exception as e:
-        logging.error(f"Failed to update {parameter.upper()} in the configfile: {e}")
-
-# Initial load of the configuration
-load_config()
-
-# Function to set the language
-def set_language(language_code):
-    """Load translations for the specified language."""
-    gettext.bindtextdomain(DOMAIN, LOCALE_DIR)
-    gettext.textdomain(DOMAIN)
-    lang = gettext.translation(DOMAIN, localedir=LOCALE_DIR, languages=[language_code], fallback=True)
-    lang.install()
-    global _
-    _ = lang.gettext
 
 def format_date_minmax(date: datetime, to_start=True):
     """
@@ -545,6 +294,39 @@ def get_total_disk_space():
         return (stat.f_blocks * stat.f_frsize) / (1024 * 1024)
     except Exception as e:
         logging.error(f"Failed to get the total disk space: {e}")
+        return 0
+    
+def get_used_ram_space():
+    """
+    Returns the used RAM space in MB.
+    """
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            meminfo = f.readlines()
+        for line in meminfo:
+            if 'MemAvailable' in line:
+                available_ram = int(line.split()[1]) / 1024  # Convert kB to MB
+                break
+        total_ram = get_total_ram_space()
+        used_ram = total_ram - available_ram
+        return used_ram
+    except Exception as e:
+        logging.error(f"Failed to get the used RAM space: {e}")
+        return 0
+
+def get_total_ram_space():
+    """
+    Returns the total RAM space in MB.
+    """
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            meminfo = f.readlines()
+        for line in meminfo:
+            if 'MemTotal' in line:
+                total_ram = int(line.split()[1]) / 1024  # Convert kB to MB
+                return total_ram
+    except Exception as e:
+        logging.error(f"Failed to get the total RAM space: {e}")
         return 0
     
 def get_database_size():
@@ -997,3 +779,46 @@ def check_allowed_to_exit():
     else:
         logging.info("[CAT_EXIT_CHECK] Not allowed to exit, as the setting is disabled.")
         return False
+    
+def get_current_ip(interface: str = "wlan0") -> str:
+    """
+    Returns the current IP address of the device.
+    Args:
+        interface (str): The network interface to check (default is 'wlan0').
+    Returns:
+        str: The current IP address of the device.
+    """
+    try:
+        def get_ip_address(ifname):
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            return socket.inet_ntoa(fcntl.ioctl(
+                s.fileno(),
+                0x8915,  # SIOCGIFADDR
+                struct.pack('256s', ifname[:15].encode('utf-8'))
+            )[20:24])
+
+        ip_address = get_ip_address(interface)
+        return ip_address
+    except Exception as e:
+        logging.error(f"Failed to get the IP address of 'wlan0': {e}")
+        return None
+    
+def is_port_open(port, host='localhost'):
+    """Check if a port is open on the given host."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)  # 1 second timeout
+            result = s.connect_ex((host, port))
+            return result == 0  # If result is 0, port is open
+    except:
+        return False
+    
+def is_valid_uuid4(s: str) -> bool:
+    """
+    Check if a string is a valid UUID4.
+    """
+    try:
+        val = uuid.UUID(s, version=4)
+    except ValueError:
+        return False
+    return val.version == 4 and str(val) == s.lower()

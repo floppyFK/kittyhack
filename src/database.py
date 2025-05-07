@@ -12,8 +12,18 @@ import base64
 import numpy as np
 import shutil
 import json
+from datetime import datetime, time, timezone
+from src.baseconfig import CONFIG, update_single_config_parameter
 from typing import TypedDict, List
-from src.helper import *
+from src.helper import (
+    get_utc_date_string,
+    process_image,
+    resize_image_to_square,
+    get_free_disk_space,
+    get_database_size,
+    get_file_size,
+    Result
+    )
 from src.camera import image_buffer, DetectedObject
 
 # database actions
@@ -198,13 +208,13 @@ def db_get_photos(database: str,
     The newest data are at the top of the dataframe.
     """
     if return_data == ReturnDataPhotosDB.all:
-         columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, rfid, event_text"
+         columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text"
     elif return_data == ReturnDataPhotosDB.all_modified_image:
-         columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, rfid, event_text"
+         columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text"
     elif return_data == ReturnDataPhotosDB.all_original_image:
-         columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, rfid, event_text"
+         columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text"
     elif return_data == ReturnDataPhotosDB.all_except_photos:
-         columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, rfid, event_text"
+         columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text"
     elif return_data == ReturnDataPhotosDB.only_ids:
          columns = "id"
     else:
@@ -247,13 +257,13 @@ def db_get_photos_by_block_id(database: str, block_id: int, return_data: ReturnD
     :return: DataFrame containing the requested data
     """
     if return_data == ReturnDataPhotosDB.all:
-        columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, rfid, event_text, thumbnail"
+        columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text, thumbnail"
     elif return_data == ReturnDataPhotosDB.all_modified_image:
-        columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, rfid, event_text, thumbnail"
+        columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text, thumbnail"
     elif return_data == ReturnDataPhotosDB.all_original_image:
-        columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, rfid, event_text, thumbnail"
+        columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text, thumbnail"
     elif return_data == ReturnDataPhotosDB.all_except_photos:
-        columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, rfid, event_text"
+        columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text"
     elif return_data == ReturnDataPhotosDB.only_ids:
         columns = "id"
         
@@ -386,6 +396,7 @@ def create_kittyhack_events_table(database: str):
             modified_image BLOB,
             mouse_probability REAL,
             no_mouse_probability REAL,
+            own_cat_probability REAL,
             rfid TEXT,
             event_text TEXT,
             deleted BOOLEAN DEFAULT 0,
@@ -606,7 +617,7 @@ def read_photo_by_id(database: str, photo_id: int) -> pd.DataFrame:
     """
     This function reads a specific dataframe based on the ID from the source database.
     """
-    columns = "id, block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, rfid, event_text"
+    columns = "id, block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, own_cat_probability, rfid, event_text"
     stmt = f"SELECT {columns} FROM events WHERE id = {photo_id}"
     return read_df_from_database(database, stmt)
 
@@ -723,7 +734,7 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
                 except Exception as e:
                     event_json = json.dumps({'detected_objects': [], 'event_text': ''})
                     logging.error(f"[DATABASE] Failed to serialize event data: {e}")
-                columns = "block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, rfid, event_text"
+                columns = "block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, own_cat_probability, rfid, event_text"
                 values = ', '.join(['?' for _ in columns.split(', ')])
                 values_list = [
                     db_block_id,
@@ -733,6 +744,7 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
                     None if element.modified_image is None else element.modified_image,
                     element.mouse_probability,
                     element.no_mouse_probability,
+                    element.own_cat_probability,
                     element.tag_id,
                     event_json
                 ]
@@ -861,6 +873,14 @@ def get_cat_name_rfid_dict(database: str):
     stmt = "SELECT rfid, name FROM cats"
     df_cats = read_df_from_database(database, stmt)
     return dict(zip(df_cats['rfid'], df_cats['name']))
+
+def get_cat_names_list(database: str):
+    """
+    This function returns a list of cat names from the database.
+    """
+    stmt = "SELECT name FROM cats"
+    df_cats = read_df_from_database(database, stmt)
+    return df_cats['name'].tolist() if not df_cats.empty else []
 
 def check_if_table_exists(database: str, table: str) -> bool:
     """
@@ -1156,11 +1176,11 @@ def backup_database(database: str, backup_path: str) -> Result:
                 if src_id not in events_dst_dict:
                     cursor_src.execute("SELECT * FROM events WHERE id = ?", (src_id,))
                     full_row = cursor_src.fetchone()
-                    cursor_dst.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", full_row)
+                    cursor_dst.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", full_row)
                 elif events_dst_dict[src_id] != src_deleted:
                     cursor_src.execute("SELECT * FROM events WHERE id = ?", (src_id,))
                     full_row = cursor_src.fetchone()
-                    cursor_dst.execute("UPDATE events SET block_id = ?, created_at = ?, event_type = ?, original_image = ?, modified_image = ?, mouse_probability = ?, no_mouse_probability = ?, rfid = ?, event_text = ?, deleted = ?, thumbnail = ? WHERE id = ?", full_row[1:] + (src_id,))
+                    cursor_dst.execute("UPDATE events SET block_id = ?, created_at = ?, event_type = ?, original_image = ?, modified_image = ?, mouse_probability = ?, no_mouse_probability = ?, own_cat_probability = ?, rfid = ?, event_text = ?, deleted = ?, thumbnail = ? WHERE id = ?", full_row[1:] + (src_id,))
 
             # Delete events from backup that don't exist in source
             cursor_src.execute("SELECT id FROM events")

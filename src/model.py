@@ -447,6 +447,7 @@ class ModelHandler:
             import multiprocessing
             from multiprocessing import Queue
             import os
+            from src.baseconfig import configure_logging
 
             # Check if we're using all available cores
             all_cores = multiprocessing.cpu_count()
@@ -455,12 +456,12 @@ class ModelHandler:
             # If using all cores, run the model directly for better performance
             if using_all_cores:
                 logging.info(f"[MODEL] Loading YOLO model directly in main process using all available cores")
-                self._yolo_model = YOLO(self.modeldir, task="detect")
+                self._yolo_model = YOLO(self.modeldir, task="detect", verbose=False)
                 
                 # Create a wrapper function to match the expected interface
                 def direct_inference(frame, input_size):
                     # Run inference directly
-                    results = self._yolo_model(frame, stream=True, imgsz=input_size)
+                    results = self._yolo_model(frame, stream=True, imgsz=input_size, verbose=False)
                     
                     # Process results
                     mouse_probability = 0
@@ -520,7 +521,7 @@ class ModelHandler:
                         logging.info(f"[MODEL] Worker process running on CPU cores {cores_to_use}")
                         
                         # Load the YOLO model in this process
-                        model = YOLO(model_path, task="detect")
+                        model = YOLO(model_path, task="detect", verbose=False)
                         
                         while True:
                             # Get input from queue

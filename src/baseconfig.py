@@ -2,6 +2,9 @@ import os
 import gettext
 import configparser
 import logging
+from logging.handlers import RotatingFileHandler
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from enum import Enum
 from configupdater import ConfigUpdater
 
@@ -265,9 +268,6 @@ def create_default_config():
         parser.write(configfile)
     logging.info(f"Default configuration written to {CONFIGFILE}")
 
-# Initial load of the configuration
-load_config()
-
 def set_language(language_code = "de"):
     """Load translations for the specified language."""
     gettext.bindtextdomain(DOMAIN, LOCALE_DIR)
@@ -275,3 +275,48 @@ def set_language(language_code = "de"):
     lang = gettext.translation(DOMAIN, localedir=LOCALE_DIR, languages=[language_code], fallback=True)
     lang.install()
     return lang.gettext
+
+def configure_logging(level_name: str = "INFO"):
+    """
+    Configures the logging settings.
+    """
+    level = logging._nameToLevel.get(level_name.upper(), logging.INFO)
+
+    # Remove all existing handlers from the root logger
+    for h in logging.root.handlers[:]:
+        logging.root.removeHandler(h)
+
+    # Create a rotating file handler for logging
+    # This handler will create log files with a maximum size of 10 MB each and keep up to 5 backup files
+    handler = RotatingFileHandler(LOGFILE, maxBytes=10*1024*1024, backupCount=5)
+
+    # Define the format for log messages
+    formatter = TimeZoneFormatter('%(asctime)s [%(levelname)s] %(message)s')
+    handler.setFormatter(formatter)
+
+    # Get the root logger and set its level and handler
+    logger = logging.getLogger()
+    logger.setLevel(level)
+    logger.addHandler(handler)
+    logging.info(f"Logger loglevel set to {level_name.upper()}")
+
+# Custom formatter with timezone-aware local time
+class TimeZoneFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        # Get current time in local timezone
+        local_time = datetime.fromtimestamp(record.created, tz=ZoneInfo(CONFIG['TIMEZONE']))
+        
+        # Build the timestamp with milliseconds and timezone offset
+        timestamp = local_time.strftime('%Y-%m-%d %H:%M:%S')
+        milliseconds = f"{local_time.microsecond // 1000:03d}"
+        timezone = local_time.strftime('%z (%Z)')
+
+        return f"{timestamp}.{milliseconds} {timezone}"
+
+# -------------------------------------------------------------------------------------------------
+
+# Initial load of the configuration
+load_config()
+
+# Configure logging
+configure_logging()

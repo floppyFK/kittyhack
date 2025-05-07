@@ -5,7 +5,6 @@ import time as tm
 from shiny import render, ui, reactive, module
 from shiny.types import FileInfo
 import logging
-from logging.handlers import RotatingFileHandler
 import base64
 from zoneinfo import ZoneInfo
 from faicons import icon_svg
@@ -23,6 +22,7 @@ from src.baseconfig import (
     AllowedToEnter,
     set_language,
     save_config,
+    configure_logging,
     DEFAULT_CONFIG,
     JOURNAL_LOG,
     LOGFILE
@@ -72,36 +72,6 @@ from src.magnets import Magnets
 from src.pir import Pir
 from src.model import RemoteModelTrainer, YoloModel
 from src.shiny_wrappers import uix
-
-# LOGFILE SETUP
-# Convert the log level string from the configuration to the corresponding logging level constant
-loglevel = logging._nameToLevel.get(CONFIG['LOGLEVEL'], logging.INFO)
-
-# Create a rotating file handler for logging
-# This handler will create log files with a maximum size of 10 MB each and keep up to 5 backup files
-handler = RotatingFileHandler(LOGFILE, maxBytes=10*1024*1024, backupCount=5)
-
-# Custom formatter with timezone-aware local time
-class TimeZoneFormatter(logging.Formatter):
-    def formatTime(self, record, datefmt=None):
-        # Get current time in local timezone
-        local_time = datetime.fromtimestamp(record.created, tz=ZoneInfo(CONFIG['TIMEZONE']))
-        
-        # Build the timestamp with milliseconds and timezone offset
-        timestamp = local_time.strftime('%Y-%m-%d %H:%M:%S')
-        milliseconds = f"{local_time.microsecond // 1000:03d}"
-        timezone = local_time.strftime('%z (%Z)')
-
-        return f"{timestamp}.{milliseconds} {timezone}"
-
-# Define the format for log messages
-formatter = TimeZoneFormatter('%(asctime)s [%(levelname)s] %(message)s')
-handler.setFormatter(formatter)
-
-# Get the root logger and set its level and handler
-logger = logging.getLogger()
-logger.setLevel(loglevel)
-logger.addHandler(handler)
 
 # Prepare gettext for translations based on the configured language
 _ = set_language(CONFIG['LANGUAGE'])
@@ -2839,8 +2809,7 @@ def server(input, output, session):
         CONFIG['ALLOWED_TO_EXIT_RANGE3_TO'] = input.txtAllowedToExitRange3To()
 
         # Update the log level
-        loglevel = logging._nameToLevel.get(input.txtLoglevel(), logging.INFO)
-        logger.setLevel(loglevel)
+        configure_logging(input.txtLoglevel())
 
         # Save the configuration to the config file
         _ = set_language(CONFIG['LANGUAGE'])

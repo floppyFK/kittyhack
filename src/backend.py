@@ -1,6 +1,7 @@
 import threading
 import time as tm
 import logging
+import multiprocessing
 from src.baseconfig import AllowedToEnter, CONFIG
 from src.pir import Pir
 from src.rfid import Rfid, RfidRunState
@@ -17,6 +18,11 @@ MAX_UNLOCK_TIME = 45.0           # Maximum time the door is allowed to stay open
 LAZY_CAT_DELAY = 6.0             # Keep the PIR active for an additional 6 seconds after the last detected motion
 
 # Initialize Model
+if CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']:
+    threads = multiprocessing.cpu_count()
+else:
+    threads = 1
+
 if CONFIG['TFLITE_MODEL_VERSION']:
     logging.info(f"[BACKEND] Using TFLite model version {CONFIG['TFLITE_MODEL_VERSION']}")
     model_hanlder = ModelHandler(model="tflite",
@@ -26,7 +32,8 @@ if CONFIG['TFLITE_MODEL_VERSION']:
                                   resolution = "800x600",
                                   framerate = 10,
                                   jpeg_quality = 75,
-                                  model_image_size = 320)
+                                  model_image_size = 320,
+                                  num_threads=threads)
 else:
     logging.info(f"[BACKEND] Using YOLO model {YoloModel.get_model_path(CONFIG['YOLO_MODEL'])}")
     model_hanlder = ModelHandler(model="yolo",
@@ -37,7 +44,7 @@ else:
                                   framerate = 10,
                                   jpeg_quality = 75,
                                   model_image_size = YoloModel.get_model_image_size(CONFIG['YOLO_MODEL']),
-                                  num_threads=8)
+                                  num_threads=threads)
 
 # Global variable for manual door control
 manual_door_override = {'unlock_inside': False, 'unlock_outside': False, 'lock_inside': False, 'lock_outside': False}

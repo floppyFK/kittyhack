@@ -457,6 +457,8 @@ class ModelHandler:
             if using_all_cores:
                 logging.info(f"[MODEL] Loading YOLO model directly in main process using all available cores")
                 self._yolo_model = YOLO(self.modeldir, task="detect", verbose=False)
+                # Re-Configure logging to silence the model's output
+                configure_logging(CONFIG['LOGLEVEL'])
                 
                 # Create a wrapper function to match the expected interface
                 def direct_inference(frame, input_size):
@@ -497,7 +499,7 @@ class ModelHandler:
                             
                             detected_objects.append(detected_object)
                             
-                            if object_name.lower() in ["mouse", "maus", "prey", "beute"]:
+                            if object_name.lower() in ["prey", "beute"]:
                                 mouse_probability = int(probability)
                             elif object_name.lower() in self.cat_names:
                                 own_cat_probability = int(probability)
@@ -522,6 +524,8 @@ class ModelHandler:
                         
                         # Load the YOLO model in this process
                         model = YOLO(model_path, task="detect", verbose=False)
+                        # Re-Configure logging to silence the model's output
+                        configure_logging(CONFIG['LOGLEVEL'])
                         
                         while True:
                             # Get input from queue
@@ -567,7 +571,7 @@ class ModelHandler:
                                     
                                     detected_objects.append(detected_object)
                                     
-                                    if object_name.lower() in ["mouse", "maus", "prey", "beute"]:
+                                    if object_name.lower() in ["prey", "beute"]:
                                         mouse_probability = int(probability)
                                     elif object_name.lower() in cat_names:
                                         own_cat_probability = int(probability)

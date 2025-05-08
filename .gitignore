@@ -6,3 +6,4 @@ kittyhack.log*
 config.ini
 sync-to-kittyflap.sh
 *.code-workspace
+notifications.json

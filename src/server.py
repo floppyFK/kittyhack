@@ -1000,6 +1000,19 @@ def server(input, output, session):
             reload_trigger_photos.set(reload_trigger_photos.get() + 1)
             logging.info("Reloading photos due to external trigger.")
 
+    @reactive.effect
+    def periodic_ram_check():
+        reactive.invalidate_later(60)
+        used_ram_space = get_used_ram_space()
+        total_ram_space = get_total_ram_space()
+        ram_usage_percentage = (used_ram_space / total_ram_space) * 100
+        if ram_usage_percentage >= 90:
+            if get_labelstudio_status() == True:
+                additional_text = " " + _("LabelStudio is running. If you do not need it anymore to label images, please stop it in the 'AI Training' section.")
+            else:
+                additional_text = ""
+            ui.notification_show(_("Warning: RAM usage is at {:.1f}%!{}").format(ram_usage_percentage, additional_text), duration=20, type="warning")
+
     @render.text
     def live_view_header():
         reactive.invalidate_later(0.25)
@@ -1908,6 +1921,8 @@ def server(input, output, session):
                             ui.input_task_button("btn_labelstudio_stop", _("Stop Label Studio"), icon=icon_svg("stop")),
                             ui.br(),
                             ui.help_text(_("Label Studio is running. Click the button to stop Label Studio.")),
+                            ui.br(),
+                            ui.help_text(_("Remember to stop Label Studio after you are done with the labeling process, to free up resources for KittyHack.")),
                             style_="text-align: center;"
                         ),
                     ),
@@ -2560,7 +2575,7 @@ def server(input, output, session):
                             ui.markdown(
                                 "- **" + _("Original Kittyflap Model v1:") + "** " + _("Always tries to detect objects `Mouse` and `No Mouse`, even if there is no such object in the picture (this was the default in Kittyhack v1.4.0 and lower)") + "\n\n" +
                                 "- **" + _("Original Kittyflap Model v2:") + "** " + _("Only tries to detect objects `Mouse` and `No Mouse` if there is a cat in the picture.") + "\n\n" +
-                                "- **" + _("Custom Models:") + "** " + _("These are your own trained models, which you have created in the AI Training section.") + "\n\n" +
+                                "- **" + _("Custom Models:") + "** " + _("These are your own trained models, which you have created in the 'AI Training' section.") + "\n\n" +
                                 "> " + _("If you change this setting, the Kittyflap must be restarted to apply the new model version.")
                             ), style_="color: grey;"
                         ),

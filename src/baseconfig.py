@@ -85,7 +85,9 @@ DEFAULT_CONFIG = {
         "model_training": "",
         "yolo_model": "",
         "startup_shutdown_flag": False,
-        "not_graceful_shutdowns": 0
+        "not_graceful_shutdowns": 0,
+        "use_camera_for_cat_detection": False,
+        "cat_threshold": 70.0
     }
 }
 
@@ -154,7 +156,9 @@ def load_config():
         "MODEL_TRAINING": parser.get('Settings', 'model_training', fallback=DEFAULT_CONFIG['Settings']['model_training']),
         "YOLO_MODEL": parser.get('Settings', 'yolo_model', fallback=DEFAULT_CONFIG['Settings']['yolo_model']),
         "STARTUP_SHUTDOWN_FLAG": parser.getboolean('Settings', 'startup_shutdown_flag', fallback=DEFAULT_CONFIG['Settings']['startup_shutdown_flag']),
-        "NOT_GRACEFUL_SHUTDOWNS": parser.getint('Settings', 'not_graceful_shutdowns', fallback=DEFAULT_CONFIG['Settings']['not_graceful_shutdowns'])
+        "NOT_GRACEFUL_SHUTDOWNS": parser.getint('Settings', 'not_graceful_shutdowns', fallback=DEFAULT_CONFIG['Settings']['not_graceful_shutdowns']),
+        "USE_CAMERA_FOR_CAT_DETECTION": parser.getboolean('Settings', 'use_camera_for_cat_detection', fallback=DEFAULT_CONFIG['Settings']['use_camera_for_cat_detection']),
+        "CAT_THRESHOLD": parser.getfloat('Settings', 'cat_threshold', fallback=DEFAULT_CONFIG['Settings']['cat_threshold'])
     }
 
 def save_config():
@@ -219,6 +223,8 @@ def save_config():
     settings['yolo_model'] = CONFIG['YOLO_MODEL']
     settings['startup_shutdown_flag'] = CONFIG['STARTUP_SHUTDOWN_FLAG']
     settings['not_graceful_shutdowns'] = CONFIG['NOT_GRACEFUL_SHUTDOWNS']
+    settings['use_camera_for_cat_detection'] = CONFIG['USE_CAMERA_FOR_CAT_DETECTION']
+    settings['cat_threshold'] = CONFIG['CAT_THRESHOLD']
 
     # Write updated configuration back to the file
     try:
@@ -429,7 +435,7 @@ class UserNotifications:
 load_config()
 
 # Configure logging
-configure_logging()
+configure_logging(CONFIG['LOGLEVEL'])
 
 # Initialize user notifications
 UserNotifications()

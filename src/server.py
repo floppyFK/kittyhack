@@ -1255,7 +1255,8 @@ def server(input, output, session):
             CONFIG['ELEMENTS_PER_PAGE']
         )
 
-        df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all_except_photos)
+        # Get a dictionary mapping RFIDs to cat names
+        cat_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
 
         for index, data_row in df_photos.iterrows():
             # FALLBACK: The event_text column was added in version 1.4.0. If it is not present, show the "modified_image" with baked-in event data
@@ -1283,10 +1284,7 @@ def server(input, output, session):
                 photo_timestamp = "Unknown date"
             
             if data_row["rfid"]:
-                try:
-                    cat_name = df_cats.loc[df_cats["rfid"] == data_row["rfid"], "name"].values[0]
-                except:
-                    cat_name = _("Unknown RFID: {}".format(data_row["rfid"]))
+                cat_name = cat_name_dict.get(data_row["rfid"], _("Unknown RFID: {}".format(data_row["rfid"])))
             else:
                 cat_name = _("No RFID found")
 
@@ -2484,7 +2482,7 @@ def server(input, output, session):
                             8,
                             ui.markdown(
                                 _("This threshold will only be used for the decision, if an motion event on the outside shall be logged or not:") + "\n\n" +
-                                _("The detected probability for `Mouse` or `No Mouse` must exceed this threshold at least in one picture of a motion event. Otherwise the pictures will be discarded and the event will not be logged.") + "\n\n" +
+                                _("The detected probability of objects must exceed this threshold at least in one picture of a motion event. Otherwise the pictures will be discarded and the event will not be logged.") + "\n\n" +
                                 "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['min_threshold']) + ")*"
                             ), style_="color: grey;"
                         )
@@ -2569,7 +2567,34 @@ def server(input, output, session):
                     ),
                     ui.hr(),
                     ui.row(
-                        ui.column(12, ui.input_select(
+                        ui.column(12, ui.input_switch("btnUseCameraForCatDetection", _("Use camera for cat detection"), CONFIG['USE_CAMERA_FOR_CAT_DETECTION'])),
+                        ui.column(
+                            12,
+                            ui.markdown(
+                                _("If this is enabled, the camera will also be used for cat detection (in addition to the RFID reader).") + "  \n\n" +
+                                _("You can configure the required threshold for the cat detection with the slider below.") + " " +
+                                _("If the detection is successful, the inside direction will be opened.") + "\n\n" +
+                                _("**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models.") + "\n\n" +
+                                _("This is an *EXPERIMENTAL* feature! It depends heavily on the quality of your model and the lighting conditions.") + " " +
+                                _("If one or both are not good, the detection may either fail or other - similiar looking cats may be detected as your cat.")
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(4, ui.input_slider("sldCatThreshold", _("Cat detection threshold"), min=0, max=100, value=CONFIG['CAT_THRESHOLD'])),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("Kittyhack decides based on this value, if a picture contains your cat.") + "  \n" + 
+                                _("If the detected probability of your cat exceeds this value in a picture, and the setting `Use camera for cat detection` is enabled, the flap will be opened.") + "  \n" +
+                                "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['cat_threshold']) + ")*"
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(4, ui.input_select(
                             "txtAllowedToEnter",
                             _("Open inside direction for:"),
                             {
@@ -2577,6 +2602,16 @@ def server(input, output, session):
                             },
                             selected=str(CONFIG['ALLOWED_TO_ENTER'].value),
                         )),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("This setting defines which cats are allowed to enter the house.") + "  \n\n" +
+                                _("- **All cats:** *Every* detected motion on the outside will unlock the flap.") + "  \n" +
+                                _("- **All cats with a RFID chip:** Every successful RFID detection will unlock the flap.") + "  \n" +
+                                _("- **Only registered cats:** Only the cats that are registered in the database will unlock the flap (either by RFID or by camera detection, if enabled).") + "  \n" +
+                                _("- **No cats:** The inside direction will never be opened.")
+                            ), style_="color: grey;"
+                        ),
                     ),
                     ui.hr(),
                     ui.row(
@@ -2845,6 +2880,8 @@ def server(input, output, session):
                 CONFIG['YOLO_MODEL'] = ""
                 CONFIG['TFLITE_MODEL_VERSION'] = ""
         
+        CONFIG['USE_CAMERA_FOR_CAT_DETECTION'] = input.btnUseCameraForCatDetection()
+        CONFIG['CAT_THRESHOLD'] = float(input.sldCatThreshold())
         CONFIG['ALLOWED_TO_ENTER'] = AllowedToEnter(input.txtAllowedToEnter())
         CONFIG['LIVE_VIEW_REFRESH_INTERVAL'] = float(input.numLiveViewUpdateInterval())
         CONFIG['ALLOWED_TO_EXIT'] = input.btnAllowedToExit()

@@ -345,12 +345,22 @@ def db_get_cats(database: str, return_data: ReturnDataCatDB):
 def db_get_all_rfid_tags(database: str):
     """
     This function returns all RFID tags from the 'cats' table as an array.
+    If a cat's RFID is empty, its name (lowercase) is used instead.
     """
-    stmt = "SELECT rfid FROM cats"
+    stmt = "SELECT rfid, name FROM cats"
     df = read_df_from_database(database, stmt)
     if df.empty:
         return []
-    return df['rfid'].tolist()
+    
+    result = []
+    for __, row in df.iterrows():
+        rfid = row['rfid']
+        # Use name (lowercase) as fallback if rfid is empty
+        if not rfid:
+            rfid = row['name'].lower()
+        result.append(rfid)
+    
+    return result
 
 def db_get_config(database: str, return_data: ReturnDataConfigDB):
     """
@@ -872,7 +882,18 @@ def vacuum_database(database: str) -> Result:
 def get_cat_name_rfid_dict(database: str):
     stmt = "SELECT rfid, name FROM cats"
     df_cats = read_df_from_database(database, stmt)
-    return dict(zip(df_cats['rfid'], df_cats['name']))
+    
+    # Create dictionary with fallback logic
+    result = {}
+    for __, row in df_cats.iterrows():
+        rfid = row['rfid']
+        name = row['name']
+        # Use name (lowercase) as fallback if rfid is empty
+        if not rfid:
+            rfid = name.lower()
+        result[rfid] = name
+    
+    return result
 
 def get_cat_names_list(database: str):
     """

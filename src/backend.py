@@ -55,6 +55,7 @@ def backend_main(simulate_kittyflap = False):
 
     tag_id = None
     tag_id_valid = False
+    tag_id_from_video = None
     tag_timestamp = 0.0
     motion_outside = 0
     motion_inside = 0
@@ -74,6 +75,7 @@ def backend_main(simulate_kittyflap = False):
     ids_with_mouse = []
     ids_of_current_motion_block = []
     known_rfid_tags = []
+    cat_rfid_name_dict = {}
     unlock_inside_tm = 0.0
     unlock_inside = False
     unlock_outside_tm = 0.0
@@ -211,8 +213,11 @@ def backend_main(simulate_kittyflap = False):
                 if (len(ids_exceeding_mouse_th) + len(ids_exceeding_nomouse_th) +len(ids_exceeding_own_cat_th) > 0) or (event_type in [EventType.CAT_WENT_OUTSIDE]):
                     for element in img_ids_for_motion_block:
                         image_buffer.update_block_id(element, motion_block_id)
+                        # Prefer the tag_id from the RFID reader. If this is not available, fall back to the detected id from the video
                         if tag_id is not None:
                             image_buffer.update_tag_id(element, tag_id)
+                        elif tag_id_from_video is not None:
+                            image_buffer.update_tag_id(element, tag_id_from_video)
                     logging.info(f"[BACKEND] Updated block ID for {len(img_ids_for_motion_block)} elements to '{motion_block_id}' and tag ID to '{tag_id if tag_id is not None else ''}'")
                     # Write to the database in a separate thread
                     db_thread = threading.Thread(target=write_motion_block_to_db, args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, event_type), daemon=True)
@@ -227,6 +232,9 @@ def backend_main(simulate_kittyflap = False):
                 first_motion_outside_tm = 0.0
                 first_motion_inside_tm = 0.0
                 first_motion_inside_raw_tm = 0.0
+
+                # Forget the video tag id
+                tag_id_from_video = None
 
             # Just double check that the inside magnet is released ( == inside locked) if no motion is detected outside
             if (motion_outside == 0 and magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME)):
@@ -246,6 +254,7 @@ def backend_main(simulate_kittyflap = False):
                 first_motion_outside_tm = tm.time()
                 model_hanlder.resume()
                 known_rfid_tags = db_get_all_rfid_tags(CONFIG['KITTYHACK_DATABASE_PATH'])
+                cat_rfid_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
             
             if last_inside_raw == 0 and motion_inside_raw == 1: # Inside motion detected
                 logging.debug("[BACKEND] Motion detected INSIDE (raw)")
@@ -285,6 +294,29 @@ def backend_main(simulate_kittyflap = False):
                 ((tm.time() - last_motion_inside_tm) > OPEN_OUTSIDE_TIMEOUT) and
                 (magnets.check_queued("lock_outside") == False) ):
                     magnets.queue_command("lock_outside")
+
+            # Check also for a cat via the camera, if the option is enabled and no RFID tag is detected
+            if CONFIG['USE_CAMERA_FOR_CAT_DETECTION'] and tag_id_from_video is None and motion_outside == 1:
+                imgs_with_cats = image_buffer.get_filtered_ids(first_motion_outside_tm, min_own_cat_probability=CONFIG['CAT_THRESHOLD'])
+                if len(imgs_with_cats) > 0:
+                    # Find the element with the highest probability
+                    max_prob = 0.0
+                    detected_cat = ""
+                    for element in imgs_with_cats:
+                        img = image_buffer.get_by_id(element)
+                        for obj in getattr(img, 'detected_objects', []):
+                            obj_name = getattr(obj, 'object_name', '').lower()
+                            obj_probability = getattr(obj, 'probability', 0.0)
+                            if obj_name not in ["prey", "beute"] and obj_probability > max_prob:
+                                max_prob = obj_probability
+                                detected_cat = obj_name
+                    if detected_cat != "":
+                        logging.info(f"[BACKEND] Detected cat '{detected_cat}' by video stream with probability {max_prob:.2f} in image ID {element}")
+                        # Look for the cat name in the values of the dictionary
+                        matching_tag = next((rfid for rfid, name in cat_rfid_name_dict.items() if name.lower() == detected_cat), None)
+                        if matching_tag:
+                            tag_id_from_video = matching_tag
+                            logging.info(f"[BACKEND] Detected cat '{detected_cat}' matches RFID tag '{tag_id_from_video}'")
                 
             # Check for a valid RFID tag
             if ( tag_id and
@@ -297,7 +329,7 @@ def backend_main(simulate_kittyflap = False):
 
             # Check if we are allowed to open the inside direction
             if motion_outside and not unlock_inside_decision_made:
-                if CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.KNOWN and tag_id in known_rfid_tags:
+                if CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.KNOWN and ( (tag_id in known_rfid_tags) or (tag_id_from_video in known_rfid_tags) ):
                     tag_id_valid = True
                     unlock_inside_decision_made = True
                     logging.info("[BACKEND] Detected RFID tag is in the database. Kitty is allowed to enter...")

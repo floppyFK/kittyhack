@@ -1580,27 +1580,58 @@ def server(input, output, session):
     @output
     @render.ui
     def ui_system():
-            return ui.div(
-                ui.column(12, ui.h3(_("Kittyflap System Actions"))),
-                ui.column(12, ui.help_text(_("Start tasks/actions on the Kittyflap"))),
-                ui.br(),
-                ui.br(),
-                ui.column(12, ui.input_action_button("bRestartKittyflap", _("Restart Kittyflap"))),
-                ui.br(),
-                ui.br(),
-                ui.column(12, ui.input_action_button("bShutdownKittyflap", _("Shutdown Kittyflap"))),
-                ui.column(12, ui.help_text(_("To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again."))),
-                ui.br(),
-                ui.br(),
-                ui.column(12, ui.input_task_button("reinstall_camera_driver", _("Reinstall Camera Driver"), icon=icon_svg("rotate-right"), class_="btn-primary")),
-                ui.column(12, ui.help_text(_("Reinstall the camera driver if the live view does not work properly."))),
-                ui.hr(),
-                ui.br(),
-                ui.br()
-            )
+        return ui.div(
+            ui.div(
+                ui.card(
+                    ui.card_header(
+                        ui.h4(_("Kittyflap System Actions"), style_="text-align: center;"),
+                    ),
+                    ui.br(),
+                    ui.markdown(_("Start tasks/actions on the Kittyflap")),
+                    ui.br(),
+                    ui.div(
+                        ui.input_action_button("bRestartKittyflap", _("Restart Kittyflap"), class_="btn-default"),
+                        style_="text-align: center;"
+                    ),
+                    ui.br(),
+                    ui.div(
+                        ui.input_action_button("bShutdownKittyflap", _("Shutdown Kittyflap"), class_="btn-default"),
+                        style_="text-align: center;"
+                    ),
+                    ui.help_text(_("To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again.")),
+                    ui.hr(),
+                    ui.div(
+                        ui.input_task_button("reinstall_camera_driver", _("Reinstall Camera Driver"), icon=icon_svg("rotate-right"), class_="btn-default"),
+                        style_="text-align: center;"
+                    ),
+                    ui.help_text(_("Reinstall the camera driver if the live view does not work properly.")),
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
+            ui.br(),
+            ui.br()
+        )
     
     @reactive.Effect
     @reactive.event(input.reinstall_camera_driver)
+    def on_action_reinstall_camera_driver():
+        m = ui.modal(
+            _("Do you really want to reinstall the camera driver? This operation can take several minutes."),
+            title=_("Reinstall Camera Driver"),
+            easy_close=False,
+            footer=ui.div(
+                ui.input_task_button("btn_modal_reinstall_cam_ok", _("OK")),
+                ui.input_action_button("btn_modal_cancel", _("Cancel")),
+            )
+        )
+        ui.modal_show(m)
+    
+    @reactive.effect
+    @reactive.event(input.btn_modal_reinstall_cam_ok)
     def reinstall_camera_driver_process():
         # Read the dependencies (*.deb packages) from the "camera_dependencies.txt" file
         dependencies_file = "./camera_dependencies.txt"
@@ -1682,12 +1713,14 @@ def server(input, output, session):
                     raise subprocess.CalledProcessError(1, f"dpkg -i {dependencies_paths}")
 
             except subprocess.CalledProcessError as e:
+                ui.modal_remove()
                 logging.error(f"An error occurred during the installation process: {e}")
                 ui.notification_show(_("An error occurred during the installation process. Please check the logs for details."), duration=None, type="error")
 
             else:
                 logging.info(f"Camera driver reinstallation successful.")
                 # Show the restart dialog
+                ui.modal_remove()
                 m = ui.modal(
                     _("A restart is required to apply the update. Do you want to restart the Kittyflap now?"),
                     title=_("Restart required"),

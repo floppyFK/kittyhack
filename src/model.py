@@ -662,10 +662,7 @@ class ModelHandler:
             logging.info(f"[MODEL] Preparing to run TFLite model {PATH_TO_TFLITE} on video stream with resolution {imW}x{imH} @ {self.framerate}fps and quality {self.jpeg_quality}%")
 
             # Load the Tensorflow Lite model.
-            if CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']:
-                interpreter = self._Interpreter(model_path=PATH_TO_TFLITE, num_threads=multiprocessing.cpu_count())
-            else:
-                interpreter = self._Interpreter(model_path=PATH_TO_TFLITE)
+            interpreter = self._Interpreter(model_path=PATH_TO_TFLITE, num_threads=self.num_threads)
             interpreter.allocate_tensors()
 
             # Get model details

@@ -1,7 +1,7 @@
 # vX.Y.Z
 
 
-## Highlightgs
+## Highlights
 
 ---------------
 

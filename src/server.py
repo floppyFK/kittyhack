@@ -94,9 +94,11 @@ if CONFIG['NOT_GRACEFUL_SHUTDOWNS'] >= 3:
     # Add a entry to the user notifications, which will be shown at the next login in the frontend
     UserNotifications.add(
         header=_("⚠️ Several crashes detected!"),
-        message=_("The kittyflap was not shut down gracefully several times in a row. Please do not power off the device without shutting it down first!") + "\n\n" +
-                _("If you did not unplug the Kittyflap from power without shutting it down, please report your log files on the GitHub issue tracker, thanks!") + "\n\n" +
-                _("> **NOTE:** The option 'Use all CPU cores for image processing' has been disabled now automatically, since this could cause the issue on some devices.") + "\n" +
+        message=_("The kittyflap was not shut down gracefully several times in a row. Please do not power off the device without shutting it down first, otherwise the database may be corrupted!") + "\n\n" +
+                _("If you have shut it down gracefully and see this message, please report it in the") + " " +
+                "[GitHub issue tracker](https://github.com/floppyFK/kittyhack/issues), " + 
+                _("thanks!") + "\n\n" +
+                _("> **NOTE:** The option `Use all CPU cores for image processing` has been disabled now automatically, since this could cause the issue on some devices.") + "\n" +
                 _("Please check the settings and enable it again, if you want to use it."),
                 type="warning",
                 id="not_graceful_shutdown",
@@ -904,13 +906,13 @@ def server(input, output, session):
     
     # Show a notification if a new version of Kittyhack is available
     if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
-        ui.notification_show(_("A new version of Kittyhack is available: {}. Go to the 'Info' section for update instructions.").format(CONFIG['LATEST_VERSION']), duration=10, type="message")
+        ui.notification_show(_("A new version of Kittyhack is available: {}. Go to the [INFO] section for update instructions.").format(CONFIG['LATEST_VERSION']), duration=10, type="message")
 
     # Show a warning if the remaining disk space is below the critical threshold
     kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
     if free_disk_space < 500:
         if kittyflap_db_file_exists:
-            additional_info = _(" or consider deleting pictures from the original kittyflap database file. For more details, see the 'Info' section.")
+            additional_info = _(" or consider deleting pictures from the original kittyflap database file. For more details, see the [INFO] section.")
         else:
             additional_info = ""
         ui.notification_show(_("Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{}).").format(free_disk_space, additional_info), duration=20, type="warning")
@@ -949,7 +951,7 @@ def server(input, output, session):
             ui.modal(
                 ui.div(
                     ui.markdown(changelog_text),
-                    ui.markdown("\n\n---------\n\n" + _("**NOTE**: You can find the changelogs also in the 'Info' section.")),
+                    ui.markdown("\n\n---------\n\n" + _("**NOTE**: You can find the changelogs also in the `INFO` section.")),
                 ),
                 title=_("Changelog"),
                 easy_close=True,
@@ -1008,7 +1010,7 @@ def server(input, output, session):
         ram_usage_percentage = (used_ram_space / total_ram_space) * 100
         if ram_usage_percentage >= 90:
             if get_labelstudio_status() == True:
-                additional_text = " " + _("LabelStudio is running. If you do not need it anymore to label images, please stop it in the 'AI Training' section.")
+                additional_text = " " + _("LabelStudio is running. If you do not need it anymore to label images, please stop it in the [AI TRAINING] section.")
             else:
                 additional_text = ""
             ui.notification_show(_("Warning: RAM usage is at {:.1f}%!{}").format(ram_usage_percentage, additional_text), duration=20, type="warning")
@@ -1808,7 +1810,7 @@ def server(input, output, session):
                                 ui.br(),
                                 ui.column(12, ui.input_text(id=f"mng_cat_rfid_{data_row['id']}", label=_("RFID"), value=data_row['rfid'], width="100%")),
                                 ui.column(12, ui.help_text(_("NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."))),
-                                ui.column(12, ui.help_text(_("If you have entered the RFID correctly here, the name of the cat will be displayed in the 'Pictures' section."))),
+                                ui.column(12, ui.help_text(_("If you have entered the RFID correctly here, the name of the cat will be displayed in the [PICTURES] section."))),
                                 ui.br(),
                                 ui.column(12, uix.input_file(id=f"mng_cat_pic_{data_row['id']}", label=_("Change Picture"), accept=[".jpg", ".png"], width="100%")),
                             )
@@ -1835,7 +1837,7 @@ def server(input, output, session):
                 ),
             )
         else:
-            ui_cards.append(ui.help_text(_("No cats found in the database. Please go to the 'Add new cat' section to add a new cat.")))
+            ui_cards.append(ui.help_text(_("No cats found in the database. Please go to the [ADD NEW CAT] section to add a new cat.")))
 
             return ui.div(
                 ui.layout_column_wrap(*ui_cards, width="400px"),
@@ -1901,7 +1903,7 @@ def server(input, output, session):
                         ui.column(12, ui.input_text(id=f"add_new_cat_name", label=_("Name"), value="", width="100%")),
                         ui.br(),
                         ui.column(12, ui.input_text(id=f"add_new_cat_rfid", label=_("RFID"), value="", width="100%")),
-                        ui.column(12, ui.help_text(_("You can find the RFID in the 'Pictures' section, if the chip of your cat was recognized by the Kittyflap. To read the RFID, just set the entrance mode to 'All Cats' and let pass your cat through the Kittyflap."))),
+                        ui.column(12, ui.help_text(_("You can find the RFID in the [PICTURES] section, if the chip of your cat was recognized by the Kittyflap. To read the RFID, just set the entrance mode to 'All Cats' and let pass your cat through the Kittyflap."))),
                         ui.column(12, ui.help_text(_("NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."))),
                         ui.br(),
                         ui.column(12, uix.input_file(id=f"add_new_cat_pic", label=_("Upload Picture"), accept=".jpg", width="100%")),
@@ -2027,7 +2029,7 @@ def server(input, output, session):
                     _("This is a bit harder, but you are more flexible and the performance is way better. Also, you don't need to worry about the limited disk space on the Kittyflap. See the [Label Studio](https://labelstud.io/) website for instructions.") + "  \n" +
                     _("> **Please note, if you want to install Label Studio on the Kittyflap:**") + "  \n" +
                     _("Some Kittyflaps have only 1GB of RAM. In this case, it is strongly recommended to always stop the Label Studio server after you are done with the labeling process, otherwise the Kittyflap may run out of memory.") + "  \n" +
-                    _("You can check the available disk space and the RAM configuration in the 'Info' section.")
+                    _("You can check the available disk space and the RAM configuration in the `INFO` section.")
                 ),
                 ui.hr(),
                 ui.column(
@@ -2138,7 +2140,7 @@ def server(input, output, session):
                         ui.h4(_("Model Management"), style_="text-align: center;"),
                     ),
                     ui.br(),
-                    ui.div(_("Here you can rename or remove your own models. To activate a model, go to the 'Configuration' section.")),
+                    ui.div(_("Here you can rename or remove your own models. To activate a model, go to the [CONFIGURATION] section.")),
                     ui.output_ui("manage_yolo_models_table"),
                     full_screen=False,
                     class_="generic-container align-left",
@@ -2476,7 +2478,7 @@ def server(input, output, session):
                         ui.column(
                             8,
                             ui.markdown(
-                                _("This setting applies only to the pictures section in the ungrouped view mode.") + "  \n" +
+                                _("This setting applies only to the `PICTURES` section in the ungrouped view mode.") + "\n\n" +
                                 _("NOTE: Too many pictures per page could slow down the performance drastically!")
                             ), style_="color: grey;"
                         ),
@@ -2492,8 +2494,7 @@ def server(input, output, session):
                         ui.column(
                             8,
                             ui.markdown(
-                                "> " + _("WARNING: You should keep the TX power as low as possible to avoid interference with the PIR Sensors! You should only increase this value, if you have problems with the WLAN connection.") + "  \n" +
-                                "> " + _("NOTE: 0dBm = 1mW, 10dBm = 10mW, 20dBm = 100mW") + "\n\n" +
+                                _("WARNING: You should keep the TX power as low as possible to avoid interference with the PIR Sensors! You should only increase this value, if you have problems with the WLAN connection.") + "\n\n" +
                                 "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['wlan_tx_power']) + ")*"
                             ), style_="color: grey;"
                         ),
@@ -2608,7 +2609,7 @@ def server(input, output, session):
                             ui.markdown(
                                 "- **" + _("Original Kittyflap Model v1:") + "** " + _("Always tries to detect objects `Mouse` and `No Mouse`, even if there is no such object in the picture (this was the default in Kittyhack v1.4.0 and lower)") + "\n\n" +
                                 "- **" + _("Original Kittyflap Model v2:") + "** " + _("Only tries to detect objects `Mouse` and `No Mouse` if there is a cat in the picture.") + "\n\n" +
-                                "- **" + _("Custom Models:") + "** " + _("These are your own trained models, which you have created in the 'AI Training' section.") + "\n\n" +
+                                "- **" + _("Custom Models:") + "** " + _("These are your own trained models, which you have created in the `AI TRAINING` section.") + "\n\n" +
                                 "> " + _("If you change this setting, the Kittyflap must be restarted to apply the new model version.")
                             ), style_="color: grey;"
                         ),
@@ -2619,11 +2620,11 @@ def server(input, output, session):
                         ui.column(
                             12,
                             ui.markdown(
-                                _("If this is enabled, the camera will also be used for cat detection (in addition to the RFID reader).") + "  \n\n" +
-                                _("You can configure the required threshold for the cat detection with the slider below.") + " " +
+                                _("If this setting is enabled, the camera will also be used for cat detection (in addition to the RFID reader).") + "  \n\n" +
+                                _("You can configure the required threshold for the cat detection with the slider `Cat detection threshold` below.") + " " +
                                 _("If the detection is successful, the inside direction will be opened.") + "\n\n" +
                                 _("**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models.") + "\n\n" +
-                                _("This is an *EXPERIMENTAL* feature! It depends heavily on the quality of your model and the lighting conditions.") + " " +
+                                _("This is an *EXPERIMENTAL* feature! It depends heavily on the quality of your model and sufficient lighting conditions.") + " " +
                                 _("If one or both are not good, the detection may either fail or other - similiar looking cats may be detected as your cat.")
                             ), style_="color: grey;"
                         ),
@@ -2773,7 +2774,7 @@ def server(input, output, session):
                             ui.markdown(
                                 _("The oldest pictures will be deleted if the number of pictures exceeds this value.") + "  \n" +
                                 _("The maximum number of pictures depends on the type of the Raspberry Pi, since some kittyflaps are equipped with 16GB and some with 32GB.") + "  \n" +
-                                _("As a rule of thumb, you can calculate with 200MB per 1000 pictures. You can check the free disk space in the `Info` section.") + "  \n" +
+                                _("As a rule of thumb, you can calculate with 200MB per 1000 pictures. You can check the free disk space in the `INFO` section.") + "  \n" +
                                 "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['max_photos_count']) + ")*"
                             ), style_="color: grey;"
                         ),
@@ -2961,13 +2962,13 @@ def server(input, output, session):
         if save_config():
             ui.notification_show(_("Kittyhack configuration updated successfully."), duration=5, type="message")
             if language_changed:
-                ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the new language."), duration=30, type="message")
+                ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the new language."), duration=30, type="message")
 
             if selected_model_changed:
-                ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the new detection model."), duration=30, type="message")
+                ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the new detection model."), duration=30, type="message")
             
             if img_processing_cores_changed:
-                ui.notification_show(_("Please restart the kittyflap in the 'System' section, to apply the changed configuration."), duration=30, type="message")
+                ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the changed configuration."), duration=30, type="message")
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=5, type="error")
 
@@ -3155,7 +3156,8 @@ def server(input, output, session):
             logging.info(f"A download of the kittyhack database was requested --> Restart pending.")
             # Show the restart dialog
             m = ui.modal(
-                _("Please click the 'Reboot' button to restart the Kittyflap **after** the download has finished.\n\nNOTE: The download will start in the background, so check your browser's download section."),
+                _("Please click the 'Reboot' button to restart the Kittyflap **after** the download has finished.") + "\n\n" +
+                _("NOTE: The download will start in the background, so check your browser's download section."),
                 title=_("Download started..."),
                 easy_close=False,
                 footer=ui.div(
@@ -3201,18 +3203,20 @@ def server(input, output, session):
                     ui_update_kittyhack = ui_update_kittyhack, ui.div(
                         ui.br(),
                         ui.markdown(
-                            _("""
-                            ⚠️ WARNING: Local changes detected in the git repository in `/root/kittyhack`.
-                            If you proceed with the update, these changes will be lost (the database and configuration will not be affected).
-                            Please commit or stash your changes manually before updating, if you want to keep them.
-                            """)
+                            _("⚠️ WARNING: Local changes detected in the git repository in `/root/kittyhack`.") + "\n\n" +
+                            _("If you proceed with the update, these changes will be lost (the database and configuration will not be affected).") + "\n\n" +
+                            _("Please commit or stash your changes manually before updating, if you want to keep them.")
                         ),
                         ui.h6(_("Local changes:")),
                         ui.tags.pre(result.stdout)
                     )
                     
             except Exception as e:
-                ui_update_kittyhack = ui.markdown(_("An error occurred while checking for local changes in the git repository: {}\n\nNo automatic update possible.").format(e))
+                ui_update_kittyhack = ui.markdown(
+                    _("An error occurred while checking for local changes in the git repository: {}").format(e) + "\n\n" +
+                    _("No automatic update possible.")
+                )
+                    
         else:
             ui_update_kittyhack = ui.markdown(_("You are already using the latest version of Kittyhack."))
 
@@ -3222,11 +3226,9 @@ def server(input, output, session):
             if get_file_size(CONFIG['DATABASE_PATH']) > 100:
                 ui_kittyflap_db = ui.div(
                     ui.markdown(
-                        _("""
-                        The original kittyflap database file consumes currently **{:.1f} MB** of disk space.  
-                        The file contains a lot pictures which could not be uploaded to the original kittyflap servers anymore.
-                        You could delete the pictures from it to free up disk space.  
-                        """).format(get_file_size(CONFIG['DATABASE_PATH']))
+                        _("The original kittyflap database file consumes currently **{:.1f} MB** of disk space.").format(get_file_size(CONFIG['DATABASE_PATH'])) + "\n\n" +
+                        _("The file contains a lot pictures which could not be uploaded to the original kittyflap servers anymore.") + "\n\n" +
+                        _("You could delete the pictures from it to free up disk space.")
                     ),
                     ui.input_task_button("clear_kittyflap_db", _("Remove pictures from original Kittyflap Database"), icon=icon_svg("trash")),
                     ui.download_button("download_kittyflap_db", _("Download Kittyflap Database"), icon=icon_svg("download")),
@@ -3237,24 +3239,25 @@ def server(input, output, session):
                         ui.download_button("download_kittyflap_db", _("Download Kittyflap Database"), icon=icon_svg("download")),
                     )
             else:
-                ui_kittyflap_db = ui.markdown(_("The original kittyflap database seems to be empty. **WARNING:** A downgrade to Kittyhack v1.1.0 will probably not work!"))
+                ui_kittyflap_db = ui.markdown(_("The original kittyflap database seems to be empty.") + "\n\n" +
+                                              _("**WARNING:** A downgrade to Kittyhack v1.1.0 will probably not work!"))
         else:
-            ui_kittyflap_db = ui.markdown(_("The original kittyflap database file does not exist anymore.\n **WARNING:** A downgrade to Kittyhack v1.1.0 is not possible without the original database file!"))
+            ui_kittyflap_db = ui.markdown(_("The original kittyflap database file does not exist anymore.") + "\n\n" +
+                                          _("**WARNING:** A downgrade to Kittyhack v1.1.0 is not possible without the original database file!"))
         return ui.div(
             ui.div(
                 ui.card(
                     ui.card_header(ui.h4(_("Information"), style_="text-align: center;")),
                     ui.br(),
                     ui.markdown(
-                        _("Kittyhack is an open-source project that enables offline use of the Kittyflap cat door—completely without internet access. "
-                        "It was created after the manufacturer of Kittyflap filed for bankruptcy, rendering the associated app non-functional.")
+                        _("Kittyhack is an open-source project that enables offline use of the Kittyflap cat door—completely without internet access.") + "\n\n" +
+                        _("It was created after the manufacturer of Kittyflap filed for bankruptcy, rendering the associated app non-functional.")
                     ),
                     ui.hr(),
                     ui.markdown(
-                        _("**Important Notes**  \n"
-                        "I have no connection to the manufacturer of Kittyflap. This project was developed on my own initiative to continue using my Kittyflap.  \n"
-                        "Additionally, this project is in an early stage! The planned features are not fully implemented yet, and bugs are to be expected!  \n"
-                        "Please report any bugs or feature requests on the GitHub repository.")
+                        _("**Important Notes**") +  "\n\n" +
+                        _("I have no connection to the manufacturer of Kittyflap. This project was developed on my own initiative to continue using my Kittyflap.") + "\n\n" +
+                        _("If you find any bugs or have suggestions for improvement, please report them on the GitHub page.")
                     ),
                     ui.HTML(f"<center><p><a href='https://github.com/floppyFK/kittyhack' target='_blank'>{icon_svg('square-github')} {_('GitHub Repository')}</a></p></center>"),
                     ui.br(),
@@ -3285,8 +3288,8 @@ def server(input, output, session):
                     ui.output_ui("ui_system_info"),
                     ui.div(ui.download_button("download_kittyhack_db", _("Download Kittyhack Database"), icon=icon_svg("download"))),
                     ui.markdown(
-                        _("**WARNING:** To download the database, the Kittyhack software will be stopped and the flap will be locked. "
-                        "You have to restart the Kittyflap afterwards to return to normal operation.")
+                        _("**WARNING:** To download the database, the Kittyhack software will be stopped and the flap will be locked. ") + "\n\n" +
+                        _("You have to restart the Kittyflap afterwards to return to normal operation.")
                     ),
                     ui.br(),
                     full_screen=False,

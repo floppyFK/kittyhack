@@ -256,8 +256,8 @@ tr:has(.event-date-separator) {
   }
 
   #shiny-disconnected-overlay::after {
-    content: "Connection lost.\A Please reload the page to reconnect.";
-    font-size: 2rem;
+    content: "Connection lost.\A Trying to reconnect...";
+    font-size: 1.5rem;
     font-weight: bold;
     color: rgb(255 237 115);
     text-shadow: 2px 2px 4px black;

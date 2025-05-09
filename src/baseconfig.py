@@ -301,8 +301,8 @@ def configure_logging(level_name: str = "INFO"):
         logging.root.removeHandler(h)
 
     # Create a rotating file handler for logging
-    # This handler will create log files with a maximum size of 10 MB each and keep up to 5 backup files
-    handler = RotatingFileHandler(LOGFILE, maxBytes=10*1024*1024, backupCount=5)
+    # This handler will create log files with a maximum size of 10 MB each and keep up to 3 backup files
+    handler = RotatingFileHandler(LOGFILE, maxBytes=10*1024*1024, backupCount=3)
 
     # Define the format for log messages
     formatter = TimeZoneFormatter('%(asctime)s [%(levelname)s] %(message)s')

@@ -1068,7 +1068,7 @@ def server(input, output, session):
                     '<div class="placeholder-image">' +
                     '<div></div>' +
                     '<div><strong>' + _('Connection to the camera failed.') + '</strong></div>' +
-                    '<div>' + _('If this message does not disappear within 10 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>' +
+                    '<div>' + _('If this message does not disappear within 30 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>' +
                     '<div></div>' +
                     '</div>'
                 )
@@ -3127,19 +3127,103 @@ def server(input, output, session):
         finally:
             ui.remove_ui("#pleasewait_wlan_scan")
             
-    
-    @render.download()
+    @render.download(filename="kittyhack_logs.zip")
     def download_logfile():
-        return LOGFILE
-    
-    @render.download()
-    def download_journal():
+        # Show a modal dialog to inform the user that the download is in progress
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.markdown(_("Creating log archive. Please wait...")),
+                    ui.HTML('<div class="spinner-container"><div class="spinner"></div></div>'),
+                ),
+                title=_("Preparing Download"),
+                easy_close=False,
+                footer=None
+            )
+        )
+        
         try:
-            with open(JOURNAL_LOG, 'w') as f:
-                subprocess.run(["/usr/bin/journalctl", "-u", "kittyhack", "-n", "10000", "--quiet"], stdout=f, check=True)
-            return JOURNAL_LOG
-        except subprocess.CalledProcessError as e:
-            ui.notification_show(_("Failed to create the journal file: {}").format(e), duration=5, type="error")
+            # Create a temporary directory for the logs
+            temp_dir = os.path.join("/tmp", f"kittyhack_logs_{int(tm.time())}")
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # Path to the zip file we'll create
+            zip_file_path = os.path.join("/tmp", f"kittyhack_logs.zip")
+
+            # If the zip file already exists, remove it
+            if os.path.exists(zip_file_path):
+                os.remove(zip_file_path)
+            
+            # Generate journalctl log and save to temp directory
+            journal_file_path = os.path.join(temp_dir, "journalctl.log")
+            with open(journal_file_path, 'w') as f:
+                subprocess.run(["/usr/bin/journalctl", "-u", "kittyhack", "-n", "10000", "--quiet"], 
+                            stdout=f, check=True)
+            
+            # Create a zip file with compression
+            with zipfile.ZipFile(zip_file_path, 'w', compression=zipfile.ZIP_DEFLATED) as z:
+                # Add the journalctl log
+                z.write(journal_file_path, arcname="journalctl.log")
+                
+                # Add all kittyhack.log* files
+                log_dir = os.getcwd()
+                log_base = LOGFILE
+                
+                # Check if log_dir exists before trying to list files
+                if os.path.exists(log_dir):
+                    for file in os.listdir(log_dir):
+                        if file.startswith(log_base):
+                            file_path = os.path.join(log_dir, file)
+                            z.write(file_path, arcname=file)
+                else:
+                    logging.warning(f"Log directory does not exist: {log_dir}")
+                    
+                system_log_dir = "/var/log"
+                if os.path.exists(system_log_dir):
+                    # First, find all setup directories with timestamps
+                    setup_dirs = []
+                    for root, dirs, x in os.walk(system_log_dir):
+                        for dir_name in dirs:
+                            if dir_name.startswith("kittyhack-setup-"):
+                                full_path = os.path.join(root, dir_name)
+                                try:
+                                    # Extract timestamp from directory name (format: kittyhack-setup-YYYYMMDD-HHMMSS)
+                                    timestamp_str = dir_name.replace("kittyhack-setup-", "")
+                                    timestamp = datetime.strptime(timestamp_str, "%Y%m%d-%H%M%S")
+                                    setup_dirs.append((full_path, timestamp))
+                                except ValueError:
+                                    # If timestamp parsing fails, still include with minimum date
+                                    setup_dirs.append((full_path, datetime.min))
+                    
+                    # Process setup directories (latest first) - include up to 3 most recent directories
+                    if setup_dirs:
+                        # Sort by timestamp (newest first)
+                        setup_dirs.sort(key=lambda x: x[1], reverse=True)
+                        # Include up to the latest 3 setup directories
+                        for i, (setup_dir, timestamp) in enumerate(setup_dirs[:3]):
+                            # Get a short name for the directory based on its timestamp
+                            if timestamp != datetime.min:
+                                dir_short_name = timestamp.strftime("%Y%m%d-%H%M%S")
+                            else:
+                                dir_short_name = f"unknown-{i+1}"
+                                
+                            for root, x, files in os.walk(setup_dir):
+                                for file in files:
+                                    file_path = os.path.join(root, file)
+                                    rel_path = os.path.relpath(file_path, system_log_dir)
+                                    z.write(file_path, arcname=f"system_logs/{dir_short_name}/{rel_path}")
+            
+            # Clean up the temp directory
+            for file in os.listdir(temp_dir):
+                os.remove(os.path.join(temp_dir, file))
+            os.rmdir(temp_dir)
+            
+            ui.modal_remove()
+            return zip_file_path
+        except Exception as e:
+            logging.error(f"Failed to create logs zip file: {e}")
+            ui.notification_show(_("Failed to create logs zip file: {}").format(e), duration=5, type="error")
+            ui.modal_remove()
             return None
         
     @render.download(filename="kittyhack.db")
@@ -3156,8 +3240,10 @@ def server(input, output, session):
             logging.info(f"A download of the kittyhack database was requested --> Restart pending.")
             # Show the restart dialog
             m = ui.modal(
-                _("Please click the 'Reboot' button to restart the Kittyflap **after** the download has finished.") + "\n\n" +
-                _("NOTE: The download will start in the background, so check your browser's download section."),
+                ui.markdown(
+                    _("Please click the 'Reboot' button to restart the Kittyflap **after** the download has finished.") + "\n\n" +
+                    _("NOTE: The download will start in the background, so check your browser's download section.")
+                ),
                 title=_("Download started..."),
                 easy_close=False,
                 footer=ui.div(
@@ -3315,7 +3401,6 @@ def server(input, output, session):
                     ui.card_header(ui.h4(_("Logfiles"), style_="text-align: center;")),
                     ui.br(),
                     ui.div(ui.download_button("download_logfile", _("Download Kittyhack Logfile"), icon=icon_svg("download"))),
-                    ui.div(ui.download_button("download_journal", _("Download Kittyhack Journal"), icon=icon_svg("download"))),
                     ui.br(),
                     full_screen=False,
                     class_="generic-container",

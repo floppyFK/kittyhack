@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-05-09 11:40+0000\n"
+"POT-Creation-Date: 2025-05-09 14:01+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -116,7 +116,7 @@ msgstr ""
 
 #: src/server.py:729 src/server.py:822 src/server.py:872 src/server.py:984
 #: src/server.py:1630 src/server.py:1732 src/server.py:1758 src/server.py:1779
-#: src/server.py:2218 src/server.py:2342 src/server.py:3517
+#: src/server.py:2218 src/server.py:2342 src/server.py:3606
 msgid "Cancel"
 msgstr ""
 
@@ -177,7 +177,7 @@ msgid "Delete Model"
 msgstr ""
 
 #: src/server.py:871 src/server.py:1629 src/server.py:1731 src/server.py:1757
-#: src/server.py:1778 src/server.py:2217 src/server.py:2341 src/server.py:3516
+#: src/server.py:1778 src/server.py:2217 src/server.py:2341 src/server.py:3605
 msgid "OK"
 msgstr ""
 
@@ -211,7 +211,7 @@ msgstr ""
 msgid "Notifications"
 msgstr ""
 
-#: src/server.py:942 src/server.py:960 src/server.py:3392
+#: src/server.py:942 src/server.py:960 src/server.py:3481
 msgid "Close"
 msgstr ""
 
@@ -266,7 +266,7 @@ msgstr ""
 
 #: src/server.py:1071
 msgid ""
-"If this message does not disappear within 10 seconds, please (re-)install "
+"If this message does not disappear within 30 seconds, please (re-)install "
 "the required camera drivers with the \"Reinstall Camera Driver\" button in "
 "the \"System\" section."
 msgstr ""
@@ -431,13 +431,13 @@ msgid ""
 "details."
 msgstr ""
 
-#: src/server.py:1727 src/server.py:3512
+#: src/server.py:1727 src/server.py:3601
 msgid ""
 "A restart is required to apply the update. Do you want to restart the "
 "Kittyflap now?"
 msgstr ""
 
-#: src/server.py:1728 src/server.py:3513
+#: src/server.py:1728 src/server.py:3602
 msgid "Restart required"
 msgstr ""
 
@@ -1425,265 +1425,277 @@ msgstr ""
 msgid "Signal"
 msgstr ""
 
-#: src/server.py:3142
+#: src/server.py:3136
+msgid "Creating log archive. Please wait..."
+msgstr ""
+
+#: src/server.py:3139
+msgid "Preparing Download"
+msgstr ""
+
+#: src/server.py:3220
+msgid "Failed to create logs zip file: {}"
+msgstr ""
+
+#: src/server.py:3231
 msgid "Failed to create the journal file: {}"
 msgstr ""
 
-#: src/server.py:3153
+#: src/server.py:3242
 msgid "Failed to halt the backend processes: {}"
 msgstr ""
 
-#: src/server.py:3159
+#: src/server.py:3248
 msgid ""
 "Please click the 'Reboot' button to restart the Kittyflap **after** the "
 "download has finished."
 msgstr ""
 
-#: src/server.py:3160
+#: src/server.py:3249
 msgid ""
 "NOTE: The download will start in the background, so check your browser's "
 "download section."
 msgstr ""
 
-#: src/server.py:3161
+#: src/server.py:3250
 msgid "Download started..."
 msgstr ""
 
-#: src/server.py:3164
+#: src/server.py:3253
 msgid "Reboot"
 msgstr ""
 
-#: src/server.py:3174
+#: src/server.py:3263
 msgid "The original kittyflap database file does not exist."
 msgstr ""
 
-#: src/server.py:3184
+#: src/server.py:3273
 msgid ""
 "Unable to fetch the latest version from github. Please try it again later or "
 "check your internet connection."
 msgstr ""
 
-#: src/server.py:3189
+#: src/server.py:3278
 msgid "Automatic update to **{}**:"
 msgstr ""
 
-#: src/server.py:3190
+#: src/server.py:3279
 msgid "Update Kittyhack"
 msgstr ""
 
-#: src/server.py:3192
+#: src/server.py:3281
 msgid "Important: A stable WLAN connection is required for the update process."
 msgstr ""
 
-#: src/server.py:3194
+#: src/server.py:3283
 msgid "The update will end with a reboot of the Kittyflap."
 msgstr ""
 
-#: src/server.py:3195
+#: src/server.py:3284
 msgid ""
 "Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to "
 "see what's new in the latest version."
 msgstr ""
 
-#: src/server.py:3206
+#: src/server.py:3295
 msgid ""
 "⚠️ WARNING: Local changes detected in the git repository in `/root/kittyhack`."
 msgstr ""
 
-#: src/server.py:3207
+#: src/server.py:3296
 msgid ""
 "If you proceed with the update, these changes will be lost (the database and "
 "configuration will not be affected)."
 msgstr ""
 
-#: src/server.py:3208
+#: src/server.py:3297
 msgid ""
 "Please commit or stash your changes manually before updating, if you want to "
 "keep them."
 msgstr ""
 
-#: src/server.py:3210
+#: src/server.py:3299
 msgid "Local changes:"
 msgstr ""
 
-#: src/server.py:3216
+#: src/server.py:3305
 msgid ""
 "An error occurred while checking for local changes in the git repository: {}"
 msgstr ""
 
-#: src/server.py:3217
+#: src/server.py:3306
 msgid "No automatic update possible."
 msgstr ""
 
-#: src/server.py:3221
+#: src/server.py:3310
 msgid "You are already using the latest version of Kittyhack."
 msgstr ""
 
-#: src/server.py:3229
+#: src/server.py:3318
 msgid ""
 "The original kittyflap database file consumes currently **{:.1f} MB** of "
 "disk space."
 msgstr ""
 
-#: src/server.py:3230
+#: src/server.py:3319
 msgid ""
 "The file contains a lot pictures which could not be uploaded to the original "
 "kittyflap servers anymore."
 msgstr ""
 
-#: src/server.py:3231
+#: src/server.py:3320
 msgid "You could delete the pictures from it to free up disk space."
 msgstr ""
 
-#: src/server.py:3233
+#: src/server.py:3322
 msgid "Remove pictures from original Kittyflap Database"
 msgstr ""
 
-#: src/server.py:3234 src/server.py:3239
+#: src/server.py:3323 src/server.py:3328
 msgid "Download Kittyflap Database"
 msgstr ""
 
-#: src/server.py:3238
+#: src/server.py:3327
 msgid ""
 "The original kittyflap database file exists and has a regular size of "
 "**{:.1f} MB**. Nothing to do here."
 msgstr ""
 
-#: src/server.py:3242
+#: src/server.py:3331
 msgid "The original kittyflap database seems to be empty."
 msgstr ""
 
-#: src/server.py:3243
+#: src/server.py:3332
 msgid "**WARNING:** A downgrade to Kittyhack v1.1.0 will probably not work!"
 msgstr ""
 
-#: src/server.py:3245 src/server.py:3410
+#: src/server.py:3334 src/server.py:3499
 msgid "The original kittyflap database file does not exist anymore."
 msgstr ""
 
-#: src/server.py:3246
+#: src/server.py:3335
 msgid ""
 "**WARNING:** A downgrade to Kittyhack v1.1.0 is not possible without the "
 "original database file!"
 msgstr ""
 
-#: src/server.py:3250
+#: src/server.py:3339
 msgid "Information"
 msgstr ""
 
-#: src/server.py:3253
+#: src/server.py:3342
 msgid ""
 "Kittyhack is an open-source project that enables offline use of the "
 "Kittyflap cat door—completely without internet access."
 msgstr ""
 
-#: src/server.py:3254
+#: src/server.py:3343
 msgid ""
 "It was created after the manufacturer of Kittyflap filed for bankruptcy, "
 "rendering the associated app non-functional."
 msgstr ""
 
-#: src/server.py:3258
+#: src/server.py:3347
 msgid "**Important Notes**"
 msgstr ""
 
-#: src/server.py:3259
+#: src/server.py:3348
 msgid ""
 "I have no connection to the manufacturer of Kittyflap. This project was "
 "developed on my own initiative to continue using my Kittyflap."
 msgstr ""
 
-#: src/server.py:3260
+#: src/server.py:3349
 msgid ""
 "If you find any bugs or have suggestions for improvement, please report them "
 "on the GitHub page."
 msgstr ""
 
-#: src/server.py:3272
+#: src/server.py:3361
 msgid "Version Information"
 msgstr ""
 
-#: src/server.py:3274
+#: src/server.py:3363
 msgid "Current Version"
 msgstr ""
 
-#: src/server.py:3275
+#: src/server.py:3364
 msgid "Latest Version"
 msgstr ""
 
-#: src/server.py:3286
+#: src/server.py:3375
 msgid "System Information"
 msgstr ""
 
-#: src/server.py:3289
+#: src/server.py:3378
 msgid "Download Kittyhack Database"
 msgstr ""
 
-#: src/server.py:3291
+#: src/server.py:3380
 msgid ""
 "**WARNING:** To download the database, the Kittyhack software will be "
 "stopped and the flap will be locked. "
 msgstr ""
 
-#: src/server.py:3292
+#: src/server.py:3381
 msgid ""
 "You have to restart the Kittyflap afterwards to return to normal operation."
 msgstr ""
 
-#: src/server.py:3303
+#: src/server.py:3392
 msgid "Original Kittyflap Database"
 msgstr ""
 
-#: src/server.py:3315
+#: src/server.py:3404
 msgid "Logfiles"
 msgstr ""
 
-#: src/server.py:3317
+#: src/server.py:3406
 msgid "Download Kittyhack Logfile"
 msgstr ""
 
-#: src/server.py:3318
+#: src/server.py:3407
 msgid "Download Kittyhack Journal"
 msgstr ""
 
-#: src/server.py:3358
+#: src/server.py:3447
 msgid "Quality: {}, Signal: {} dBm"
 msgstr ""
 
-#: src/server.py:3360
+#: src/server.py:3449
 msgid "Not connected"
 msgstr ""
 
-#: src/server.py:3362
+#: src/server.py:3451
 msgid "Unable to determine"
 msgstr ""
 
-#: src/server.py:3366
+#: src/server.py:3455
 msgid "Kittyhack database size"
 msgstr ""
 
-#: src/server.py:3366
+#: src/server.py:3455
 msgid "Free disk space"
 msgstr ""
 
-#: src/server.py:3366
+#: src/server.py:3455
 msgid "Used RAM"
 msgstr ""
 
-#: src/server.py:3366
+#: src/server.py:3455
 msgid "WLAN Status"
 msgstr ""
 
-#: src/server.py:3388
+#: src/server.py:3477
 msgid "Changelogs"
 msgstr ""
 
-#: src/server.py:3405
+#: src/server.py:3494
 msgid ""
 "The pictures from the original kittyflap database were removed successfully."
 msgstr ""
 
-#: src/server.py:3408
+#: src/server.py:3497
 msgid ""
 "An error occurred while deleting the pictures from the original kittyflap "
 "database: {}"

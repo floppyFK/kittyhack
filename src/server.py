@@ -1463,16 +1463,17 @@ def server(input, output, session):
                     ui.output_ui("ui_last_events_table"),
                     full_screen=False,
                     class_="generic-container",
+                    style_="margin-bottom: 40px;",
                     min_height="150px"
                 ),
                 width="400px"
             )
         )
     
-    @render.table
+    @render.text
     @reactive.event(reload_trigger_photos, ignore_none=True)
     def ui_last_events_table():
-        return get_events_table(block_count=25)
+        return get_events_table_html(block_count=25)
     
     @output
     @render.ui
@@ -1483,13 +1484,14 @@ def server(input, output, session):
                     ui.output_ui("ui_events_by_date_table"),
                     full_screen=False,
                     class_="generic-container",
+                    style_="margin-bottom: 40px;",
                     min_height="150px"
                 ),
                 width="400px"
             )
         )
     
-    @render.table
+    @render.text
     @reactive.event(input.button_reload, input.date_selector, input.button_cat_only, input.button_mouse_only, reload_trigger_photos, ignore_none=True)
     def ui_events_by_date_table():
         date_start = format_date_minmax(input.date_selector(), True)
@@ -1498,17 +1500,22 @@ def server(input, output, session):
         # Convert date_start and date_end to timezone-aware datetime strings in the UTC timezone
         date_start = datetime.strptime(date_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
         date_end = datetime.strptime(date_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
-        return get_events_table(0, date_start, date_end, input.button_cat_only(), input.button_mouse_only(), CONFIG['MOUSE_THRESHOLD'])
+        
+        # Use the refactored function that returns HTML
+        return get_events_table_html(0, date_start, date_end, input.button_cat_only(), input.button_mouse_only(), CONFIG['MOUSE_THRESHOLD'])
 
-    def get_events_table(block_count = 0, date_start="2020-01-01 00:00:00", date_end="2100-12-31 23:59:59", cats_only=False, mouse_only=False, mouse_probability=0.0):
+    def get_events_table_html(block_count=0, date_start="2020-01-01 00:00:00", date_end="2100-12-31 23:59:59", cats_only=False, mouse_only=False, mouse_probability=0.0):
         try:
             logging.info(f"Reading events from the database for block_count={block_count}, date_start={date_start}, date_end={date_end}, cats_only={cats_only}, mouse_only={mouse_only}, mouse_probability={mouse_probability}")
             df_events = db_get_motion_blocks(CONFIG['KITTYHACK_DATABASE_PATH'], block_count, date_start, date_end, cats_only, mouse_only, mouse_probability)
 
             if df_events.empty:
-                return pd.DataFrame({
-                    '': [_('No events found.')]
-                })
+                return ui.HTML(
+                    '<table class="dataframe shiny-table table w-auto">'
+                    '<tbody><tr><td>' + _('No events found.') + '</td></tr></tbody>'
+                    '</table>'
+                )
+                
             # Convert UTC timestamps to local timezone
             df_events['created_at'] = pd.to_datetime(df_events['created_at']).dt.tz_convert(CONFIG['TIMEZONE'])
             df_events = df_events.sort_values(by='created_at', ascending=False)
@@ -1518,7 +1525,6 @@ def server(input, output, session):
             # Replace dates with "Today" and "Yesterday"
             today = datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).date()
             yesterday = today - timedelta(days=1)
-            # Convert dates to 'Today', 'Yesterday', or the date string
             # Convert the config date format to Python's strftime format
             date_format = CONFIG['DATE_FORMAT'].lower().replace('yyyy', '%Y').replace('mm', '%m').replace('dd', '%d')
             df_events['date_display'] = df_events['date'].apply(
@@ -1527,57 +1533,74 @@ def server(input, output, session):
 
             # Show the cat name instead of the RFID
             cat_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
-            df_events['cat_name'] = df_events['rfid'].apply(lambda rfid: cat_name_dict.get(rfid, _("Unknown RFID") + f": {rfid}" if rfid else _("No RFID found") ))
+            df_events['cat_name'] = df_events['rfid'].apply(lambda rfid: cat_name_dict.get(rfid, _("Unknown RFID") + f": {rfid}" if rfid else _("No RFID found")))
 
-            # Add a column 'event_pretty' to the events table with icon(s) and a tooltip            
-            df_events['event_pretty'] = df_events['event_type'].apply(lambda event_type: ui.tooltip(
-                ui.HTML("<div>" + " ".join(str(icon) for icon in EventType.to_icons(event_type)) + "</div>"),
-                EventType.to_pretty_string(event_type)
-            ))
+            # Process event types into HTML with icons
+            event_icons = {}
+            for __, row in df_events.iterrows():
+                event_type = row['event_type']
+                icons_html = " ".join(str(icon) for icon in EventType.to_icons(event_type))
+                tooltip_text = EventType.to_pretty_string(event_type)
+                event_icons[row.name] = {
+                    'icons_html': icons_html,
+                    'tooltip_text': tooltip_text
+                }
 
-            # Add an 'inspect' column to the 'events' DataFrame
-            inspect_buttons = []
-            for index, row in df_events.iterrows():
-                unique_id = hashlib.md5(os.urandom(16)).hexdigest()
-                inspect_buttons.append(
-                    ui.div(btn_show_event(f"btn_show_event_{unique_id}"))
-                )
-                show_event_server(f"btn_show_event_{unique_id}", row['block_id'])
-            df_events['inspect'] = inspect_buttons
-
-            # Create a new DataFrame to hold the formatted events
-            formatted_events = pd.DataFrame(columns=['time', 'event', 'cat', 'action'])
+            # Start building the HTML table
+            html = '<table class="dataframe shiny-table table w-auto">'
+            html += '<tbody>'
 
             # Iterate through the events and add date rows when the date changes
             last_date = None
-            for x, row in df_events.iterrows():
+            for idx, row in df_events.iterrows():
                 if row['date_display'] != last_date:
-                    # Create a date separator row that spans all columns
-                    new_row = pd.DataFrame([{
-                        'time': ui.div(
-                            row["date_display"], 
-                            class_="event-date-separator",
-                        ),
-                        'event': '',
-                        'cat': '',
-                        'action': ''
-                    }])
-                    formatted_events = pd.concat([formatted_events, new_row], ignore_index=True)
+                    # Create a date separator row
+                    html += f'<tr class="date-separator-row"><td colspan="4" class="event-date-separator">{row["date_display"]}</td></tr>'
                     last_date = row['date_display']
-                new_row = pd.DataFrame([{'time': row['time'], 'event': row['event_pretty'], 'cat': row['cat_name'], 'action': row['inspect']}])
-                formatted_events = pd.concat([formatted_events, new_row], ignore_index=True)
+                
+                # Create the main event row
+                html += '<tr>'
+                html += f'<td>{row["time"]}</td>'
+                
+                # Event column with tooltip
+                event_info = event_icons[idx]
+                html += f'<td><div class="tooltip-wrapper" title="{event_info["tooltip_text"]}"><div>{event_info["icons_html"]}</div></div></td>'
+                
+                # Cat name
+                html += f'<td>{row["cat_name"]}</td>'
+                
+                # Action button
+                unique_id = hashlib.md5(os.urandom(16)).hexdigest()
+                btn_id = f"btn_show_event_{unique_id}"
+                html += f'<td><div>{btn_show_event(btn_id)}'
+                html += f'<i class="fa fa-search" style="margin-left: -1px; margin-right: auto;"></i></button></div></td>'
+                
+                # Register the event handler for this button
+                show_event_server(btn_id, row['block_id'])
+                
+                html += '</tr>'
 
-            return (
-                formatted_events.style.set_table_attributes('class="dataframe shiny-table table w-auto"')
-                .hide(axis="index")
-                .hide(axis="columns")
-            )
+            html += '</tbody></table>'
+            
+            # Add a small script to ensure tooltips work
+            html += '''
+            <script>
+            $(document).ready(function() {
+            $('.tooltip-wrapper').tooltip();
+            });
+            </script>
+            '''
+            
+            return ui.HTML(html)
+        
         except Exception as e:
             logging.error(f"Failed to read events from the database: {e}")
-            # Return an empty DataFrame with an error message
-            return pd.DataFrame({
-                'ERROR': [_('Failed to read events from the database.')]
-            })
+            # Return an error message
+            return ui.HTML(
+                '<table class="dataframe shiny-table table w-auto">'
+                '<tbody><tr><td class="error">' + _('Failed to read events from the database.') + '</td></tr></tbody>'
+                '</table>'
+            )
 
     @output
     @render.ui

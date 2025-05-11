@@ -2422,12 +2422,13 @@ def server(input, output, session):
     def start_labelstudio():
         systemctl("start", "labelstudio")
         
-        # Wait up to 45 seconds for the process to start
-        max_wait_time = 45  # seconds
+        # Wait up to 300 seconds for the process to start
+        # The first start may take a lot longer, so we set a higher timeout
+        max_wait_time = 300  # seconds
         start_time = tm.time()
         
         with ui.Progress(min=0, max=100) as p:
-            p.set(message=_("Starting Label Studio..."), detail=_("Please wait..."))
+            p.set(message=_("Starting Label Studio..."), detail=_("Please wait...") + " " + _("(The first start of Label Studio may take several minutes!)"))
             
             while tm.time() - start_time < max_wait_time:
                 # Check if service is running and the web server is responding on port 8080

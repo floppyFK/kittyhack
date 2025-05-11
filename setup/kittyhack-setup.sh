@@ -498,6 +498,31 @@ install_full() {
     install_kittyhack
 }
 
+# Update Kittyhack only
+install_update() {
+    echo -e "${CYAN}--- Check internet connection ---${NC}"
+    if ! ping -c 1 google.com &>/dev/null; then
+        echo -e "${RED}No internet connection detected. Please check your connection and try again.${NC}"
+        exit 1
+    else
+        echo -e "${GREEN}Internet connection is active.${NC}"
+    fi
+
+    echo -e "${CYAN}--- Stop kittyhack service ---${NC}"
+    if systemctl is-active --quiet kittyhack.service; then
+        systemctl stop kittyhack.service
+        if systemctl is-active --quiet kittyhack.service; then
+            ((FAIL_COUNT++))
+            echo -e "${RED}Failed to stop KittyHack service.${NC}"
+        else
+            echo -e "${GREEN}KittyHack service stopped successfully.${NC}"
+        fi
+    else
+            echo -e "${GREY}KittyHack service is already inactive.${NC}"
+    fi
+
+    install_kittyhack
+
 install_kittyhack() {
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 1: Clone KittyHack repository ---${NC}"
     if [[ -d /root/kittyhack ]]; then
@@ -523,14 +548,14 @@ install_kittyhack() {
 
     if [ $INSTALL_LEGACY_KITTYHACK -eq 0 ]; then
         echo -e "${GREY}Fetching latest release...${NC}"
-        # Try up to 3 times to get the latest tag
-        for i in {1..3}; do
+        # Try up to 5 times to get the latest tag
+        for i in {1..5}; do
             GIT_TAG=$(curl -sf https://api.github.com/repos/floppyFK/kittyhack/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
             if [[ -n "$GIT_TAG" ]]; then
                 break
             fi
-            echo -e "${YELLOW}Attempt $i of 3 to fetch latest release failed. Retrying in 5 seconds...${NC}"
-            sleep 5
+            echo -e "${YELLOW}Attempt $i of 3 to fetch latest release failed. Retrying in 10 seconds...${NC}"
+            sleep 10
         done
         # If still empty, try alternative method using git ls-remote
         if [[ -z "$GIT_TAG" ]]; then
@@ -539,7 +564,7 @@ install_kittyhack() {
         # If still empty, use fallback version
         if [[ -z "$GIT_TAG" ]]; then
             echo -e "${YELLOW}Failed to fetch latest version. Using latest known version.${NC}"
-            GIT_TAG="v1.3.0"
+            GIT_TAG="v2.0.0"
         fi
     else
         GIT_TAG="v1.1.1"
@@ -772,7 +797,7 @@ EOF
         3)
             echo -e "${CYAN}Updating to the latest version of Kittyhack...${NC}"
             INSTALL_LEGACY_KITTYHACK=0
-            install_kittyhack
+            install_update
             break
             ;;
         q|b)

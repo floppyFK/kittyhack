@@ -522,6 +522,7 @@ install_update() {
     fi
 
     install_kittyhack
+}
 
 install_kittyhack() {
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 1: Clone KittyHack repository ---${NC}"

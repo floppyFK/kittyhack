@@ -1978,7 +1978,7 @@ def server(input, output, session):
                             12,
                             ui.input_task_button("btn_labelstudio_stop", _("Stop Label Studio"), icon=icon_svg("stop")),
                             ui.br(),
-                            ui.help_text(_("Label Studio is running. Click the button to stop Label Studio.")),
+                            ui.help_text(_("Label Studio is running. Click the button to stop it.")),
                             ui.br(),
                             ui.help_text(_("Remember to stop Label Studio after you are done with the labeling process, to free up resources for KittyHack.")),
                             style_="text-align: center;"
@@ -2010,7 +2010,7 @@ def server(input, output, session):
                         12,
                         ui.input_task_button("btn_labelstudio_start", _("Start Label Studio"), icon=icon_svg("play")),
                         ui.br(),
-                        ui.help_text(_("Label Studio is not running. Click the button to start Label Studio.")),
+                        ui.help_text(_("Label Studio is not running. Click the button to start it.")),
                         style_="text-align: center;"
                     ),
                 )
@@ -2085,7 +2085,13 @@ def server(input, output, session):
                         _("2. **Model Training**: In this step, the labeled images are used to train a new AI model.") + "  \n" +
                         _("To achieve the best results, it is recommended to label at least 100 images of each cat and their prey. The more images you label, the better the model will be.") + " " +
                         _("The training process can take several hours, depending on the number of images.") + "  \n\n" +
-                        _("You can watch this Youtube video for a introduction, how to use Label Studio and train your own model:") + "[YOUTUBE_VIDEO_LINK_TODO](https://www.youtube.com/watch?v=0x0x0x0x0x)"
+                        _("Please watch this Youtube video before creating your own model! Following these exact instructions is crucial for successful training:")
+                    ),
+                    ui.div(
+                        ui.HTML('<a href="https://www.youtube.com/watch?v=0x0x0x0x0x" target="_blank" class="btn btn-default">' +
+                               '<i class="fa fa-youtube-play" style="margin-right: 5px;"></i>' + 
+                               _("Watch Tutorial: How to create your own AI model") + '</a>'),
+                        style_="text-align: center;"
                     ),
                     ui.br(),
                     full_screen=False,
@@ -3252,12 +3258,26 @@ def server(input, output, session):
     @render.download(filename="kittyhack.db")
     def download_kittyhack_db():
         try:
+            # Show a modal dialog to prevent a double click of the download button
+            ui.modal_show(
+                ui.modal(
+                    ui.div(
+                        ui.markdown(_("Please wait...")),
+                        ui.HTML('<div class="spinner-container"><div class="spinner"></div></div>'),
+                    ),
+                    title=_("Preparing Download"),
+                    easy_close=False,
+                    footer=None
+                )
+            )
             sigterm_monitor.halt_backend()
             tm.sleep(1.0)
+            ui.modal_remove()
             return CONFIG['KITTYHACK_DATABASE_PATH']
         except Exception as e:
             logging.error(f"Failed to halt the backend processes: {e}")
             ui.notification_show(_("Failed to halt the backend processes: {}").format(e), duration=5, type="error")
+            ui.modal_remove()
             return None
         finally:
             logging.info(f"A download of the kittyhack database was requested --> Restart pending.")

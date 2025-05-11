@@ -555,13 +555,15 @@ install_kittyhack() {
             if [[ -n "$GIT_TAG" ]]; then
                 break
             fi
-            echo -e "${YELLOW}Attempt $i of 3 to fetch latest release failed. Retrying in 10 seconds...${NC}"
+            # Alternative method using git ls-remote
+            GIT_TAG=$(git ls-remote --tags --refs https://github.com/floppyFK/kittyhack.git | tail -n1 | sed 's/.*\///')
+            if [[ -n "$GIT_TAG" ]]; then
+                break
+            fi
+            echo -e "${YELLOW}Attempt $i of 5 to fetch latest release failed. Retrying in 10 seconds...${NC}"
             sleep 10
         done
-        # If still empty, try alternative method using git ls-remote
-        if [[ -z "$GIT_TAG" ]]; then
-            GIT_TAG=$(git ls-remote --tags --refs https://github.com/floppyFK/kittyhack.git | tail -n1 | sed 's/.*\///')
-        fi
+
         # If still empty, use fallback version
         if [[ -z "$GIT_TAG" ]]; then
             echo -e "${YELLOW}Failed to fetch latest version. Using latest known version.${NC}"

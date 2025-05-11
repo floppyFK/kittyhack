@@ -16,7 +16,6 @@ FMTDEF='\e[0m' # default format
 # Set up logging to both terminal and file
 LOGPATH="/var/log/kittyhack-setup-$(date +%Y%m%d-%H%M%S)"
 LOGFILE="${LOGPATH}/kittyhack-setup.log"
-LOG_SERVER="https://kittyhack-development.fk-cloud.de"
 mkdir -p "$LOGPATH"
 exec > >(tee -a ${LOGFILE}) 2>&1
 
@@ -134,50 +133,6 @@ RuntimeMaxSec=3600s
 [Install]
 WantedBy=multi-user.target
 EOF
-}
-
-# Function to upload logs to developer server
-upload_logs() {
-    local archive="/tmp/kittyhack-logs-$(date +%Y%m%d-%H%M%S).tar.gz"
-    
-    # Create tar archive of logs
-    if [ -d "${LOGPATH}" ]; then
-        tar -czf "$archive" -C "$(dirname "${LOGPATH}")" "$(basename "${LOGPATH}")"
-    else
-        echo -e "${RED}Log directory ${LOGPATH} does not exist. Cannot create archive.${NC}"
-        return 1
-    fi
-
-    # Upload logs if tar was successful
-    response=$(curl -s -o /dev/null -w "%{http_code}" -X POST -F "file=@${archive}" "${LOG_SERVER}/kittyhack/upload/logs/$(basename ${archive})")
-    rm -f "$archive"
-}
-
-request_log_report() {
-    # Loop until a valid input (y/n) is received
-    while true; do
-        if [ "$LANGUAGE" == "de" ]; then
-            echo -e "${CYAN}Möchtest du die Installationsprotokolle dem Entwickler von Kittyhack zur Verfügung stellen?${NC}"
-            echo -e "${CYAN}Damit würdest du sehr dabei helfen, den Installer für alle Kittyflap Nutzer zu verbessern!${NC}"
-            echo -e "(${BLUE}${FMTBOLD}j${FMTDEF}${NC})a | (${BLUE}${FMTBOLD}n${FMTDEF}${NC})ein"
-            read -r SHARE_LOGS
-            case $SHARE_LOGS in
-                [JjYy]) SHARE_LOGS="y"; break ;;
-                [Nn]) SHARE_LOGS="n"; break ;;
-                *) echo -e "${RED}Bitte 'j' für ja oder 'n' für nein eingeben.${NC}" ;;
-            esac
-        else
-            echo -e "${CYAN}Do you want to share the install logs with the developer of kittyhack?!${NC}"
-            echo -e "${CYAN}This would be very helpful to improve the installer for all Kittyflap users!${NC}"
-            echo -e "(${BLUE}${FMTBOLD}y${FMTDEF}${NC})es | (${BLUE}${FMTBOLD}n${FMTDEF}${NC})o"
-            read -r SHARE_LOGS
-            case $SHARE_LOGS in
-                [Yy]) SHARE_LOGS="y"; break ;;
-                [Nn]) SHARE_LOGS="n"; break ;;
-                *) echo -e "${RED}Please enter 'y' for yes or 'n' for no.${NC}" ;;
-            esac
-        fi
-    done
 }
 
 # Full installation process
@@ -751,57 +706,50 @@ cat << "EOF"
 EOF
 
     # Menu
+        free_space=$(df -h --output=avail / | awk 'NR==2 {
+        val = $1
+        # Add "B" if not already present
+        if (val !~ /B$/) val = val "B"
+        len = length(val)
+        total = 75
+        pad = int((total - len) / 2)
+        printf "%*s%s%*s", pad, "", val, total - len - pad, ""
+    }')
     echo
     if [ "$LANGUAGE" == "de" ]; then
         echo -e "Willkommen zum KittyHack-Setup!"
         echo
         echo -e "+--------------------------------- ${CYAN}HINWEIS${NC} ---------------------------------+"
-        echo -e "| Du hast hier in diesem Installer die Möglichkeit, die erste Version von   |"
-        echo -e "| Kittyhack (v1.1.1) zu installieren. Dies wird jedoch ausdrücklich nicht   |"
-        echo -e "| mehr empfohlen, da es zu diversen Problemen mit der Kamera kommen kann.   |"
-        echo -e "| Was ist der Unterschied zwischen den Versionen?                           |"
-        echo -e "| - Die v1.1.x basiert auf der originalen Kittyflap Software und fungiert   |"
-        echo -e "|   nur als 'Client' zur Anzeige der Bilder und zur Steuerung einger        |"
-        echo -e "|   weniger Funktionen.                                                     |"
-        echo -e "| - Ab v1.2.0 wurde die originale Kittyflap Software komplett durch eine neu|"
-        echo -e "|   entwickelte Software ersetzt, die mehr Funktionen und eine bessere      |"
-        echo -e "|   Kontrolle über die Katzenklappe bietet.                                 |"
-        echo -e "| Zusätzlich wird der Installer fragen, ob du die Installationsprotokolle   |"
-        echo -e "| mit dem Entwickler teilen möchten. ${FMTBOLD}Das Teilen der Protokolle würde mir${FMTDEF}    |"
-        echo -e "| ${FMTBOLD}unglaublich helfen, den Installer zu verbessern und eventuelle${FMTDEF}            |"
-        echo -e "| ${FMTBOLD}Probleme zu beheben!${FMTDEF}                                                      |"
+        echo -e "| Bitte stelle vor der Installation sicher, dass genügend freier Speicher-  |"
+        echo -e "| platz vorhanden ist. Für die Installation werden mindestens 2GB freier    |"
+        echo -e "| Speicherplatz benötigt! Aktuell verfügbar:                                |"
+        echo -e "|                                                                           |"
+        echo -e "|${CYAN}${free_space}${NC}|"
+        echo -e "|                                                                           |"
         echo -e "+---------------------------------------------------------------------------+"
     else
         echo -e "Welcome to the KittyHack setup!"
         echo
-        echo -e "+---------------------------------- ${CYAN}NOTE${NC} ----------------------------------+"
-        echo -e "| In this installer, you have the option to install the first version of   |"
-        echo -e "| Kittyhack (v1.1.1). However, this is explicitly not recommended anymore  |"
-        echo -e "| as it can cause various issues with the camera.                          |"
-        echo -e "| What is the difference between the versions?                             |"
-        echo -e "| - The v1.1.x is based on the original Kittyflap software and acts as a   |"
-        echo -e "|   'client' to display images and control a few functions.                |"
-        echo -e "| - From v1.2.0 onwards, the original Kittyflap software is completely     |"
-        echo -e "|   replaced by a newly developed software that offers more functions and  |"
-        echo -e "|   better control over the cat flap.                                      |"
-        echo -e "| Additionally, the installer will ask if you want to share the install    |"
-        echo -e "| logs with the developer. ${FMTBOLD}Sharing the logs will help a lot to improve the${FMTDEF} |"
-        echo -e "| ${FMTBOLD}installer and fix any issues!${FMTDEF}                                            |"
-        echo -e "+--------------------------------------------------------------------------+"
+        echo -e "+---------------------------------- ${CYAN}NOTE${NC} -----------------------------------+"
+        echo -e "| Please ensure that you have enough free disk space before installation.   |"
+        echo -e "| The installation requires at least 2GB of free disk space!                |"
+        echo -e "| Currently available:                                                      |"
+        echo -e "|                                                                           |"
+        echo -e "|${CYAN}${free_space}${NC}|"
+        echo -e "|                                                                           |"
+        echo -e "+---------------------------------------------------------------------------+"
     fi
     
     echo -e "${ERRMSG}" 
     if [ "$LANGUAGE" == "de" ]; then
         echo -e "${CYAN}Bitte die gewünschte Option auswählen:${NC}"
-        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Kittyhack v1.1.1 installieren (Nicht mehr empfohlen!)"
-        echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Neueste Kittyhack Version installieren"
-        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Kameratreiber erneut installieren (bitte nur ausführen, wenn du keine Live-Bilder siehst. Ist inzwischen auch über die Kittyhack Web-Oberfläche möglich)"
+        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Kittyhack installieren"
+        echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Kameratreiber erneut installieren (bitte nur ausführen, wenn du keine Live-Bilder siehst. Ist inzwischen auch über die Kittyhack Web-Oberfläche möglich)"
         echo -e "(${BLUE}${FMTBOLD}b${FMTDEF}${NC})eenden"
     else
         echo -e "${CYAN}Please choose the desired option:${NC}"
-        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) install v1.1.1 (not recommended anymore!)"
-        echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) install the latest version"
-        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Reinstall camera drivers (only run if you don't see live images. Can also be done via the Kittyhack web interface now)"
+        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) install the latest version"
+        echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Reinstall camera drivers (only run if you don't see live images. Can also be done via the Kittyhack web interface now)"
         echo -e "(${BLUE}${FMTBOLD}q${FMTDEF}${NC})uit"
     fi
     read -r MODE
@@ -809,22 +757,13 @@ EOF
     # Handle the input
     case "$MODE" in
         1)
-            echo -e "${CYAN}Installing Kittyhack v1.1.1...${NC}"
-            INSTALL_LEGACY_KITTYHACK=1
-            request_log_report
+            echo -e "${CYAN}Installing the latest version of Kittyhack...${NC}"
+            INSTALL_LEGACY_KITTYHACK=0
             install_full
             break
             ;;
         2)
-            echo -e "${CYAN}Installing the latest version of Kittyhack...${NC}"
-            INSTALL_LEGACY_KITTYHACK=0
-            request_log_report
-            install_full
-            break
-            ;;
-        3)
             echo -e "${CYAN}Reinstalling camera drivers...${NC}"
-            request_log_report
             reinstall_camera_drivers
             break
             ;;
@@ -834,9 +773,9 @@ EOF
             ;;
         *)
             if [ "$LANGUAGE" == "de" ]; then
-                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2' oder 'q' eingeben.${NC}\n"
+                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2' oder 'b' eingeben.${NC}\n"
             else
-                ERRMSG="${RED}Invalid choice. Please enter '1', '2' or 'b'.${NC}\n"
+                ERRMSG="${RED}Invalid choice. Please enter '1', '2' or 'q'.${NC}\n"
             fi
             MODE=""
             ;;
@@ -875,10 +814,4 @@ else
     else
         echo -e "\n${RED}Setup failed. Please check the logs in ${LOGFILE} for more details.${NC}\n"
     fi
-fi
-
-if [[ "$SHARE_LOGS" == "n" ]]; then
-    echo -e "${GREY}Skipping log upload.${NC}"
-else
-    upload_logs
 fi

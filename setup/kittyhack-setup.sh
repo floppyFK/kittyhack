@@ -743,13 +743,15 @@ EOF
     echo -e "${ERRMSG}" 
     if [ "$LANGUAGE" == "de" ]; then
         echo -e "${CYAN}Bitte die gewünschte Option auswählen:${NC}"
-        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Kittyhack installieren"
+        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Erstmalige Installation von Kittyhack ausführen"
         echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Kameratreiber erneut installieren (bitte nur ausführen, wenn du keine Live-Bilder siehst. Ist inzwischen auch über die Kittyhack Web-Oberfläche möglich)"
+        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Update auf die neueste Version von Kittyhack (bitte nur ausführen, wenn du bereits Kittyhack installiert hast)"
         echo -e "(${BLUE}${FMTBOLD}b${FMTDEF}${NC})eenden"
     else
         echo -e "${CYAN}Please choose the desired option:${NC}"
-        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) install the latest version"
+        echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Run initial installation of Kittyhack"
         echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Reinstall camera drivers (only run if you don't see live images. Can also be done via the Kittyhack web interface now)"
+        echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Update to the latest version of Kittyhack (only run if you already have Kittyhack installed)"
         echo -e "(${BLUE}${FMTBOLD}q${FMTDEF}${NC})uit"
     fi
     read -r MODE
@@ -767,15 +769,21 @@ EOF
             reinstall_camera_drivers
             break
             ;;
+        3)
+            echo -e "${CYAN}Updating to the latest version of Kittyhack...${NC}"
+            INSTALL_LEGACY_KITTYHACK=0
+            install_kittyhack
+            break
+            ;;
         q|b)
             echo -e "${YELLOW}Quitting installation.${NC}"
             exit 0
             ;;
         *)
             if [ "$LANGUAGE" == "de" ]; then
-                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2' oder 'b' eingeben.${NC}\n"
+                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2', '3' oder 'b' eingeben.${NC}\n"
             else
-                ERRMSG="${RED}Invalid choice. Please enter '1', '2' or 'q'.${NC}\n"
+                ERRMSG="${RED}Invalid choice. Please enter '1', '2', '3' or 'q'.${NC}\n"
             fi
             MODE=""
             ;;

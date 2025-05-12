@@ -9,7 +9,7 @@ Kittyhack is an open-source project that enables offline use of the Kittyflap ca
 ⚠️ **Important Notes**  
 I have no connection to the manufacturer of Kittyflap. This project was developed on my own initiative to continue using my Kittyflap.
 
-Additionally, this project is in a **early stage**! The planned features are not fully implemented yet, and bugs are to be expected!
+If you find any bugs or have suggestions for improvement, please report them on the GitHub issue tracker.
 
 ---
 
@@ -28,9 +28,7 @@ Current features:
 - **Live camera feed**
 - **Manage cats and add new cats**
 - **Show incoming/outgoing Events** 
-
-### Planned Features
-- **Train your own "AI"**: Create a custom object detection model using your own images.
+- **AI Training** Create a custom object detection model for your cat and your environment by using your own images
 
 ---
 
@@ -141,9 +139,10 @@ The setup is quite simple:
    ```bash
    sudo curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && sudo chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh && sudo rm /tmp/kittyhack-setup.sh
    ```
-   You can choose between two options:
-   - **install**: Runs the full setup and disables unwanted services on the kittyflap (recommended)
-   - **update**: Runs only the update (or the initial installation, if not yet done) of the KittyHack application. No system configuration will be changed.
+   You can choose between the following options:
+   - **Initial installation**: Performs the complete setup, including stopping and removing unwanted services on the Kittyflap (only to be executed once)
+   - **Reinstall camera drivers**: This will reinstall the necessary device drivers in the system. Only to be executed if there are problems with the camera image. This installation is also possible directly through the web interface.
+   - **Update to the latest version**: If a first-time installation of Kittyhack has already been performed, this option is sufficient to update to the latest version. The existing system configuration will not be changed.
 
    That's it!
 
@@ -200,7 +199,7 @@ Kittyhack ist ein Open-Source-Projekt, das die Offline-Nutzung der Kittyflap-Kat
 ⚠️ **Wichtige Hinweise**  
 Ich stehe in keinerlei Verbindung mit dem Hersteller der Kittyflap. Dieses Projekt wurde aus eigenem Antrieb erstellt, um meine eigene Katzenklappe weiterhin nutzen zu können.
 
-Zudem befindet sich das Projekt noch in einem **frühen Stadium**! Die geplanten Funktionen sind noch nicht alle umgesetzt und mit Bugs ist zu rechnen!
+Wenn du Bugs findest oder Verbesserungsvorschläge hast, melde sie bitte im Issue Tracker dieses GitHub Projekts.
 
 ---
 
@@ -219,9 +218,7 @@ Aktuelle Features:
 - **Live-Bild der Kamera**
 - **Katzen verwalten und neue Katzen hinzufügen**
 - **Ereignisse von ankommenden/rausgehenden Katzen anzeigen**
-
-### Geplante Features
-- **Trainieren einer eigenen "KI"**: Ein individuelles Objekterkennungsmodell anhand der eigenen Bildern erstellen lassen.
+- **"KI" Modell Training** Erstelle ein individuelles Objekterkennungsmodell für deine Katze und deine Umgebung anhand der eigenen Bilder
 
 ---
 
@@ -333,9 +330,10 @@ Die Installation ist kinderleicht:
    ```bash
    sudo curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && sudo chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh de && sudo rm /tmp/kittyhack-setup.sh
    ```
-   Du hast die Auswahl zwischen zwei Optionen:
-   - **install**: Führt das komplette Setup aus, inklusive stoppen und entfernen von ungewollten Services auf der Kittyflap (empfohlen)
-   - **update**: Führt nur das Update (oder die initiale Installation, falls noch nicht geschehen) der KittyHack Applikation aus. An der bestehenden Systemkonfiguration wird nichts geändert.
+   Du hast die Auswahl zwischen folgenden Optionen:
+   - **Erstmalige Installation**: Führt das komplette Setup aus, inklusive stoppen und entfernen von ungewollten Services auf der Kittyflap (nur erstmalig auszuführen)
+   - **Kameratreiber erneut installieren**: Damit werden die erforderlichen Gerätetreiber im System erneut installiert. Nur auszuführen, wenn es Probleme mit dem Kamerabild geben sollte. Diese Installation ist auch direkt über das Web-Interface möglich.
+   - **Update auf die neueste Version**: Wenn bereits eine erstmalige Installation von Kittyhack ausgeführt wurde, reicht diese Option, um auf den aktuellsten Stand zu aktualisieren. An der bestehenden Systemkonfiguration wird nichts geändert.
 
    Das war's!
 

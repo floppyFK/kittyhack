@@ -3,15 +3,6 @@
 ## Highlights
 The time has come! With this version, you have the ability to individually train the AI for your cat. No more chance for mice 😉
 
-> ⚠️ **ATTENTION:** This update requires downloading and installing approximately 250 MB of data from the internet. The update process will therefore take significantly longer than usual!
-> The safest way is to run this version update through the setup script:
-> ```bash
-> sudo curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && sudo chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh && sudo rm /tmp/kittyhack-setup.sh
-> ```
->
-> You can also run the update through the web interface. However, during the update, you might see a "Connection Lost" message - **don't worry, the installation continues running in the background!**
-> Please wait **at least 15 minutes** (or longer if you have a very slow internet connection), and then refresh the page. Afterwards, you'll need to restart the cat flap once more and you'll be on v2.0!
-
 ---------------
 
 ## New Features

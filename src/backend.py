@@ -4,9 +4,8 @@ import logging
 import multiprocessing
 from src.baseconfig import AllowedToEnter, CONFIG
 from src.pir import Pir
-from src.rfid import Rfid, RfidRunState
 from src.database import *
-from src.magnets import Magnets
+from src.magnets_rfid import Magnets, Rfid, RfidRunState
 from src.camera import image_buffer
 from src.helper import sigterm_monitor, EventType, check_allowed_to_exit
 from src.model import ModelHandler, YoloModel
@@ -363,12 +362,12 @@ def backend_main(simulate_kittyflap = False):
 
             # Check if the inside magnet should be unlocked
             mouse_check_conditions = {
-                "mouse_check_enabled": CONFIG['MOUSE_CHECK_ENABLED'] == False,
+                "mouse_check_disabled": CONFIG['MOUSE_CHECK_ENABLED'] == False,
                 "no_mouse_detected": len(ids_with_mouse) == 0,
                 "sufficient_pictures": len(ids_of_current_motion_block) >= CONFIG['MIN_PICTURES_TO_ANALYZE']
             }
 
-            mouse_check = mouse_check_conditions["mouse_check_enabled"] or (mouse_check_conditions["no_mouse_detected"] and mouse_check_conditions["sufficient_pictures"])
+            mouse_check = mouse_check_conditions["mouse_check_disabled"] or (mouse_check_conditions["no_mouse_detected"] and mouse_check_conditions["sufficient_pictures"])
 
             unlock_inside_conditions = {
                 "motion_outside": motion_outside == 1,
@@ -459,8 +458,8 @@ def backend_main(simulate_kittyflap = False):
 
     # RFID Cleanup on shutdown:
     rfid.stop_read(wait_for_stop=True)
-    rfid.set_power(False)
     rfid.set_field(False)
+    rfid.set_power(False)
 
     logging.info("[BACKEND] Stopped backend.")
     sigterm_monitor.signal_task_done()

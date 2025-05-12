@@ -107,7 +107,7 @@ if CONFIG['NOT_GRACEFUL_SHUTDOWNS'] >= 3:
     
 # Now proceed with the startup
 from src.backend import backend_main, manual_door_override, model_hanlder
-from src.magnets import Magnets
+from src.magnets_rfid import Magnets
 from src.pir import Pir
 from src.model import RemoteModelTrainer, YoloModel
 from src.shiny_wrappers import uix

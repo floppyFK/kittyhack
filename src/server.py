@@ -2947,17 +2947,14 @@ def server(input, output, session):
         CONFIG['LOGLEVEL'] = input.txtLoglevel()
         CONFIG['MOUSE_CHECK_ENABLED'] = input.btnDetectPrey()
 
+        # Always update the model configuration and ensure, that only one of the two is set
         # Check if the selected model is a TFLite model or a YOLO model
-        if selected_model_changed:
-            if (input.selectedModel().startswith("tflite::")):
-                CONFIG['TFLITE_MODEL_VERSION'] = input.selectedModel().replace("tflite::", "")
-                CONFIG['YOLO_MODEL'] = ""
-            elif (input.selectedModel().startswith("yolo::")):
-                CONFIG['YOLO_MODEL'] = input.selectedModel().replace("yolo::", "")
-                CONFIG['TFLITE_MODEL_VERSION'] = ""
-            else:
-                CONFIG['YOLO_MODEL'] = ""
-                CONFIG['TFLITE_MODEL_VERSION'] = ""
+        if (input.selectedModel().startswith("yolo::")):
+            CONFIG['YOLO_MODEL'] = input.selectedModel().replace("yolo::", "")
+            CONFIG['TFLITE_MODEL_VERSION'] = ""
+        elif (input.selectedModel().startswith("tflite::")):
+            CONFIG['TFLITE_MODEL_VERSION'] = input.selectedModel().replace("tflite::", "")
+            CONFIG['YOLO_MODEL'] = ""
         
         CONFIG['USE_CAMERA_FOR_CAT_DETECTION'] = input.btnUseCameraForCatDetection()
         CONFIG['CAT_THRESHOLD'] = float(input.sldCatThreshold())

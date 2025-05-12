@@ -3184,7 +3184,7 @@ def server(input, output, session):
             # Generate journalctl log and save to temp directory
             journal_file_path = os.path.join(temp_dir, "journalctl.log")
             with open(journal_file_path, 'w') as f:
-                subprocess.run(["/usr/bin/journalctl", "-u", "kittyhack", "-n", "10000", "--quiet"], 
+                subprocess.run(["/usr/bin/journalctl", "-n", "10000", "--quiet"], 
                             stdout=f, check=True)
             
             # Create a zip file with compression

@@ -2049,7 +2049,7 @@ def server(input, output, session):
                     _("1. `EASY` **Install Label Studio automatically on the Kittyflap**:") + "  \n" +
                     _("Easy, but you may be limited in the number of images you can label. The performance may vary, depending on the wlan connection to the Kittyflap.") + "  \n" +
                     _("2. `EXPERT` **Install Label Studio on your own computer**:") + "  \n" +
-                    _("This is a bit harder, but you are more flexible and the performance is way better. Also, you don't need to worry about the limited disk space on the Kittyflap. See the [Label Studio](https://labelstud.io/) website for instructions.") + "  \n" +
+                    _("This is a bit harder, but you are more flexible and the performance while labeling the images may be better. Also, you don't need to worry about the limited disk space on the Kittyflap. See the [Label Studio](https://labelstud.io/) website for instructions.") + "  \n" +
                     _("> **Please note, if you want to install Label Studio on the Kittyflap:**") + "  \n" +
                     _("Some Kittyflaps have only 1GB of RAM. In this case, it is strongly recommended to always stop the Label Studio server after you are done with the labeling process, otherwise the Kittyflap may run out of memory.") + "  \n" +
                     _("You can check the available disk space and the RAM configuration in the `INFO` section.")
@@ -2061,7 +2061,7 @@ def server(input, output, session):
                     ui.br(),
                     ui.help_text(_("Click the button to install Label Studio.")),
                     ui.br(),
-                    ui.help_text(_("This will take several minutes, so please be patient.")),
+                    ui.help_text(_("This will take 5-10 minutes, so please be patient.")),
                     ui.br(),
                     ui.help_text(_("The Kittyflap may not be reachable during the installation. This is normal.")),
                     style_="text-align: center;"
@@ -2070,7 +2070,12 @@ def server(input, output, session):
 
         # Check if a model training is in progress
         training_status = RemoteModelTrainer.check_model_training_result(show_notification=True, show_in_progress=True, return_pretty_status=True)
-
+        # URLs for different languages
+        wiki_url = {
+            "de": "https://github.com/floppyFK/kittyhack/wiki/%5BDE%5D-Kittyhack-v2.0-%E2%80%90-Eigene-KI%E2%80%90Modelle-trainieren",
+            "en": "https://github.com/floppyFK/kittyhack/wiki/%5BEN%5D-Kittyhack-v2.0-%E2%80%90-Train-own-AI%E2%80%90Models"
+        }.get(CONFIG["LANGUAGE"], "https://github.com/floppyFK/kittyhack/wiki/%5BEN%5D-Kittyhack-v2.0-%E2%80%90-Train-own-AI%E2%80%90Models")
+        
         ui_ai_training =  ui.div(
             # --- Description ---
             ui.div(
@@ -2085,12 +2090,12 @@ def server(input, output, session):
                         _("2. **Model Training**: In this step, the labeled images are used to train a new AI model.") + "  \n" +
                         _("To achieve the best results, it is recommended to label at least 100 images of each cat and their prey. The more images you label, the better the model will be.") + " " +
                         _("The training process can take several hours, depending on the number of images.") + "  \n\n" +
-                        _("Please watch this Youtube video before creating your own model! Following these exact instructions is crucial for successful training:")
+                        _("Please read the instructions before creating your own model! Following these exact instructions is crucial for successful training:")
                     ),
                     ui.div(
-                        ui.HTML('<a href="https://www.youtube.com/watch?v=0x0x0x0x0x" target="_blank" class="btn btn-default">' +
-                               '<i class="fa fa-youtube-play" style="margin-right: 5px;"></i>' + 
-                               _("Watch Tutorial: How to create your own AI model") + '</a>'),
+                        ui.HTML(f'<a href="{wiki_url}" target="_blank" class="btn btn-default">' +
+                               '<i class="fa fa-clipboard-list" style="margin-right: 5px;"></i>' + 
+                               _("Instructions for training your own model") + '</a>'),
                         style_="text-align: center;"
                     ),
                     ui.br(),

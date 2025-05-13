@@ -167,7 +167,7 @@ class Rfid:
                         if ready:
                             line = f.readline().decode('utf-8', errors='ignore').strip()
                             # Skip empty lines and initialization messages from the RFID reader
-                            if not line or re.search(r'tectus|AESlite', line, re.IGNORECASE):
+                            if not line or re.search(r'tectus|AESlite|Error|\>', line, re.IGNORECASE):
                                 logging.info(f"[RFID] Skipping line: '{line}'")
                                 continue
 

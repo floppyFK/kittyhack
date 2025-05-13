@@ -50,6 +50,7 @@ def run_with_progress(command, progress_callback, step, message, detail):
     """
     Run a command and stream its stdout to the progress_callback.
     """
+    logging.info(f"Running command: {' '.join(command)}")
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -59,11 +60,15 @@ def run_with_progress(command, progress_callback, step, message, detail):
     )
     output_lines = []
     for line in process.stdout:
+        line_stripped = line.strip()
         output_lines.append(line)
+        logging.info(f"Command output: {line_stripped}")
         if progress_callback:
             # Send the latest line as detail
-            progress_callback(step, message, line.strip())
+            progress_callback(step, message, line_stripped)
     process.wait()
+    if process.returncode != 0:
+        logging.error(f"Command failed with return code {process.returncode}")
     return process.returncode == 0, ''.join(output_lines)
 
 def is_service_running(service: str, simulate_operations=False):
@@ -506,7 +511,6 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
         ("Updating systemd service file", ["/bin/cp", "/root/kittyhack/setup/kittyhack.service", "/etc/systemd/system/kittyhack.service"]),
         ("Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"]),
     ]
-
     for i, (msg, cmd) in enumerate(steps, 1):
         if progress_callback:
             progress_callback(i, msg, "")
@@ -515,12 +519,16 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             output_lines = []
             for line in process.stdout:
+                line_stripped = line.strip()
                 output_lines.append(line)
+                logging.info(f"[UPDATE] {line_stripped}")
                 if progress_callback:
-                    progress_callback(i, msg, line.strip())
+                    progress_callback(i, msg, line_stripped)
             process.wait()
             if process.returncode != 0:
-                raise subprocess.CalledProcessError(process.returncode, cmd, output=''.join(output_lines))
+                output = ''.join(output_lines)
+                logging.error(f"Command failed with return code {process.returncode}:\n{output}")
+                raise subprocess.CalledProcessError(process.returncode, cmd, output=output)
         except Exception as e:
             logging.error(f"Update step failed: {msg}: {e}")
             # Rollback logic
@@ -549,22 +557,40 @@ def install_labelstudio(progress_callback=None):
     """
     try:
         # Step 1: Create a virtual environment
-        if progress_callback:
-            progress_callback(1, _("Creating virtual environment..."), _("This may take a moment..."))
         venv_path = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV)
         venv_python = os.path.join(venv_path, "bin", "python")
+        
         if not os.path.exists(venv_path):
-            subprocess.run(["python3", "-m", "venv", venv_path], check=True)
+            ok, output = run_with_progress(
+                ["python3", "-m", "venv", venv_path],
+                progress_callback,
+                1,
+                _("Creating virtual environment..."),
+                _("This may take a moment...")
+            )
+            if not ok:
+                logging.error("[SYSTEM] Virtual environment creation failed:\n" + output)
+                return False
             logging.info("[SYSTEM] Label Studio virtual environment created.")
+        else:
+            logging.info("[SYSTEM] Virtual environment already exists, skipping creation.")
+            if progress_callback:
+                progress_callback(1, _("Virtual environment already exists"), _("Skipping creation..."))
 
         # Step 2: Install pip and dependencies
-        if progress_callback:
-            progress_callback(2, _("Upgrading pip..."), _("This may take a few minutes..."))
-        subprocess.run([venv_python, "-m", "pip", "install", "--upgrade", "pip"], check=True)
+        ok, pip_upgrade_output = run_with_progress(
+            [venv_python, "-m", "pip", "install", "--upgrade", "pip"],
+            progress_callback,
+            2,
+            _("Upgrading pip..."),
+            _("This may take a few minutes...")
+        )
+        if not ok:
+            logging.error("[SYSTEM] Pip upgrade failed:\n" + pip_upgrade_output)
+            return False
+        logging.info("[SYSTEM] Pip upgraded successfully.")
         
         # Step 3: Install Label Studio
-        if progress_callback:
-            progress_callback(3, _("Installing Label Studio..."), _("This takes several minutes... Do not turn off the power or reload the page!"))
         ok, pip_output = run_with_progress(
             [venv_python, "-m", "pip", "install", "label-studio"],
             progress_callback,
@@ -578,21 +604,43 @@ def install_labelstudio(progress_callback=None):
         logging.info("[SYSTEM] Label Studio installed in virtual environment.")
 
         # Step 4: Create a systemd service file
-        if progress_callback:
-            progress_callback(4, _("Creating systemd service..."), _("Almost done..."))
         service_template_path = "/root/kittyhack/setup/labelstudio.service"
         service_file_path = "/etc/systemd/system/labelstudio.service"
+        
+        if progress_callback:
+            progress_callback(4, _("Creating systemd service..."), _("Almost done..."))
+            
         if os.path.exists(service_template_path):
-            with open(service_template_path, "r") as template_file:
-                service_content = template_file.read().replace("{{VENV_PATH}}", venv_path)
-            with open(service_file_path, "w") as service_file:
-                service_file.write(service_content)
-            logging.info("[SYSTEM] Label Studio systemd service file created.")
+            try:
+                with open(service_template_path, "r") as template_file:
+                    service_content = template_file.read().replace("{{VENV_PATH}}", venv_path)
+                with open(service_file_path, "w") as service_file:
+                    service_file.write(service_content)
+                logging.info("[SYSTEM] Label Studio systemd service file created.")
+                if progress_callback:
+                    progress_callback(4, _("Creating systemd service..."), _("Service file created successfully."))
+            except Exception as e:
+                logging.error(f"[SYSTEM] Error creating systemd service file: {e}")
+                if progress_callback:
+                    progress_callback(4, _("Creating systemd service..."), f"Error: {str(e)}")
+                return False
+        else:
+            logging.error("[SYSTEM] Service template file not found.")
+            if progress_callback:
+                progress_callback(4, _("Creating systemd service..."), _("Error: Template file not found."))
+            return False
 
         # Step 5: Reload systemd daemon
-        if progress_callback:
-            progress_callback(5, _("Reloading systemd services..."), _("Almost done..."))
-        subprocess.run(["/usr/bin/systemctl", "daemon-reload"], check=True)
+        ok, systemd_output = run_with_progress(
+            ["/usr/bin/systemctl", "daemon-reload"],
+            progress_callback,
+            5,
+            _("Reloading systemd services..."),
+            _("Almost done...")
+        )
+        if not ok:
+            logging.error("[SYSTEM] Systemd daemon reload failed:\n" + systemd_output)
+            return False
         logging.info("[SYSTEM] Label Studio systemd daemon reloaded.")
 
         return True

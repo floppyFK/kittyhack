@@ -6,6 +6,7 @@ import re
 import sys
 import requests
 import time as tm
+
 from src.baseconfig import CONFIG, set_language
 
 GPIO_BASE_PATH = "/sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/"
@@ -482,7 +483,58 @@ def get_labelstudio_status():
         return result.stdout.strip() == "active"
     except subprocess.CalledProcessError:
         return False
-    
+
+def update_kittyhack(progress_callback=None, latest_version=None, current_version=None):
+    """
+    Update Kittyhack to the latest version, reporting progress via callback.
+
+    Args:
+        progress_callback (callable): Function(step, message, detail) for UI progress.
+        latest_version (str): The version to update to.
+        current_version (str): The current version (for rollback).
+
+    Returns:
+        bool: True if update succeeded, False otherwise.
+    """
+
+    steps = [
+        ("Reverting local changes", ["/bin/git", "restore", "."]),
+        ("Cleaning untracked files", ["/bin/git", "clean", "-fd"]),
+        (f"Fetching latest version {latest_version}", ["/bin/git", "fetch", "--all", "--tags"]),
+        (f"Checking out {latest_version}", ["/bin/git", "checkout", latest_version]),
+        ("Updating python dependencies", ["/bin/bash", "-c", "source /root/kittyhack/.venv/bin/activate && pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt"]),
+        ("Updating systemd service file", ["/bin/cp", "/root/kittyhack/setup/kittyhack.service", "/etc/systemd/system/kittyhack.service"]),
+        ("Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"]),
+    ]
+
+    for i, (msg, cmd) in enumerate(steps, 1):
+        if progress_callback:
+            progress_callback(i, msg, "")
+        logging.info(msg)
+        try:
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            output_lines = []
+            for line in process.stdout:
+                output_lines.append(line)
+                if progress_callback:
+                    progress_callback(i, msg, line.strip())
+            process.wait()
+            if process.returncode != 0:
+                raise subprocess.CalledProcessError(process.returncode, cmd, output=''.join(output_lines))
+        except Exception as e:
+            logging.error(f"Update step failed: {msg}: {e}")
+            # Rollback logic
+            if current_version:
+                try:
+                    subprocess.run(["/bin/git", "checkout", current_version], check=True)
+                    subprocess.run(["/bin/bash", "-c", "source /root/kittyhack/.venv/bin/activate && pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt"], check=True)
+                    subprocess.run(["/bin/cp", "/root/kittyhack/setup/kittyhack.service", "/etc/systemd/system/kittyhack.service"], check=True)
+                    subprocess.run(["/bin/systemctl", "daemon-reload"], check=True)
+                except Exception as rollback_e:
+                    logging.error(f"Rollback failed: {rollback_e}")
+            return False, str(e)
+    return True, "Update completed"
+
 def install_labelstudio(progress_callback=None):
     """
     Install Label Studio by creating a virtual environment, installing the package,

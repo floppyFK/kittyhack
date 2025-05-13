@@ -3,6 +3,7 @@ import logging
 import subprocess
 import os
 import re
+import sys
 import requests
 import time as tm
 from src.baseconfig import CONFIG, set_language
@@ -43,6 +44,26 @@ def systemctl(mode: str, service: str, simulate_operations=False):
             return False
     
     return True
+
+def run_with_progress(command, progress_callback, step, message, detail):
+    """
+    Run a command and stream its stdout to the progress_callback.
+    """
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1
+    )
+    output_lines = []
+    for line in process.stdout:
+        output_lines.append(line)
+        if progress_callback:
+            # Send the latest line as detail
+            progress_callback(step, message, line.strip())
+    process.wait()
+    return process.returncode == 0, ''.join(output_lines)
 
 def is_service_running(service: str, simulate_operations=False):
     """
@@ -479,6 +500,7 @@ def install_labelstudio(progress_callback=None):
         if progress_callback:
             progress_callback(1, _("Creating virtual environment..."), _("This may take a moment..."))
         venv_path = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV)
+        venv_python = os.path.join(venv_path, "bin", "python")
         if not os.path.exists(venv_path):
             subprocess.run(["python3", "-m", "venv", venv_path], check=True)
             logging.info("[SYSTEM] Label Studio virtual environment created.")
@@ -486,13 +508,21 @@ def install_labelstudio(progress_callback=None):
         # Step 2: Install pip and dependencies
         if progress_callback:
             progress_callback(2, _("Upgrading pip..."), _("This may take a few minutes..."))
-        venv_python = os.path.join(venv_path, "bin", "python")
         subprocess.run([venv_python, "-m", "pip", "install", "--upgrade", "pip"], check=True)
         
         # Step 3: Install Label Studio
         if progress_callback:
             progress_callback(3, _("Installing Label Studio..."), _("This takes several minutes... Do not turn off the power or reload the page!"))
-        subprocess.run([venv_python, "-m", "pip", "install", "label-studio"], check=True)
+        ok, pip_output = run_with_progress(
+            [venv_python, "-m", "pip", "install", "label-studio"],
+            progress_callback,
+            3,
+            _("Installing Label Studio..."),
+            _("This takes several minutes... Do not turn off the power or reload the page!")
+        )
+        if not ok:
+            logging.error("[SYSTEM] Label Studio installation failed:\n" + pip_output)
+            return False
         logging.info("[SYSTEM] Label Studio installed in virtual environment.")
 
         # Step 4: Create a systemd service file

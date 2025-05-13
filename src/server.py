@@ -3543,102 +3543,19 @@ def server(input, output, session):
 
     @reactive.Effect
     @reactive.event(input.update_kittyhack)
-    def update_kittyhack_process():        
+    def update_kittyhack_process():
+        from src.system import update_kittyhack  # Import the new function
+
+        latest_version = CONFIG['LATEST_VERSION']
+        current_version = git_version
+
         with ui.Progress(min=1, max=7) as p:
-            p.set(message="Update in progress", detail="This may take a while...")
-            i = 0
+            def progress_callback(step, message, detail):
+                p.set(step, message=message, detail=detail)
 
-            latest_version = CONFIG['LATEST_VERSION']
-            try:
-                # Step 1: Revert local changes, if there are any
-                msg = "Reverting local changes"
-                i += 1
-                p.set(i, message=msg)
-                logging.info(msg)
-                if not execute_update_step("/bin/git restore .", msg):
-                    raise subprocess.CalledProcessError(1, "git restore .")
-                if not execute_update_step("/bin/git clean -fd", msg):
-                    raise subprocess.CalledProcessError(1, "git clean -fd")
-
-                # Step 2: Update the git repository to the latest tagged version
-                msg = f"Updating Kittyhack to the latest version {latest_version}"
-                i += 1
-                p.set(i, message=msg)
-                logging.info(msg)
-                if not execute_update_step("/bin/git fetch --all --tags", msg):
-                    raise subprocess.CalledProcessError(1, "git fetch")
-                
-                # Step 3: Check out the latest version
-                msg = f"Checking out the latest version {latest_version}"
-                i += 1
-                p.set(i, message=msg)
-                logging.info(msg)
-                if not execute_update_step(f"/bin/git checkout {latest_version}", msg):
-                    raise subprocess.CalledProcessError(1, f"git checkout {latest_version}")
-                
-                # Step 4: Update the python dependencies
-                msg = "Updating the python dependencies"
-                i += 1
-                p.set(i, message=msg)
-                logging.info(msg)
-                if not execute_update_step("/bin/bash -c 'source /root/kittyhack/.venv/bin/activate && pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt'", msg):
-                    raise subprocess.CalledProcessError(1, "pip install")
-                
-                # Step 5: Update the systemd service file
-                msg = "Updating the systemd service file"
-                i += 1
-                p.set(i, message=msg)
-                logging.info(msg)
-                if not execute_update_step("/bin/cp /root/kittyhack/setup/kittyhack.service /etc/systemd/system/kittyhack.service", msg):
-                    raise subprocess.CalledProcessError(1, "cp kittyhack.service")
-                
-                # Step 6: Reload the systemd daemon
-                msg = "Reloading the systemd daemon"
-                i += 1
-                p.set(i, message=msg)
-                logging.info(msg)
-                if not execute_update_step("/bin/systemctl daemon-reload", msg):
-                    raise subprocess.CalledProcessError(1, "systemctl daemon-reload")
-
-            except subprocess.CalledProcessError as e:
-                msg = f"An error occurred during the update process: {e}"
-                logging.error(msg)
-                ui.notification_show(msg, duration=None, type="error")
-
-                # Rollback Step 1: Go back to the previous version
-                msg = f"Rolling back to the previous version {git_version}"
-                i = max(i - 1, 1)
-                p.set(i, message=msg)
-                logging.info(msg)
-                execute_update_step(f"/bin/git checkout {git_version}", msg)
-
-                # Rollback Step 2: Update the python dependencies
-                msg = "Rolling back the python dependencies"
-                i = max(i - 1, 1)
-                p.set(i, message=msg)
-                logging.info(msg)
-                execute_update_step("/bin/bash -c 'source /root/kittyhack/.venv/bin/activate && pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt'", msg)
-
-                # Rollback Step 3: Update the systemd service file
-                msg = "Rolling back the systemd service file"
-                i = max(i - 1, 1)
-                p.set(i, message=msg)
-                logging.info(msg)
-                execute_update_step("/bin/cp /root/kittyhack/setup/kittyhack.service /etc/systemd/system/kittyhack.service", msg)
-
-                # Rollback Step 4: Reload the systemd daemon
-                msg = "Rolling back the systemd daemon"
-                i = max(i - 1, 1)
-                p.set(i, message=msg)
-                logging.info(msg)
-                execute_update_step("/bin/systemctl daemon-reload", msg)
-
-                # Notify the user about the error
-                ui.notification_show(f"Rollback to {git_version} complete. Please check the logs for details.", duration=None, type="warning")
-
-            else:
+            ok, msg = update_kittyhack(progress_callback=progress_callback, latest_version=latest_version, current_version=current_version)
+            if ok:
                 logging.info(f"Kittyhack updated successfully to version {latest_version}.")
-                # Show the restart dialog
                 m = ui.modal(
                     _("A restart is required to apply the update. Do you want to restart the Kittyflap now?"),
                     title=_("Restart required"),
@@ -3649,5 +3566,8 @@ def server(input, output, session):
                     )
                 )
                 ui.modal_show(m)
+            else:
+                logging.error(f"Kittyhack update failed: {msg}")
+                ui.notification_show(_("An error occurred during the update process: {}").format(msg), duration=None, type="error")
 
 

@@ -17,7 +17,10 @@ Es ist soweit! Mit dieser Version hast du die Möglichkeit, die KI individuell a
 
 ## Bugfixes
 - **Darstellung auf iOS**: Die Darstellung der Event-Liste auf iOS Geräten wurde gefixt.
+- **RFID Reader**: Falsche RFIDs wie `E54` werden jetzt nicht mehr gelesen
+- **Uhrzeit in Events**: Die Uhrzeit in einem Event wird jetzt wieder korrekt dargestellt
 
 ## Kleinere Änderungen
 - **Logfile Download**: Es werden nun über einen Button alle relevanten Logs auf einmal heruntergeladen
 - **Absturzerkennung**: Die Software erkennt nun, ob es unerwartete Abstürze gab. Bei mehreren aufeinanderfolgenden Abstürzen wird eine Warnmeldung angezeigt.
+- **Update-Prozess**: Der Update-Prozess gibt jetzt detailliertere Ausgaben über seinen aktuellen Status aus.

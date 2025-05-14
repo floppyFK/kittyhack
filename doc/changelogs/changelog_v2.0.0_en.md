@@ -16,7 +16,10 @@ The time has come! With this version, you have the ability to individually train
 
 ## Bugfixes
 - **Display on iOS**: The display of the event list on iOS devices has been fixed.
+- **RFID Reader**: Incorrect RFIDs like `E54` are no longer read
+- **Time in Events**: The time in an event is now displayed correctly again
 
 ## Minor Changes
 - **Logfile Download**: All relevant logs can now be downloaded at once via a button
 - **Crash Detection**: The software now recognizes if unexpected crashes occurred. If there are multiple consecutive crashes, a warning message is displayed.
+- **Update Process**: The update process now provides more detailed output about its current status.

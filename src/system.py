@@ -698,6 +698,10 @@ def update_labelstudio(progress_callback=None):
     Returns:
         bool: True if update is successful, False otherwise.
     """
+
+    if progress_callback:
+        progress_callback(0, _("Starting Label Studio update..."), _("This may take a few minutes..."))
+
     try:
         systemctl("stop", "labelstudio")
         logging.info("[SYSTEM] Label Studio service stopped.")

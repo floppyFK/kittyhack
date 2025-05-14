@@ -306,3 +306,33 @@
     max-width: 55px;
     text-align: center;
 }
+
+.release_notes {
+    background-color: #f8f9fa;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.8em !important;
+    text-align: left !important;
+}
+
+.release_notes h1 {
+    font-size: 1.3em;
+}
+.release_notes h2 {
+    font-size: 1.1em;
+}
+.release_notes h3 {
+    font-size: 1em;
+}
+.release_notes h4 {
+    font-size: 0.95em;
+}
+.release_notes h5 {
+    font-size: 0.9em;
+}
+.release_notes h6 {
+    font-size: 0.85em;
+}

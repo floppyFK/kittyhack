@@ -277,6 +277,28 @@ def read_latest_kittyhack_version():
         logging.error(f"Failed to fetch the latest version from GitHub: {e}")
         return "unknown"
     
+def fetch_github_release_notes(version: str) -> str:
+    """
+    Fetches the release notes for a specific version from the Kittyhack GitHub repository.
+    Args:
+        version (str): The version tag (e.g., 'v2.0.0' or '2.0.0').
+    Returns:
+        str: The release notes (body) or an error message.
+    """
+    url = "https://api.github.com/repos/floppyFK/kittyhack/releases"
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        releases = response.json()
+        # Accept both 'vX.Y.Z' and 'X.Y.Z' as tags
+        for release in releases:
+            tag = release.get("tag_name", "")
+            if tag == version or tag == f"v{version}" or tag.lstrip("v") == version.lstrip("v"):
+                return release.get("body", "No release notes found.")
+        return f"No release notes found for version {version}."
+    except Exception as e:
+        return f"Failed to fetch release notes: {e}"
+    
 def get_free_disk_space():
     """
     Returns the remaining disk space on the filesystem in MB.

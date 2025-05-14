@@ -59,13 +59,19 @@ def run_with_progress(command, progress_callback, step, message, detail):
         bufsize=1
     )
     output_lines = []
+    # Limit the length of callback messages to avoid flooding the UI
+    max_detail_length = 120
     for line in process.stdout:
         line_stripped = line.strip()
         output_lines.append(line)
-        logging.info(f"Command output: {line_stripped}")
+        logging.info(f"[SYSTEM] {line_stripped}")
         if progress_callback:
-            # Send the latest line as detail
-            progress_callback(step, message, line_stripped)
+            # Send the latest line as detail, truncated if necessary
+            if len(line_stripped) > max_detail_length:
+                truncated_detail = line_stripped[:max_detail_length] + "..."
+                progress_callback(step, message, truncated_detail)
+            else:
+                progress_callback(step, message, line_stripped)
     process.wait()
     if process.returncode != 0:
         logging.error(f"Command failed with return code {process.returncode}")
@@ -518,12 +524,19 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
         try:
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             output_lines = []
+            # Limit the length of callback messages to avoid flooding the UI
+            max_detail_length = 120
             for line in process.stdout:
                 line_stripped = line.strip()
                 output_lines.append(line)
                 logging.info(f"[UPDATE] {line_stripped}")
                 if progress_callback:
-                    progress_callback(i, msg, line_stripped)
+                    # Send the latest line as detail, truncated if necessary
+                    if len(line_stripped) > max_detail_length:
+                        truncated_detail = line_stripped[:max_detail_length] + "..."
+                        progress_callback(i, msg, truncated_detail)
+                    else:
+                        progress_callback(i, msg, line_stripped)
             process.wait()
             if process.returncode != 0:
                 output = ''.join(output_lines)
@@ -555,11 +568,40 @@ def install_labelstudio(progress_callback=None):
     Returns:
         bool: True if installation is successful, False otherwise.
     """
+    venv_path = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV)
+    venv_python = os.path.join(venv_path, "bin", "python")
+    service_template_path = "/root/kittyhack/setup/labelstudio.service"
+    service_file_path = "/etc/systemd/system/labelstudio.service"
+
+    # Stop the service if it's running
     try:
-        # Step 1: Create a virtual environment
-        venv_path = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV)
-        venv_python = os.path.join(venv_path, "bin", "python")
-        
+        if os.path.exists(service_file_path):
+            if is_service_running("labelstudio"):
+                logging.info("[SYSTEM] Stopping existing Label Studio service...")
+                if progress_callback:
+                    progress_callback(0, _("Stopping existing Label Studio service..."), "")
+                systemctl("stop", "labelstudio")
+            subprocess.run(["rm", "-f", service_file_path], check=True)
+            logging.info("[SYSTEM] Label Studio systemd service file removed.")
+    except Exception as e:
+        logging.error(f"[SYSTEM] Error stopping Label Studio service: {e}")
+    
+    # Remove the installation directory if it exists
+    if os.path.exists(LABELSTUDIO_PATH):
+        logging.info("[SYSTEM] Removing existing Label Studio installation...")
+        if progress_callback:
+            progress_callback(0, _("Removing existing Label Studio installation..."), "")
+        try:
+            subprocess.run(["rm", "-rf", LABELSTUDIO_PATH], check=True)
+        except Exception as e:
+            logging.error(f"[SYSTEM] Error removing existing Label Studio installation: {e}")
+
+    if progress_callback:
+        progress_callback(0, _("Starting Label Studio installation..."), _("This may take a few minutes..."))
+        logging.info("[SYSTEM] Starting Label Studio installation...")
+    
+    try:
+        # Step 1: Create a virtual environment        
         if not os.path.exists(venv_path):
             ok, output = run_with_progress(
                 ["python3", "-m", "venv", venv_path],
@@ -603,10 +645,7 @@ def install_labelstudio(progress_callback=None):
             return False
         logging.info("[SYSTEM] Label Studio installed in virtual environment.")
 
-        # Step 4: Create a systemd service file
-        service_template_path = "/root/kittyhack/setup/labelstudio.service"
-        service_file_path = "/etc/systemd/system/labelstudio.service"
-        
+        # Step 4: Create a systemd service file        
         if progress_callback:
             progress_callback(4, _("Creating systemd service..."), _("Almost done..."))
             
@@ -659,7 +698,6 @@ def update_labelstudio(progress_callback=None):
     Returns:
         bool: True if update is successful, False otherwise.
     """
-    # FIXME: We need to stop the service before updating
     try:
         systemctl("stop", "labelstudio")
         logging.info("[SYSTEM] Label Studio service stopped.")
@@ -668,10 +706,17 @@ def update_labelstudio(progress_callback=None):
 
     try:
         # Step 1: Upgrade Label Studio
-        if progress_callback:
-            progress_callback(1, _("Upgrading Label Studio..."), _("This takes several minutes... Do not turn off the power or reload the page!"))
         venv_python = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV, "bin", "python")
-        subprocess.run([venv_python, "-m", "pip", "install", "--upgrade", "label-studio"], check=True)
+        ok, pip_output = run_with_progress(
+            [venv_python, "-m", "pip", "install", "--upgrade", "label-studio"],
+            progress_callback,
+            1,
+            _("Upgrading Label Studio..."),
+            _("This takes several minutes... Do not turn off the power or reload the page!")
+        )
+        if not ok:
+            logging.error("[SYSTEM] Label Studio upgrade failed:\n" + pip_output)
+            return False
         logging.info("[SYSTEM] Label Studio upgraded in virtual environment.")
 
         return True

@@ -50,6 +50,7 @@ from src.helper import (
     get_total_disk_space,
     get_used_ram_space,
     get_total_ram_space,
+    fetch_github_release_notes,
     sigterm_monitor
 )
 from src.database import *
@@ -1065,9 +1066,11 @@ def server(input, output, session):
             frame = model_hanlder.get_camera_frame()
             if frame is None:
                 img_html = (
-                    '<div class="placeholder-image">' +
+                    '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
                     '<div></div>' +
                     '<div><strong>' + _('Connection to the camera failed.') + '</strong></div>' +
+                    '<div>' + _("Please wait...") + '</div>' +
+                    '<div class="spinner-container"><div class="spinner"></div></div>' +
                     '<div>' + _('If this message does not disappear within 30 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>' +
                     '<div></div>' +
                     '</div>'
@@ -1525,15 +1528,31 @@ def server(input, output, session):
             # Replace dates with "Today" and "Yesterday"
             today = datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).date()
             yesterday = today - timedelta(days=1)
-            # Convert the config date format to Python's strftime format
             date_format = CONFIG['DATE_FORMAT'].lower().replace('yyyy', '%Y').replace('mm', '%m').replace('dd', '%d')
             df_events['date_display'] = df_events['date'].apply(
                 lambda date: _("Today") if date == today else (_("Yesterday") if date == yesterday else date.strftime(date_format))
             )
 
-            # Show the cat name instead of the RFID
+            # Show the cat name instead of the RFID, and prepare thumbnails
             cat_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
-            df_events['cat_name'] = df_events['rfid'].apply(lambda rfid: cat_name_dict.get(rfid, _("Unknown RFID") + f": {rfid}" if rfid else _("No RFID found")))
+            # Build a dict: rfid -> (cat_id, name)
+            df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all)
+            rfid_to_catid = {row['rfid']: row['id'] for _, row in df_cats.iterrows() if row['rfid']}
+            cat_thumbnails = {}
+            for rfid, cat_id in rfid_to_catid.items():
+                thumb = get_cat_thumbnail(CONFIG['KITTYHACK_DATABASE_PATH'], cat_id)
+                if thumb:
+                    cat_thumbnails[rfid] = thumb
+
+            def cat_name_with_icon(rfid):
+                name = cat_name_dict.get(rfid, _("Unknown RFID") + f": {rfid}" if rfid else _("No RFID found"))
+                thumb = cat_thumbnails.get(rfid)
+                if thumb:
+                    return f'<img src="data:image/jpeg;base64,{thumb}" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:6px;"> {name}'
+                else:
+                    return name
+
+            df_events['cat_name'] = df_events['rfid'].apply(cat_name_with_icon)
 
             # Process event types into HTML with icons
             event_icons = {}
@@ -1554,35 +1573,22 @@ def server(input, output, session):
             last_date = None
             for idx, row in df_events.iterrows():
                 if row['date_display'] != last_date:
-                    # Create a date separator row
                     html += f'<tr class="date-separator-row"><td colspan="4" class="event-date-separator">{row["date_display"]}</td></tr>'
                     last_date = row['date_display']
                 
-                # Create the main event row
                 html += '<tr>'
                 html += f'<td>{row["time"]}</td>'
-                
-                # Event column with tooltip
                 event_info = event_icons[idx]
                 html += f'<td><div class="tooltip-wrapper" title="{event_info["tooltip_text"]}"><div>{event_info["icons_html"]}</div></div></td>'
-                
-                # Cat name
                 html += f'<td>{row["cat_name"]}</td>'
-                
-                # Action button
                 unique_id = hashlib.md5(os.urandom(16)).hexdigest()
                 btn_id = f"btn_show_event_{unique_id}"
                 html += f'<td><div>{btn_show_event(btn_id)}'
                 html += f'<i class="fa fa-search" style="margin-left: -1px; margin-right: auto;"></i></button></div></td>'
-                
-                # Register the event handler for this button
                 show_event_server(btn_id, row['block_id'])
-                
                 html += '</tr>'
 
             html += '</tbody></table>'
-            
-            # Add a small script to ensure tooltips work
             html += '''
             <script>
             $(document).ready(function() {
@@ -1590,12 +1596,9 @@ def server(input, output, session):
             });
             </script>
             '''
-            
             return ui.HTML(html)
-        
         except Exception as e:
             logging.error(f"Failed to read events from the database: {e}")
-            # Return an error message
             return ui.HTML(
                 '<table class="dataframe shiny-table table w-auto">'
                 '<tbody><tr><td class="error">' + _('Failed to read events from the database.') + '</td></tr></tbody>'
@@ -1821,7 +1824,11 @@ def server(input, output, session):
                     decoded_picture = None
 
                 if decoded_picture:
-                    img_html = f'<img style="max-width: 400px !important;" src="data:image/jpeg;base64,{decoded_picture}" />'
+                    img_html = f'''
+                        <div style="text-align: center;">
+                            <img style="max-width: 400px !important;" src="data:image/jpeg;base64,{decoded_picture}" />
+                        </div>
+                        '''
                 else:
                     img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
 
@@ -1841,7 +1848,8 @@ def server(input, output, session):
                         ui.HTML(img_html),
                         ui.card_footer(
                             ui.div(
-                                ui.column(12, ui.input_checkbox(id=f"mng_cat_del_{data_row['id']}", label=_("Delete {} from the database").format(data_row['name']), value=False), style_="padding-top: 20px;"),
+                                ui.input_checkbox(id=f"mng_cat_del_{data_row['id']}", label=_("Delete {} from the database").format(data_row['name']), value=False),
+                                style_="padding-top: 20px; display: flex; justify-content: center;"
                             )
                         ),
                         full_screen=False,
@@ -1850,7 +1858,10 @@ def server(input, output, session):
                 )
             
             return ui.div(
-                ui.layout_column_wrap(*ui_cards, width="400px"),
+                ui.div(
+                    *ui_cards,
+                    style_="display: flex; flex-direction: column; align-items: center; gap: 20px;"
+                ),
                 ui.panel_absolute(
                     ui.panel_well(
                         ui.input_action_button(id="mng_cat_save_changes", label=_("Save all changes"), icon=icon_svg("floppy-disk")),
@@ -1970,6 +1981,8 @@ def server(input, output, session):
 
         # Check labelstudio
         if CONFIG["LABELSTUDIO_VERSION"] is not None:
+            labelstudio_latest_version = get_labelstudio_latest_version()
+            
             # Check if labelstudio is running
             if get_labelstudio_status() == True:
                 ui_labelstudio = ui.div(
@@ -1998,7 +2011,7 @@ def server(input, output, session):
                         ),
                         ui.column(
                             12,
-                            ui.help_text(_("Latest version: ") + get_labelstudio_latest_version()),
+                            ui.help_text(_("Latest version: ") + labelstudio_latest_version),
                             style_="text-align: center;"
                         ),
                         style_ ="padding-top: 50px;"
@@ -2015,16 +2028,20 @@ def server(input, output, session):
                     ),
                 )
 
-            if get_labelstudio_latest_version() != CONFIG["LABELSTUDIO_VERSION"]:
+            if labelstudio_latest_version != CONFIG["LABELSTUDIO_VERSION"]:
                 ui_labelstudio = ui_labelstudio, ui.row(
                     ui.column(
                         12,
                         ui.input_task_button("btn_labelstudio_update", _("Update Label Studio"), icon=icon_svg("circle-up"), class_="btn-primary"),
                         ui.br(),
                         ui.help_text(_("Click the button to update Label Studio to the latest version.")),
+                        ui.br(),
+                        ui.help_text(_('Current Version') + ": " + CONFIG['LABELSTUDIO_VERSION']),
+                        ui.br(),
+                        ui.help_text(_('Latest Version') + ": " + labelstudio_latest_version),
                         style_="text-align: center;"
                     ),
-                    style_ ="padding-top: 50px;"
+                    style_="padding-top: 50px;"
                 )
 
             ui_labelstudio = ui_labelstudio, ui.hr(), ui.row(
@@ -3317,7 +3334,18 @@ def server(input, output, session):
         elif git_version != latest_version:
             # Check for local changes in the git repository
             try:
+                # Fetch the release notes of the latest version
+                release_notes = fetch_github_release_notes(latest_version)
                 ui_update_kittyhack = ui.div(
+                    ui.markdown("**" + _("Release Notes for") + " " + latest_version + ":**"),
+                    ui.div(
+                        ui.markdown(release_notes),
+                        class_="release_notes"
+                    ),
+                    ui.br()
+                )
+                
+                ui_update_kittyhack = ui_update_kittyhack, ui.div(
                     ui.markdown(_("Automatic update to **{}**:").format(latest_version)),
                     ui.input_task_button("update_kittyhack", _("Update Kittyhack"), icon=icon_svg("download"), class_="btn-primary"),
                     ui.br(),
@@ -3333,14 +3361,18 @@ def server(input, output, session):
                     # Local changes detected
                     result = subprocess.run(["/bin/git", "status"], capture_output=True, text=True, check=True)
                     ui_update_kittyhack = ui_update_kittyhack, ui.div(
-                        ui.br(),
+                        ui.hr(),
                         ui.markdown(
                             _("⚠️ WARNING: Local changes detected in the git repository in `/root/kittyhack`.") + "\n\n" +
                             _("If you proceed with the update, these changes will be lost (the database and configuration will not be affected).") + "\n\n" +
                             _("Please commit or stash your changes manually before updating, if you want to keep them.")
                         ),
                         ui.h6(_("Local changes:")),
-                        ui.tags.pre(result.stdout)
+                        ui.div(
+                            result.stdout,
+                            class_ = "release_notes",
+                            style_ = "font-family: monospace; white-space: pre-wrap;"
+                        )
                     )
                     
             except Exception as e:
@@ -3348,7 +3380,7 @@ def server(input, output, session):
                     _("An error occurred while checking for local changes in the git repository: {}").format(e) + "\n\n" +
                     _("No automatic update possible.")
                 )
-                    
+        
         else:
             ui_update_kittyhack = ui.markdown(_("You are already using the latest version of Kittyhack."))
 

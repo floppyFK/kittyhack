@@ -8,6 +8,7 @@ The time has come! With this version, you have the ability to individually train
 ## New Features
 - **AI Training**: Individual training of the AI for your cat and your environment. With the help of the built-in Label Studio Server, you can continuously improve the model used to evaluate camera images.
 - **Unlocking via Image Analysis**: In addition to unlocking using your cat's RFID, there is now the option to unlock the flap based on image recognition.
+- **Cat Thumbnail in Events**: The "Events" view now displays a thumbnail image of the detected cat
 
 ## Improvements
 - **Design Adjustment**: All tabs now have a uniform design.

@@ -84,6 +84,8 @@ class LastImageBlockTimestamp:
 # Initialize the timestamp class
 last_imgblock_ts = LastImageBlockTimestamp()
 
+_cat_thumbnail_cache = {}
+
 # Lock for database writes
 db_write_lock = Lock()
 
@@ -902,6 +904,39 @@ def get_cat_names_list(database: str):
     stmt = "SELECT name FROM cats"
     df_cats = read_df_from_database(database, stmt)
     return df_cats['name'].tolist() if not df_cats.empty else []
+
+def get_cat_thumbnail(database_path, cat_id, size=(32, 32)):
+    """
+    Returns a base64-encoded thumbnail for the cat with the given ID using cv2.
+    If no image is available, returns None.
+    Uses in-memory cache to avoid redundant encoding.
+    """
+    cache_key = (cat_id, size)
+    if cache_key in _cat_thumbnail_cache:
+        return _cat_thumbnail_cache[cache_key]
+    try:
+        # Fetch the cat image from the database
+        df = db_get_cats(database_path, ReturnDataCatDB.all)
+        row = df[df['id'] == cat_id]
+        if row.empty or row.iloc[0]['cat_image'] is None:
+            return None
+        img_bytes = row.iloc[0]['cat_image']
+        img_array = np.frombuffer(img_bytes, np.uint8)
+        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        if img is None:
+            return None
+        # Resize to thumbnail
+        thumb = cv2.resize(img, size, interpolation=cv2.INTER_AREA)
+        # Encode as JPEG
+        ret, buf = cv2.imencode('.jpg', thumb)
+        if not ret:
+            return None
+        b64_thumb = base64.b64encode(buf.tobytes()).decode('utf-8')
+        _cat_thumbnail_cache[cache_key] = b64_thumb
+        return b64_thumb
+    except Exception as e:
+        logging.error(f"Failed to create cat thumbnail for cat_id={cat_id}: {e}")
+        return None
 
 def check_if_table_exists(database: str, table: str) -> bool:
     """

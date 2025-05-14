@@ -1,6 +1,5 @@
 # v2.0.0
 
-
 ## Highlights
 Es ist soweit! Mit dieser Version hast du die Möglichkeit, die KI individuell auf deine Katze zu trainieren. Keine Chance mehr für Mäuse 😉
 
@@ -9,6 +8,7 @@ Es ist soweit! Mit dieser Version hast du die Möglichkeit, die KI individuell a
 ## Neue Features
 - **KI Training**: Individuelles Training der KI auf deine Katze und deine Umgebung. Mit Hilfe des eingebauten Label Studio Server kannst du kontinuierlich das Modell verbessern, das zur Auswertung der Kamerabilder verwendet wird.
 - **Entsperren über Bildauswertung**: Neben der Entsperrung anhand der RFID deiner Katze gibt es jetzt auch die Möglichkeit, die Klappe anhand der Bilderkennung zu entriegeln.
+- **Katzen-Thumbnail in Events**: In der "Events"-Ansicht wird nun ein Vorschaubild der erkannten Katze angezeigt
 
 ## Verbesserungen
 - **Design Anpassung**: Alle Tabs haben nun ein einheitliches Design.

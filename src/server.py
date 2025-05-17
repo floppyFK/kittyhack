@@ -3439,6 +3439,8 @@ def server(input, output, session):
                                 "**" + _("Latest Version") + ":** `" + latest_version + "`"),
                     ui_update_kittyhack,
                     ui.br(),
+                    ui.h5("Changelogs"),
+                    ui.div(ui.input_action_button("btn_changelogs", _("Show all Changelogs"), icon=icon_svg("info"))),
                     full_screen=False,
                     class_="generic-container",
                     style_="padding-left: 1rem !important; padding-right: 1rem !important;",

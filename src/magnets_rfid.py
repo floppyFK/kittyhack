@@ -6,6 +6,7 @@ from enum import Enum
 from src.system import Gpio, I2C
 from src.helper import sigterm_monitor
 import threading
+import string
 import time as tm
 from queue import Queue
 
@@ -504,6 +505,10 @@ class Rfid:
         Returns the current state of the RFID field.
         """
         return self.field_state
+    
+    def remove_non_printable_chars(self, line):
+        # Remove all non-printable characters
+        return ''.join(filter(lambda x: x in string.printable, line))
 
     def run(self, read_cycles=0):
         """
@@ -559,8 +564,9 @@ class Rfid:
                         ready, __, __ = select.select([f], [], [], 1.0)
                         if ready:
                             line = f.readline().decode('utf-8', errors='ignore').strip()
+                            line = self.remove_non_printable_chars(line)
                             # Skip empty lines and initialization messages from the RFID reader
-                            if not line or re.search(r'tectus|AESlite', line, re.IGNORECASE):
+                            if not line or re.search(r'tectus|AESlite|error|>', line, re.IGNORECASE):
                                 logging.info(f"[RFID] Skipping line: '{line}'")
                                 continue
 

@@ -206,7 +206,14 @@ def backend_main(simulate_kittyflap = False):
                 ids_exceeding_mouse_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_mouse_probability=CONFIG['MIN_THRESHOLD'])
                 ids_exceeding_nomouse_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_no_mouse_probability=CONFIG['MIN_THRESHOLD'])
                 ids_exceeding_own_cat_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_own_cat_probability=CONFIG['MIN_THRESHOLD'])
-                logging.info(f"[BACKEND] Found {len(img_ids_for_motion_block)} elements between {first_motion_outside_tm} and {last_motion_outside_tm}")
+                logging.info(f"""[BACKEND] Detection summary:
+                                                            - {len(img_ids_for_motion_block)} elements in current motion block (between {first_motion_outside_tm} and {last_motion_outside_tm})
+                                                            - {len(ids_exceeding_mouse_th)} elements exceeding mouse threshold
+                                                            - {len(ids_exceeding_nomouse_th)} elements exceeding no-mouse threshold
+                                                            - {len(ids_exceeding_own_cat_th)} elements exceeding own cat threshold
+                                                            Event type: {event_type}
+                                                            RFID tag: {tag_id or 'None'} 
+                                                            Video tag: {tag_id_from_video or 'None'}""")
                 # Log all events to the database, where either the mouse threshold is exceeded, the no-mouse threshold is exceeded,
                 # or the own cat threshold is exceeded or a tag id was detected
                 # as well as all outgoing events
@@ -221,12 +228,12 @@ def backend_main(simulate_kittyflap = False):
                             image_buffer.update_tag_id(element, tag_id)
                         elif tag_id_from_video is not None:
                             image_buffer.update_tag_id(element, tag_id_from_video)
-                    logging.info(f"[BACKEND] Updated block ID for {len(img_ids_for_motion_block)} elements to '{motion_block_id}' and tag ID to '{tag_id if tag_id is not None else ''}'")
+                    logging.info(f"[BACKEND] Minimal threshold exceeded or tag ID detected. Images will be written to the database. Updated block ID for {len(img_ids_for_motion_block)} elements to '{motion_block_id}' and tag ID to '{tag_id if tag_id is not None else ''}'")
                     # Write to the database in a separate thread
                     db_thread = threading.Thread(target=write_motion_block_to_db, args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, event_type), daemon=True)
                     db_thread.start()
                 else:
-                    logging.info(f"[BACKEND] No elements found that exceed the minimal threshold '{CONFIG['MIN_THRESHOLD']}'. No database entry will be created.")
+                    logging.info(f"[BACKEND] No elements found that exceed the minimal threshold '{CONFIG['MIN_THRESHOLD']}' and no tag ID was detected. No database entry will be created.")
                     if len(img_ids_for_motion_block) > 0:
                         for element in img_ids_for_motion_block:
                             image_buffer.delete_by_id(element)

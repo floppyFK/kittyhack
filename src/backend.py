@@ -207,9 +207,13 @@ def backend_main(simulate_kittyflap = False):
                 ids_exceeding_nomouse_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_no_mouse_probability=CONFIG['MIN_THRESHOLD'])
                 ids_exceeding_own_cat_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_own_cat_probability=CONFIG['MIN_THRESHOLD'])
                 logging.info(f"[BACKEND] Found {len(img_ids_for_motion_block)} elements between {first_motion_outside_tm} and {last_motion_outside_tm}")
-                # Log all events to the database, where either the mouse threshold is exceeded or the no-mouse threshold is exceeded,
+                # Log all events to the database, where either the mouse threshold is exceeded, the no-mouse threshold is exceeded,
+                # or the own cat threshold is exceeded or a tag id was detected
                 # as well as all outgoing events
-                if (len(ids_exceeding_mouse_th) + len(ids_exceeding_nomouse_th) +len(ids_exceeding_own_cat_th) > 0) or (event_type in [EventType.CAT_WENT_OUTSIDE]):
+                if ((len(ids_exceeding_mouse_th) + len(ids_exceeding_nomouse_th) +len(ids_exceeding_own_cat_th) > 0) or 
+                    (event_type in [EventType.CAT_WENT_OUTSIDE]) or 
+                    (tag_id is not None) or 
+                    (tag_id_from_video is not None)):
                     for element in img_ids_for_motion_block:
                         image_buffer.update_block_id(element, motion_block_id)
                         # Prefer the tag_id from the RFID reader. If this is not available, fall back to the detected id from the video
@@ -234,6 +238,9 @@ def backend_main(simulate_kittyflap = False):
 
                 # Forget the video tag id
                 tag_id_from_video = None
+                if tag_id is not None:
+                    rfid.set_tag(None, 0.0)
+                    logging.info("[BACKEND] Forget the tag ID from the RFID reader.")
 
             # Just double check that the inside magnet is released ( == inside locked) if no motion is detected outside
             if (motion_outside == 0 and magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME)):

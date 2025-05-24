@@ -566,8 +566,8 @@ class Rfid:
                             line = f.readline().decode('utf-8', errors='ignore').strip()
                             line = self.remove_non_printable_chars(line)
                             # Skip empty lines and initialization messages from the RFID reader
-                            if not line or re.search(r'tectus|AESlite|error|>', line, re.IGNORECASE):
-                                logging.info(f"[RFID] Skipping line: '{line}'")
+                            if not line or not re.match(r'^[0-9A-Fa-f]{16}$', line):
+                                logging.info(f"[RFID] Skipping line: '{line}' - Invalid format (requires exactly 16 hex characters)")
                                 continue
 
                             # We found something! Remove non-hex characters from the tag ID

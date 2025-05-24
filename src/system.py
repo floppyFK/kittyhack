@@ -556,6 +556,51 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
             return False, str(e)
     return True, "Update completed"
 
+def get_hostname():
+    """
+    Get the hostname of the system.
+
+    Returns:
+        str: The hostname.
+    """
+    try:
+        hostname = subprocess.check_output(["hostname"], text=True).strip()
+        logging.info(f"[SYSTEM] Hostname: {hostname}")
+        return hostname
+    except Exception as e:
+        logging.error(f"[SYSTEM] Error getting hostname: {e}")
+        return ""
+
+def set_hostname(hostname):
+    """
+    Set the hostname of the system.
+
+    Args:
+        hostname (str): The new hostname to set.
+
+    Returns:
+        bool: True if the hostname was set successfully, False otherwise.
+    """
+    try:
+        subprocess.run(["hostnamectl", "set-hostname", hostname], check=True)
+        # Update /etc/hosts file
+        with open("/etc/hosts", "r") as f:
+            lines = f.readlines()
+        with open("/etc/hosts", "w") as f:
+            for line in lines:
+                if "127.0.1.1" in line:
+                    f.write(f"127.0.1.1\t{hostname}\n")
+                else:
+                    f.write(line)
+        # Update /etc/hostname file
+        with open("/etc/hostname", "w") as f:
+            f.write(f"{hostname}\n")
+        logging.info(f"[SYSTEM] Hostname set to: {hostname}")
+        return True
+    except Exception as e:
+        logging.error(f"[SYSTEM] Error setting hostname: {e}")
+        return False
+
 def install_labelstudio(progress_callback=None):
     """
     Install Label Studio by creating a virtual environment, installing the package,

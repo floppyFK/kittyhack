@@ -13,6 +13,7 @@ app_ui = ui.page_fillable(
     ui.include_js(js_file),
     ui.include_css("styles.css"),
     ui.head_content(
+        ui.tags.link(rel="manifest", href="manifest.json"),
         ui.tags.link(rel="icon", type="image/png", sizes="64x64", href="favicon-64x64.png"),
         ui.tags.link(rel="icon", type="image/png", sizes="32x32", href="favicon-32x32.png"),
         ui.tags.link(rel="icon", type="image/png", sizes="16x16", href="favicon-16x16.png"),

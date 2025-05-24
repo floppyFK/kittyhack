@@ -67,7 +67,9 @@ from src.system import (
     update_labelstudio,
     remove_labelstudio,
     systemctl,
-    scan_wlan_networks
+    scan_wlan_networks,
+    get_hostname,
+    set_hostname
 )
 
 # Prepare gettext for translations based on the configured language
@@ -328,7 +330,7 @@ def start_background_task():
             log_system_information()
 
             # Use a shorter sleep interval and check for sigterm_monitor.stop_now to allow graceful shutdown
-            for _ in range(int(CONFIG['PERIODIC_JOBS_INTERVAL'])):
+            for __ in range(int(CONFIG['PERIODIC_JOBS_INTERVAL'])):
                 if sigterm_monitor.stop_now:
                     break
                 tm.sleep(1.0)
@@ -1537,7 +1539,7 @@ def server(input, output, session):
             cat_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
             # Build a dict: rfid -> (cat_id, name)
             df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all)
-            rfid_to_catid = {row['rfid']: row['id'] for _, row in df_cats.iterrows() if row['rfid']}
+            rfid_to_catid = {row['rfid']: row['id'] for __, row in df_cats.iterrows() if row['rfid']}
             cat_thumbnails = {}
             for rfid, cat_id in rfid_to_catid.items():
                 thumb = get_cat_thumbnail(CONFIG['KITTYHACK_DATABASE_PATH'], cat_id)
@@ -2495,6 +2497,8 @@ def server(input, output, session):
             combined_models["__separator__"] = "────────────"
         for unique_id, display_name in yolo_models.items():
             combined_models[f"yolo::{unique_id}"] = display_name
+
+        hostname = get_hostname()
         
 
         ui_config =  ui.div(
@@ -2847,6 +2851,21 @@ def server(input, output, session):
                     ),
                     ui.br(),
                     ui.row(
+                        ui.column(12, ui.input_text("txtHostname", label=_("Hostname"), placeholder="", value=hostname, width="100%")),
+                        ui.column(
+                            12,
+                            ui.markdown(
+                                _("The hostname of the Kittyflap. You can change it to any unique name in your network for an easier access (mDNS / Avahi must be enabled in your router).") + "  \n" +
+                                _("Allowed characters: `a-z`, `A-Z`, `0-9` and `-`.") + "  \n" +
+                                "> " + _("NOTE: This setting requires a restart of the kittyflap to take effect.") + "\n\n" +
+                                _("You can access the Kittyflap via the hostname in your browser:")
+                            ), 
+                            ui.output_text_verbatim("hostname_preview"),
+                            style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
                         ui.column(4, ui.input_select("txtLoglevel", "Loglevel", {"DEBUG": "DEBUG", "INFO": "INFO", "WARN": "WARN", "ERROR": "ERROR", "CRITICAL": "CRITICAL"}, selected=CONFIG['LOGLEVEL'])),
                         ui.column(8, ui.markdown(_("`INFO` is the default log level and should be used in normal operation. `DEBUG` should only be used if it is really necessary!")), style_="color: grey;"),
                     ),
@@ -2858,7 +2877,7 @@ def server(input, output, session):
                             ui.markdown(
                                 _("If this is disabled, only one CPU core will be used for image processing, which results in a slower analysis of the pictures, and therefore also a little bit slower prey detection.") + "  \n" +
                                 _("Some users have reported that this option causes reboots or system freezes. If you encounter the same issue, it's recommended to disable this setting.") + "  \n" +
-                                _("NOTE: This setting requires a restart of the kittyflap to take effect.")
+                                "> " + _("NOTE: This setting requires a restart of the kittyflap to take effect.")
                             ), style_="color: grey;"
                         ),
                     ),
@@ -2884,6 +2903,10 @@ def server(input, output, session):
             ),
         )
         return ui_config
+    
+    @render.text
+    def hostname_preview():
+        return "http://" + input.txtHostname() + ".local"
     
     @reactive.effect
     def update_mouse_threshold_limit():
@@ -2944,6 +2967,20 @@ def server(input, output, session):
             valid = validate_time_format(field_id)
             if not valid:
                 return
+            
+        # Check for a changed hostname
+        hostname_changed = input.txtHostname() != get_hostname()
+        if hostname_changed:
+            # Check if the hostname is valid
+            if not re.match(r"^[a-zA-Z0-9-]+$", input.txtHostname()):
+                ui.notification_show(
+                    _("Hostname: ") +
+                    _("Invalid hostname. Only letters, numbers and hyphens are allowed.") + "\n" + 
+                    _("Changes were not saved."), duration=5, type="error"
+                )
+                return
+            # Hostname is valid, set it
+            set_hostname(input.txtHostname())
 
         # override the variable with the data from the configuration page
         language_changed = CONFIG['LANGUAGE'] != input.txtLanguage()
@@ -3016,7 +3053,7 @@ def server(input, output, session):
             if selected_model_changed:
                 ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the new detection model."), duration=30, type="message")
             
-            if img_processing_cores_changed:
+            if img_processing_cores_changed or hostname_changed:
                 ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the changed configuration."), duration=30, type="message")
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=5, type="error")
@@ -3441,6 +3478,7 @@ def server(input, output, session):
                     ui.br(),
                     ui.h5("Changelogs"),
                     ui.div(ui.input_action_button("btn_changelogs", _("Show all Changelogs"), icon=icon_svg("info"))),
+                    ui.br(),
                     full_screen=False,
                     class_="generic-container",
                     style_="padding-left: 1rem !important; padding-right: 1rem !important;",
@@ -3469,6 +3507,57 @@ def server(input, output, session):
                     ui.card_header(ui.h4(_("Original Kittyflap Database"), style_="text-align: center;")),
                     ui.br(),
                     ui_kittyflap_db,
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            ),
+            ui.div(
+                ui.card(
+                    ui.card_header(ui.h4(_("Progressive Web App (PWA)"), style_="text-align: center;")),
+                    ui.br(),
+                    ui.markdown(
+                        _("You can install Kittyhack as a") +" [" + _("Progressive Web App") + "](https://web.dev/learn/pwa/progressive-web-apps) " + _("on your Smartphone or computer for easier access.") + "  \n" +
+                        _("Such a PWA can be added to your home screen and launched like a native app, without needing to open a web browser.")
+                    ),
+                    ui.div(
+                        # HTTPS Warning message
+                        ui.div(
+                            ui.markdown(
+                                "⚠️ " + _("**HTTPS Required**") + "\n\n" +
+                                _("PWA installation requires a secure connection (HTTPS). You are currently accessing Kittyhack via HTTP.") + "  \n\n" +
+                                _("You'll need to set up a reverse proxy with HTTPS.") + " " +
+                                _("If you want to setup a reverse proxy in your home network, you can watch") +" [" + _("this guide") + "](https://schroederdennis.de/allgemein/nginx-proxy-manager-nginx-reverse-proxy-vorgestellt/)."
+                            ),
+                            id="pwa_https_warning",
+                            style_="display: none; color: #e74a3b; padding: 10px; border: 1px solid #e74a3b; border-radius: 5px; margin: 10px 0;"
+                        ),
+                        # Already installed message
+                        ui.div(
+                            ui.markdown("✅ " + _("**App is already installed on this device!**")),
+                            id="pwa_already_installed", 
+                            style_="display: none; color: #1cc88a; padding: 10px; text-align: center;"
+                        ),
+                        # Success message
+                        ui.div(
+                            ui.markdown("✅ " + _("**Installation successful!**")),
+                            id="pwa_installed_success", 
+                            style_="display: none; color: #1cc88a; padding: 10px; text-align: center;"
+                        ),
+                        # Install button
+                        ui.div(
+                            ui.input_action_button(
+                                id="pwa_install_button",
+                                label=_("Install as App"),
+                                icon=icon_svg("download"),
+                                class_="btn-primary"
+                            ),
+                            style_="text-align: center; margin-top: 10px;"
+                        ),
+                        id="pwa_install_container"
+                    ),
                     ui.br(),
                     full_screen=False,
                     class_="generic-container",

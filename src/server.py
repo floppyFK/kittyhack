@@ -1560,8 +1560,24 @@ def server(input, output, session):
             event_icons = {}
             for __, row in df_events.iterrows():
                 event_type = row['event_type']
-                icons_html = " ".join(str(icon) for icon in EventType.to_icons(event_type))
-                tooltip_text = EventType.to_pretty_string(event_type)
+                
+                # Handle comma-separated event types
+                if ',' in event_type:
+                    event_type_list = event_type.split(',')
+                    # Process each event type and combine the results
+                    icons_list = []
+                    tooltip_parts = []
+                    for et in event_type_list:
+                        icons_list.extend(EventType.to_icons(et.strip()))
+                        tooltip_parts.append(EventType.to_pretty_string(et.strip()))
+                    
+                    icons_html = " ".join(str(icon) for icon in icons_list)
+                    tooltip_text = " + ".join(tooltip_parts)
+                else:
+                    # Process single event type as before
+                    icons_html = " ".join(str(icon) for icon in EventType.to_icons(event_type))
+                    tooltip_text = EventType.to_pretty_string(event_type)
+                
                 event_icons[row.name] = {
                     'icons_html': icons_html,
                     'tooltip_text': tooltip_text

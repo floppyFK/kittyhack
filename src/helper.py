@@ -41,6 +41,9 @@ class EventType:
     CAT_WENT_PROBABLY_INSIDE = "cat_went_probably_inside"
     CAT_WENT_INSIDE_WITH_MOUSE = "cat_went_inside_with_mouse"
     CAT_WENT_OUTSIDE = "cat_went_outside"
+    MANUALLY_UNLOCKED = "manually_unlocked"
+    MANUALLY_LOCKED = "manually_locked"
+    MAX_UNLOCK_TIME_EXCEEDED = "max_unlock_time_exceeded"
 
     @staticmethod
     def to_pretty_string(event_type):
@@ -50,7 +53,10 @@ class EventType:
             EventType.CAT_WENT_INSIDE: _("Cat went inside"),
             EventType.CAT_WENT_PROBABLY_INSIDE: _("Cat went probably inside (no motion inside detected, but the flap was unlocked)"),
             EventType.CAT_WENT_INSIDE_WITH_MOUSE: _("Cat went inside with mouse"),
-            EventType.CAT_WENT_OUTSIDE: _("Cat went outside")
+            EventType.CAT_WENT_OUTSIDE: _("Cat went outside"),
+            EventType.MANUALLY_UNLOCKED: _("Manually unlocked flap"),
+            EventType.MANUALLY_LOCKED: _("Manually locked flap"),
+            EventType.MAX_UNLOCK_TIME_EXCEEDED: _("Maximum unlock time exceeded")
         }.get(event_type, _("Unknown event"))
 
     @staticmethod
@@ -61,7 +67,10 @@ class EventType:
             EventType.CAT_WENT_INSIDE: [str(icon_svg("circle-down"))],
             EventType.CAT_WENT_PROBABLY_INSIDE: [str(icon_svg("circle-down")), str(icon_svg("circle-question"))],
             EventType.CAT_WENT_INSIDE_WITH_MOUSE: [str(icon_svg("circle-down"))],
-            EventType.CAT_WENT_OUTSIDE: [str(icon_svg("circle-up"))]
+            EventType.CAT_WENT_OUTSIDE: [str(icon_svg("circle-up"))],
+            EventType.MANUALLY_UNLOCKED: [str(icon_svg("lock-open"))],
+            EventType.MANUALLY_LOCKED: [str(icon_svg("lock"))],
+            EventType.MAX_UNLOCK_TIME_EXCEEDED: [str(icon_svg("clock"))]
         }.get(event_type, [str(icon_svg("circle-question"))])
 
 def icon_svg_local(svg: str, margin_left: str | None = "auto", margin_right: str | None = "0.2em",) -> htmltools.TagChild:

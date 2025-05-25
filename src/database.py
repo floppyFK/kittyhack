@@ -761,7 +761,7 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
                     event_json
                 ]
                 cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
-            index += 1
+                index += 1
 
             # Delete the image from the buffer
             if delete_from_buffer:

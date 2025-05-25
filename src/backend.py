@@ -13,7 +13,7 @@ from src.model import ModelHandler, YoloModel
 TAG_TIMEOUT = 30.0               # after 30 seconds, a detected tag is considered invalid
 RFID_READER_OFF_DELAY = 15.0     # Turn the RFID reader off 15 seconds after the last detected motion outside
 OPEN_OUTSIDE_TIMEOUT = 6.0 + CONFIG['PIR_INSIDE_THRESHOLD'] # Keep the magnet to the outside open for 6 + PIR_INSIDE_THRESHOLD seconds after the last motion on the inside
-MAX_UNLOCK_TIME = 45.0           # Maximum time the door is allowed to stay open
+MAX_UNLOCK_TIME = 60.0           # Maximum time the door is allowed to stay open
 LAZY_CAT_DELAY = 6.0             # Keep the PIR active for an additional 6 seconds after the last detected motion
 
 # Initialize Model
@@ -80,6 +80,7 @@ def backend_main(simulate_kittyflap = False):
     unlock_outside_tm = 0.0
     inside_manually_unlocked = False
     backend_main.prey_detection_tm = 0.0
+    additional_verdict_infos = []
 
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
@@ -201,6 +202,13 @@ def backend_main(simulate_kittyflap = False):
                     logging.info("[BACKEND] Motion event conclusion: Cat went outside.")
                     event_type = EventType.CAT_WENT_OUTSIDE
 
+                all_events = str(event_type)
+                # Add all additional verdict information to the event type
+                if additional_verdict_infos:
+                    for info in additional_verdict_infos:
+                        all_events += "," + str(info)
+                additional_verdict_infos = []
+
                 # Update the motion_block_id and the tag_id for for all elements between first_motion_outside_tm and last_motion_outside_tm
                 img_ids_for_motion_block = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm)
                 ids_exceeding_mouse_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_mouse_probability=CONFIG['MIN_THRESHOLD'])
@@ -211,7 +219,7 @@ def backend_main(simulate_kittyflap = False):
                                                             - {len(ids_exceeding_mouse_th)} elements exceeding mouse threshold
                                                             - {len(ids_exceeding_nomouse_th)} elements exceeding no-mouse threshold
                                                             - {len(ids_exceeding_own_cat_th)} elements exceeding own cat threshold
-                                                            Event type: {event_type}
+                                                            Event type: {all_events}
                                                             RFID tag: {tag_id or 'None'} 
                                                             Video tag: {tag_id_from_video or 'None'}""")
                 # Log all events to the database, where either the mouse threshold is exceeded, the no-mouse threshold is exceeded,
@@ -230,7 +238,7 @@ def backend_main(simulate_kittyflap = False):
                             image_buffer.update_tag_id(element, tag_id_from_video)
                     logging.info(f"[BACKEND] Minimal threshold exceeded or tag ID detected. Images will be written to the database. Updated block ID for {len(img_ids_for_motion_block)} elements to '{motion_block_id}' and tag ID to '{tag_id if tag_id is not None else ''}'")
                     # Write to the database in a separate thread
-                    db_thread = threading.Thread(target=write_motion_block_to_db, args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, event_type), daemon=True)
+                    db_thread = threading.Thread(target=write_motion_block_to_db, args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, all_events), daemon=True)
                     db_thread.start()
                 else:
                     logging.info(f"[BACKEND] No elements found that exceed the minimal threshold '{CONFIG['MIN_THRESHOLD']}' and no tag ID was detected. No database entry will be created.")
@@ -249,10 +257,6 @@ def backend_main(simulate_kittyflap = False):
                     rfid.set_tag(None, 0.0)
                     logging.info("[BACKEND] Forget the tag ID from the RFID reader.")
 
-            # Just double check that the inside magnet is released ( == inside locked) if no motion is detected outside
-            if (motion_outside == 0 and magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME)):
-                    magnets.queue_command("lock_inside")
-
             if last_inside_raw == 1 and motion_inside_raw == 0: # Inside motion stopped (raw)
                 last_motion_inside_raw_tm = motion_inside_raw_tm
                 logging.debug(f"[BACKEND] Motion stopped INSIDE (raw)")
@@ -268,6 +272,8 @@ def backend_main(simulate_kittyflap = False):
                 model_hanlder.resume()
                 known_rfid_tags = db_get_all_rfid_tags(CONFIG['KITTYHACK_DATABASE_PATH'])
                 cat_rfid_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
+                # Reset the additional verdict infos
+                additional_verdict_infos = []
             
             if last_inside_raw == 0 and motion_inside_raw == 1: # Inside motion detected
                 logging.debug("[BACKEND] Motion detected INSIDE (raw)")
@@ -435,7 +441,11 @@ def backend_main(simulate_kittyflap = False):
                     magnets.empty_queue()
                     magnets.queue_command("unlock_inside")
                     unlock_inside_tm = tm.time()
-                    inside_manually_unlocked = True if manual_door_override['unlock_inside'] else False
+                    if manual_door_override['unlock_inside']:
+                        inside_manually_unlocked = True
+                        additional_verdict_infos.append(str(EventType.MANUALLY_UNLOCKED))
+                    else:
+                        inside_manually_unlocked = False
                 
                 manual_door_override['unlock_inside'] = False
 
@@ -456,12 +466,17 @@ def backend_main(simulate_kittyflap = False):
                     magnets.empty_queue()
                 else:
                     logging.info("[BACKEND] Manual override: Inside door is already locked.")
+                inside_manually_unlocked = False
                 manual_door_override['lock_inside'] = False
+                additional_verdict_infos.append(str(EventType.MANUALLY_LOCKED))
                 
             # Check if maximum unlock time is exceeded
             if magnets.get_inside_state() and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_inside") == False:
                 logging.warning("[BACKEND] Maximum unlock time exceeded for inside door. Forcing lock.")
                 magnets.queue_command("lock_inside")
+                if inside_manually_unlocked:
+                    inside_manually_unlocked = False
+                additional_verdict_infos.append(str(EventType.MAX_UNLOCK_TIME_EXCEEDED))
                 
             if magnets.get_outside_state() and (tm.time() - unlock_outside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_outside") == False:
                 logging.warning("[BACKEND] Maximum unlock time exceeded for outside door. Forcing lock.")

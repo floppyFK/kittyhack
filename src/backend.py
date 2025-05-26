@@ -24,7 +24,7 @@ else:
 
 if CONFIG['TFLITE_MODEL_VERSION']:
     logging.info(f"[BACKEND] Using TFLite model version {CONFIG['TFLITE_MODEL_VERSION']}")
-    model_hanlder = ModelHandler(model="tflite",
+    model_handler = ModelHandler(model="tflite",
                                  modeldir = f"./tflite/{CONFIG['TFLITE_MODEL_VERSION']}",
                                   graph = "cv-lite-model.tflite",
                                   labelfile = "labels.txt",
@@ -35,7 +35,7 @@ if CONFIG['TFLITE_MODEL_VERSION']:
                                   num_threads=threads)
 else:
     logging.info(f"[BACKEND] Using YOLO model {YoloModel.get_model_path(CONFIG['YOLO_MODEL'])}")
-    model_hanlder = ModelHandler(model="yolo",
+    model_handler = ModelHandler(model="yolo",
                                  modeldir = YoloModel.get_model_path(CONFIG['YOLO_MODEL']),
                                   graph = "",
                                   labelfile = "labels.txt",
@@ -89,12 +89,12 @@ def backend_main(simulate_kittyflap = False):
     # Start the camera
     logging.info("[BACKEND] Start the camera...")
     def run_camera():
-        model_hanlder.run()
+        model_handler.run()
 
     # Run the camera in a separate thread
     camera_thread = threading.Thread(target=run_camera, daemon=True)
     camera_thread.start()
-    model_hanlder.pause()
+    model_handler.pause()
 
     # Initialize PIRs, Magnets and RFID
     pir = Pir(simulate_kittyflap=simulate_kittyflap)
@@ -146,20 +146,22 @@ def backend_main(simulate_kittyflap = False):
             use_camera_for_motion = CONFIG['USE_CAMERA_FOR_MOTION_DETECTION']
 
             # Log if the configuration has changed
-            if use_camera_for_motion != previous_use_camera_for_motion:
+            if use_camera_for_motion != previous_use_camera_for_motion and model_handler.check_videostream_status():
                 previous_use_camera_for_motion = use_camera_for_motion
                 if use_camera_for_motion:
                     motion_source = "Camera"
+                    model_handler.set_videostream_buffer_size(1)
                     # Check whether the model handler is running. If not, start it.
-                    if model_hanlder.get_run_state() == False:
+                    if model_handler.get_run_state() == False:
                         logging.info("[BACKEND] Starting model handler for camera-based motion detection.")
-                        model_hanlder.resume()
+                        model_handler.resume()
                         tm.sleep(0.5)
                 else:
                     motion_source = "PIR"
-                    if motion_outside == 0 and model_hanlder.get_run_state() == True:
+                    model_handler.set_videostream_buffer_size(30)
+                    if motion_outside == 0 and model_handler.get_run_state() == True:
                         logging.info("[BACKEND] Currently no motion outside detected. Pausing model handler for PIR-based motion detection.")
-                        model_hanlder.pause()
+                        model_handler.pause()
                 logging.info(f"[BACKEND] Outside motion detection mode changed to {motion_source}.")
                 image_buffer.clear()  # Clear the image buffer when switching motion detection mode
 
@@ -203,8 +205,8 @@ def backend_main(simulate_kittyflap = False):
             # Outside motion stopped
             if last_outside == 1 and motion_outside == 0:
                 if not use_camera_for_motion:
-                    if model_hanlder.get_run_state() == True:
-                        model_hanlder.pause()
+                    if model_handler.get_run_state() == True:
+                        model_handler.pause()
                         # Wait for the last image to be processed
                         tm.sleep(0.5)
                 unlock_inside_decision_made = False
@@ -307,7 +309,7 @@ def backend_main(simulate_kittyflap = False):
                     first_motion_outside_tm = tm.time() - 2.5
                 else:
                     first_motion_outside_tm = tm.time()
-                    model_hanlder.resume()
+                    model_handler.resume()
                 known_rfid_tags = db_get_all_rfid_tags(CONFIG['KITTYHACK_DATABASE_PATH'])
                 cat_rfid_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
                 # Reset the additional verdict infos

@@ -109,7 +109,7 @@ if CONFIG['NOT_GRACEFUL_SHUTDOWNS'] >= 3:
         )
     
 # Now proceed with the startup
-from src.backend import backend_main, manual_door_override, model_hanlder
+from src.backend import backend_main, manual_door_override, model_handler
 from src.magnets_rfid import Magnets
 from src.pir import Pir
 from src.model import RemoteModelTrainer, YoloModel
@@ -1065,7 +1065,7 @@ def server(input, output, session):
     def live_view_main():
         reactive.invalidate_later(CONFIG['LIVE_VIEW_REFRESH_INTERVAL'])
         try:
-            frame = model_hanlder.get_camera_frame()
+            frame = model_handler.get_camera_frame()
             if frame is None:
                 img_html = (
                     '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
@@ -1078,7 +1078,7 @@ def server(input, output, session):
                     '</div>'
                 )
             else:
-                frame_jpg = model_hanlder.encode_jpg_image(frame)
+                frame_jpg = model_handler.encode_jpg_image(frame)
                 if frame_jpg:
                     frame_b64 = base64.b64encode(frame_jpg).decode('utf-8')
                     img_html = f'<img src="data:image/jpeg;base64,{frame_b64}" />'

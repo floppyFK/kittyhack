@@ -11,7 +11,6 @@ import threading
 import logging
 from typing import List, Optional
 class VideoStream:
-    # FIXME: self.frame shall be changed to a list of frames. The last frame is always the most recent one. The list can be used to store the last N frames. If the list is full, the oldest frame is removed.
     """Camera object that controls video streaming from the Picamera"""
     def __init__(self, resolution=(640, 480), framerate=15, jpeg_quality=75, tuning_file="/usr/share/libcamera/ipa/rpi/vc4/ov5647_noir.json"):
         self.resolution = resolution
@@ -23,6 +22,18 @@ class VideoStream:
         self.buffer_size = 30
         self.process = None
         self.lock = threading.Lock()
+
+    def set_buffer_size(self, new_size: int):
+        """Dynamically set the buffer size and trim frames if necessary."""
+        if new_size < 1:
+            raise ValueError("Buffer size must be at least 1")
+        with self.lock:
+            self.buffer_size = new_size
+            if len(self.frames) > self.buffer_size:
+                # Remove oldest frames to fit the new buffer size
+                self.frames = self.frames[-self.buffer_size:]
+        logging.info(f"[CAMERA] Buffer size set to {self.buffer_size}")
+
 
     def start(self):
         # Start the thread that reads frames from the video stream
@@ -144,7 +155,7 @@ class ImageBufferElement:
                 f"no_mouse_probability={self.no_mouse_probability}, own_cat_probability={self.own_cat_probability}, tag_id={self.tag_id}, detected_objects={self.detected_objects})")
 
 class ImageBuffer:
-    MAX_IMAGE_BUFFER_SIZE = 2000
+    MAX_IMAGE_BUFFER_SIZE = 1000
 
     def __init__(self):
         """Initialize an empty buffer."""

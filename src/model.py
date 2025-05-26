@@ -841,6 +841,19 @@ class ModelHandler:
         self.cat_names = [cat_name.lower() for cat_name in get_cat_names_list(CONFIG['KITTYHACK_DATABASE_PATH'])]
         self.paused = False
 
+    def set_videostream_buffer_size(self, new_size: int):
+        """
+        Set the buffer size of the videostream.
+        Args:
+            new_size (int): The new buffer size to set.
+        """
+        global videostream
+        if videostream is not None:
+            videostream.set_buffer_size(new_size)
+            logging.info(f"[MODEL] Changed videostream buffer size to {new_size}")
+        else:
+            logging.warning("[MODEL] Cannot set buffer size: videostream is not initialized.")
+
     def get_run_state(self):
         return not self.paused
 
@@ -929,6 +942,18 @@ class ModelHandler:
         else:
             logging.error("[CAMERA] 'Get Frame' failed. Video stream is not yet initialized.")
             return None
+        
+    def check_videostream_status(self):
+        """
+        Checks if the video stream is running and returns its status.
+        Returns:
+            bool: True if the video stream is running, False otherwise.
+        """
+        global videostream
+        if videostream is not None:
+            return True
+        else:
+            return False
         
     def encode_jpg_image(self, decoded_image: cv2.typing.MatLike) -> bytes:
         """

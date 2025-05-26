@@ -6,6 +6,7 @@
 
 ## Verbesserungen
 - **Zusätzliche Event Infos**: Die Event-Liste zeigt jetzt zusätzliche Icons bei manuellen Entriegelungen / Verriegelungen während eines Events an.
+- **Konfigurations-Tab**: Geänderte Eingabefelder im Konfigurations-Tab werden nun vor dem Speichern optisch hervorgehoben. Dadurch sind Fehleingaben (z. B. beim Scrollen auf Smartphones) leichter erkennbar.
 
 ## Bugfixes
 - **RFID-Reader**: Das Ausleseverhalten des RFID-Readers wurde weiter verbessert

@@ -6,6 +6,7 @@
 
 ## Improvements
 - **Additional Event Info**: The event list now displays additional icons for manual unlocking/locking during an event.
+- **Configuration tab**: Changed input fields in the configuration tab are now visually highlighted before saving. This makes input errors (e.g., when scrolling on smartphones) easier to spot.
 
 ## Bugfixes
 - **RFID-Reader**: The reading behavior of the RFID reader has been further improved

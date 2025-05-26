@@ -2515,9 +2515,137 @@ def server(input, output, session):
             combined_models[f"yolo::{unique_id}"] = display_name
 
         hostname = get_hostname()
+
+        # Add JavaScript for tracking unsaved changes
+        unsaved_changes_js = ui.HTML("""
+        <script>
+        $(document).ready(function() {
+          let hasUnsavedChanges = false;
+          let isInitializing = true;
+
+          // Remove highlights on page load
+          $('#bSaveKittyhackConfig').removeClass('save-button-highlight');
+          $('.unsaved-input').removeClass('unsaved-input');
+
+          // Function to highlight the changed input and save button
+          function highlightInput(element) {
+            if (!isInitializing) {
+              $(element).addClass('unsaved-input');
+              $('#bSaveKittyhackConfig').addClass('save-button-highlight');
+              hasUnsavedChanges = true;
+            }
+          }
+
+          // Function to highlight slider specifically
+          function highlightSlider(sliderId) {
+            if (!isInitializing) {
+              const sliderContainer = $(`#${sliderId}`).closest('.form-group');
+              sliderContainer.find('.irs-single').addClass('unsaved-input');
+              sliderContainer.find('.irs-bar').addClass('unsaved-input');
+              sliderContainer.find('.irs-handle').addClass('unsaved-input');
+              $('#bSaveKittyhackConfig').addClass('save-button-highlight');
+              hasUnsavedChanges = true;
+            }
+          }
+
+          // Initialization period: ignore changes for 1 second
+          setTimeout(function() {
+            isInitializing = false;
+          }, 1000);
+
+          // Monitor all input elements within the configuration forms
+          $(document).on('change', 'input, select', function() {
+            highlightInput(this);
+          });
+
+          // Special handling for range sliders with direct observation of the hidden input
+          $(document).on('change input', 'input.js-range-slider', function() {
+            const sliderId = $(this).attr('id');
+            highlightSlider(sliderId);
+          });
+
+          // Also observe the slider handle being dragged using mousedown/mouseup events
+          $(document).on('mousedown touchstart', '.irs-handle', function() {
+            const slider = $(this).closest('.form-group').find('input.js-range-slider');
+            const sliderId = slider.attr('id');
+            $(this).data('dragging', true);
+            $(document).one('mouseup touchend', function() {
+              if ($(this).data('dragging')) {
+                highlightSlider(sliderId);
+                $(this).data('dragging', false);
+              }
+            });
+          });
+
+          // Monitor text inputs and textareas as they're typed in
+          $(document).on('input', 'input[type="text"], input[type="password"], textarea', function() {
+            highlightInput(this);
+          });
+
+          // Reset when save button is clicked
+          $(document).on('click', '#bSaveKittyhackConfig', function() {
+            $('.unsaved-input').removeClass('unsaved-input');
+            $('#bSaveKittyhackConfig').removeClass('save-button-highlight');
+            hasUnsavedChanges = false;
+          });
+        });
+        </script>
+
+        <style>
+        .unsaved-input {
+          border: 2px solid #ffc107 !important;
+          box-shadow: 0 0 0 0.2rem rgba(255, 193, 7, 0.25);
+        }
         
+        /* Special handling for range sliders - target the ion range slider elements */
+        .irs-single.unsaved-input {
+          background-color: #ffc107 !important;
+          color: black !important;
+          border: none !important; /* Remove border for this element */
+        }
+        
+        .irs-bar.unsaved-input {
+          background-color: #ffc107 !important;
+          border-color: #ffc107 !important;
+          border-top: 1px solid #ffc107 !important;
+          border-bottom: 1px solid #ffc107 !important;
+        }
+        
+        .irs-handle.unsaved-input {
+          border: 2px solid #ffc107 !important;
+          background-color: #ffc107 !important;
+        }
+        
+        /* Special handling for switches and checkboxes */
+        .form-check-input.unsaved-input {
+          box-shadow: 0 0 0 0.25rem rgba(255, 193, 7, 0.5);
+        }
+        
+        /* Highlight style for save button */
+        .save-button-highlight {
+          background-color: #ffc107 !important;
+          border-color: #e0a800 !important;
+          color: #000 !important;
+          box-shadow: 0 0 0 0.2rem rgba(255, 193, 7, 0.5);
+          animation: pulse-save 2s infinite;
+        }
+        
+        @keyframes pulse-save {
+          0% {
+            box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);
+          }
+          70% {
+            box-shadow: 0 0 0 8px rgba(255, 193, 7, 0);
+          }
+          100% {
+            box-shadow: 0 0 0 0 rgba(255, 193, 7, 0);
+          }
+        }
+        </style>
+        """)
 
         ui_config =  ui.div(
+            unsaved_changes_js,
             # --- General settings ---
             ui.div(
                 ui.card(

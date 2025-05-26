@@ -765,7 +765,7 @@ def wlan_modify_server(input, output, session, ssid: str):
             ui.notification_show(_("WLAN configuration for {} updated successfully.").format(ssid), duration=5, type="message")
             reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
         else:
-            ui.notification_show(_("Failed to update WLAN configuration for {}").format(ssid), duration=5, type="error")
+            ui.notification_show(_("Failed to update WLAN configuration for {}").format(ssid), duration=10, type="error")
         ui.modal_remove()
 
     @reactive.effect
@@ -783,7 +783,7 @@ def wlan_modify_server(input, output, session, ssid: str):
             ui.modal_remove()
             reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
         else:
-            ui.notification_show(_("Failed to delete WLAN connection {}").format(ssid), duration=5, type="error")
+            ui.notification_show(_("Failed to delete WLAN connection {}").format(ssid), duration=10, type="error")
 
 @module.server
 def manage_yolo_model_server(input, output, session, unique_id: str):
@@ -848,7 +848,7 @@ def manage_yolo_model_server(input, output, session, unique_id: str):
             reload_trigger_ai.set(reload_trigger_ai.get() + 1)
             reload_trigger_config.set(reload_trigger_config.get() + 1)
         else:
-            ui.notification_show(_("Failed to update model configuration {}").format(model_name), duration=5, type="error")
+            ui.notification_show(_("Failed to update model configuration {}").format(model_name), duration=10, type="error")
         ui.modal_remove()
 
     @reactive.effect
@@ -895,7 +895,7 @@ def manage_yolo_model_server(input, output, session, unique_id: str):
             reload_trigger_ai.set(reload_trigger_ai.get() + 1)
             reload_trigger_config.set(reload_trigger_config.get() + 1)
         else:
-            ui.notification_show(_("Failed to delete Model {}").format(input.txtModelName()), duration=5, type="error")
+            ui.notification_show(_("Failed to delete Model {}").format(input.txtModelName()), duration=10, type="error")
         ui.modal_remove()
 
 #######################################################################
@@ -1401,7 +1401,7 @@ def server(input, output, session):
                 if result.success:
                     ui.notification_show(_("Photo {} deleted successfully.").format(id), duration=5, type="message")
                 else:
-                    ui.notification_show(_("An error occurred while deleting the photo: {}").format(result.message), duration=5, type="error")
+                    ui.notification_show(_("An error occurred while deleting the photo: {}").format(result.message), duration=10, type="error")
 
         if deleted_photos:
             # Reload the dataset
@@ -1917,7 +1917,7 @@ def server(input, output, session):
                     if result.success:
                         ui.notification_show(_("{} deleted successfully from the database.").format(db_name), duration=5, type="message")
                     else:
-                        ui.notification_show(_("Failed to delete {} from the database: {}").format(db_name, result.message), duration=5, type="error")
+                        ui.notification_show(_("Failed to delete {} from the database: {}").format(db_name, result.message), duration=10, type="error")
                 else:                    
                     # Get image path, if a file was uploaded
                     card_pic: list[FileInfo] | None = input[f"mng_cat_pic_{db_id}"]()
@@ -1935,7 +1935,7 @@ def server(input, output, session):
                         if result.success:
                             ui.notification_show(_("Data for {} updated successfully.").format(card_name), duration=5, type="message")
                         else:
-                            ui.notification_show(_("Failed to update cat details: {}").format(result.message), duration=5, type="error")
+                            ui.notification_show(_("Failed to update cat details: {}").format(result.message), duration=10, type="error")
             
             if not updated_cats:
                 ui.notification_show(_("No changes detected. Nothing to save."), duration=5, type="message")
@@ -1990,7 +1990,7 @@ def server(input, output, session):
             ui.update_text(id="add_new_cat_rfid", value="")
             reload_trigger_cats.set(reload_trigger_cats.get() + 1)
         else:
-            ui.notification_show(_("An error occurred while adding the new cat: {}").format(result.message), duration=5, type="error")
+            ui.notification_show(_("An error occurred while adding the new cat: {}").format(result.message), duration=10, type="error")
 
     @output
     @render.ui
@@ -2305,12 +2305,12 @@ def server(input, output, session):
     def on_submit_model_training():
         # Check if a file was uploaded
         if input.model_training_data() is None:
-            ui.notification_show(_("Please upload a ZIP file with the Label Studio training data."), duration=5, type="error")
+            ui.notification_show(_("Please upload a ZIP file with the Label Studio training data."), duration=10, type="error")
             return
 
         # Check if the file is a ZIP file
         if not input.model_training_data()[0]['name'].endswith('.zip'):
-            ui.notification_show(_("The uploaded file is not a ZIP file. Please upload a valid ZIP file."), duration=5, type="error")
+            ui.notification_show(_("The uploaded file is not a ZIP file. Please upload a valid ZIP file."), duration=10, type="error")
             return
 
         # Get the uploaded file path
@@ -2322,7 +2322,7 @@ def server(input, output, session):
         if email_notification:
             # Validate the email address
             if not re.match(r"[^@]+@[^@]+\.[^@]+", email_notification):
-                ui.notification_show(_("Please enter a valid email address."), duration=5, type="error")
+                ui.notification_show(_("Please enter a valid email address."), duration=10, type="error")
                 return
             if email_notification != CONFIG['EMAIL']:
                 # Update the email address in the config
@@ -2831,6 +2831,24 @@ def server(input, output, session):
                     ),
                     ui.hr(),
                     ui.row(
+                        ui.column(12, ui.input_switch("btnUseCameraForMotionDetection", _("Use camera for motion detection"), CONFIG['USE_CAMERA_FOR_MOTION_DETECTION'])),
+                        ui.column(
+                            12,
+                            ui.markdown(
+                                _("If this setting is enabled, instead of the outside PIR sensor, the camera will be used for motion detection.") + "  \n\n" +
+                                _("**How it works:**") + "  \n" +
+                                _("- In regular operation, Kittyhack waits for a trigger from the outside PIR sensor before starting camera analysis") + "  \n" + 
+                                _("- With this feature enabled, the PIR sensor is disabled and the camera continuously analyzes images") + "  \n" + 
+                                _("- When a cat is detected in the camera feed, it's treated as equivalent to a motion detection outside") + "  \n\n" +
+                                _("You can configure the required threshold for the cat detection with the slider `Cat detection threshold` below.") + "  \n\n" +
+                                _("This may be very helpful in areas where environmental factors (moving trees, people passing by) permanently cause false PIR triggers.") + "  \n\n" +
+                                _("**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models.") + "\n\n" +
+                                _("This is an *EXPERIMENTAL* feature! It depends heavily on the quality of your model and sufficient lighting conditions.")
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
                         ui.column(4, ui.input_slider("sldCatThreshold", _("Cat detection threshold"), min=0, max=100, value=CONFIG['CAT_THRESHOLD'])),
                         ui.column(
                             8,
@@ -3076,7 +3094,7 @@ def server(input, output, session):
                     _("Allowed to exit time ranges: ") +
                     _("Invalid time format. Please use HH:MM format.") + "\n" + 
                     _("Changes were not saved."), 
-                    duration=5, type="error"
+                    duration=10, type="error"
                 )
                 return False
             # Check if the time is in the valid range
@@ -3087,7 +3105,7 @@ def server(input, output, session):
                         _("Allowed to exit time ranges: ") +
                         _("Time must be between 00:00 and 23:59.") + "\n" + 
                         _("Changes were not saved."), 
-                        duration=5, type="error"
+                        duration=10, type="error"
                     )
                     return False
             except ValueError:
@@ -3095,7 +3113,7 @@ def server(input, output, session):
                     _("Allowed to exit time ranges: ") +
                     _("Invalid time value.") + "\n" +
                     _("Changes were not saved."),
-                    duration=5, type="error"
+                    duration=10, type="error"
                 )
                 return False
             return True
@@ -3120,7 +3138,7 @@ def server(input, output, session):
                 ui.notification_show(
                     _("Hostname: ") +
                     _("Invalid hostname. Only letters, numbers and hyphens are allowed.") + "\n" + 
-                    _("Changes were not saved."), duration=5, type="error"
+                    _("Changes were not saved."), duration=10, type="error"
                 )
                 return
             # Hostname is valid, set it
@@ -3161,6 +3179,7 @@ def server(input, output, session):
         
         CONFIG['USE_CAMERA_FOR_CAT_DETECTION'] = input.btnUseCameraForCatDetection()
         CONFIG['CAT_THRESHOLD'] = float(input.sldCatThreshold())
+        CONFIG['USE_CAMERA_FOR_MOTION_DETECTION'] = input.btnUseCameraForMotionDetection()
         CONFIG['ALLOWED_TO_ENTER'] = AllowedToEnter(input.txtAllowedToEnter())
         CONFIG['LIVE_VIEW_REFRESH_INTERVAL'] = float(input.numLiveViewUpdateInterval())
         CONFIG['ALLOWED_TO_EXIT'] = input.btnAllowedToExit()
@@ -3188,6 +3207,24 @@ def server(input, output, session):
 
         # Save the configuration to the config file
         _ = set_language(CONFIG['LANGUAGE'])
+
+        # Check for invalid combinations of settings
+        if input.selectedModel().startswith("tflite::") and input.btnUseCameraForMotionDetection():
+            CONFIG['USE_CAMERA_FOR_MOTION_DETECTION'] = False
+            ui.notification_show(
+                _("Invalid configuration: ") +
+                _("You cannot use the camera for motion detection in combination with an original Kittyflap model. You need a custom trained model for this.") + "\n" +
+                _("The setting \"{}\" was disabled.").format(_("Use camera for motion detection")),
+                duration=None, type="warning"
+            )
+        if input.selectedModel().startswith("tflite::") and input.btnUseCameraForCatDetection():
+            CONFIG['USE_CAMERA_FOR_CAT_DETECTION'] = False
+            ui.notification_show(
+                _("Invalid configuration: ") +
+                _("You cannot use the camera for cat detection in combination with an original Kittyflap model. You need a custom trained model for this.") + "\n" +
+                _("The setting \"{}\" was disabled.").format(_("Use camera for cat detection")),
+                duration=None, type="warning"
+            )
         
         if save_config():
             ui.notification_show(_("Kittyhack configuration updated successfully."), duration=5, type="message")
@@ -3200,7 +3237,7 @@ def server(input, output, session):
             if img_processing_cores_changed or hostname_changed:
                 ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the changed configuration."), duration=30, type="message")
         else:
-            ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=5, type="error")
+            ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=10, type="error")
 
     @output
     @render.ui
@@ -3299,7 +3336,7 @@ def server(input, output, session):
             ui.notification_show(_("WLAN configuration for {} updated successfully.").format(ssid), duration=5, type="message")
             reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
         else:
-            ui.notification_show(_("Failed to update WLAN configuration for {}").format(ssid), duration=5, type="error")
+            ui.notification_show(_("Failed to update WLAN configuration for {}").format(ssid), duration=10, type="error")
         ui.modal_remove()
 
     @output
@@ -3452,7 +3489,7 @@ def server(input, output, session):
             return zip_file_path
         except Exception as e:
             logging.error(f"Failed to create logs zip file: {e}")
-            ui.notification_show(_("Failed to create logs zip file: {}").format(e), duration=5, type="error")
+            ui.notification_show(_("Failed to create logs zip file: {}").format(e), duration=10, type="error")
             ui.modal_remove()
             return None
         
@@ -3477,7 +3514,7 @@ def server(input, output, session):
             return CONFIG['KITTYHACK_DATABASE_PATH']
         except Exception as e:
             logging.error(f"Failed to halt the backend processes: {e}")
-            ui.notification_show(_("Failed to halt the backend processes: {}").format(e), duration=5, type="error")
+            ui.notification_show(_("Failed to halt the backend processes: {}").format(e), duration=10, type="error")
             ui.modal_remove()
             return None
         finally:
@@ -3501,7 +3538,7 @@ def server(input, output, session):
         if os.path.exists(CONFIG['DATABASE_PATH']):
             return CONFIG['DATABASE_PATH']
         else:
-            ui.notification_show(_("The original kittyflap database file does not exist."), duration=5, type="error")
+            ui.notification_show(_("The original kittyflap database file does not exist."), duration=10, type="error")
             return None
     
     @output
@@ -3803,7 +3840,7 @@ def server(input, output, session):
                     ui.notification_show(_("The pictures from the original kittyflap database were removed successfully."), duration=5, type="message")
                     p.set(2)
                 except Exception as e:
-                    ui.notification_show(_("An error occurred while deleting the pictures from the original kittyflap database: {}").format(e), duration=5, type="error")
+                    ui.notification_show(_("An error occurred while deleting the pictures from the original kittyflap database: {}").format(e), duration=10, type="error")
             else:
                 ui.notification_show(_("The original kittyflap database file does not exist anymore."), duration=5, type="message")
         reload_trigger_info.set(reload_trigger_info.get() + 1)

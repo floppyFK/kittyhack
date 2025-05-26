@@ -566,12 +566,13 @@ class Rfid:
                             line = f.readline().decode('utf-8', errors='ignore').strip()
                             line = self.remove_non_printable_chars(line)
                             # Skip empty lines and initialization messages from the RFID reader
-                            if not line or not re.match(r'^[0-9A-Fa-f]{16}$', line):
-                                logging.info(f"[RFID] Skipping line: '{line}' - Invalid format (requires exactly 16 hex characters)")
+                            match = re.search(r'([0-9A-Fa-f]{16})', line)
+                            if not match:
+                                logging.info(f"[RFID] Skipping line: '{line}' - No valid 16-char hex substring found")
                                 continue
 
-                            # We found something! Remove non-hex characters from the tag ID
-                            tag_id = re.sub(r'[^0-9A-Fa-f]', '', line)
+                            # We found a valid 16-char hex substring
+                            tag_id = match.group(1)
                             timestamp = tm.time()
                             last_tag, last_tm = self.get_tag()
                             self.set_tag(tag_id, timestamp)

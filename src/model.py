@@ -548,12 +548,12 @@ class ModelHandler:
                             detected_objects = []
                             
                             for r in results:
-                                if len(r) > 0:
-                                    logging.info(f"[MODEL] Detected {len(r)} objects in image")
+                                detected_info = []
                                 for i, (box, conf, cls) in enumerate(zip(r.boxes.xyxy, r.boxes.conf, r.boxes.cls)):
                                     xmin, ymin, xmax, ymax = box
                                     object_name = labels[int(cls)]
                                     probability = float(conf * 100)
+                                    detected_info.append(f"{object_name} ({probability:.1f}%)")
                                     
                                     # Map bounding box coordinates back to original size
                                     xmin_orig = float((xmin - pad_x) / scale)
@@ -580,6 +580,9 @@ class ModelHandler:
                                         mouse_probability = int(probability)
                                     elif object_name.lower() in cat_names:
                                         own_cat_probability = int(probability)
+
+                                if detected_info:
+                                    logging.info(f"[MODEL] Detected {len(detected_info)} objects in image: {', '.join(detected_info)}")
                             
                             # Return results through the output queue
                             output_queue.put((job_id, mouse_probability, own_cat_probability, detected_objects))

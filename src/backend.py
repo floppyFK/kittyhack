@@ -306,7 +306,7 @@ def backend_main(simulate_kittyflap = False):
                 logging.info(f"[BACKEND] {motion_source}-based motion detection: Motion detected OUTSIDE (Block ID: {motion_block_id})")
                 # If we use the camera for motion detection, set the first motion timestamp a bit earlier to avoid missing the first motion
                 if use_camera_for_motion:
-                    first_motion_outside_tm = tm.time() - 2.5
+                    first_motion_outside_tm = tm.time() - 0.5
                 else:
                     first_motion_outside_tm = tm.time()
                     model_handler.resume()
@@ -412,7 +412,7 @@ def backend_main(simulate_kittyflap = False):
                 rfid.set_tag(None, 0.0)
                 logging.info("[BACKEND] Tag timeout reached. Forget the tag.")
 
-            if image_buffer.size() > 0:
+            if image_buffer.size() > 0 and first_motion_outside_tm > 0.0:
                 # Process all elements in the buffer
                 ids_of_current_motion_block = image_buffer.get_filtered_ids(min_timestamp=first_motion_outside_tm)
                 ids_with_mouse = image_buffer.get_filtered_ids(min_timestamp=first_motion_outside_tm, min_mouse_probability=CONFIG['MOUSE_THRESHOLD'])

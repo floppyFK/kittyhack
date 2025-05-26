@@ -81,6 +81,7 @@ def backend_main(simulate_kittyflap = False):
     inside_manually_unlocked = False
     backend_main.prey_detection_tm = 0.0
     additional_verdict_infos = []
+    previous_use_camera_for_motion = None
 
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
@@ -141,10 +142,42 @@ def backend_main(simulate_kittyflap = False):
         try:
             tm.sleep(0.1)  # sleep to reduce CPU load
 
+            # Decide if the camera or the PIR should be used for motion detection
+            use_camera_for_motion = CONFIG['USE_CAMERA_FOR_MOTION_DETECTION']
+
+            # Log if the configuration has changed
+            if use_camera_for_motion != previous_use_camera_for_motion:
+                previous_use_camera_for_motion = use_camera_for_motion
+                if use_camera_for_motion:
+                    motion_source = "Camera"
+                    # Check whether the model handler is running. If not, start it.
+                    if model_hanlder.get_run_state() == False:
+                        logging.info("[BACKEND] Starting model handler for camera-based motion detection.")
+                        model_hanlder.resume()
+                        tm.sleep(0.5)
+                else:
+                    motion_source = "PIR"
+                    if motion_outside == 0 and model_hanlder.get_run_state() == True:
+                        logging.info("[BACKEND] Currently no motion outside detected. Pausing model handler for PIR-based motion detection.")
+                        model_hanlder.pause()
+                logging.info(f"[BACKEND] Outside motion detection mode changed to {motion_source}.")
+                image_buffer.clear()  # Clear the image buffer when switching motion detection mode
+
             last_outside = motion_outside
             last_inside = motion_inside
             last_inside_raw = motion_inside_raw
-            motion_outside, motion_inside, motion_outside_raw, motion_inside_raw = pir.get_states()
+
+            if use_camera_for_motion:
+                # Decide if motion occured currently. Look up to 5 seconds into the past for images with cats
+                min_ts = tm.time() - 5.0
+                cat_imgs = image_buffer.get_filtered_ids(min_timestamp=min_ts, min_own_cat_probability=CONFIG['CAT_THRESHOLD'])
+                motion_outside = 1 if len(cat_imgs) > 0 else 0
+                # Motion raw does not exist for the camera, so we set it to the same value as motion_outside
+                motion_outside_raw = motion_outside
+                # Still use PIR for inside motion
+                __, motion_inside, __, motion_inside_raw = pir.get_states()
+            else:
+                motion_outside, motion_inside, motion_outside_raw, motion_inside_raw = pir.get_states()
 
             # Update the motion timestamps
             if motion_outside == 1:
@@ -169,14 +202,15 @@ def backend_main(simulate_kittyflap = False):
 
             # Outside motion stopped
             if last_outside == 1 and motion_outside == 0:
-                if model_hanlder.get_run_state() == True:
-                    model_hanlder.pause()
-                    # Wait for the last image to be processed
-                    tm.sleep(0.5)
+                if not use_camera_for_motion:
+                    if model_hanlder.get_run_state() == True:
+                        model_hanlder.pause()
+                        # Wait for the last image to be processed
+                        tm.sleep(0.5)
                 unlock_inside_decision_made = False
                 tag_id_valid = False
                 last_motion_outside_tm = tm.time()
-                logging.info(f"[BACKEND] Motion stopped OUTSIDE (Block ID: '{motion_block_id}')")
+                logging.info(f"[BACKEND] {motion_source}-based motion detection: Motion stopped OUTSIDE (Block ID: '{motion_block_id}')")
                 if (magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and inside_manually_unlocked == False):
                     magnets.queue_command("lock_inside")
 
@@ -214,11 +248,11 @@ def backend_main(simulate_kittyflap = False):
                 ids_exceeding_mouse_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_mouse_probability=CONFIG['MIN_THRESHOLD'])
                 ids_exceeding_nomouse_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_no_mouse_probability=CONFIG['MIN_THRESHOLD'])
                 ids_exceeding_own_cat_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_own_cat_probability=CONFIG['MIN_THRESHOLD'])
-                logging.info(f"""[BACKEND] Detection summary:
+                logging.info(f"""[BACKEND] {motion_source}-based motion detection: Detection summary:
                                                             - {len(img_ids_for_motion_block)} elements in current motion block (between {first_motion_outside_tm} and {last_motion_outside_tm})
-                                                            - {len(ids_exceeding_mouse_th)} elements exceeding mouse threshold
-                                                            - {len(ids_exceeding_nomouse_th)} elements exceeding no-mouse threshold
-                                                            - {len(ids_exceeding_own_cat_th)} elements exceeding own cat threshold
+                                                            - {len(ids_exceeding_mouse_th)} elements where "mouse" detection exceeded the min. logging threshold of {CONFIG['MIN_THRESHOLD']}
+                                                            - {len(ids_exceeding_nomouse_th)} elements where "no-mouse" detection exceeded the min. logging threshold of {CONFIG['MIN_THRESHOLD']}
+                                                            - {len(ids_exceeding_own_cat_th)} elements where "own cat" detection exceeded the min. logging threshold of {CONFIG['MIN_THRESHOLD']}
                                                             Event type: {all_events}
                                                             RFID tag: {tag_id or 'None'} 
                                                             Video tag: {tag_id_from_video or 'None'}""")
@@ -267,9 +301,13 @@ def backend_main(simulate_kittyflap = False):
             
             if last_outside == 0 and motion_outside == 1: # Outside motion detected
                 motion_block_id += 1
-                logging.info(f"[BACKEND] Motion detected OUTSIDE (Block ID: {motion_block_id})")
-                first_motion_outside_tm = tm.time()
-                model_hanlder.resume()
+                logging.info(f"[BACKEND] {motion_source}-based motion detection: Motion detected OUTSIDE (Block ID: {motion_block_id})")
+                # If we use the camera for motion detection, set the first motion timestamp a bit earlier to avoid missing the first motion
+                if use_camera_for_motion:
+                    first_motion_outside_tm = tm.time() - 2.5
+                else:
+                    first_motion_outside_tm = tm.time()
+                    model_hanlder.resume()
                 known_rfid_tags = db_get_all_rfid_tags(CONFIG['KITTYHACK_DATABASE_PATH'])
                 cat_rfid_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
                 # Reset the additional verdict infos

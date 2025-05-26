@@ -156,13 +156,53 @@ class ImageBuffer:
         """
         Append a new element to the buffer.
         """
+        # --- Periodic logging for discarded elements ---
+        if not hasattr(self, '_last_log_time'):
+            self._last_log_time = timestamp
+            self._appended_count = 0
+            self._max_mouse_prob = 0.0
+            self._max_no_mouse_prob = 0.0
+            self._max_own_cat_prob = 0.0
+            self._discarded_count = 0
+            self._last_discard_log_time = timestamp
+
         if len(self._buffer) >= self.MAX_IMAGE_BUFFER_SIZE:
-            logging.warning(f"[IMAGEBUFFER] Buffer is full. Discarding the oldest element with ID {self._buffer[0].id}.")
             self._buffer.pop(0)
+            self._discarded_count += 1
+
         element = ImageBufferElement(self._next_id, 0, timestamp, original_image, modified_image, mouse_probability, no_mouse_probability, own_cat_probability, detected_objects=detected_objects)
         self._buffer.append(element)
-        logging.info(f"[IMAGEBUFFER] Appended new element with ID {self._next_id}, timestamp: {timestamp}, Mouse probability: {mouse_probability}, No mouse probability: {no_mouse_probability}, Own cat probability: {own_cat_probability} to the buffer.")
+
+        self._appended_count += 1
+        self._max_mouse_prob = max(self._max_mouse_prob, mouse_probability)
+        self._max_no_mouse_prob = max(self._max_no_mouse_prob, no_mouse_probability)
+        self._max_own_cat_prob = max(self._max_own_cat_prob, own_cat_probability)
+
+        # Periodic log for appended images and max probabilities
+        if timestamp - self._last_log_time >= 60:
+            logging.info(
+                f"[IMAGEBUFFER] {self._appended_count} images appended in last 60s. "
+                f"Max Mouse prob: {self._max_mouse_prob}, "
+                f"Max No-mouse prob: {self._max_no_mouse_prob}, "
+                f"Max Own-cat prob: {self._max_own_cat_prob}"
+            )
+            self._last_log_time = timestamp
+            self._appended_count = 0
+            self._max_mouse_prob = 0.0
+            self._max_no_mouse_prob = 0.0
+            self._max_own_cat_prob = 0.0
+
+        # Periodic log for discarded elements
+        if timestamp - self._last_discard_log_time >= 60:
+            if self._discarded_count > 0:
+                logging.info(
+                    f"[IMAGEBUFFER] {self._discarded_count} oldest elements discarded from buffer in last 60s (buffer full)."
+                )
+                self._discarded_count = 0
+            self._last_discard_log_time = timestamp
+
         self._next_id += 1
+
 
     def pop(self) -> Optional[ImageBufferElement]:
         """

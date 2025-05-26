@@ -456,6 +456,8 @@ class ModelHandler:
             # If using all cores, run the model directly for better performance
             if using_all_cores:
                 logging.info(f"[MODEL] Loading YOLO model directly in main process using all available cores")
+                logging.getLogger("ultralytics").setLevel(logging.WARNING)
+                logging.getLogger("ultralytics.yolo.engine.model").setLevel(logging.WARNING)
                 self._yolo_model = YOLO(self.modeldir, task="detect", verbose=False)
                 # Re-Configure logging to silence the model's output
                 configure_logging(CONFIG['LOGLEVEL'])
@@ -523,6 +525,8 @@ class ModelHandler:
                         logging.info(f"[MODEL] Worker process running on CPU cores {cores_to_use}")
                         
                         # Load the YOLO model in this process
+                        logging.getLogger("ultralytics").setLevel(logging.WARNING)
+                        logging.getLogger("ultralytics.yolo.engine.model").setLevel(logging.WARNING)
                         model = YOLO(model_path, task="detect", verbose=False)
                         # Re-Configure logging to silence the model's output
                         configure_logging(CONFIG['LOGLEVEL'])
@@ -544,7 +548,8 @@ class ModelHandler:
                             detected_objects = []
                             
                             for r in results:
-                                logging.info(f"[MODEL] Detected {len(r)} objects in image")
+                                if len(r) > 0:
+                                    logging.info(f"[MODEL] Detected {len(r)} objects in image")
                                 for i, (box, conf, cls) in enumerate(zip(r.boxes.xyxy, r.boxes.conf, r.boxes.cls)):
                                     xmin, ymin, xmax, ymax = box
                                     object_name = labels[int(cls)]
@@ -787,7 +792,24 @@ class ModelHandler:
                     t2 = cv2.getTickCount()
                     time1 = (t2 - t1) / freq
                     frame_rate_calc = 1 / time1
-                    logging.info(f"[MODEL] Model processing time: {time1:.2f} sec, Frame Rate: {frame_rate_calc:.2f} fps")
+                    if CONFIG.get('USE_CAMERA_FOR_MOTION_DETECTION', False):
+                        # Log every 60 seconds: average FPS and frame count
+                        if not hasattr(self, '_last_model_log_time'):
+                            self._last_model_log_time = tm.time()
+                            self._frame_count_since_log = 0
+                            self._fps_sum_since_log = 0.0
+
+                        self._frame_count_since_log += 1
+                        self._fps_sum_since_log += frame_rate_calc
+                        now = tm.time()
+                        if now - self._last_model_log_time >= 60:
+                            avg_fps = self._fps_sum_since_log / self._frame_count_since_log if self._frame_count_since_log > 0 else 0
+                            logging.info(f"[MODEL] Model processing: {self._frame_count_since_log} frames in last 60s, avg FPS: {avg_fps:.2f}")
+                            self._last_model_log_time = now
+                            self._frame_count_since_log = 0
+                            self._fps_sum_since_log = 0.0
+                    else:
+                        logging.info(f"[MODEL] Model processing time: {time1:.2f} sec, Frame Rate: {frame_rate_calc:.2f} fps")
 
                     # Set first_run to False after processing the first frame
                     first_run = False

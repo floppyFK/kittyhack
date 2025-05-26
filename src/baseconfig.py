@@ -87,7 +87,8 @@ DEFAULT_CONFIG = {
         "startup_shutdown_flag": False,
         "not_graceful_shutdowns": 0,
         "use_camera_for_cat_detection": False,
-        "cat_threshold": 70.0
+        "cat_threshold": 70.0,
+        "use_camera_for_motion_detection": False
     }
 }
 
@@ -158,7 +159,8 @@ def load_config():
         "STARTUP_SHUTDOWN_FLAG": parser.getboolean('Settings', 'startup_shutdown_flag', fallback=DEFAULT_CONFIG['Settings']['startup_shutdown_flag']),
         "NOT_GRACEFUL_SHUTDOWNS": parser.getint('Settings', 'not_graceful_shutdowns', fallback=DEFAULT_CONFIG['Settings']['not_graceful_shutdowns']),
         "USE_CAMERA_FOR_CAT_DETECTION": parser.getboolean('Settings', 'use_camera_for_cat_detection', fallback=DEFAULT_CONFIG['Settings']['use_camera_for_cat_detection']),
-        "CAT_THRESHOLD": parser.getfloat('Settings', 'cat_threshold', fallback=DEFAULT_CONFIG['Settings']['cat_threshold'])
+        "CAT_THRESHOLD": parser.getfloat('Settings', 'cat_threshold', fallback=DEFAULT_CONFIG['Settings']['cat_threshold']),
+        "USE_CAMERA_FOR_MOTION_DETECTION": parser.getboolean('Settings', 'use_camera_for_motion_detection', fallback=DEFAULT_CONFIG['Settings'].get('use_camera_for_motion_detection', False))
     }
 
 def save_config():
@@ -225,6 +227,7 @@ def save_config():
     settings['not_graceful_shutdowns'] = CONFIG['NOT_GRACEFUL_SHUTDOWNS']
     settings['use_camera_for_cat_detection'] = CONFIG['USE_CAMERA_FOR_CAT_DETECTION']
     settings['cat_threshold'] = CONFIG['CAT_THRESHOLD']
+    settings['use_camera_for_motion_detection'] = CONFIG['USE_CAMERA_FOR_MOTION_DETECTION']
 
     # Write updated configuration back to the file
     try:

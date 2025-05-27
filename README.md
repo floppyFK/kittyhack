@@ -32,6 +32,13 @@ Current features:
 
 ---
 
+## Planned Features
+
+- **Home Assistant integration via MQTT**  
+  Planned support for Home Assistant through MQTT, allowing automation and monitoring of the Kittyflap from your smart home system.
+
+---
+
 ## Installation
 
 ### Prerequisites
@@ -163,11 +170,8 @@ to the Kittyflap via your router. For a secure connection, additional measures l
 >⚠️ To ensure Kittyhack is always reachable at the same IP address, it is recommended to assign a static IP address in your router.
 
 ### Updates
-Updates for Kittyhack are available directly in the WebGUI in the 'Info' section starting from version v1.2.0.  
-If you are using Kittyhack version v1.1.x, simply run the [setup script](#setup_en) on the Kittyflap again to perform an update.
-
-### Switching between v1.1.x and newer versions
-The [setup script](#setup_en) allows you to switch between versions. Simply run it again and choose the appropriate option.
+Updates for Kittyhack are available directly in the WebGUI in the 'Info' section.  
+Alternatively, you can also run the [setup script](#setup_en) again on the Kittyflap to perform an update.
 
 
 ## FAQ
@@ -176,18 +180,21 @@ The [setup script](#setup_en) allows you to switch between versions. Simply run 
 The WLAN signal is probably too weak because the WLAN antenna is mounted on the outside of the Kittyflap and has to pass therefore an additional wall or door to reach your router.  
 Make sure the distance to the router is not too great. If the WLAN signal is too weak, the Kittyflap will eventually disconnect and will only reconnect after being restarted by 
 unplugging and plugging it back in (I am still investigating why this happens - I am trying to find a solution!).  
-In Kittyhack version 1.2.0 and later, you can check the strength of the WLAN signal in the 'Info' section.
 
-### Why is the website background grayed out and the content disappears when I try to switch sections?
-This issue is related to power-saving features on smartphones and tablets: When your browser on your smartphone loses focus (e.g., when you switch to the home screen), communication 
-with the Kittyhack page stops after a few seconds. I am still working on a solution for this problem.  
-In the meantime, you can simply reload the Kittyhack page (e.g., with the refresh gesture) to make it work normally again.
+### Why does the website background turn gray and the content disappear when I try to switch sections?
+This issue is caused by the power-saving features of smartphones and tablets: When your browser on your smartphone loses focus (for example, when switching to the home screen), the connection to the Kittyhack page is interrupted after a few seconds.  
+By now (since v1.5), the page should automatically reload itself after such a connection loss. If this does not happen, please reload the page manually (e.g., using the refresh gesture).
 
-### After updating Kittyhack from v1.1 to v1.2, the detection area for 'Mouse' or 'No Mouse' is not marked in the images in the image view, even though I have activated the *Show detection overlay* function
-For old images imported from version v1.1, these areas were not saved. This function is only available from version v1.2. For all newly captured images, this area will be saved correctly.
+### I have successfully installed Kittyhack. Shouldn't the night light be activated when it gets too dark?
+The switching to night mode (infrared filter) is handled automatically by the built-in camera module. If you cover the area of the camera module completely with your hand during sufficient daylight, you should hear a faint clicking sound. If you do not hear this click, the switching is probably defective.  
+There have already been some cases where the switching was defective. In this case, the module (Akozon 5MP OV5647) unfortunately has to be replaced.  
+You can find more details in this post: https://github.com/floppyFK/kittyhack/issues/81
 
-### I have successfully installed Kittyhack v1.2. Shouldn't the night light be activated when it gets too dark?
-Please restart the Kittyflap once after installation (in the 'System' section -> 'Restart Kittyflap'), then it should work.
+### My cat flap recognizes everything as prey—except the actual prey. The detected zones are somewhere random in the image.
+You are probably still using an original object detection model from Kittyflap. These original models are not reliable!  
+It is highly recommended to train your own model. You can find instructions in the [Wiki](https://github.com/floppyFK/kittyhack/wiki/%5BEN%5D-Kittyhack-v2.0-%E2%80%90-Train-own-AI%E2%80%90Models).  
+If you are already using your own model, continue to train and refine it. Also, make sure that only high-quality and meaningful images are included in your datasets.
+
 
 ---
 
@@ -219,6 +226,13 @@ Aktuelle Features:
 - **Katzen verwalten und neue Katzen hinzufügen**
 - **Ereignisse von ankommenden/rausgehenden Katzen anzeigen**
 - **"KI" Modell Training** Erstelle ein individuelles Objekterkennungsmodell für deine Katze und deine Umgebung anhand der eigenen Bilder
+
+---
+
+## Geplante Features
+
+- **Home Assistant Unterstützung via MQTT**  
+  Geplante Unterstützung für Home Assistant über MQTT, um die Kittyflap in dein Smart Home zu integrieren und zu automatisieren.
 
 ---
 
@@ -354,11 +368,8 @@ auf die Kittyflap über deinen Router freigibst. Für eine sichere Verbindung k�
 >⚠️ Damit Kittyhack immer unter der selben IP Adresse erreichbar ist, empfiehlt es sich, im Router eine statische IP Adresse zu vergeben.
 
 ### Updates
-Updates von Kittyhack sind ab der Version v1.2.0 direkt in der WebGUI in der Sektion 'Info' möglich.
-Wenn du die Version v1.1.x verwendest, führe für ein Update einfach das [Setup Script](#setup_de) auf der Kittyflap nochmal aus.
-
-### Wechsel zwischen v1.1.x und neueren Version
-Das [Setup Script](#setup_de) bietet die Möglichkeit zwischen den Versionen zu wechseln. Führe es dazu einfach erneut aus und wähle die entsprechende Option. 
+Updates von Kittyhack sind direkt in der WebGUI in der Sektion 'Info' möglich.  
+Alternativ zu den Updates über die WebGUI kann auch das [Setup Script](#setup_de) erneut ausgeführt werden. Auch dort ist ein Update möglich.
 
 
 ## FAQ
@@ -366,16 +377,18 @@ Das [Setup Script](#setup_de) bietet die Möglichkeit zwischen den Versionen zu 
 ### Meine Kittyflap verschwindet nach einigen Stunden immer wieder aus meinem WLAN
 Wahrscheinlich ist das WLAN Signal zu schwach, da die WLAN-Antenne auf der Außenseite der Kittyflap angebracht ist und bis zu deinem Router somit eine zusätzliche Wand bzw. Türe durchdringen muss.  
 Achte darauf, dass die Entfernung zum Router nicht zu groß ist. Wenn das WLAN-Signal zu schwach ist, meldet sich die Kittyflap irgendwann ab und wählt sich erst wieder ein,
-wenn sie durch Aus- und Wiedereinstecken neu gestartet wurde (warum das so ist untersuche ich noch - ich versuche, eine Lösung dafür zu finden!)  
-In Kittyhack Version ab v1.2.0 kannst du die Stärke des WLAN-Signals übrigens in der 'Info'-Sektion auslesen.  
+wenn sie durch Aus- und Wiedereinstecken neu gestartet wurde (warum das so ist untersuche ich noch - ich versuche, eine Lösung dafür zu finden!)   
 
 ### Warum ist der Hintergrund der Website ausgegraut und der Inhalt verschwindet, wenn ich versuche, die Sektion wechsle?
-Dieses Problem hat mit den Energiesparfunktionen auf Smartphones und Tablets zu tun: Wenn dein Browser auf deinem Smartphone den Fokus verliert (also wenn du z. B. auf den Homescreen wechselst), 
-wird nach wenigen Sekunden die Kommunikation mit der Kittyhack Seite gestoppt. Ich versuche noch für dieses Problem eine Lösung zu finden.  
-In der Zwischenzeit kannst du die Kittyhack Seite aber einfach neu laden (z. B. mit der Aktualisieren-Geste), damit sie wieder normal funktioniert.
+Dieses Problem hängt mit den Energiesparfunktionen von Smartphones und Tablets zusammen: Wenn dein Browser auf dem Smartphone den Fokus verliert (z. B. beim Wechsel auf den Homescreen), wird nach wenigen Sekunden die Verbindung zur Kittyhack-Seite getrennt.  
+Inzwischen (seit v1.5) sollte die Seite sich bei einem solchen Verbindungsabbruch automatisch neu laden. Falls das nicht geschieht, lade die Seite bitte einmal manuell neu (z. B. mit der Aktualisieren-Geste).
 
-### Nach dem Update von Kittyhack von v1.1 auf v1.2 ist in den Bildern in der Bilderansicht kein Erkennungsbereich für 'Maus' bzw. 'Keine Maus' eingezeichnet, obwohl ich die Funktion *Overlay in Bildern anzeigen* aktiviert habe
-Bei alten Bildern, die aus der Version v1.1 importiert wurden, wurden diese Bereiche noch nicht abgespeichert. Diese Funktion ist erst ab Version v1.2 verfügbar. Bei allen neu aufgenommenen Bildern wird dieser Bereich korrekt gespeichert.
+### Ich habe Kittyhack erfolgreich installiert. Sollte nun nicht das Nachtlicht aktiviert werden, wenn es zu dunkel ist?
+Die Umschaltung zum Nachtlicht (Infrarot-Filter) erfolgt autark über das verbaute Kameramodul. Wenn der Bereich des Kameramoduls – bei ausreichendem Tageslicht – vollflächig mit der Hand abgedeckt wird, sollte ein leises Klicken zu hören sein. Ist dieses Klicken nicht zu hören, ist die Umschaltung vermutlich defekt.  
+Es gab bereits einige Fälle, bei denen die Umschaltung defekt war. In diesem Fall muss das Modul (Akozon 5MP OV5647) leider ausgetauscht werden.  
+Weitere Details findest du in diesem Beitrag: https://github.com/floppyFK/kittyhack/issues/81
 
-### Ich habe Kittyhack v1.2 erfolgreich installiert. Sollte damit nicht das Nachtlicht aktiviert werden, wenn es zu dunkel ist?
-Bitte starte die Kittyflap nach der Installation einmal neu (in der Sektion 'System' -> 'Kittyflap Neustarten'), dann sollte es funktionieren.
+### Bei meiner Katzenklappe wird alles mögliche als Beute erkannt, nur nicht die Beute selbst. Die Zonen für die erkannten Bereiche liegen irgendwo im Bild.
+Du verwendest vermutlich noch ein originales Modell der Kittyflap für die Objekterkennung. Diese Modelle sind nicht zuverlässig!  
+Trainiere unbedingt ein eigenes Modell. Wie das funktioniert, kannst du im [Wiki](https://github.com/floppyFK/kittyhack/wiki/%5BDE%5D-Kittyhack-v2.0-%E2%80%90-Eigene-KI%E2%80%90Modelle-trainieren) nachlesen.  
+Falls du bereits ein eigenes Modell verwendest, solltest du es weiter trainieren und verfeinern. Achte außerdem darauf, dass nur wirklich gute und aussagekräftige Bilder in deinen Datensätzen enthalten sind.

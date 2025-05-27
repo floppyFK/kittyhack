@@ -190,10 +190,15 @@ The switching to night mode (infrared filter) is handled automatically by the bu
 There have already been some cases where the switching was defective. In this case, the module (Akozon 5MP OV5647) unfortunately has to be replaced.  
 You can find more details in this post: https://github.com/floppyFK/kittyhack/issues/81
 
-### My cat flap recognizes everything as prey—except the actual prey. The detected zones are somewhere random in the image.
+### My cat flap recognizes everything as prey - except the actual prey. The detected zones are somewhere random in the image.
 You are probably still using an original object detection model from Kittyflap. These original models are not reliable!  
 It is highly recommended to train your own model. You can find instructions in the [Wiki](https://github.com/floppyFK/kittyhack/wiki/%5BEN%5D-Kittyhack-v2.0-%E2%80%90-Train-own-AI%E2%80%90Models).  
 If you are already using your own model, continue to train and refine it. Also, make sure that only high-quality and meaningful images are included in your datasets.
+
+### I constantly get motion detected outside - what can I do?
+Starting with version 2.1.0, you can use the camera image for motion detection as an alternative to the external PIR sensor.  
+This significantly reduces false triggers, for example by trees or people in the image. However, a well-trained, custom detection model is required for this feature.  
+You can find the option under **Configuration** → **Use camera for motion detection**.
 
 
 ---
@@ -392,3 +397,8 @@ Weitere Details findest du in diesem Beitrag: https://github.com/floppyFK/kittyh
 Du verwendest vermutlich noch ein originales Modell der Kittyflap für die Objekterkennung. Diese Modelle sind nicht zuverlässig!  
 Trainiere unbedingt ein eigenes Modell. Wie das funktioniert, kannst du im [Wiki](https://github.com/floppyFK/kittyhack/wiki/%5BDE%5D-Kittyhack-v2.0-%E2%80%90-Eigene-KI%E2%80%90Modelle-trainieren) nachlesen.  
 Falls du bereits ein eigenes Modell verwendest, solltest du es weiter trainieren und verfeinern. Achte außerdem darauf, dass nur wirklich gute und aussagekräftige Bilder in deinen Datensätzen enthalten sind.
+
+### Bei mir wird ständig Bewegung außen erkannt, was kann ich tun?
+Ab Version 2.1.0 kannst du alternativ zum äußeren PIR-Sensor auch das Kamerabild zur Bewegungserkennung nutzen.  
+Dies reduziert Fehlauslösungen, zum Beispiel durch Bäume oder Menschen im Bild, deutlich. Voraussetzung ist jedoch ein gut trainiertes, eigenes Erkennungsmodell.  
+Die Option findest du unter **Konfiguration** → **Kamera für die Bewegungserkennung verwenden**.

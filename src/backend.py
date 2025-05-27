@@ -14,7 +14,8 @@ TAG_TIMEOUT = 30.0               # after 30 seconds, a detected tag is considere
 RFID_READER_OFF_DELAY = 15.0     # Turn the RFID reader off 15 seconds after the last detected motion outside
 OPEN_OUTSIDE_TIMEOUT = 6.0 + CONFIG['PIR_INSIDE_THRESHOLD'] # Keep the magnet to the outside open for 6 + PIR_INSIDE_THRESHOLD seconds after the last motion on the inside
 MAX_UNLOCK_TIME = 60.0           # Maximum time the door is allowed to stay open
-LAZY_CAT_DELAY = 6.0             # Keep the PIR active for an additional 6 seconds after the last detected motion
+LAZY_CAT_DELAY_PIR_MOTION = 6.0  # Keep the PIR active for an additional 6 seconds after the last detected motion when using PIR-based motion detection
+LAZY_CAT_DELAY_CAM_MOTION = 12.0 # Keep the PIR active for an additional 12 seconds after the last detected motion when using camera-based motion detection
 
 # Initialize Model
 if CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']:
@@ -117,7 +118,7 @@ def backend_main(simulate_kittyflap = False):
     rfid_thread = threading.Thread(target=rfid.run, args=(), daemon=True)
     rfid_thread.start()
 
-    def lazy_cat_workaround(current_motion_state: int | bool, last_motion_state: int | bool, current_motion_timestamp: float, delay=LAZY_CAT_DELAY) -> int | bool:
+    def lazy_cat_workaround(current_motion_state: int | bool, last_motion_state: int | bool, current_motion_timestamp: float, delay=LAZY_CAT_DELAY_PIR_MOTION) -> int | bool:
         """
         Helps to keep a PIR sensor active for an additional configurable seconds after the last detected motion.
 
@@ -189,9 +190,17 @@ def backend_main(simulate_kittyflap = False):
             if motion_inside_raw == 1:
                 motion_inside_raw_tm = tm.time()
 
-            motion_outside = lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm, LAZY_CAT_DELAY)
-            motion_inside = lazy_cat_workaround(motion_inside, last_inside, motion_inside_tm, LAZY_CAT_DELAY)
-            motion_inside_raw = lazy_cat_workaround(motion_inside_raw, last_inside_raw, motion_inside_raw_tm, LAZY_CAT_DELAY)
+            if use_camera_for_motion:
+                # If we use the camera for motion detection, keep the outside motion-indicator longer active, since normally
+                # no motion is detected anymore by the camera, when the cat is very close to the flap.
+                motion_outside = lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm, LAZY_CAT_DELAY_CAM_MOTION)
+            else:
+                # Since the PIR tracks motion in a wider area (and even directly in front of the flap), we do not need to keep
+                # the motion active as long as with the camera motion detection
+                motion_outside = lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm, LAZY_CAT_DELAY_PIR_MOTION)
+            
+            motion_inside = lazy_cat_workaround(motion_inside, last_inside, motion_inside_tm, LAZY_CAT_DELAY_PIR_MOTION)
+            motion_inside_raw = lazy_cat_workaround(motion_inside_raw, last_inside_raw, motion_inside_raw_tm, LAZY_CAT_DELAY_PIR_MOTION)
 
             previous_tag_id = tag_id
             tag_id, tag_timestamp = rfid.get_tag()
@@ -303,13 +312,15 @@ def backend_main(simulate_kittyflap = False):
             
             if last_outside == 0 and motion_outside == 1: # Outside motion detected
                 motion_block_id += 1
-                logging.info(f"[BACKEND] {motion_source}-based motion detection: Motion detected OUTSIDE (Block ID: {motion_block_id})")
                 # If we use the camera for motion detection, set the first motion timestamp a bit earlier to avoid missing the first motion
                 if use_camera_for_motion:
                     first_motion_outside_tm = tm.time() - 0.5
+                    additional_log_info = f"| configured cat detection threshold: {CONFIG['CAT_THRESHOLD']} "
                 else:
                     first_motion_outside_tm = tm.time()
                     model_handler.resume()
+                    additional_log_info = ""
+                logging.info(f"[BACKEND] {motion_source}-based motion detection: Motion detected OUTSIDE {additional_log_info}(Block ID: {motion_block_id})")
                 known_rfid_tags = db_get_all_rfid_tags(CONFIG['KITTYHACK_DATABASE_PATH'])
                 cat_rfid_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
                 # Reset the additional verdict infos

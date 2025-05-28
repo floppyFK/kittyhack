@@ -80,6 +80,17 @@ document.addEventListener("DOMContentLoaded", function() {
         checkForDisconnectOverlay();
     })();
 
+    // --- Collapse navbar on nav-link click (mobile fix) ---
+    document.querySelectorAll('.navbar-collapse .nav-link').forEach(function (el) {
+        el.addEventListener('click', function () {
+            var navbarCollapse = el.closest('.navbar-collapse');
+            if (navbarCollapse && navbarCollapse.classList.contains('show')) {
+                navbarCollapse.classList.remove('show');
+            }
+        });
+    });
+
+    // --- Register Service Worker for PWA ---
     if('serviceWorker' in navigator) {
         navigator.serviceWorker
             .register('/pwa-service-worker.js', { scope: '/' })

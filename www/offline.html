@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
   <title>KITTYHACK</title>
   <style>
-    /* Reset and base styles */
     * {
       margin: 0;
       padding: 0;
@@ -74,6 +73,11 @@
     .btn-retry:hover {
       background-color: #2e59d9;
     }
+    .status {
+      margin-top: 20px;
+      font-size: 0.95rem;
+      color: #858796;
+    }
     @media (max-width: 576px) {
       .offline-card {
         max-width: 100%;
@@ -83,6 +87,64 @@
       }
     }
   </style>
+  <script>
+    const CHECK_INTERVAL = 5000;
+    const TARGET_URL = "/";
+
+    let countdownInterval;
+
+    function updateStatus(text) {
+      const el = document.getElementById("status-text");
+      if (el) el.textContent = text;
+    }
+
+    function startRetryLoop() {
+      let countdown = CHECK_INTERVAL / 1000;
+
+      updateStatus(`Retrying in ${countdown} seconds...`);
+
+      countdownInterval = setInterval(() => {
+        countdown--;
+        if (countdown <= 0) {
+          clearInterval(countdownInterval);
+          updateStatus("Checking connectivity...");
+          checkConnectivity();
+        } else {
+          updateStatus(`Retrying in ${countdown} seconds...`);
+        }
+      }, 1000);
+    }
+
+    async function checkConnectivity() {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
+
+        const response = await fetch(TARGET_URL, {
+          method: "HEAD",
+          cache: "no-store",
+          signal: controller.signal
+        });
+
+        clearTimeout(timeout);
+
+        if (response.ok) {
+          window.location.href = TARGET_URL;
+        } else {
+          console.log("Initial check failed, starting retry loop.");
+          startRetryLoop();
+        }
+      } catch (err) {
+        console.log("Offline or fetch failed.");
+        startRetryLoop();
+      }
+    }
+
+    window.addEventListener("load", () => {
+      updateStatus("Checking connectivity...");
+      checkConnectivity();
+    });
+  </script>
 </head>
 <body>
   <div class="offline-card">
@@ -96,6 +158,7 @@
       <button onclick="window.location.href = '/'" class="btn-retry">
         Try to reload the WebGUI
       </button>
+      <div class="status" id="status-text">Initializing...</div>
     </div>
   </div>
 </body>

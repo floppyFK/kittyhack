@@ -125,7 +125,7 @@ def read_df_from_database(database: str, stmt: str) -> pd.DataFrame:
     result = lock_database()
     if not result.success:
         logging.error(f"[DATABASE] Failed to acquire lock for reading from database '{database}': {result.message}")
-        return pd.DataFrame.empty
+        return pd.DataFrame()
 
     try:
         conn = sqlite3.connect(database, timeout=30)
@@ -133,7 +133,7 @@ def read_df_from_database(database: str, stmt: str) -> pd.DataFrame:
         conn.close()
     except Exception as e:
         logging.error(f"[DATABASE] Failed to read from database '{database}': {e}")
-        df = pd.DataFrame.empty
+        df = pd.DataFrame()
     else:
         logging.debug(f"[DATABASE] Read from database '{database}': {df}")
     finally:

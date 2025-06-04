@@ -279,8 +279,13 @@ def create_default_config():
     """
     Creates the configuration file with default values.
     """
+    def stringify_dict(d):
+        return {k: str(v) if v is not None else "" for k, v in d.items()}
+
     parser = configparser.ConfigParser()
-    parser.read_dict(DEFAULT_CONFIG)
+    # Convert all values in DEFAULT_CONFIG to strings
+    config_str = {section: stringify_dict(values) for section, values in DEFAULT_CONFIG.items()}
+    parser.read_dict(config_str)
     with open(CONFIGFILE, 'w') as configfile:
         parser.write(configfile)
     logging.info(f"Default configuration written to {CONFIGFILE}")

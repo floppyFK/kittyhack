@@ -2774,7 +2774,7 @@ def server(input, output, session):
                     ),
                     ui.hr(),
                     ui.row(
-                        ui.column(4, ui.input_slider("sldLockAfterPreyDetect", _("Lock duration after prey detection (in s)"), min=30, max=600, step=5, value=CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'])),
+                        ui.column(4, ui.input_slider("sldLockAfterPreyDetect", _("Lock duration after prey detection (in s)"), min=30, max=1800, step=5, value=CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'])),
                         ui.column(8, ui.markdown(_("The flap will remain closed for this time after a prey detection.")), style_="color: grey;")
                     ),
                     ui.hr(),

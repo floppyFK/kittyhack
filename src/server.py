@@ -3037,11 +3037,17 @@ def server(input, output, session):
                         ui.column(
                             12,
                             ui.markdown(
-                                _("If this is disabled, only one CPU core will be used for image processing, which results in a slower analysis of the pictures, and therefore also a little bit slower prey detection.") + "  \n" +
-                                _("Some users have reported that this option causes reboots or system freezes. If you encounter the same issue, it's recommended to disable this setting.") + "  \n" +
-                                "> " + _("NOTE: This setting requires a restart of the kittyflap to take effect.")
-                            ), style_="color: grey;"
+                                _("If this is enabled, all CPU cores will be used for image processing. This results in a faster analysis of the pictures, and therefore a maybe a bit faster prey detection.")
+                            ), style="color: grey;",
                         ),
+                        ui.column(
+                            12,
+                            ui.markdown(
+                                _("⚠️ **WARNING**: It is NOT recommended to enable this feature! Several users have reported that this option causes reboots or system freezes.") +
+                                _("If you encounter the same issue, it's strongly recommended to disable this setting.")
+                            ), style_="color: #e74a3b; padding: 10px; border: 1px solid #e74a3b; border-radius: 5px; margin: 20px; width: 90%;"
+                        ),
+                        ui.column( 12, ui.markdown("> " + _("NOTE: This setting requires a restart of the kittyflap to take effect.")), style_="color: grey;"),
                     ),
                     ui.br(),
                     full_screen=False,

@@ -7,3 +7,4 @@ config.ini
 sync-to-kittyflap.sh
 *.code-workspace
 notifications.json
+ignore_*

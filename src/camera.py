@@ -9,10 +9,28 @@ import subprocess
 import shlex
 import threading
 import logging
+import time as tm
 from typing import List, Optional
 class VideoStream:
-    """Camera object that controls video streaming from the Picamera"""
-    def __init__(self, resolution=(640, 480), framerate=15, jpeg_quality=75, tuning_file="/usr/share/libcamera/ipa/rpi/vc4/ov5647_noir.json"):
+    """Camera object that controls video streaming from the Picamera or an IP camera"""
+
+    # Camera state constants
+    STATE_INITIALIZING = "initializing"
+    STATE_RUNNING = "running"
+    STATE_ERROR = "error"
+    STATE_STOPPED = "stopped"
+    STATE_INTERNAL = "internal_camera"
+    STATE_IP_CAMERA = "ip_camera"
+
+    def __init__(
+        self,
+        resolution=(800, 600),
+        framerate=10,
+        jpeg_quality=75,
+        tuning_file="/usr/share/libcamera/ipa/rpi/vc4/ov5647_noir.json",
+        source="internal",  # "internal" or "ip_camera"
+        ip_camera_url: str = None
+    ):
         self.resolution = resolution
         self.framerate = framerate
         self.jpeg_quality = jpeg_quality
@@ -22,6 +40,19 @@ class VideoStream:
         self.buffer_size = 30
         self.process = None
         self.lock = threading.Lock()
+        self.source = source
+        self.ip_camera_url = ip_camera_url
+        self.cap = None  # For IP camera
+        self.thread = None
+        self.camera_state = self.STATE_INITIALIZING  # <-- Add this line
+
+    def get_camera_state(self):
+        """Return the current camera connection state."""
+        return self.camera_state
+    
+    def get_resolution(self):
+        """Return the current camera resolution as (width, height)."""
+        return self.resolution
 
     def set_buffer_size(self, new_size: int):
         """Dynamically set the buffer size and trim frames if necessary."""
@@ -36,51 +67,144 @@ class VideoStream:
 
 
     def start(self):
-        # Start the thread that reads frames from the video stream
-        threading.Thread(target=self.update, args=(), daemon=True).start()
+        self.camera_state = self.STATE_INITIALIZING
+        self.thread = threading.Thread(target=self.update, args=(), daemon=True)
+        self.thread.start()
         return self
 
     def update(self):
-        # Include the tuning file in the command if specified
-        tuning_option = f"--tuning-file {self.tuning_file}" if self.tuning_file else ""
-        command = (
-            f"/usr/bin/libcamera-vid -t 0 --inline --width {self.resolution[0]} "
-            f"--height {self.resolution[1]} --framerate {self.framerate} "
-            f"--codec mjpeg --quality {self.jpeg_quality} {tuning_option} -o -"
-        )
-        logging.info(f"[CAMERA] Running command: {command}")
+        if self.source == "internal":
+            self.camera_state = self.STATE_INTERNAL
+            # Internal Raspberry Pi camera via libcamera-vid
+            tuning_option = f"--tuning-file {self.tuning_file}" if self.tuning_file else ""
+            command = (
+                f"/usr/bin/libcamera-vid -t 0 --inline --width {self.resolution[0]} "
+                f"--height {self.resolution[1]} --framerate {self.framerate} "
+                f"--codec mjpeg --quality {self.jpeg_quality} {tuning_option} -o -"
+            )
+            logging.info(f"[CAMERA] Running command: {command}")
 
-        self.process = subprocess.Popen(
-            shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=4096 * 10000
-        )
-        logging.info(f"[CAMERA] Subprocess started: {self.process.pid}")
-        buffer = b""
-        while not self.stopped:
-            chunk = self.process.stdout.read(4096)
-            if not chunk:
-                logging.warning("[CAMERA] Stream ended unexpectedly")
-                break
-            buffer += chunk
+            self.process = subprocess.Popen(
+                shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=4096 * 10000
+            )
+            logging.info(f"[CAMERA] Subprocess started: {self.process.pid}")
+            buffer = b""
+            try:
+                self.camera_state = self.STATE_RUNNING
+                while not self.stopped:
+                    chunk = self.process.stdout.read(4096)
+                    if not chunk:
+                        logging.warning("[CAMERA] Stream ended unexpectedly")
+                        break
+                    buffer += chunk
 
-            # Extract JPEG frames
-            while b'\xff\xd8' in buffer and b'\xff\xd9' in buffer:
-                start = buffer.find(b'\xff\xd8')  # Start of JPEG
-                end = buffer.find(b'\xff\xd9') + 2  # End of JPEG
-                jpeg_data = buffer[start:end]
-                buffer = buffer[end:]
+                    # Extract JPEG frames
+                    while b'\xff\xd8' in buffer and b'\xff\xd9' in buffer:
+                        start = buffer.find(b'\xff\xd8')  # Start of JPEG
+                        end = buffer.find(b'\xff\xd9') + 2  # End of JPEG
+                        jpeg_data = buffer[start:end]
+                        buffer = buffer[end:]
 
-                # Decode the JPEG frame
-                frame = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
-                if frame is not None:
-                    frame = cv2.rotate(frame, cv2.ROTATE_180)
+                    # Decode the JPEG frame
+                        frame = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
+                        if frame is not None:
+                            frame = cv2.rotate(frame, cv2.ROTATE_180)
+                            with self.lock:
+                                self.frames.append(frame)
+                                if len(self.frames) > self.buffer_size:
+                                    self.frames.pop(0)  # Remove oldest frame
+                        else:
+                            logging.error("[CAMERA] Failed to decode frame")
+            except Exception as e:
+                logging.error(f"[CAMERA] Internal camera error: {e}")
+                self.camera_state = self.STATE_ERROR
+        elif self.source == "ip_camera" and self.ip_camera_url:
+            self.camera_state = self.STATE_IP_CAMERA
+            retry_delay = 5  # seconds
+
+            # Define maximum allowed resolutions for common aspect ratios
+            MAX_PIXELS = 1280 * 720  # 921600
+            MAX_RESOLUTIONS = [
+                ((16, 9), (1280, 720)),
+                ((4, 3), (1024, 768)),
+                ((5, 4), (960, 768)),
+                ((3, 2), (1080, 720)),
+                ((1, 1), (850, 850)),
+            ]
+
+            def get_max_resolution(width, height):
+                # Find the closest aspect ratio and its max resolution
+                aspect = width / height
+                best_diff = float('inf')
+                best_res = (1280, 720)  # fallback
+                for (ar_w, ar_h), (max_w, max_h) in MAX_RESOLUTIONS:
+                    ar = ar_w / ar_h
+                    diff = abs(aspect - ar)
+                    if diff < best_diff:
+                        best_diff = diff
+                        best_res = (max_w, max_h)
+                return best_res
+
+            while not self.stopped:
+                logging.info(f"[CAMERA] Connecting to IP camera at {self.ip_camera_url}")
+                self.camera_state = self.STATE_INITIALIZING
+                self.cap = cv2.VideoCapture(self.ip_camera_url)
+                if not self.cap.isOpened():
+                    logging.error(f"[CAMERA] Failed to open IP camera stream: {self.ip_camera_url}. Retrying in {retry_delay}s...")
+                    self.camera_state = self.STATE_ERROR
+                    self.cap.release()
+                    if self.stopped:
+                        break
+                    tm.sleep(retry_delay)
+                    continue
+
+                # Get the actual resolution of the IP camera
+                width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                logging.info(f"[CAMERA] IP camera resolution: {width}x{height}")
+                self.resolution = (width, height)  # Update to actual resolution
+
+                if width * height > MAX_PIXELS:
+                    logging.warning(f"[CAMERA] IP camera resolution {width}x{height} exceeds maximum allowed {MAX_PIXELS} pixels. The performance may be affected!")
+
+                max_w, max_h = get_max_resolution(width, height)
+
+                # Set desired resolution before reading frames
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, max_w)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, max_h)
+
+                self.camera_state = self.STATE_RUNNING
+                while not self.stopped:
+                    ret, frame = self.cap.read()
+                    if not ret:
+                        logging.warning("[CAMERA] Failed to read frame from IP camera. Attempting to reconnect...")
+                        self.camera_state = self.STATE_ERROR
+                        break  # Break inner loop to reconnect
+
+                    # DO NOT RESIZE HERE, let the IP camera handle it. Resizing is too CPU intensive.
+                    # Resize if frame exceeds allowed size, keeping aspect ratio
+                    #h, w = frame.shape[:2]
+                    #if w * h > MAX_PIXELS or w > max_w or h > max_h:
+                    #    scale = min(max_w / w, max_h / h)
+                    #    new_w, new_h = int(w * scale), int(h * scale)
+                    #    frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
                     with self.lock:
                         self.frames.append(frame)
                         if len(self.frames) > self.buffer_size:
-                            self.frames.pop(0)  # Remove oldest frame
-                else:
-                    logging.error("[CAMERA] Failed to decode frame")
+                            self.frames.pop(0)
+                self.cap.release()
+                if self.stopped:
+                    break
+                logging.info(f"[CAMERA] Reconnecting to IP camera in {retry_delay}s...")
+                self.camera_state = self.STATE_INITIALIZING
+                tm.sleep(retry_delay)
+        else:
+            logging.error("[CAMERA] Invalid source or missing IP camera URL")
+            self.camera_state = self.STATE_ERROR
 
         if self.stopped:
+            self.camera_state = self.STATE_STOPPED
             final_frame = np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8)
             # Calculate text size
             text = "Stream Ended. Please restart the Kittyflap."
@@ -94,7 +218,7 @@ class VideoStream:
             text_y = (final_frame.shape[0] + text_size[1]) // 2
 
             # Draw background rectangle
-            cv2.rectangle(final_frame, (text_x - 10, text_y - text_size[1] - 10), 
+            cv2.rectangle(final_frame, (text_x - 10, text_y - text_size[1] - 10),
                           (text_x + text_size[0] + 10, text_y + 10), (128, 128, 128), cv2.FILLED)
 
             with self.lock:
@@ -107,7 +231,7 @@ class VideoStream:
         # Return the most recent frame
         with self.lock:
             return self.frames[-1] if self.frames else None
-        
+
     def read_oldest(self):
         # Return and remove the oldest frame from the list, but keep the last frame
         with self.lock:
@@ -121,9 +245,14 @@ class VideoStream:
     def stop(self):
         # Stop the video stream
         self.stopped = True
-        if self.process:
+        if self.thread is not None:
+            self.thread.join(timeout=5)  # Wait for the thread to finish
+        if self.source == "internal" and self.process:
             self.process.terminate()
             logging.info("[CAMERA] Video stream stopped.")
+        elif self.source == "ip_camera" and self.cap:
+            self.cap.release()
+            logging.info("[CAMERA] IP camera stream stopped.")
         else:
             logging.error("[CAMERA] Video stream not yet started. Nothing to stop.")
 
@@ -361,6 +490,3 @@ class ImageBuffer:
 # Global variable declarations
 image_buffer = ImageBuffer()
 videostream = None
-
-
-

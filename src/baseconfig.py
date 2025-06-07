@@ -88,7 +88,9 @@ DEFAULT_CONFIG = {
         "not_graceful_shutdowns": 0,
         "use_camera_for_cat_detection": False,
         "cat_threshold": 70.0,
-        "use_camera_for_motion_detection": False
+        "use_camera_for_motion_detection": False,
+        "camera_source": "internal", # can be "internal" or "ip_camera"
+        "ip_camera_url": ""
     }
 }
 
@@ -160,7 +162,9 @@ def load_config():
         "NOT_GRACEFUL_SHUTDOWNS": parser.getint('Settings', 'not_graceful_shutdowns', fallback=DEFAULT_CONFIG['Settings']['not_graceful_shutdowns']),
         "USE_CAMERA_FOR_CAT_DETECTION": parser.getboolean('Settings', 'use_camera_for_cat_detection', fallback=DEFAULT_CONFIG['Settings']['use_camera_for_cat_detection']),
         "CAT_THRESHOLD": parser.getfloat('Settings', 'cat_threshold', fallback=DEFAULT_CONFIG['Settings']['cat_threshold']),
-        "USE_CAMERA_FOR_MOTION_DETECTION": parser.getboolean('Settings', 'use_camera_for_motion_detection', fallback=DEFAULT_CONFIG['Settings'].get('use_camera_for_motion_detection', False))
+        "USE_CAMERA_FOR_MOTION_DETECTION": parser.getboolean('Settings', 'use_camera_for_motion_detection', fallback=DEFAULT_CONFIG['Settings'].get('use_camera_for_motion_detection', False)),
+        "CAMERA_SOURCE": parser.get('Settings', 'camera_source', fallback=DEFAULT_CONFIG['Settings']['camera_source']),
+        "IP_CAMERA_URL": parser.get('Settings', 'ip_camera_url', fallback=DEFAULT_CONFIG['Settings'].get('ip_camera_url', ""))
     }
 
 def save_config():
@@ -228,6 +232,8 @@ def save_config():
     settings['use_camera_for_cat_detection'] = CONFIG['USE_CAMERA_FOR_CAT_DETECTION']
     settings['cat_threshold'] = CONFIG['CAT_THRESHOLD']
     settings['use_camera_for_motion_detection'] = CONFIG['USE_CAMERA_FOR_MOTION_DETECTION']
+    settings['camera_source'] = CONFIG['CAMERA_SOURCE']
+    settings['ip_camera_url'] = CONFIG['IP_CAMERA_URL']
 
     # Write updated configuration back to the file
     try:

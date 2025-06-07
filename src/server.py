@@ -1053,7 +1053,7 @@ def server(input, output, session):
                 ui.update_action_button("bResetPreyCooldown", disabled=True)
         except:
             ui_html = ui.markdown(_("Failed to fetch the current status of the locks and motion sensors."))
-        
+
         return ui.div(
             ui.HTML(f"{datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S')}"),
             ui.br(),
@@ -1064,30 +1064,101 @@ def server(input, output, session):
     @render.text
     def live_view_main():
         reactive.invalidate_later(CONFIG['LIVE_VIEW_REFRESH_INTERVAL'])
+        # Static variables to track last frame and time
+        if not hasattr(live_view_main, "last_frame_hash"):
+            live_view_main.last_frame_hash = None
+            live_view_main.last_change_time = tm.time()
+            live_view_main.last_frame_jpg = None
+
+        warning_html = ""
+        # Check for IP camera resolution warning (moved here)
+        if CONFIG.get("CAMERA_SOURCE") == "ip_camera":
+            try:
+                res = model_handler.get_camera_resolution()
+                if res and isinstance(res, (tuple, list)) and len(res) == 2:
+                    width, height = res
+                    if width * height > 1280 * 720:
+                        warning_html = ui.div(
+                            ui.div(
+                                "⚠️ " + _("Warning") + ": " +
+                                _("Your IP camera resolution is higher than recommended (max. 1280x720).") + " " +
+                                _("Current: {width}x{height}. This may have negative effects on performance.").format(width=width, height=height),
+                                class_="generic-container warning-container",
+                            ),
+                            style_="text-align: center;"
+                        )
+            except Exception as e:
+                logging.error(f"Failed to check IP camera resolution: {e}")
+
         try:
             frame = model_handler.get_camera_frame()
             if frame is None:
-                img_html = (
-                    '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
-                    '<div></div>' +
-                    '<div><strong>' + _('Connection to the camera failed.') + '</strong></div>' +
-                    '<div>' + _("Please wait...") + '</div>' +
-                    '<div class="spinner-container"><div class="spinner"></div></div>' +
-                    '<div>' + _('If this message does not disappear within 30 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>' +
-                    '<div></div>' +
-                    '</div>'
-                )
+                if CONFIG.get("CAMERA_SOURCE") == "ip_camera":
+                    img_html = (
+                        '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
+                        '<div></div>' +
+                        '<div><strong>' + _('Connection to the IP camera failed.') + '</strong></div>' +
+                        '<div>' + _("Please check the stream URL and the network connection of your IP camera.") + '</div>' +
+                        '<div class="spinner-container"><div class="spinner"></div></div>' +
+                        '<div>' + _('If you have just changed the camera settings, please wait a few seconds for the camera to reconnect.') + '</div>' +
+                        '<div>' + _('Current status: ') + (str(model_handler.get_camera_state()) if model_handler.get_camera_state() is not None else _('Unknown')) + '</div>' +                        '<div></div>' +
+                        '</div>'
+                    )
+                else:
+                    img_html = (
+                        '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
+                        '<div></div>' +
+                        '<div><strong>' + _('Connection to the camera failed.') + '</strong></div>' +
+                        '<div>' + _("Please wait...") + '</div>' +
+                        '<div class="spinner-container"><div class="spinner"></div></div>' +
+                        '<div>' + _('If this message does not disappear within 30 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>' +
+                        '<div></div>' +
+                        '</div>'
+                    )
             else:
                 frame_jpg = model_handler.encode_jpg_image(frame)
+                # Compute a hash of the frame to detect changes
+                frame_hash = hashlib.md5(frame_jpg).hexdigest() if frame_jpg else None
+
                 if frame_jpg:
-                    frame_b64 = base64.b64encode(frame_jpg).decode('utf-8')
-                    img_html = f'<img src="data:image/jpeg;base64,{frame_b64}" />'
+                    # If frame changed, update last_change_time and last_frame_jpg
+                    if frame_hash != live_view_main.last_frame_hash:
+                        live_view_main.last_change_time = tm.time()
+                        live_view_main.last_frame_hash = frame_hash
+                        live_view_main.last_frame_jpg = frame_jpg
+
+                    # If frame hasn't changed for >5s and using external IP camera, show spinner and warning
+                    if (
+                        tm.time() - live_view_main.last_change_time > 5
+                        and CONFIG.get("CAMERA_SOURCE") == "ip_camera"
+                    ):
+                        img_html = (
+                            '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
+                            '<div></div>'
+                            '<div><strong>' + _('Camera stream appears to be frozen.') + '</strong></div>'
+                            '<div>' + _("Please check your external IP camera connection or network settings.") + '</div>'
+                            '<div class="spinner-container"><div class="spinner"></div></div>'
+                            '<div></div>'
+                            '</div>'
+                        )
+                    else:
+                        frame_b64 = base64.b64encode(live_view_main.last_frame_jpg).decode('utf-8')
+                        img_html = f'<img src="data:image/jpeg;base64,{frame_b64}" />'
                 else:
                     img_html = '<div class="placeholder-image"><strong>' + _('Could not read the picture from the camera.') + '</strong></div>'
         except Exception as e:
             logging.error(f"Failed to fetch the live view image: {e}")
             img_html = '<div class="placeholder-image"><strong>' + _('An error occured while fetching the live view image.') + '</strong></div>'
-        return ui.HTML(img_html)
+        
+        if warning_html:
+            return ui.HTML(f'''
+                <div style="display: inline-block; text-align: center;">
+                    {img_html}
+                    {warning_html}
+                </div>
+            ''')
+        else:
+            return ui.HTML(img_html)
 
     @reactive.Effect
     def immediate_bg_task_site_load():
@@ -1248,7 +1319,7 @@ def server(input, output, session):
 
     @output
     @render.ui
-    @reactive.event(input.ui_photos_cards_tabs, input.button_detection_overlay, ignore_none=True)
+    @reactive.event(input.button_events_view, ignore_none=True)
     def ui_photos_cards():
         ui_cards = []
 
@@ -1412,15 +1483,16 @@ def server(input, output, session):
     @output
     @render.ui
     def ui_live_view():
-        return ui.div(
-            ui.card(
-                ui.card_header(
-                    ui.output_ui("live_view_header"),
-                ),
-                ui.output_ui("live_view_main"),
-                full_screen=False,
-                class_="image-container"
+        live_view = ui.card(
+            ui.card_header(
+                ui.output_ui("live_view_header"),
             ),
+            ui.output_ui("live_view_main"),
+            full_screen=False,
+            class_="image-container"
+        )
+        return ui.div(
+            live_view,
         )
     
     @output
@@ -1544,6 +1616,7 @@ def server(input, output, session):
             for rfid, cat_id in rfid_to_catid.items():
                 thumb = get_cat_thumbnail(CONFIG['KITTYHACK_DATABASE_PATH'], cat_id)
                 if thumb:
+                   
                     cat_thumbnails[rfid] = thumb
 
             def cat_name_with_icon(rfid):
@@ -2403,7 +2476,6 @@ def server(input, output, session):
     @reactive.event(input.btn_labelstudio_remove)
     def btn_labelstudio_remove():
         m = ui.modal(
-            _("Do you really want to remove Label Studio?"),
             title=_("Remove Label Studio"),
             easy_close=True,
             footer=ui.div(
@@ -2486,6 +2558,36 @@ def server(input, output, session):
         # If we get here, the process didn't start within the timeout period
         ui.notification_show(_("Label Studio may not have started completely. Please check the logs."), duration=5, type="warning")
         reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+
+    def collapsible_section(section_id, title, intro, content):
+        return ui.div(
+            # Custom CSS for the collapsible section
+            ui.HTML("""
+            <script>
+            $(document).on('shown.bs.collapse hidden.bs.collapse', function(e) {
+                // Update aria-expanded attribute for accessibility and chevron rotation
+                var btn = $("[data-bs-target='#" + e.target.id + "']");
+                btn.attr("aria-expanded", $("#" + e.target.id).hasClass("show"));
+            });
+            </script>
+            """),
+            ui.div(
+                ui.HTML(f"""
+                    <button class="collapsible-header-btn btn" type="button" data-bs-toggle="collapse" data-bs-target="#{section_id}_body" aria-expanded="false" aria-controls="{section_id}_body">
+                        <span class="collapsible-chevron">&#9654;</span>
+                        {title}
+                    </button>
+                    <div class="collapsible-section-intro">{intro}</div>
+                """),
+            ),
+            ui.div(
+                ui.div(content),
+                id=f"{section_id}_body",
+                class_="collapse",  # collapsed by default
+            ),
+            class_="collapsible-section",
+            style_="margin-bottom:1.5em;"
+        )
 
     @output
     @render.ui
@@ -2644,14 +2746,34 @@ def server(input, output, session):
         </style>
         """)
 
+        hide_unhide_ip_camera_url = ui.HTML("""
+        <script>
+        $(document).ready(function() {
+            function toggleIpCameraUrlField() {
+                if ($('#camera_source').val() === 'ip_camera') {
+                    $('#ip_camera_url_container').show();
+                    $('#ip_camera_warning').show();
+                } else {
+                    $('#ip_camera_url_container').hide();
+                    $('#ip_camera_warning').hide();
+                }
+            }
+            toggleIpCameraUrlField();
+            $('#camera_source').on('change', toggleIpCameraUrlField);
+        });
+        </script>
+        """)
+
         ui_config =  ui.div(
             unsaved_changes_js,
+            hide_unhide_ip_camera_url,
             # --- General settings ---
-            ui.div(
-                ui.card(
-                    ui.card_header(
-                        ui.h4(_("General settings"), style_="text-align: center;"),
-                    ),
+            ui.br(),
+            collapsible_section(
+                "general_settings",
+                _("General settings"),
+                _("Basic language, timezone, and display options for Kittyhack."),
+                ui.div(
                     ui.br(),
                     ui.row(
                         ui.column(6, ui.input_select("txtLanguage", _("Language"), {"en":"English", "de":"Deutsch"}, selected=CONFIG['LANGUAGE'])),
@@ -2674,17 +2796,6 @@ def server(input, output, session):
                     ),
                     ui.hr(),
                     ui.row(
-                        ui.column(4, ui.input_numeric("numElementsPerPage", _("Maximum pictures per page"), CONFIG['ELEMENTS_PER_PAGE'], min=1)),
-                        ui.column(
-                            8,
-                            ui.markdown(
-                                _("This setting applies only to the `PICTURES` section in the ungrouped view mode.") + "\n\n" +
-                                _("NOTE: Too many pictures per page could slow down the performance drastically!")
-                            ), style_="color: grey;"
-                        ),
-                    ),
-                    ui.hr(),
-                    ui.row(
                         ui.column(12, ui.input_switch("btnPeriodicVersionCheck", _("Periodic version check"), CONFIG['PERIODIC_VERSION_CHECK'])),
                         ui.column(12, ui.markdown(_("Automatically check for new versions of Kittyhack.")), style_="color: grey;"),
                     ),
@@ -2699,19 +2810,82 @@ def server(input, output, session):
                             ), style_="color: grey;"
                         ),
                     ),
+                    class_="generic-container align-left",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+            ),
+
+            # --- Camera settings ---
+            collapsible_section(
+                "camera_settings",
+                _("Camera settings"),
+                _("Camera specific settings for the internal and external cameras."),
+                ui.div(
+                    ui.br(),
+                    ui.row(
+                        ui.column(
+                            12,
+                            ui.input_select(
+                                "camera_source",
+                                _("Camera source"),
+                                {
+                                    "internal": _("Internal Camera"),
+                                    "ip_camera": _("External IP Camera"),
+                                },
+                                selected=CONFIG['CAMERA_SOURCE'],
+                            ),
+                        ),
+                        ui.column(
+                            12,
+                            ui.input_text(
+                                "ip_camera_url",
+                                _("External IP Camera URL"),
+                                value=CONFIG['IP_CAMERA_URL'],
+                                placeholder=_("e.g. rtsp://user:pass@192.168.1.100:554/stream"),
+                                width="100%",
+                            ),
+                            id="ip_camera_url_container",
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.markdown(
+                        _("Select the camera source for the Kittyflap. If you choose `External IP Camera`, please provide the URL of the camera stream.")
+                    ),
+                    ui.column(
+                        12,
+                        ui.markdown(
+                            _("**Examples of supported stream URLs:**")
+                            + "\n"
+                            + "- `rtsp://user:pass@192.168.1.100:554/stream1`  _(RTSP)_"
+                            + "\n"
+                            + "- `http://192.168.1.101:8080/video`  _(HTTP MJPEG)_"
+                            + "\n"
+                            + "- `rtmp://192.168.1.102/live/stream`  _(RTMP)_"
+                            + "\n"
+                            + "- `udp://@239.0.0.1:1234`  _(UDP multicast)_"
+                            + "\n"
+                            + "- `tcp://192.168.1.103:8554`  _(TCP stream)_"
+                            + "\n\n"
+                            "> "
+                            + _("**NOTE:** The external IP camera stream should have a maximum resolution of 1280x720 (16:9) or 1024x768 (4:3) and a maximum framerate of 15fps.") + "  \n"
+                            + _("At higher resolutions and/or framerates, the performance of the Kittyflap may be drastically reduced.") + "  \n"
+                            + _("This can often be configured in the settings of your IP camera. Some cameras also provide different URLs for different resolutions.")
+                        ),
+                        id="ip_camera_warning",
+                        style_="color: grey;"
+                    ),
                     full_screen=False,
                     class_="generic-container align-left",
                     style_="padding-left: 1rem !important; padding-right: 1rem !important;",
                 ),
-                width="400px"
             ),
 
             # --- Door control settings ---
-            ui.div(
-                ui.card(
-                    ui.card_header(
-                        ui.h4(_("Door control settings"), style_="text-align: center;"),
-                    ),
+            collapsible_section(
+                "door_control_settings",
+                _("Door control settings"),
+                _("Detection thresholds, model selection and other settings for the door control."),
+                ui.div(
                     ui.br(),
                     ui.row(
                         ui.column(4, ui.input_slider("sldMouseThreshold", _("Mouse detection threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
@@ -2745,30 +2919,6 @@ def server(input, output, session):
                                 _("Number of pictures that must be analyzed before deciding to unlock the flap. If a picture exceeds the mouse threshold, the flap will remain closed.") + "  \n" +
                                 _("If a picture after this minimum number of pictures exceeds the mouse threshold, the flap will be closed again.") + "  \n" +
                                 "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['min_pictures_to_analyze']) + ")*"
-                            ), style_="color: grey;"
-                        ),
-                    ),
-                    ui.hr(),
-                    ui.row(
-                        ui.column(4, ui.input_numeric("numMaxPicturesPerEventWithRfid", _("Maximal pictures per event with RFID"), CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID'], min=0)),
-                        ui.column(
-                            8,
-                            ui.markdown(
-                                _("Maximal number of pictures that will be stored to the database for a motion event, if a cat with a RFID chip is detected.") + "  \n" +
-                                _("NOTE: The internal prey detection will still be active for all pictures of this event. This number just limits the number of pictures that will be stored to the database.") + "  \n" +
-                                _("If you set this to 0, no event will be logged to the database. Too many pictures can slow down the performance drastically.")
-                            ), style_="color: grey;"
-                        ),
-                    ),
-                    ui.hr(),
-                    ui.row(
-                        ui.column(4, ui.input_numeric("numMaxPicturesPerEventWithoutRfid", _("Maximal pictures per event without RFID"), CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID'], min=0)),
-                        ui.column(
-                            8,
-                            ui.markdown(
-                                _("Maximal number of pictures that will be stored to the database for a motion event, if a motion event without a detected RFID occurs.") + "  \n" +
-                                _("NOTE: The internal prey detection will still be active for all pictures of this event. This number just limits the number of pictures that will be stored to the database.") + " \n" +
-                                _("If you set this to 0, no event will be logged to the database. Too many pictures can slow down the performance drastically.")
                             ), style_="color: grey;"
                         ),
                     ),
@@ -2936,15 +3086,14 @@ def server(input, output, session):
                     class_="generic-container align-left",
                     style_="padding-left: 1rem !important; padding-right: 1rem !important;",
                 ),
-                width="400px"
             ),
 
             # --- Live view settings ---
-            ui.div(
-                ui.card(
-                    ui.card_header(
-                        ui.h4(_("Live view settings"), style_="text-align: center;"),
-                    ),
+            collapsible_section(
+                "live_view_settings",
+                _("Live view settings"),
+                _("Update interval for the live camera view in the WebUI."),
+                ui.div(
                     ui.br(),
                     ui.row(
                         ui.column(
@@ -2975,15 +3124,14 @@ def server(input, output, session):
                     class_="generic-container align-left",
                     style_="padding-left: 1rem !important; padding-right: 1rem !important;",
                 ),
-                width="400px"
             ),
 
             # --- Pictures view settings ---
-            ui.div(
-                ui.card(
-                    ui.card_header(
-                        ui.h4(_("Pictures view settings"), style_="text-align: center;"),
-                    ),
+            collapsible_section(
+                "pictures_view_settings",
+                _("Pictures view settings"),
+                _("Configuration of the pictures view in the WebUI, maximum number of pictures in the database and limits of pictures per event."),
+                ui.div(
                     ui.br(),
                     ui.row(
                         ui.column(4, ui.input_numeric("numMaxPhotosCount", _("Maximum number of photos to retain in the database"), CONFIG['MAX_PHOTOS_COUNT'], min=100)),
@@ -2997,20 +3145,54 @@ def server(input, output, session):
                             ), style_="color: grey;"
                         ),
                     ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(4, ui.input_numeric("numMaxPicturesPerEventWithRfid", _("Maximal pictures per event with RFID"), CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID'], min=0)),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("Maximal number of pictures that will be stored to the database for a motion event, if a cat with a RFID chip is detected.") + "  \n" +
+                                _("NOTE: The internal prey detection will still be active for all pictures of this event. This number just limits the number of pictures that will be stored to the database.") + "  \n" +
+                                _("If you set this to 0, no event will be logged to the database. Too many pictures can slow down the performance drastically.")
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(4, ui.input_numeric("numMaxPicturesPerEventWithoutRfid", _("Maximal pictures per event without RFID"), CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID'], min=0)),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("Maximal number of pictures that will be stored to the database for a motion event, if a motion event without a detected RFID occurs.") + "  \n" +
+                                _("NOTE: The internal prey detection will still be active for all pictures of this event. This number just limits the number of pictures that will be stored to the database.") + " \n" +
+                                _("If you set this to 0, no event will be logged to the database. Too many pictures can slow down the performance drastically.")
+                            ), style_="color: grey;"
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(4, ui.input_numeric("numElementsPerPage", _("Maximum pictures per page"), CONFIG['ELEMENTS_PER_PAGE'], min=1)),
+                        ui.column(
+                            8,
+                            ui.markdown(
+                                _("This setting applies only to the `PICTURES` section in the ungrouped view mode.") + "\n\n" +
+                                _("NOTE: Too many pictures per page could slow down the performance drastically!")
+                            ), style_="color: grey;"
+                        ),
+                    ),
                     ui.br(),
                     full_screen=False,
                     class_="generic-container align-left",
                     style_="padding-left: 1rem !important; padding-right: 1rem !important;",
                 ),
-                width="400px"
             ),
 
             # --- Advanced settings ---
-            ui.div(
-                ui.card(
-                    ui.card_header(
-                        ui.h4(_("Advanced settings"), style_="text-align: center;"),
-                    ),
+            collapsible_section(
+                "advanced_settings",
+                _("Advanced settings"),
+                _("Advanced configuration options for hostname, logging, and performance."),
+                ui.div(
                     ui.br(),
                     ui.row(
                         ui.column(12, ui.input_text("txtHostname", label=_("Hostname"), placeholder="", value=hostname, width="100%")),
@@ -3054,7 +3236,6 @@ def server(input, output, session):
                     class_="generic-container align-left",
                     style_="padding-left: 1rem !important; padding-right: 1rem !important;",
                 ),
-                width="400px"
             ),
 
             ui.br(),
@@ -3150,6 +3331,16 @@ def server(input, output, session):
             # Hostname is valid, set it
             set_hostname(input.txtHostname())
 
+        if input.camera_source() == "ip_camera":
+            # Accept RTSP, HTTP(S), RTMP, UDP, TCP, and file URLs
+            if not re.match(r"^(rtsp|http|https|rtmp|udp|tcp|file)://", input.ip_camera_url(), re.IGNORECASE):
+                ui.notification_show(
+                    _("IP Camera URL: ") +
+                    _("Invalid stream URL format. Please use a valid URL starting with rtsp://, http://, https://, rtmp://, udp://, tcp://, or file://") + "\n" +
+                    _("Changes were not saved."), duration=10, type="error"
+                )
+                return
+
         # override the variable with the data from the configuration page
         language_changed = CONFIG['LANGUAGE'] != input.txtLanguage()
         if (input.selectedModel().startswith("tflite::") and
@@ -3207,6 +3398,8 @@ def server(input, output, session):
         CONFIG['ALLOWED_TO_EXIT_RANGE3'] = input.btnAllowedToExitRange3()
         CONFIG['ALLOWED_TO_EXIT_RANGE3_FROM'] = input.txtAllowedToExitRange3From()
         CONFIG['ALLOWED_TO_EXIT_RANGE3_TO'] = input.txtAllowedToExitRange3To()
+        CONFIG['CAMERA_SOURCE'] = input.camera_source()
+        CONFIG['IP_CAMERA_URL'] = input.ip_camera_url()
 
         # Update the log level
         configure_logging(input.txtLoglevel())

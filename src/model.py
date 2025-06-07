@@ -659,11 +659,16 @@ class ModelHandler:
     def run(self):
         """Run the model on the video stream."""
         global videostream
+        global CONFIG
 
         resW, resH = self.resolution.split('x')
         imW, imH = int(resW), int(resH)
 
         self.load_model()
+
+        # Store the last used camera config to detect changes
+        last_camera_source = CONFIG['CAMERA_SOURCE']
+        last_ip_camera_url = CONFIG['IP_CAMERA_URL']
 
         # Check if the model is a YOLO model
         if self.model == "tflite":
@@ -710,7 +715,7 @@ class ModelHandler:
         freq = cv2.getTickFrequency()
 
         # Initialize video stream
-        videostream = VideoStream(resolution=(imW, imH), framerate=self.framerate, jpeg_quality=self.jpeg_quality).start()
+        videostream = VideoStream(source=CONFIG['CAMERA_SOURCE'], ip_camera_url=CONFIG['IP_CAMERA_URL']).start()
         logging.info(f"[CAMERA] Starting video stream...")
 
         # Wait for the camera to warm up
@@ -729,14 +734,36 @@ class ModelHandler:
             logging.info("[CAMERA] Camera stream started successfully.")
 
         # Calculate padding for letterbox resizing
-        scale = int(self.input_size) / max(imW, imH)
-        pad_x = (self.input_size - imW * scale) / 2  # Horizontal padding
-        pad_y = (self.input_size - imH * scale) / 2  # Vertical padding
+        #scale = int(self.input_size) / max(imW, imH)
+        #pad_x = (self.input_size - imW * scale) / 2  # Horizontal padding
+        #pad_y = (self.input_size - imH * scale) / 2  # Vertical padding
 
         # Flag to ensure we run at least one inference to initialize the model
         first_run = True
         
         while not sigterm_monitor.stop_now:
+            # --- Detect camera config changes and re-init videostream if needed ---
+            current_camera_source = CONFIG['CAMERA_SOURCE']
+            current_ip_camera_url = CONFIG['IP_CAMERA_URL']
+            if (current_camera_source != last_camera_source) or (current_ip_camera_url != last_ip_camera_url):
+                tm.sleep(0.2)
+                logging.info(f"[MODEL] Detected change in CAMERA_SOURCE or IP_CAMERA_URL. Reinitializing videostream...")
+                self.reinit_videostream()
+                last_camera_source = current_camera_source
+                last_ip_camera_url = current_ip_camera_url
+                # Wait for the new stream to warm up
+                frame = None
+                stream_start_time = tm.time()
+                while frame is None:
+                    frame = videostream.read_oldest()
+                    if tm.time() - stream_start_time > 10:
+                        logging.error("[CAMERA] Camera stream failed to start within 10 seconds after reinit!")
+                        break
+                    else:
+                        tm.sleep(0.1)
+                if frame is not None:
+                    logging.info("[CAMERA] Camera stream re-initialized successfully.")
+
             # Start timer (for calculating frame rate)
             t1 = cv2.getTickCount()
 
@@ -844,6 +871,34 @@ class ModelHandler:
         self.cat_names = [cat_name.lower() for cat_name in get_cat_names_list(CONFIG['KITTYHACK_DATABASE_PATH'])]
         self.paused = False
 
+    def reinit_videostream(self):
+        """
+        Re-initialize the videostream if CAMERA_SOURCE or IP_CAMERA_URL has changed.
+        Always uses the latest CONFIG values.
+        """
+        global videostream
+        from src.baseconfig import CONFIG  # Ensure latest config is used
+
+        # Stop the current videostream if it exists
+        if videostream is not None:
+            try:
+                videostream.stop()
+                videostream = None
+                logging.info("[MODEL] Stopped previous videostream.")
+                tm.sleep(1.0) # Give some time for the stream to stop
+            except Exception as e:
+                logging.warning(f"[MODEL] Error stopping previous videostream: {e}")
+
+        # Start a new videostream with the latest config values
+        videostream = VideoStream(
+            source=CONFIG['CAMERA_SOURCE'],
+            ip_camera_url=CONFIG['IP_CAMERA_URL']
+        ).start()
+        if CONFIG['CAMERA_SOURCE'] == "internal":
+            logging.info(f"[MODEL] Re-initialized videostream with internal camera source.")
+        else:
+            logging.info(f"[MODEL] Re-initialized videostream with external camera source: {CONFIG['IP_CAMERA_URL']}.")
+
     def set_videostream_buffer_size(self, new_size: int):
         """
         Set the buffer size of the videostream.
@@ -944,6 +999,24 @@ class ModelHandler:
             return videostream.read()
         else:
             logging.error("[CAMERA] 'Get Frame' failed. Video stream is not yet initialized.")
+            return None
+        
+    def get_camera_state(self):
+        if videostream is not None:
+            return videostream.get_camera_state()
+        else:
+            logging.error("[CAMERA] 'Get Camera State' failed. Video stream is not yet initialized.")
+            return None
+        
+    def get_camera_resolution(self):
+        """
+        Returns the current camera resolution as a tuple (width, height).
+        If the video stream is not initialized, returns None.
+        """
+        if videostream is not None:
+            return videostream.get_resolution()
+        else:
+            logging.error("[CAMERA] 'Get Camera Resolution' failed. Video stream is not yet initialized.")
             return None
         
     def check_videostream_status(self):

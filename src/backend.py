@@ -29,9 +29,6 @@ if CONFIG['TFLITE_MODEL_VERSION']:
                                  modeldir = f"./tflite/{CONFIG['TFLITE_MODEL_VERSION']}",
                                   graph = "cv-lite-model.tflite",
                                   labelfile = "labels.txt",
-                                  resolution = "800x600",
-                                  framerate = 10,
-                                  jpeg_quality = 75,
                                   model_image_size = 320,
                                   num_threads=threads)
 else:

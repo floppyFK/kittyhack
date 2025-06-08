@@ -2822,6 +2822,25 @@ def server(input, output, session):
                 _("Camera specific settings for the internal and external cameras."),
                 ui.div(
                     ui.br(),
+                    ui.column(
+                        12,
+                        ui.markdown(
+                            _(
+                                "You can use an **external IP camera** instead of the internal camera to achieve better viewing angles for prey detection. "
+                                "This can be especially useful if the internal camera's position is not ideal for your setup. "
+                                "You can also achieve much better night vision capabilities with an external camera. "
+                                "\n\n"
+                                "**Important notes:**\n"
+                                "- Both the Kittyflap and the IP camera must have a stable and strong WLAN connection for reliable operation.\n"
+                                "- The IP camera must be configured with a **fixed (static) IP address**.\n"
+                                "- Make sure your IP camera supports a compatible video stream (e.g., RTSP, HTTP MJPEG, or similar formats).\n"
+                                "- For best performance, use a resolution of up to 1280x720 and a frame rate of up to 15fps.\n"
+                                "\n"
+                                "If you experience connection issues or interruptions, please check the WLAN signal strength and the network configuration of both devices."
+                            )
+                        ),
+                        style_="color: grey;"
+                    ),
                     ui.row(
                         ui.column(
                             12,
@@ -2846,10 +2865,6 @@ def server(input, output, session):
                             ),
                             id="ip_camera_url_container",
                         ),
-                    ),
-                    ui.hr(),
-                    ui.markdown(
-                        _("Select the camera source for the Kittyflap. If you choose `External IP Camera`, please provide the URL of the camera stream.")
                     ),
                     ui.column(
                         12,

@@ -69,7 +69,8 @@ from src.system import (
     systemctl,
     scan_wlan_networks,
     get_hostname,
-    set_hostname
+    set_hostname,
+    update_kittyhack
 )
 
 # Prepare gettext for translations based on the configured language
@@ -357,6 +358,26 @@ reload_trigger_photos = reactive.Value(0)
 reload_trigger_ai = reactive.Value(0)
 reload_trigger_config = reactive.Value(0)
 
+# Global update progress state
+update_progress_state = {
+    "in_progress": False,
+    "step": 0,
+    "max_steps": 8,
+    "message": "",
+    "detail": "",
+    "result": None,  # None, "ok", "reboot_dialog" or "error"
+    "error_msg": "",
+}
+update_progress_lock = threading.Lock()
+
+def set_update_progress(**kwargs):
+    with update_progress_lock:
+        update_progress_state.update(kwargs)
+
+def get_update_progress():
+    with update_progress_lock:
+        return update_progress_state.copy()
+    
 #######################################################################
 # Modules
 #######################################################################
@@ -948,24 +969,26 @@ def server(input, output, session):
         )
 
     # Show changelogs, if the version was updated
-    changelog_text = get_changelogs(after_version=CONFIG['LAST_READ_CHANGELOGS'], language=CONFIG['LANGUAGE'])
-    if changelog_text:
-        ui.modal_show(
-            ui.modal(
-                ui.div(
-                    ui.markdown(changelog_text),
-                    ui.markdown("\n\n---------\n\n" + _("**NOTE**: You can find the changelogs also in the `INFO` section.")),
-                ),
-                title=_("Changelog"),
-                easy_close=True,
-                size="xl",
-                footer=ui.div(
-                    ui.input_action_button("btn_modal_cancel", _("Close")),
+    state = get_update_progress()
+    if not (state.get("result") == "reboot_dialog" or state.get("in_progress") is True):
+        changelog_text = get_changelogs(after_version=CONFIG['LAST_READ_CHANGELOGS'], language=CONFIG['LANGUAGE'])
+        if changelog_text:
+            ui.modal_show(
+                ui.modal(
+                    ui.div(
+                        ui.markdown(changelog_text),
+                        ui.markdown("\n\n---------\n\n" + _("**NOTE**: You can find the changelogs also in the `INFO` section.")),
+                    ),
+                    title=_("Changelog"),
+                    easy_close=True,
+                    size="xl",
+                    footer=ui.div(
+                        ui.input_action_button("btn_modal_cancel", _("Close")),
+                    )
                 )
             )
-        )
-        CONFIG['LAST_READ_CHANGELOGS'] = git_version
-        update_single_config_parameter("LAST_READ_CHANGELOGS")
+            CONFIG['LAST_READ_CHANGELOGS'] = git_version
+            update_single_config_parameter("LAST_READ_CHANGELOGS")
     
     # Add new WLAN dialog
     def wlan_add_dialog():
@@ -1855,10 +1878,17 @@ def server(input, output, session):
     @reactive.event(input.btn_modal_cancel)
     def modal_cancel():
         ui.modal_remove()
+        # Reset update progress result if the restart-required modal was open
+        state = get_update_progress()
+        if state["result"] == "ok" or state["result"] == "reboot_dialog":
+            set_update_progress(in_progress=False, result=None)
 
     @reactive.effect
     @reactive.event(input.btn_modal_reboot_ok)
     def modal_reboot():
+        state = get_update_progress()
+        if state["result"] == "ok" or state["result"] == "reboot_dialog":
+            set_update_progress(in_progress=False, result=None)
         ui.modal_remove()
         ui.modal_show(ui.modal(_("Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reload the page after the restart."), title=_("Restart Kittyflap"), footer=None))
         systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
@@ -4069,30 +4099,229 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.update_kittyhack)
     def update_kittyhack_process():
-        from src.system import update_kittyhack  # Import the new function
-
         latest_version = CONFIG['LATEST_VERSION']
         current_version = git_version
 
-        with ui.Progress(min=1, max=7) as p:
-            def progress_callback(step, message, detail):
-                p.set(step, message=message, detail=detail)
+        set_update_progress(
+            in_progress=True,
+            step=1,
+            max_steps=8,
+            message=_("Starting update..."),
+            detail="",
+            result=None,
+            error_msg="",
+        )
 
-            ok, msg = update_kittyhack(progress_callback=progress_callback, latest_version=latest_version, current_version=current_version)
+        # Start the update in a background thread so the UI can update immediately
+        def run_update():
+            def progress_callback(step, message, detail):
+                set_update_progress(
+                    in_progress=True,
+                    step=step,
+                    max_steps=8,
+                    message=message,
+                    detail=detail,
+                    result=None,
+                    error_msg="",
+                )
+            ok, msg = update_kittyhack(
+                progress_callback=progress_callback,
+                latest_version=latest_version,
+                current_version=current_version
+            )
             if ok:
                 logging.info(f"Kittyhack updated successfully to version {latest_version}.")
-                m = ui.modal(
-                    _("A restart is required to apply the update. Do you want to restart the Kittyflap now?"),
+                set_update_progress(result="ok")
+            else:
+                logging.error(f"Kittyhack update failed: {msg}")
+                set_update_progress(result="error", error_msg=msg)
+
+        threading.Thread(target=run_update, daemon=True).start()
+
+        # Add some delay here to keep the action button active for a moment until the modal is shown
+        tm.sleep(1.0)
+
+    @output
+    @render.text
+    def update_progress_message():
+        reactive.invalidate_later(0.5)
+        state = get_update_progress()
+        return state["message"]
+
+    @output
+    @render.text
+    def update_progress_detail():
+        reactive.invalidate_later(0.5)
+        state = get_update_progress()
+        return state["detail"]
+
+    @output
+    @render.text
+    def update_progress_percent():
+        reactive.invalidate_later(0.5)
+        state = get_update_progress()
+        if state["max_steps"]:
+            return f"{int(100 * state['step'] / state['max_steps'])}%"
+        return "0%"
+
+    # Update progress modal for all sessions
+    def show_update_progress_modal():
+        reactive.invalidate_later(0.5)
+        state = get_update_progress()
+        if not state["in_progress"] and state["result"] is None:
+            ui.modal_remove()
+            return
+
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.HTML("""
+                        <div style="margin-bottom: 1em;">
+                            <div style="display: flex; align-items: center; gap: 1em;">
+                                <div class="spinner" style="display: inline-block; width: 16px; height: 16px; border: 2px solid #eee; border-top: 2px solid #007bff; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                                <div style="font-weight: bold; display: flex;">
+                    """),
+                    ui.output_text("update_progress_message"),
+                    ui.HTML("""
+                                    <div id="in_progress_dots" style="margin-left: 0.2em; color: #888; font-size: 0.95em;"></div>
+                                </div>
+                            </div>
+                            <div style="color: #888;">
+                    """),
+                    ui.output_text("update_progress_detail"),
+                    ui.HTML("""
+                            </div>
+                            <div style="margin-top: 1em;">
+                                <div style="background: #eee; border-radius: 4px; height: 24px; width: 100%; position: relative;">
+                                    <div id="progress_bar" style="background: #007bff; height: 100%; border-radius: 4px; width: 0%; transition: width 0.3s;"></div>
+                                    <div id="progress_percent_text" style="position: absolute; right: 8px; top: 0; height: 100%; display: flex; align-items: center; color: #555; font-size: 0.9em;">
+                    """),
+                    ui.output_text("update_progress_percent"),
+                    ui.HTML("""
+                                    </div>
+                                </div>
+                            </div>
+                            <style>
+                            @keyframes spin {
+                                0% { transform: rotate(0deg);}
+                                100% { transform: rotate(360deg);}
+                            }
+                            </style>
+                            <script>
+                            (function() {
+                                var percentTextEl = document.getElementById('progress_percent_text');
+                                var barEl = document.getElementById('progress_bar');
+                                function updateBar() {
+                                    if (percentTextEl && barEl) {
+                                        var percent = percentTextEl.textContent.trim();
+                                        if(percent.endsWith('%')) percent = percent.slice(0, -1);
+                                        var val = parseInt(percent);
+                                        if (!isNaN(val)) {
+                                            barEl.style.width = val + '%';
+                                        }
+                                    }
+                                }
+                                if (window.MutationObserver && percentTextEl) {
+                                    var observer = new MutationObserver(updateBar);
+                                    observer.observe(percentTextEl, { childList: true, subtree: true });
+                                    updateBar();
+                                }
+                                // Animate dots
+                                var msgEl = document.getElementById('in_progress_dots');
+                                var dots = 0;
+                                setInterval(function() {
+                                    if (msgEl) {
+                                        dots = (dots + 1) % 4;
+                                        msgEl.textContent = '.'.repeat(dots);
+                                    }
+                                }, 700);
+                            })();
+                            </script>
+                        </div>
+                        <br>
+                    """),
+                    ui.markdown(_("Do not close this page until the update is finished!")),
+                    ui.markdown(_("*This step may take several minutes. Please be patient.*")),
+                ),
+                title=_("Updating Kittyhack..."),
+                easy_close=False,
+                footer=None,
+                id="update_progress_modal"
+            )
+        )
+
+    # Reactive effect to show/update the modal in all sessions
+    @reactive.Effect
+    async def update_progress_watcher():
+        reactive.invalidate_later(1)
+        state = get_update_progress()
+
+        # Track only the modal open/close state
+        if not hasattr(update_progress_watcher, "modal_open"):
+            update_progress_watcher.modal_open = False
+        if not hasattr(update_progress_watcher, "reboot_dialog_shown"):
+            update_progress_watcher.reboot_dialog_shown = False
+
+        # Show update progress modal only when starting update
+        if state["in_progress"] and not update_progress_watcher.modal_open:
+            show_update_progress_modal()
+            update_progress_watcher.modal_open = True
+            update_progress_watcher.reboot_dialog_shown = False
+
+        # Remove modal and show result only when update is finished
+        elif update_progress_watcher.modal_open and not state["in_progress"] and state["result"] is None:
+            ui.modal_remove()
+            update_progress_watcher.modal_open = False
+            update_progress_watcher.reboot_dialog_shown = False
+
+        # Show reboot dialog if update finished and reboot required, but only once
+        elif (
+            (state["result"] == "ok" or state["result"] == "reboot_dialog")
+            and not update_progress_watcher.reboot_dialog_shown
+        ):
+            # Always remove any open modal first
+            ui.modal_remove()
+            set_update_progress(result="reboot_dialog", in_progress=False)
+            ui.modal_show(
+                ui.modal(
+                    _("A restart is required to apply the update. Please click the 'Reboot' button to restart the Kittyflap."),
                     title=_("Restart required"),
                     easy_close=False,
                     footer=ui.div(
-                        ui.input_action_button("btn_modal_reboot_ok", _("OK")),
-                        ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                        ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
                     )
                 )
-                ui.modal_show(m)
-            else:
-                logging.error(f"Kittyhack update failed: {msg}")
-                ui.notification_show(_("An error occurred during the update process: {}").format(msg), duration=None, type="error")
+            )
+            update_progress_watcher.modal_open = True
+            update_progress_watcher.reboot_dialog_shown = True
 
+        # Show reboot dialog with error if update failed, but only once
+        elif (
+            state["result"] == "error"
+            and not update_progress_watcher.reboot_dialog_shown
+        ):
+            ui.modal_remove()
+            set_update_progress(result="reboot_dialog", in_progress=False)
+            ui.modal_show(
+                ui.modal(
+                    ui.div(
+                        ui.markdown(_("An error occurred during the update process:")),
+                        ui.markdown(f"```\n{state['error_msg']}\n```"),
+                        ui.br(),
+                        ui.markdown(_("A restart is required to recover. Please click the 'Reboot' button to restart the Kittyflap.")),
+                    ),
+                    title=_("Restart required"),
+                    easy_close=False,
+                    footer=ui.div(
+                        ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
+                    )
+                )
+            )
+            update_progress_watcher.modal_open = True
+            update_progress_watcher.reboot_dialog_shown = True
 
+        # If modal is open but result is not reboot or update, close it
+        elif update_progress_watcher.modal_open and state["result"] not in ("ok", "reboot_dialog", "error") and not state["in_progress"]:
+            ui.modal_remove()
+            update_progress_watcher.modal_open = False
+            update_progress_watcher.reboot_dialog_shown = False

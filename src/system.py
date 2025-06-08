@@ -508,6 +508,17 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
         bool: True if update succeeded, False otherwise.
     """
 
+    # Step 0: Stop the backend process
+    if progress_callback:
+        progress_callback(0, "Stopping backend process", "")
+    try:
+        from src.helper import sigterm_monitor
+        import time as tm
+        sigterm_monitor.halt_backend()
+        tm.sleep(1.0)
+    except Exception as e:
+        logging.error(f"Failed to stop backend process: {e}")
+
     steps = [
         ("Reverting local changes", ["/bin/git", "restore", "."]),
         ("Cleaning untracked files", ["/bin/git", "clean", "-fd"]),

@@ -3658,7 +3658,14 @@ def server(input, output, session):
                             z.write(file_path, arcname=file)
                 else:
                     logging.warning(f"Log directory does not exist: {log_dir}")
-                    
+                
+                # Add config.ini to the zip file if it exists
+                config_ini_path = os.path.join(os.getcwd(), "config.ini")
+                if os.path.exists(config_ini_path):
+                    z.write(config_ini_path, arcname="config.ini")
+                else:
+                    logging.warning("config.ini not found, skipping adding to log archive.")
+
                 system_log_dir = "/var/log"
                 if os.path.exists(system_log_dir):
                     # First, find all setup directories with timestamps

@@ -244,6 +244,18 @@ def backend_main(simulate_kittyflap = False):
                     logging.info("[BACKEND] Motion event conclusion: Cat went outside.")
                     event_type = EventType.CAT_WENT_OUTSIDE
 
+                if use_camera_for_motion:
+                    if event_type == EventType.CAT_WENT_OUTSIDE:
+                        # Use either the first_motion_outside_tm or the first_motion_inside_tm+2.5, whichever is earlier, as the timestamp for the event
+                        log_start_tm = min(first_motion_outside_tm, first_motion_inside_tm + 2.5)
+                    else:
+                        # Log 2.5 seconds earlier, since the camera might not detect the cat immediately
+                        log_start_tm = first_motion_outside_tm - 2.5
+                else:
+                    # Don't log earlier than the first motion outside timestamp when using PIR-based motion detection
+                    log_start_tm = first_motion_outside_tm
+
+
                 all_events = str(event_type)
                 # Add all additional verdict information to the event type
                 if additional_verdict_infos:
@@ -251,11 +263,11 @@ def backend_main(simulate_kittyflap = False):
                         all_events += "," + str(info)
                 additional_verdict_infos = []
 
-                # Update the motion_block_id and the tag_id for for all elements between first_motion_outside_tm and last_motion_outside_tm
-                img_ids_for_motion_block = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm)
-                ids_exceeding_mouse_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_mouse_probability=CONFIG['MIN_THRESHOLD'])
-                ids_exceeding_nomouse_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_no_mouse_probability=CONFIG['MIN_THRESHOLD'])
-                ids_exceeding_own_cat_th = image_buffer.get_filtered_ids(first_motion_outside_tm, last_motion_outside_tm, min_own_cat_probability=CONFIG['MIN_THRESHOLD'])
+                # Update the motion_block_id and the tag_id for for all elements between log_start_tm and last_motion_outside_tm
+                img_ids_for_motion_block = image_buffer.get_filtered_ids(log_start_tm, last_motion_outside_tm)
+                ids_exceeding_mouse_th = image_buffer.get_filtered_ids(log_start_tm, last_motion_outside_tm, min_mouse_probability=CONFIG['MIN_THRESHOLD'])
+                ids_exceeding_nomouse_th = image_buffer.get_filtered_ids(log_start_tm, last_motion_outside_tm, min_no_mouse_probability=CONFIG['MIN_THRESHOLD'])
+                ids_exceeding_own_cat_th = image_buffer.get_filtered_ids(log_start_tm, last_motion_outside_tm, min_own_cat_probability=CONFIG['MIN_THRESHOLD'])
                 logging.info(f"""[BACKEND] {motion_source}-based motion detection: Detection summary:
                                                             - {len(img_ids_for_motion_block)} elements in current motion block (between {first_motion_outside_tm} and {last_motion_outside_tm})
                                                             - {len(ids_exceeding_mouse_th)} elements where "mouse" detection exceeded the min. logging threshold of {CONFIG['MIN_THRESHOLD']}

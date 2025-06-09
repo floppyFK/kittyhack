@@ -2861,10 +2861,12 @@ def server(input, output, session):
                                 "You can also achieve much better night vision capabilities with an external camera. "
                                 "\n\n"
                                 "**Important notes:**\n"
-                                "- Both the Kittyflap and the IP camera must have a stable and strong WLAN connection for reliable operation.\n"
+                                "- Both the Kittyflap and the IP camera must have a stable and strong WLAN connection for reliable operation. "
+                                "A **wired (Ethernet) connection** for the IP camera is recommended, as it provides much higher reliability and performance compared to WLAN.\n"
                                 "- The IP camera must be configured with a **fixed (static) IP address**.\n"
                                 "- Make sure your IP camera supports a compatible video stream (e.g., RTSP, HTTP MJPEG, or similar formats).\n"
-                                "- For best performance, use a resolution of up to 1280x720 and a frame rate of up to 15fps.\n"
+                                "- For best performance, use a resolution of up to 1280x720 and a frame rate of up to 15fps (higher resolutions will decrease the performance of the kittyflap drastically).\n"
+                                "- The resolution can often be configured in the settings of your IP camera. Some cameras also provide different URLs for different resolutions.\n"
                                 "\n"
                                 "If you experience connection issues or interruptions, please check the WLAN signal strength and the network configuration of both devices."
                             )
@@ -2910,11 +2912,6 @@ def server(input, output, session):
                             + "- `udp://@239.0.0.1:1234`  _(UDP multicast)_"
                             + "\n"
                             + "- `tcp://192.168.1.103:8554`  _(TCP stream)_"
-                            + "\n\n"
-                            "> "
-                            + _("**NOTE:** The external IP camera stream should have a maximum resolution of 1280x720 (16:9) or 1024x768 (4:3) and a maximum framerate of 15fps.") + "  \n"
-                            + _("At higher resolutions and/or framerates, the performance of the Kittyflap may be drastically reduced.") + "  \n"
-                            + _("This can often be configured in the settings of your IP camera. Some cameras also provide different URLs for different resolutions.")
                         ),
                         id="ip_camera_warning",
                         style_="color: grey;"

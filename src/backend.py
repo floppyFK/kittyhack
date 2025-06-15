@@ -2,13 +2,15 @@ import threading
 import time as tm
 import logging
 import multiprocessing
-from src.baseconfig import AllowedToEnter, CONFIG
+import uuid
+from src.baseconfig import AllowedToEnter, CONFIG, update_single_config_parameter
 from src.pir import Pir
 from src.database import *
 from src.magnets_rfid import Magnets, Rfid, RfidRunState
 from src.camera import image_buffer
 from src.helper import sigterm_monitor, EventType, check_allowed_to_exit
 from src.model import ModelHandler, YoloModel
+from src.mqtt import MQTTClient, StatePublisher
 
 TAG_TIMEOUT = 30.0               # after 30 seconds, a detected tag is considered invalid
 RFID_READER_OFF_DELAY = 15.0     # Turn the RFID reader off 15 seconds after the last detected motion outside
@@ -45,6 +47,148 @@ else:
 
 # Global variable for manual door control
 manual_door_override = {'unlock_inside': False, 'unlock_outside': False, 'lock_inside': False, 'lock_outside': False}
+
+# Global variables for MQTT client
+mqtt_client = None
+mqtt_publisher = None
+
+def handle_manual_override(payload):
+    """Handle manual override commands from MQTT"""
+    global manual_door_override
+    try:
+        logging.info(f"[BACKEND] Received manual override: {payload}")
+        
+        # Simple toggle command handling
+        if isinstance(payload, str) and payload.strip().lower() == "toggle_inside":
+            # Toggle the inside lock state
+            if Magnets.instance:
+                current_inside_state = Magnets.instance.get_inside_state()
+                if current_inside_state:
+                    manual_door_override['lock_inside'] = True
+                    logging.info("[BACKEND] Manual override: Locking inside door")
+                else:
+                    manual_door_override['unlock_inside'] = True
+                    logging.info("[BACKEND] Manual override: Unlocking inside door")
+            return
+            
+        # Handle JSON payload for toggle
+        if isinstance(payload, dict) and payload.get("command", "").lower() == "toggle_inside":
+            # Toggle the inside lock state
+            if Magnets.instance:
+                current_inside_state = Magnets.instance.get_inside_state()
+                if current_inside_state:
+                    manual_door_override['lock_inside'] = True
+                    logging.info("[BACKEND] Manual override: Locking inside door")
+                else:
+                    manual_door_override['unlock_inside'] = True
+                    logging.info("[BACKEND] Manual override: Unlocking inside door")
+            return
+            
+    except Exception as e:
+        logging.error(f"[BACKEND] Error processing manual override: {e}")
+
+def init_mqtt_client(magnets_instance=None, motion_outside=0, motion_inside=0):
+    """Initialize and start the MQTT client with current configuration settings"""
+    global mqtt_client, mqtt_publisher
+    
+    # Clean up any existing MQTT connections
+    cleanup_mqtt()
+    
+    if CONFIG['MQTT_ENABLED']:
+        logging.info("[BACKEND] Starting MQTT client...")
+        if not CONFIG['MQTT_BROKER_ADDRESS'] or not CONFIG['MQTT_BROKER_PORT']:
+            logging.error("[BACKEND] MQTT broker address or port is not configured. MQTT client will not be started.")
+            mqtt_client = None
+            mqtt_publisher = None
+            return False
+        
+        try:
+            if not CONFIG['MQTT_DEVICE_ID']:
+                CONFIG['MQTT_DEVICE_ID'] = f"kittyhack_{str(uuid.uuid4())}"
+                update_single_config_parameter('MQTT_DEVICE_ID')
+                logging.info(f"[BACKEND] Generated MQTT device ID: {CONFIG['MQTT_DEVICE_ID']}")
+            
+            mqtt_client = MQTTClient(
+                broker_address=CONFIG['MQTT_BROKER_ADDRESS'],
+                broker_port=CONFIG['MQTT_BROKER_PORT'],
+                username=CONFIG['MQTT_USERNAME'],
+                password=CONFIG['MQTT_PASSWORD'],
+                client_name=CONFIG['MQTT_DEVICE_ID']
+            )
+            
+            connected = mqtt_client.connect()
+            if not connected:
+                logging.error("[BACKEND] Failed to connect to MQTT broker")
+                mqtt_client = None
+                mqtt_publisher = None
+                return False
+            
+            # Only set up the publisher if we have a magnets instance
+            if magnets_instance:
+                # Inside state is inverted in magnets (True means unlocked)
+                # but in MQTT publishing True means locked
+                inside_lock_state = not magnets_instance.get_inside_state()
+                outside_lock_state = not magnets_instance.get_outside_state()
+                
+                # Get current motion states
+                motion_outside_state = motion_outside == 1
+                motion_inside_state = motion_inside == 1
+                
+                # Determine prey detection state
+                prey_detected_state = False
+                if hasattr(backend_main, 'prey_detection_tm'):
+                    prey_detected_state = (tm.time() - backend_main.prey_detection_tm) <= CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION']
+                
+                mqtt_publisher = StatePublisher(
+                    mqtt_client,
+                    inside_lock_state=inside_lock_state,
+                    outside_lock_state=outside_lock_state,
+                    motion_inside_state=motion_inside_state, 
+                    motion_outside_state=motion_outside_state,
+                    prey_detected_state=prey_detected_state
+                )
+                
+                mqtt_publisher.register_manual_override_handler(handle_manual_override)
+                logging.info("[BACKEND] Registered manual override handler for MQTT publisher.")
+                
+                # Start publishing images every 5 seconds
+                mqtt_publisher.start_periodic_image_publishing(interval=5.0)
+                logging.info("[BACKEND] Started periodic camera image publishing")
+            
+            logging.info("[BACKEND] Started MQTT client.")
+            return True
+            
+        except Exception as e:
+            logging.error(f"[BACKEND] Could not start MQTT client: {e}")
+            mqtt_client = None
+            mqtt_publisher = None
+            return False
+    else:
+        mqtt_client = None
+        mqtt_publisher = None
+        logging.info("[BACKEND] MQTT client is disabled.")
+        return True
+
+def cleanup_mqtt():
+    """Clean up MQTT client resources"""
+    global mqtt_client, mqtt_publisher
+    
+    if mqtt_publisher and hasattr(mqtt_publisher, 'stop_periodic_image_publishing'):
+        try:
+            mqtt_publisher.stop_periodic_image_publishing()
+            logging.info("[BACKEND] Stopped MQTT periodic image publishing")
+        except Exception as e:
+            logging.error(f"[BACKEND] Error stopping periodic image publishing: {e}")
+    
+    if mqtt_client:
+        try:
+            mqtt_client.disconnect()
+            logging.info("[BACKEND] Disconnected MQTT client")
+        except Exception as e:
+            logging.error(f"[BACKEND] Error disconnecting MQTT client: {e}")
+    
+    mqtt_client = None
+    mqtt_publisher = None
 
 def backend_main(simulate_kittyflap = False):
 
@@ -114,6 +258,69 @@ def backend_main(simulate_kittyflap = False):
     # Start the RFID reader (without the field enabled)
     rfid_thread = threading.Thread(target=rfid.run, args=(), daemon=True)
     rfid_thread.start()
+
+    # Start the MQTT client
+    init_mqtt_client(magnets_instance=magnets, motion_outside=motion_outside, motion_inside=motion_inside)
+    # if CONFIG['MQTT_ENABLED']:
+    #     logging.info("[BACKEND] Starting MQTT client...")
+    #     if not CONFIG['MQTT_BROKER_ADDRESS'] or not CONFIG['MQTT_BROKER_PORT']:
+    #         logging.error("[BACKEND] MQTT broker address or port is not configured. MQTT client will not be started.")
+    #         mqtt_client = None
+    #         mqtt_publisher = None
+    #     else:
+    #         try:
+    #             if not CONFIG['MQTT_DEVICE_ID']:
+    #                 CONFIG['MQTT_DEVICE_ID'] = f"kittyhack_{str(uuid.uuid4())}"
+    #                 update_single_config_parameter('MQTT_DEVICE_ID')
+    #                 logging.info(f"[BACKEND] Generated MQTT device ID: {CONFIG['MQTT_DEVICE_ID']}")
+    #             mqtt_client = MQTTClient(
+    #                 broker_address=CONFIG['MQTT_BROKER_ADDRESS'],
+    #                 broker_port=CONFIG['MQTT_BROKER_PORT'],
+    #                 username=CONFIG['MQTT_USERNAME'],
+    #                 password=CONFIG['MQTT_PASSWORD'],
+    #                 client_name=CONFIG['MQTT_DEVICE_ID']
+    #             )
+    #             mqtt_client.connect()
+                
+    #             # Inside state is inverted in magnets (True means unlocked)
+    #             # but in MQTT publishing True means locked
+    #             inside_lock_state = not magnets.get_inside_state()
+    #             outside_lock_state = not magnets.get_outside_state()
+                
+    #             # Get current motion states
+    #             motion_outside_state = motion_outside == 1
+    #             motion_inside_state = motion_inside == 1
+                
+    #             # Determine prey detection state
+    #             prey_detected_state = False
+    #             if hasattr(backend_main, 'prey_detection_tm'):
+    #                 prey_detected_state = (tm.time() - backend_main.prey_detection_tm) <= CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION']
+                
+    #             mqtt_publisher = StatePublisher(
+    #                 mqtt_client,
+    #                 inside_lock_state=inside_lock_state,
+    #                 outside_lock_state=outside_lock_state,
+    #                 motion_inside_state=motion_inside_state, 
+    #                 motion_outside_state=motion_outside_state,
+    #                 prey_detected_state=prey_detected_state
+    #             )
+    #             logging.info("[BACKEND] Started MQTT client.")
+    #         except Exception as e:
+    #             logging.error(f"[BACKEND] Could not start MQTT client: {e}")
+    #             mqtt_client = None
+    #             mqtt_publisher = None
+    # else:
+    #     mqtt_client = None
+    #     mqtt_publisher = None
+    #     logging.info("[BACKEND] MQTT client is disabled.")
+
+    # if mqtt_publisher:
+    #     mqtt_publisher.register_manual_override_handler(handle_manual_override)
+    #     logging.info("[BACKEND] Registered manual override handler for MQTT publisher.")
+
+    #     # Start publishing images every 5 seconds
+    #     mqtt_publisher.start_periodic_image_publishing(interval=5.0)
+    #     logging.info("[BACKEND] Started periodic camera image publishing")
 
     def lazy_cat_workaround(current_motion_state: int | bool, last_motion_state: int | bool, current_motion_timestamp: float, delay=LAZY_CAT_DELAY_PIR_MOTION) -> int | bool:
         """
@@ -311,6 +518,11 @@ def backend_main(simulate_kittyflap = False):
                     rfid.set_tag(None, 0.0)
                     logging.info("[BACKEND] Forget the tag ID from the RFID reader.")
 
+                # Publish the event to MQTT
+                #mqtt_publisher.publish_event_type(all_events, log_start_tm, motion_block_id, tag_id, tag_id_from_video)
+                if mqtt_publisher:
+                    mqtt_publisher.publish_motion_outside(False)
+
             if last_inside_raw == 1 and motion_inside_raw == 0: # Inside motion stopped (raw)
                 last_motion_inside_raw_tm = motion_inside_raw_tm
                 logging.debug(f"[BACKEND] Motion stopped INSIDE (raw)")
@@ -318,8 +530,12 @@ def backend_main(simulate_kittyflap = False):
             if last_inside == 1 and motion_inside == 0: # Inside motion stopped
                 last_motion_inside_tm = motion_inside_tm
                 logging.info(f"[BACKEND] Motion stopped INSIDE")
+                # Publish the inside motion state to MQTT
+                if mqtt_publisher:
+                    mqtt_publisher.publish_motion_inside(False)
             
-            if last_outside == 0 and motion_outside == 1: # Outside motion detected
+            # Outside motion detected
+            if last_outside == 0 and motion_outside == 1:
                 motion_block_id += 1
                 # If we use the camera for motion detection, set the first motion timestamp a bit earlier to avoid missing the first motion
                 if use_camera_for_motion:
@@ -334,6 +550,8 @@ def backend_main(simulate_kittyflap = False):
                 cat_rfid_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
                 # Reset the additional verdict infos
                 additional_verdict_infos = []
+                if mqtt_publisher:
+                    mqtt_publisher.publish_motion_outside(True)
             
             if last_inside_raw == 0 and motion_inside_raw == 1: # Inside motion detected
                 logging.debug("[BACKEND] Motion detected INSIDE (raw)")
@@ -352,6 +570,10 @@ def backend_main(simulate_kittyflap = False):
                             unlock_outside_tm = tm.time()
                 else:
                     logging.info("[BACKEND] No cats are allowed to exit. YOU SHALL NOT PASS!")
+                
+                # Publish the inside motion state to MQTT
+                if mqtt_publisher:
+                    mqtt_publisher.publish_motion_inside(True)
 
             # Turn off the RFID reader if no motion outside and inside
             if ( (motion_outside == 0) and (motion_inside == 0) and
@@ -481,6 +703,12 @@ def backend_main(simulate_kittyflap = False):
                 for key, value in unlock_inside_conditions.items():
                     if backend_main.previous_unlock_inside_conditions[key] != value:
                         logging.info(f"[BACKEND] Unlock inside Condition '{key}' changed to {value}. ({sum(unlock_inside_conditions.values())}/{len(unlock_inside_conditions)} conditions fulfilled)")
+                        if key == "inside_locked" and mqtt_publisher:
+                            mqtt_publisher.publish_lock_inside(value)
+                        elif key == "outside_locked" and mqtt_publisher:
+                            mqtt_publisher.publish_lock_outside(value)
+                        elif key == "no_prey_within_timeout" and mqtt_publisher:
+                            mqtt_publisher.publish_prey_detected(not value)
                 if backend_main.previous_unlock_inside_conditions != unlock_inside_conditions:
                     logging.info(f"[BACKEND] Unlock inside conditions: {unlock_inside_conditions}")
                     backend_main.previous_unlock_inside_conditions = unlock_inside_conditions
@@ -550,5 +778,32 @@ def backend_main(simulate_kittyflap = False):
     rfid.set_field(False)
     rfid.set_power(False)
 
+    # MQTT Cleanup on shutdown:
+    cleanup_mqtt()
+
     logging.info("[BACKEND] Stopped backend.")
     sigterm_monitor.signal_task_done()
+
+def restart_mqtt():
+    """Restart the MQTT client with the current configuration settings"""
+    global mqtt_client, mqtt_publisher
+    
+    # Only attempt to get states if we have valid instances
+    try:
+        motion_outside = 0
+        motion_inside = 0
+        magnets_instance = None
+        
+        if Magnets.instance:
+            magnets_instance = Magnets.instance
+        
+        if Pir.instance:
+            motion_outside, motion_inside, _, _ = Pir.instance.get_states()
+            
+        logging.info("[BACKEND] Restarting MQTT client with new settings")
+        return init_mqtt_client(magnets_instance=magnets_instance, 
+                               motion_outside=motion_outside, 
+                               motion_inside=motion_inside)
+    except Exception as e:
+        logging.error(f"[BACKEND] Error restarting MQTT client: {e}")
+        return False

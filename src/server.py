@@ -23,6 +23,7 @@ from src.baseconfig import (
     set_language,
     save_config,
     configure_logging,
+    get_loggable_config_value,
     DEFAULT_CONFIG,
     JOURNAL_LOG,
     LOGFILE,
@@ -110,7 +111,7 @@ if CONFIG['NOT_GRACEFUL_SHUTDOWNS'] >= 3:
         )
     
 # Now proceed with the startup
-from src.backend import backend_main, manual_door_override, model_handler
+from src.backend import backend_main, restart_mqtt, manual_door_override, model_handler
 from src.magnets_rfid import Magnets
 from src.pir import Pir
 from src.model import RemoteModelTrainer, YoloModel
@@ -140,7 +141,8 @@ logging.info(f"Current version: {git_version}")
 # Log all configuration values from CONFIG dictionary
 logging.info("Configuration values:")
 for key, value in CONFIG.items():
-    logging.info(f"{key}={value}")
+    loggable_value = get_loggable_config_value(key, value)
+    logging.info(f"{key}={loggable_value}")
 
 # IMPORTANT: First of all check that the kwork and manager services are NOT running
 check_and_stop_kittyflap_services(CONFIG['SIMULATE_KITTYFLAP'])
@@ -3229,6 +3231,74 @@ def server(input, output, session):
                 ),
             ),
 
+            # --- Home Assistant / MQTT settings ---
+            collapsible_section(
+                "home_assistant_settings",
+                _("Home Assistant configuration"),
+                _("Configure MQTT integration for Home Assistant."),
+                ui.div(
+                    ui.br(),
+                    ui.row(
+                        ui.column(
+                            12,
+                            ui.input_switch(
+                                "btnMqttEnabled",
+                                _("Enable MQTT"),
+                                CONFIG.get('MQTT_ENABLED', False)
+                            ),
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(
+                            8,
+                            ui.input_text(
+                                "txtMqttBrokerAddress",
+                                _("MQTT Broker Address"),
+                                value=CONFIG.get('MQTT_BROKER_ADDRESS', ""),
+                                placeholder=_("e.g. 192.168.1.10"),
+                                width="100%",
+                            ),
+                        ),
+                        ui.column(
+                            4,
+                            ui.input_numeric(
+                                "numMqttBrokerPort",
+                                _("MQTT Broker Port"),
+                                value=CONFIG.get('MQTT_BROKER_PORT', 1883),
+                                min=1,
+                                max=65535,
+                            ),
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(
+                            6,
+                            ui.input_text(
+                                "txtMqttUsername",
+                                _("MQTT Username"),
+                                value=CONFIG.get('MQTT_USERNAME', ""),
+                                placeholder=_("MQTT username"),
+                                width="100%",
+                            ),
+                        ),
+                        ui.column(
+                            6,
+                            ui.input_password(
+                                "txtMqttPassword",
+                                _("MQTT Password"),
+                                value=CONFIG.get('MQTT_PASSWORD', ""),
+                                placeholder=_("MQTT password"),
+                                width="100%",
+                            ),
+                        ),
+                    ),
+                    class_="generic-container align-left",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+            ),
+
             # --- Advanced settings ---
             collapsible_section(
                 "advanced_settings",
@@ -3372,6 +3442,14 @@ def server(input, output, session):
                 return
             # Hostname is valid, set it
             set_hostname(input.txtHostname())
+        
+        mqtt_settings_changed = (
+            CONFIG['MQTT_ENABLED'] != input.btnMqttEnabled() or
+            CONFIG['MQTT_BROKER_ADDRESS'] != input.txtMqttBrokerAddress() or
+            CONFIG['MQTT_BROKER_PORT'] != int(input.numMqttBrokerPort()) or
+            CONFIG['MQTT_USERNAME'] != input.txtMqttUsername() or
+            CONFIG['MQTT_PASSWORD'] != input.txtMqttPassword()
+        )
 
         if input.camera_source() == "ip_camera":
             # Accept RTSP, HTTP(S), RTMP, UDP, TCP, and file URLs
@@ -3442,6 +3520,11 @@ def server(input, output, session):
         CONFIG['ALLOWED_TO_EXIT_RANGE3_TO'] = input.txtAllowedToExitRange3To()
         CONFIG['CAMERA_SOURCE'] = input.camera_source()
         CONFIG['IP_CAMERA_URL'] = input.ip_camera_url()
+        CONFIG['MQTT_ENABLED'] = input.btnMqttEnabled()
+        CONFIG['MQTT_BROKER_ADDRESS'] = input.txtMqttBrokerAddress()
+        CONFIG['MQTT_BROKER_PORT'] = int(input.numMqttBrokerPort())
+        CONFIG['MQTT_USERNAME'] = input.txtMqttUsername()
+        CONFIG['MQTT_PASSWORD'] = input.txtMqttPassword()
 
         # Update the log level
         configure_logging(input.txtLoglevel())
@@ -3477,6 +3560,12 @@ def server(input, output, session):
             
             if img_processing_cores_changed or hostname_changed:
                 ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the changed configuration."), duration=30, type="message")
+
+            if mqtt_settings_changed:
+                logging.info("MQTT settings changed. Restarting MQTT client...")
+                success = restart_mqtt()
+                if not success:
+                    ui.notification_show(_("Failed to restart MQTT client. Check the logs for details."), duration=10, type="error")
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=10, type="error")
 
@@ -3686,12 +3775,19 @@ def server(input, output, session):
                 else:
                     logging.warning(f"Log directory does not exist: {log_dir}")
                 
-                # Add config.ini to the zip file if it exists
-                config_ini_path = os.path.join(os.getcwd(), "config.ini")
-                if os.path.exists(config_ini_path):
-                    z.write(config_ini_path, arcname="config.ini")
-                else:
-                    logging.warning("config.ini not found, skipping adding to log archive.")
+                # Add a sanitized version of config.ini to the zip file
+                sanitized_config_path = os.path.join(temp_dir, "config_sanitized.ini")
+                
+                # Create a sanitized version of the config using the CONFIG dictionary
+                with open(sanitized_config_path, 'w') as sanitized_file:
+                    sanitized_file.write("[Settings]\n")
+                    for key, value in CONFIG.items():
+                        # Use the existing function to mask sensitive values
+                        loggable_value = get_loggable_config_value(key, value)
+                        sanitized_file.write(f"{key.lower()} = {loggable_value}\n")
+                
+                # Add the sanitized config to the zip file
+                z.write(sanitized_config_path, arcname="config_sanitized.ini")
 
                 system_log_dir = "/var/log"
                 if os.path.exists(system_log_dir):
@@ -3919,11 +4015,14 @@ def server(input, output, session):
                     ui.card_header(ui.h4(_("System Information"), style_="text-align: center;")),
                     ui.br(),
                     ui.output_ui("ui_system_info"),
+                    ui.hr(),
                     ui.div(ui.download_button("download_kittyhack_db", _("Download Kittyhack Database"), icon=icon_svg("download"))),
                     ui.markdown(
                         _("**WARNING:** To download the database, the Kittyhack software will be stopped and the flap will be locked. ") + "\n\n" +
                         _("You have to restart the Kittyflap afterwards to return to normal operation.")
                     ),
+                    ui.hr(),
+                    ui.div(ui.download_button("download_config", _("Download Configuration File"), icon=icon_svg("download"))),
                     ui.br(),
                     full_screen=False,
                     class_="generic-container",
@@ -4092,6 +4191,23 @@ def server(input, output, session):
             else:
                 ui.notification_show(_("The original kittyflap database file does not exist anymore."), duration=5, type="message")
         reload_trigger_info.set(reload_trigger_info.get() + 1)
+
+    @render.download(filename="config.ini")
+    def download_config():
+        try:
+            # Simply return the path to the actual config.ini file
+            config_ini_path = os.path.join(os.getcwd(), "config.ini")
+            
+            if os.path.exists(config_ini_path):
+                return config_ini_path
+            else:
+                logging.error("config.ini not found")
+                ui.notification_show(_("config.ini not found"), duration=10, type="error")
+                return None
+        except Exception as e:
+            logging.error(f"Failed to download config.ini file: {e}")
+            ui.notification_show(_("Failed to download config.ini file: {}").format(e), duration=10, type="error")
+            return None
 
     @reactive.Effect
     @reactive.event(input.update_kittyhack)

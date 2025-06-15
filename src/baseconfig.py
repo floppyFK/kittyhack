@@ -90,8 +90,21 @@ DEFAULT_CONFIG = {
         "cat_threshold": 70.0,
         "use_camera_for_motion_detection": False,
         "camera_source": "internal", # can be "internal" or "ip_camera"
-        "ip_camera_url": ""
+        "ip_camera_url": "",
+        "mqtt_device_id": "",
+        "mqtt_broker_address": "",
+        "mqtt_broker_port": 1883,
+        "mqtt_username": None,
+        "mqtt_password": None,
+        "mqtt_enabled": False
     }
+}
+
+# Keys that contain sensitive information (passwords, credentials, etc.) which should not be logged
+SENSITIVE_CONFIG_KEYS = {
+    'MQTT_PASSWORD',
+    'MQTT_USERNAME',
+    'IP_CAMERA_URL'  # May contain embedded credentials
 }
 
 def load_config():
@@ -164,7 +177,13 @@ def load_config():
         "CAT_THRESHOLD": parser.getfloat('Settings', 'cat_threshold', fallback=DEFAULT_CONFIG['Settings']['cat_threshold']),
         "USE_CAMERA_FOR_MOTION_DETECTION": parser.getboolean('Settings', 'use_camera_for_motion_detection', fallback=DEFAULT_CONFIG['Settings'].get('use_camera_for_motion_detection', False)),
         "CAMERA_SOURCE": parser.get('Settings', 'camera_source', fallback=DEFAULT_CONFIG['Settings']['camera_source']),
-        "IP_CAMERA_URL": parser.get('Settings', 'ip_camera_url', fallback=DEFAULT_CONFIG['Settings'].get('ip_camera_url', ""))
+        "IP_CAMERA_URL": parser.get('Settings', 'ip_camera_url', fallback=DEFAULT_CONFIG['Settings'].get('ip_camera_url', "")),
+        "MQTT_DEVICE_ID": parser.get('Settings', 'mqtt_device_id', fallback=DEFAULT_CONFIG['Settings']['mqtt_device_id']),
+        "MQTT_BROKER_ADDRESS": parser.get('Settings', 'mqtt_broker_address', fallback=DEFAULT_CONFIG['Settings']['mqtt_broker_address']),
+        "MQTT_BROKER_PORT": parser.getint('Settings', 'mqtt_broker_port', fallback=DEFAULT_CONFIG['Settings']['mqtt_broker_port']),
+        "MQTT_USERNAME": parser.get('Settings', 'mqtt_username', fallback=DEFAULT_CONFIG['Settings']['mqtt_username']),
+        "MQTT_PASSWORD": parser.get('Settings', 'mqtt_password', fallback=DEFAULT_CONFIG['Settings']['mqtt_password']),
+        "MQTT_ENABLED": parser.getboolean('Settings', 'mqtt_enabled', fallback=DEFAULT_CONFIG['Settings'].get('mqtt_enabled', False))
     }
 
 def save_config():
@@ -234,6 +253,12 @@ def save_config():
     settings['use_camera_for_motion_detection'] = CONFIG['USE_CAMERA_FOR_MOTION_DETECTION']
     settings['camera_source'] = CONFIG['CAMERA_SOURCE']
     settings['ip_camera_url'] = CONFIG['IP_CAMERA_URL']
+    settings['mqtt_device_id'] = CONFIG['MQTT_DEVICE_ID']
+    settings['mqtt_broker_address'] = CONFIG['MQTT_BROKER_ADDRESS']
+    settings['mqtt_broker_port'] = CONFIG['MQTT_BROKER_PORT']
+    settings['mqtt_username'] = CONFIG['MQTT_USERNAME']
+    settings['mqtt_password'] = CONFIG['MQTT_PASSWORD']
+    settings['mqtt_enabled'] = CONFIG['MQTT_ENABLED']
 
     # Write updated configuration back to the file
     try:
@@ -327,6 +352,22 @@ def configure_logging(level_name: str = "INFO"):
     logger.setLevel(level)
     logger.addHandler(handler)
     logging.info(f"Logger loglevel set to {level_name.upper()}")
+
+def get_loggable_config_value(key, value):
+    """
+    Returns a loggable version of a configuration value.
+    Masks sensitive values with asterisks.
+    
+    Args:
+        key (str): The configuration key
+        value: The configuration value
+        
+    Returns:
+        A string representation of the value, masked if sensitive
+    """
+    if key in SENSITIVE_CONFIG_KEYS and value:
+        return "********"  # Mask sensitive values
+    return value
 
 # Custom formatter with timezone-aware local time
 class TimeZoneFormatter(logging.Formatter):

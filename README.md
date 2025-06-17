@@ -29,6 +29,7 @@ Current features:
 - **Manage cats and add new cats**
 - **Show incoming/outgoing Events** 
 - **AI Training** Create a custom object detection model for your cat and your environment by using your own images
+- **Support of external IP cameras** for enhanced viewing angles and improved night vision comapred to the internal Kittyflap camera
 - **Home Assistant integration via MQTT** 
 
 ---
@@ -225,6 +226,7 @@ Aktuelle Features:
 - **Katzen verwalten und neue Katzen hinzufügen**
 - **Ereignisse von ankommenden/rausgehenden Katzen anzeigen**
 - **"KI" Modell Training** Erstelle ein individuelles Objekterkennungsmodell für deine Katze und deine Umgebung anhand der eigenen Bilder
+- **Support externer IP-Kameras** für bessere Blickwinkel und verbesserte Nachtsicht gegenüber der internen Kittyflap Kamera
 - **Home Assistant Unterstützung via MQTT**  
 
 ---

@@ -10,6 +10,7 @@ xgettext -d messages -o locales/messages.pot src/ui.py --from-code UTF-8 --join-
 xgettext -d messages -o locales/messages.pot src/helper.py --from-code UTF-8 --join-existing
 xgettext -d messages -o locales/messages.pot src/model.py --from-code UTF-8 --join-existing
 xgettext -d messages -o locales/messages.pot src/system.py --from-code UTF-8 --join-existing
+xgettext -d messages -o locales/messages.pot src/backend.py --from-code UTF-8 --join-existing
 ```
 
 ##### Initially create po file:
@@ -33,6 +34,7 @@ xgettext -d messages -o locales/messages.pot src/ui.py --from-code UTF-8 --join-
 xgettext -d messages -o locales/messages.pot src/helper.py --from-code UTF-8 --join-existing
 xgettext -d messages -o locales/messages.pot src/model.py --from-code UTF-8 --join-existing
 xgettext -d messages -o locales/messages.pot src/system.py --from-code UTF-8 --join-existing
+xgettext -d messages -o locales/messages.pot src/backend.py --from-code UTF-8 --join-existing
 ```
 
 ##### Merge existing po file with new values from POT:

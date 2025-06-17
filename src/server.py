@@ -1249,8 +1249,8 @@ def server(input, output, session):
             ),
             ui.br(),
             ui.row(
-                ui.div(ui.input_switch("button_cat_only", _("Show detected cats only")), class_="col-auto btn-date-filter px-1"),
-                ui.div(ui.input_switch("button_mouse_only", _("Show detected mice only")), class_="col-auto btn-date-filter px-1"),
+                ui.div(ui.input_switch("button_cat_only", _("Show detected cats only"), CONFIG['SHOW_CATS_ONLY']), class_="col-auto btn-date-filter px-1"),
+                ui.div(ui.input_switch("button_mouse_only", _("Show detected mice only"), CONFIG['SHOW_MICE_ONLY']), class_="col-auto btn-date-filter px-1"),
                 ui.div(ui.input_switch("button_detection_overlay", _("Show detection overlay"), CONFIG['SHOW_IMAGES_WITH_OVERLAY']), class_="col-auto btn-date-filter px-1"),
                 ui.div(ui.input_switch("button_events_view", _("Group pictures to events"), CONFIG['GROUP_PICTURES_TO_EVENTS']), class_="col-auto btn-date-filter px-1"),
                 class_="d-flex justify-content-center align-items-center"  # Centers elements horizontally
@@ -1258,6 +1258,18 @@ def server(input, output, session):
             class_="container"  # Adds centering within a smaller container
             )
         return uiDateBar
+    
+    @reactive.Effect
+    @reactive.event(input.button_cat_only)
+    def update_config_show_cats_only():
+        CONFIG['SHOW_CATS_ONLY'] = input.button_cat_only()
+        update_single_config_parameter("SHOW_CATS_ONLY")
+
+    @reactive.Effect
+    @reactive.event(input.button_mouse_only)
+    def update_config_show_mice_only():
+        CONFIG['SHOW_MICE_ONLY'] = input.button_mouse_only()
+        update_single_config_parameter("SHOW_MICE_ONLY")
 
     @reactive.Effect
     @reactive.event(input.button_decrement, ignore_none=True)
@@ -2223,7 +2235,7 @@ def server(input, output, session):
 
         # Show user notifications, if they are any
         show_user_notifications()
-        
+
         # URLs for different languages
         wiki_url = {
             "de": "https://github.com/floppyFK/kittyhack/wiki/%5BDE%5D-Kittyhack-v2.0-%E2%80%90-Eigene-KI%E2%80%90Modelle-trainieren",

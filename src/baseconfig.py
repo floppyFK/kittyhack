@@ -97,7 +97,9 @@ DEFAULT_CONFIG = {
         "mqtt_username": None,
         "mqtt_password": None,
         "mqtt_enabled": False,
-        "mqtt_image_publish_interval": 5.0
+        "mqtt_image_publish_interval": 5.0,
+        "show_cats_only": False,
+        "show_mice_only": False
     }
 }
 
@@ -185,7 +187,9 @@ def load_config():
         "MQTT_USERNAME": parser.get('Settings', 'mqtt_username', fallback=DEFAULT_CONFIG['Settings']['mqtt_username']),
         "MQTT_PASSWORD": parser.get('Settings', 'mqtt_password', fallback=DEFAULT_CONFIG['Settings']['mqtt_password']),
         "MQTT_ENABLED": parser.getboolean('Settings', 'mqtt_enabled', fallback=DEFAULT_CONFIG['Settings'].get('mqtt_enabled', False)),
-        "MQTT_IMAGE_PUBLISH_INTERVAL": parser.getfloat('Settings', 'mqtt_image_publish_interval', fallback=DEFAULT_CONFIG['Settings']['mqtt_image_publish_interval'])
+        "MQTT_IMAGE_PUBLISH_INTERVAL": parser.getfloat('Settings', 'mqtt_image_publish_interval', fallback=DEFAULT_CONFIG['Settings']['mqtt_image_publish_interval']),
+        "SHOW_CATS_ONLY": parser.getboolean('Settings', 'show_cats_only', fallback=DEFAULT_CONFIG['Settings']['show_cats_only']),
+        "SHOW_MICE_ONLY": parser.getboolean('Settings', 'show_mice_only', fallback=DEFAULT_CONFIG['Settings']['show_mice_only'])
     }
 
 def save_config():
@@ -262,6 +266,8 @@ def save_config():
     settings['mqtt_password'] = CONFIG['MQTT_PASSWORD']
     settings['mqtt_enabled'] = CONFIG['MQTT_ENABLED']
     settings['mqtt_image_publish_interval'] = CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL']
+    settings['show_cats_only'] = CONFIG['SHOW_CATS_ONLY']
+    settings['show_mice_only'] = CONFIG['SHOW_MICE_ONLY']
 
     # Write updated configuration back to the file
     try:

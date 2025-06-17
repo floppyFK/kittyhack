@@ -2,8 +2,7 @@ import threading
 import time as tm
 import logging
 import multiprocessing
-import uuid
-from src.baseconfig import AllowedToEnter, CONFIG, update_single_config_parameter
+from src.baseconfig import AllowedToEnter, CONFIG, set_language
 from src.pir import Pir
 from src.database import *
 from src.magnets_rfid import Magnets, Rfid, RfidRunState
@@ -18,6 +17,9 @@ OPEN_OUTSIDE_TIMEOUT = 6.0 + CONFIG['PIR_INSIDE_THRESHOLD'] # Keep the magnet to
 MAX_UNLOCK_TIME = 60.0           # Maximum time the door is allowed to stay open
 LAZY_CAT_DELAY_PIR_MOTION = 6.0  # Keep the PIR active for an additional 6 seconds after the last detected motion when using PIR-based motion detection
 LAZY_CAT_DELAY_CAM_MOTION = 12.0 # Keep the PIR active for an additional 12 seconds after the last detected motion when using camera-based motion detection
+
+# Prepare gettext for translations based on the configured language
+_ = set_language(CONFIG['LANGUAGE'])
 
 # Initialize Model
 if CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']:
@@ -87,6 +89,48 @@ def handle_manual_override(payload):
     except Exception as e:
         logging.error(f"[BACKEND] Error processing manual override: {e}")
 
+def update_mqtt_config(config_key=None):
+    """
+    Update MQTT with the latest configuration values.
+    
+    Args:
+        config_key (str, optional): Specific configuration key to update. 
+            If None, update all publishable configurations.
+    """
+    global mqtt_publisher
+    
+    if not mqtt_publisher or not CONFIG['MQTT_ENABLED']:
+        return
+        
+    try:
+        if config_key is None or config_key.upper() == 'ALLOWED_TO_EXIT':
+            mqtt_publisher.publish_allowed_to_exit(CONFIG['ALLOWED_TO_EXIT'])
+            logging.info("[BACKEND] Published updated ALLOWED_TO_EXIT to MQTT")
+            
+        if config_key is None or config_key.upper() == 'ALLOWED_TO_ENTER':
+            mqtt_publisher.publish_allowed_to_enter(CONFIG['ALLOWED_TO_ENTER'])
+            logging.info("[BACKEND] Published updated ALLOWED_TO_ENTER to MQTT")
+    
+    except Exception as e:
+        logging.error(f"[BACKEND] Error updating MQTT configuration: {e}")
+
+def update_mqtt_language():
+    """
+    Update MQTT topics that depend on the current language setting.
+    This is called when the language changes to ensure MQTT topics are updated accordingly.
+    """
+    global mqtt_publisher
+    
+    if not mqtt_publisher or not CONFIG['MQTT_ENABLED']:
+        return
+        
+    try:
+        mqtt_publisher.update_language_dependent_topics()
+        logging.info("[BACKEND] Updated MQTT language-dependent topics")
+        
+    except Exception as e:
+        logging.error(f"[BACKEND] Error updating MQTT language-dependent topics: {e}")
+
 def init_mqtt_client(magnets_instance=None, motion_outside=0, motion_inside=0):
     """Initialize and start the MQTT client with current configuration settings"""
     global mqtt_client, mqtt_publisher
@@ -102,12 +146,7 @@ def init_mqtt_client(magnets_instance=None, motion_outside=0, motion_inside=0):
             mqtt_publisher = None
             return False
         
-        try:
-            if not CONFIG['MQTT_DEVICE_ID']:
-                CONFIG['MQTT_DEVICE_ID'] = f"kittyhack_{str(uuid.uuid4())}"
-                update_single_config_parameter('MQTT_DEVICE_ID')
-                logging.info(f"[BACKEND] Generated MQTT device ID: {CONFIG['MQTT_DEVICE_ID']}")
-            
+        try:            
             mqtt_client = MQTTClient(
                 broker_address=CONFIG['MQTT_BROKER_ADDRESS'],
                 broker_port=CONFIG['MQTT_BROKER_PORT'],
@@ -151,8 +190,8 @@ def init_mqtt_client(magnets_instance=None, motion_outside=0, motion_inside=0):
                 mqtt_publisher.register_manual_override_handler(handle_manual_override)
                 logging.info("[BACKEND] Registered manual override handler for MQTT publisher.")
                 
-                # Start publishing images every 5 seconds
-                mqtt_publisher.start_periodic_image_publishing(interval=5.0)
+                # Start publishing images
+                mqtt_publisher.start_periodic_image_publishing()
                 logging.info("[BACKEND] Started periodic camera image publishing")
             
             logging.info("[BACKEND] Started MQTT client.")
@@ -174,16 +213,12 @@ def cleanup_mqtt():
     global mqtt_client, mqtt_publisher
     
     if mqtt_publisher and hasattr(mqtt_publisher, 'stop_periodic_image_publishing'):
-        try:
-            mqtt_publisher.stop_periodic_image_publishing()
-            logging.info("[BACKEND] Stopped MQTT periodic image publishing")
-        except Exception as e:
-            logging.error(f"[BACKEND] Error stopping periodic image publishing: {e}")
+        mqtt_publisher.stop_periodic_image_publishing()
     
     if mqtt_client:
         try:
             mqtt_client.disconnect()
-            logging.info("[BACKEND] Disconnected MQTT client")
+            logging.info("[BACKEND] MQTT client disconnected")
         except Exception as e:
             logging.error(f"[BACKEND] Error disconnecting MQTT client: {e}")
     
@@ -216,7 +251,7 @@ def backend_main(simulate_kittyflap = False):
     ids_with_mouse = []
     ids_of_current_motion_block = []
     known_rfid_tags = []
-    cat_rfid_name_dict = {}
+    cat_rfid_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
     unlock_inside_tm = 0.0
     unlock_inside = False
     unlock_outside_tm = 0.0
@@ -261,66 +296,6 @@ def backend_main(simulate_kittyflap = False):
 
     # Start the MQTT client
     init_mqtt_client(magnets_instance=magnets, motion_outside=motion_outside, motion_inside=motion_inside)
-    # if CONFIG['MQTT_ENABLED']:
-    #     logging.info("[BACKEND] Starting MQTT client...")
-    #     if not CONFIG['MQTT_BROKER_ADDRESS'] or not CONFIG['MQTT_BROKER_PORT']:
-    #         logging.error("[BACKEND] MQTT broker address or port is not configured. MQTT client will not be started.")
-    #         mqtt_client = None
-    #         mqtt_publisher = None
-    #     else:
-    #         try:
-    #             if not CONFIG['MQTT_DEVICE_ID']:
-    #                 CONFIG['MQTT_DEVICE_ID'] = f"kittyhack_{str(uuid.uuid4())}"
-    #                 update_single_config_parameter('MQTT_DEVICE_ID')
-    #                 logging.info(f"[BACKEND] Generated MQTT device ID: {CONFIG['MQTT_DEVICE_ID']}")
-    #             mqtt_client = MQTTClient(
-    #                 broker_address=CONFIG['MQTT_BROKER_ADDRESS'],
-    #                 broker_port=CONFIG['MQTT_BROKER_PORT'],
-    #                 username=CONFIG['MQTT_USERNAME'],
-    #                 password=CONFIG['MQTT_PASSWORD'],
-    #                 client_name=CONFIG['MQTT_DEVICE_ID']
-    #             )
-    #             mqtt_client.connect()
-                
-    #             # Inside state is inverted in magnets (True means unlocked)
-    #             # but in MQTT publishing True means locked
-    #             inside_lock_state = not magnets.get_inside_state()
-    #             outside_lock_state = not magnets.get_outside_state()
-                
-    #             # Get current motion states
-    #             motion_outside_state = motion_outside == 1
-    #             motion_inside_state = motion_inside == 1
-                
-    #             # Determine prey detection state
-    #             prey_detected_state = False
-    #             if hasattr(backend_main, 'prey_detection_tm'):
-    #                 prey_detected_state = (tm.time() - backend_main.prey_detection_tm) <= CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION']
-                
-    #             mqtt_publisher = StatePublisher(
-    #                 mqtt_client,
-    #                 inside_lock_state=inside_lock_state,
-    #                 outside_lock_state=outside_lock_state,
-    #                 motion_inside_state=motion_inside_state, 
-    #                 motion_outside_state=motion_outside_state,
-    #                 prey_detected_state=prey_detected_state
-    #             )
-    #             logging.info("[BACKEND] Started MQTT client.")
-    #         except Exception as e:
-    #             logging.error(f"[BACKEND] Could not start MQTT client: {e}")
-    #             mqtt_client = None
-    #             mqtt_publisher = None
-    # else:
-    #     mqtt_client = None
-    #     mqtt_publisher = None
-    #     logging.info("[BACKEND] MQTT client is disabled.")
-
-    # if mqtt_publisher:
-    #     mqtt_publisher.register_manual_override_handler(handle_manual_override)
-    #     logging.info("[BACKEND] Registered manual override handler for MQTT publisher.")
-
-    #     # Start publishing images every 5 seconds
-    #     mqtt_publisher.start_periodic_image_publishing(interval=5.0)
-    #     logging.info("[BACKEND] Started periodic camera image publishing")
 
     def lazy_cat_workaround(current_motion_state: int | bool, last_motion_state: int | bool, current_motion_timestamp: float, delay=LAZY_CAT_DELAY_PIR_MOTION) -> int | bool:
         """
@@ -342,6 +317,12 @@ def backend_main(simulate_kittyflap = False):
             current_motion_state = 1
             logging.debug(f"[BACKEND] Lazy cat workaround: Keep the PIR active for {delay-(tm.time()-current_motion_timestamp):.1f} seconds.")
         return current_motion_state
+    
+    def get_cat_name(rfid_tag):
+        if rfid_tag:
+            return cat_rfid_name_dict.get(rfid_tag, f"{_('Unknown RFID')}: {rfid_tag}")
+        else:
+            return _("No RFID found")
         
     while not sigterm_monitor.stop_now:
         try:
@@ -512,16 +493,20 @@ def backend_main(simulate_kittyflap = False):
                 first_motion_inside_tm = 0.0
                 first_motion_inside_raw_tm = 0.0
 
+                # Publish the event to MQTT
+                if mqtt_publisher:
+                    if tag_id is not None:
+                        cat_name = get_cat_name(tag_id)
+                    else:
+                        cat_name = get_cat_name(tag_id_from_video)
+                    mqtt_publisher.publish_event_type(all_events, cat_name)
+                    mqtt_publisher.publish_motion_outside(False)
+
                 # Forget the video tag id
                 tag_id_from_video = None
                 if tag_id is not None:
                     rfid.set_tag(None, 0.0)
                     logging.info("[BACKEND] Forget the tag ID from the RFID reader.")
-
-                # Publish the event to MQTT
-                #mqtt_publisher.publish_event_type(all_events, log_start_tm, motion_block_id, tag_id, tag_id_from_video)
-                if mqtt_publisher:
-                    mqtt_publisher.publish_motion_outside(False)
 
             if last_inside_raw == 1 and motion_inside_raw == 0: # Inside motion stopped (raw)
                 last_motion_inside_raw_tm = motion_inside_raw_tm
@@ -798,7 +783,7 @@ def restart_mqtt():
             magnets_instance = Magnets.instance
         
         if Pir.instance:
-            motion_outside, motion_inside, _, _ = Pir.instance.get_states()
+            motion_outside, motion_inside, __, __ = Pir.instance.get_states()
             
         logging.info("[BACKEND] Restarting MQTT client with new settings")
         return init_mqtt_client(magnets_instance=magnets_instance, 

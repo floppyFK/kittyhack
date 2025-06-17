@@ -96,7 +96,8 @@ DEFAULT_CONFIG = {
         "mqtt_broker_port": 1883,
         "mqtt_username": None,
         "mqtt_password": None,
-        "mqtt_enabled": False
+        "mqtt_enabled": False,
+        "mqtt_image_publish_interval": 5.0
     }
 }
 
@@ -183,7 +184,8 @@ def load_config():
         "MQTT_BROKER_PORT": parser.getint('Settings', 'mqtt_broker_port', fallback=DEFAULT_CONFIG['Settings']['mqtt_broker_port']),
         "MQTT_USERNAME": parser.get('Settings', 'mqtt_username', fallback=DEFAULT_CONFIG['Settings']['mqtt_username']),
         "MQTT_PASSWORD": parser.get('Settings', 'mqtt_password', fallback=DEFAULT_CONFIG['Settings']['mqtt_password']),
-        "MQTT_ENABLED": parser.getboolean('Settings', 'mqtt_enabled', fallback=DEFAULT_CONFIG['Settings'].get('mqtt_enabled', False))
+        "MQTT_ENABLED": parser.getboolean('Settings', 'mqtt_enabled', fallback=DEFAULT_CONFIG['Settings'].get('mqtt_enabled', False)),
+        "MQTT_IMAGE_PUBLISH_INTERVAL": parser.getfloat('Settings', 'mqtt_image_publish_interval', fallback=DEFAULT_CONFIG['Settings']['mqtt_image_publish_interval'])
     }
 
 def save_config():
@@ -259,6 +261,7 @@ def save_config():
     settings['mqtt_username'] = CONFIG['MQTT_USERNAME']
     settings['mqtt_password'] = CONFIG['MQTT_PASSWORD']
     settings['mqtt_enabled'] = CONFIG['MQTT_ENABLED']
+    settings['mqtt_image_publish_interval'] = CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL']
 
     # Write updated configuration back to the file
     try:
@@ -296,13 +299,21 @@ def update_single_config_parameter(parameter: str):
     """
     updater = ConfigUpdater()
     updater.read(CONFIGFILE)
-    updater['Settings'][parameter.lower()] = CONFIG[parameter.upper()]
+    
+    # Get the value to write
+    value = CONFIG[parameter.upper()]
+    
+    # Special handling for enum values
+    if parameter.upper() == 'ALLOWED_TO_ENTER' and isinstance(value, AllowedToEnter):
+        value = value.value
+    
+    updater['Settings'][parameter.lower()] = value
 
     # Write updated configuration back to the file
     try:
         with open(CONFIGFILE, 'w') as configfile:
             updater.write(configfile)
-        logging.info(f"Updated {parameter.upper()} in the configfile to: {CONFIG[parameter.upper()]}")
+        logging.info(f"Updated {parameter.upper()} in the configfile to: {value}")
     except Exception as e:
         logging.error(f"Failed to update {parameter.upper()} in the configfile: {e}")
 

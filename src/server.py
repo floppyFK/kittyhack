@@ -16,6 +16,7 @@ import hashlib
 import asyncio
 import io
 import zipfile
+import uuid
 from typing import List
 from src.baseconfig import (
     CONFIG,
@@ -109,9 +110,15 @@ if CONFIG['NOT_GRACEFUL_SHUTDOWNS'] >= 3:
                 id="not_graceful_shutdown",
                 skip_if_id_exists=True
         )
+
+if not CONFIG['MQTT_DEVICE_ID']:
+    # Generate a new MQTT device ID if it does not exist
+    CONFIG['MQTT_DEVICE_ID'] = f"kittyhack_{str(uuid.uuid4()).split('-')[0]}"
+    update_single_config_parameter('MQTT_DEVICE_ID')
+    logging.info(f"[BACKEND] Generated MQTT device ID: {CONFIG['MQTT_DEVICE_ID']}")
     
 # Now proceed with the startup
-from src.backend import backend_main, restart_mqtt, manual_door_override, model_handler
+from src.backend import backend_main, restart_mqtt, update_mqtt_config, update_mqtt_language, manual_door_override, model_handler
 from src.magnets_rfid import Magnets
 from src.pir import Pir
 from src.model import RemoteModelTrainer, YoloModel
@@ -3118,12 +3125,10 @@ def server(input, output, session):
                         ui.column(
                             8,
                             ui.markdown(
-                                f"""
-                                {_("A low value means a fast reaction, but also a higher probability of false alarms. A high value means a slow reaction, but also a lower probability of false alarms.")}  
-                                {_("The default setting should be a good value for most cases.")}  
-                                *({_("Default value: {}").format(DEFAULT_CONFIG['Settings']['pir_inside_threshold'])})*
-                                """
-                                ), style_="color: grey;"
+                                _("A low value means a fast reaction, but also a higher probability of false alarms. A high value means a slow reaction, but also a lower probability of false alarms.") + "  \n" +
+                                _("The default setting should be a good value for most cases.") + "  \n" +
+                                "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['pir_inside_threshold']) + ")*"
+                            ), style_="color: grey;"
                         )
                     ),
                     full_screen=False,
@@ -3294,6 +3299,90 @@ def server(input, output, session):
                             ),
                         ),
                     ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(
+                            12,
+                            ui.input_select(
+                                id="mqtt_image_publish_interval",
+                                label=_("Camera update interval"),
+                                choices={2: "2s", 3: "3s", 5: "5s", 10: "10s", 20: "20s", 30: "30s", 60: "60s"},
+                                selected=CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL']
+                            ),
+                            ui.help_text(_("The interval in seconds between publishing camera images to the MQTT broker.")),
+                        ),
+                    ),
+                    ui.hr(),
+                    ui.row(
+                        ui.column(
+                            12,
+                            ui.h5(_("Home Assistant Card Example")),
+                            ui.markdown(_("Copy this configuration to create a dashboard card in Home Assistant:")),
+                            ui.markdown(
+                                "```yaml\n" +
+                                "# " + _("Home Assistant Dashboard Card") + "\n" +
+                                "type: vertical-stack\n" +
+                                "title: " + _("KittyHack Cat Flap") + "\n" +
+                                "cards:\n" +
+                                "  - show_state: false\n" +
+                                "    show_name: false\n" +
+                                "    camera_view: live\n" +
+                                "    fit_mode: cover\n" +
+                                "    type: picture-entity\n" +
+                                "    entity: camera.{}_camera\n".format(CONFIG['MQTT_DEVICE_ID']) +
+                                "  - type: tile\n" +
+                                "    entity: sensor.{}_events\n".format(CONFIG['MQTT_DEVICE_ID']) +
+                                "    features_position: bottom\n" +
+                                "    vertical: false\n" +
+                                "    name: " + _("Last Event") + "\n" +
+                                "    show_entity_picture: false\n" +
+                                "    hide_state: false\n" +
+                                "    state_content:\n" +
+                                "      - event\n" +
+                                "      - detected_cat\n" +
+                                "  - type: entities\n" +
+                                "    show_header_toggle: false\n" +
+                                "    entities:\n" +
+                                "      - entity: lock.{}_inside_lock\n".format(CONFIG['MQTT_DEVICE_ID']) +
+                                "        name: " + _("Inside") + "\n" +
+                                "        icon: \"\"\n" +
+                                "        secondary_info: none\n" +
+                                "      - entity: binary_sensor.{}_outside_lock\n".format(CONFIG['MQTT_DEVICE_ID']) +
+                                "        name: " + _("Outside") + "\n" +
+                                "        icon: \"\"\n" +
+                                "    state_color: false\n" +
+                                "    title: " + _("Magnetic Locks") + "\n" +
+                                "  - type: entities\n" +
+                                "    title: " + _("Configuration") + "\n" +
+                                "    show_header_toggle: false\n" +
+                                "    entities:\n" +
+                                "      - entity: select.{}_allow_enter\n".format(CONFIG['MQTT_DEVICE_ID']) +
+                                "        name: " + _("Open entrance for...") + "\n" +
+                                "        icon: \"\"\n" +
+                                "        secondary_info: none\n" +
+                                "      - entity: switch.{}_allow_exit\n".format(CONFIG['MQTT_DEVICE_ID']) +
+                                "        name: " + _("Allow cats to exit") + "\n" +
+                                "        icon: \"\"\n" +
+                                "        secondary_info: none\n" +
+                                "    state_color: false\n" +
+                                "  - type: entities\n" +
+                                "    entities:\n" +
+                                "      - entity: binary_sensor.{}_motion_outside\n".format(CONFIG['MQTT_DEVICE_ID']) +
+                                "        name: " + _("Motion outside") + "\n" +
+                                "        secondary_info: last-changed\n" +
+                                "      - entity: binary_sensor.{}_motion_inside\n".format(CONFIG['MQTT_DEVICE_ID']) +
+                                "        name: " + _("Motion inside") + "\n" +
+                                "        secondary_info: last-changed\n" +
+                                "      - entity: binary_sensor.{}_prey_detected\n".format(CONFIG['MQTT_DEVICE_ID']) +
+                                "        name: " + _("Prey detected") + "\n" +
+                                "        secondary_info: last-changed\n" +
+                                "    title: " + _("Status") + "\n" +
+                                "    state_color: false\n" +
+                                "    show_header_toggle: false\n" +
+                                "```"
+                            ),
+                        ),
+                    ),
                     class_="generic-container align-left",
                     style_="padding-left: 1rem !important; padding-right: 1rem !important;",
                 ),
@@ -3448,7 +3537,8 @@ def server(input, output, session):
             CONFIG['MQTT_BROKER_ADDRESS'] != input.txtMqttBrokerAddress() or
             CONFIG['MQTT_BROKER_PORT'] != int(input.numMqttBrokerPort()) or
             CONFIG['MQTT_USERNAME'] != input.txtMqttUsername() or
-            CONFIG['MQTT_PASSWORD'] != input.txtMqttPassword()
+            CONFIG['MQTT_PASSWORD'] != input.txtMqttPassword() or
+            CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL'] != float(input.mqtt_image_publish_interval())
         )
 
         if input.camera_source() == "ip_camera":
@@ -3525,6 +3615,7 @@ def server(input, output, session):
         CONFIG['MQTT_BROKER_PORT'] = int(input.numMqttBrokerPort())
         CONFIG['MQTT_USERNAME'] = input.txtMqttUsername()
         CONFIG['MQTT_PASSWORD'] = input.txtMqttPassword()
+        CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL'] = float(input.mqtt_image_publish_interval())
 
         # Update the log level
         configure_logging(input.txtLoglevel())
@@ -3554,6 +3645,7 @@ def server(input, output, session):
             ui.notification_show(_("Kittyhack configuration updated successfully."), duration=5, type="message")
             if language_changed:
                 ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the new language."), duration=30, type="message")
+                update_mqtt_language()
 
             if selected_model_changed:
                 ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the new detection model."), duration=30, type="message")
@@ -3566,6 +3658,10 @@ def server(input, output, session):
                 success = restart_mqtt()
                 if not success:
                     ui.notification_show(_("Failed to restart MQTT client. Check the logs for details."), duration=10, type="error")
+            else:
+                # Just update the door configuration in MQTT
+                update_mqtt_config('ALLOWED_TO_ENTER')
+                update_mqtt_config('ALLOWED_TO_EXIT')
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=10, type="error")
 

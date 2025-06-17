@@ -936,6 +936,33 @@ def server(input, output, session):
     # Create reactive triggers
     reload_trigger_cats = reactive.Value(0)
     reload_trigger_info = reactive.Value(0)
+
+    def show_user_notifications():
+        user_notifications = UserNotifications.get_all()
+        if len(user_notifications) > 0:
+            # Create a combined message from all notifications
+            combined_message = ""
+            for i, notification in enumerate(user_notifications):
+                combined_message += f"## {notification['header']}\n\n{notification['message']}"
+                # Add a separator between notifications, but not after the last one
+                if i < len(user_notifications) - 1:
+                    combined_message += "\n\n---\n\n"
+                UserNotifications.remove(notification['id'])
+            
+            # Show all notifications in a single modal
+            ui.modal_show(
+                ui.modal(
+                    ui.div(
+                        ui.markdown(combined_message),
+                    ),
+                    title=_("Notifications"),
+                    easy_close=False,
+                    size="lg",
+                    footer=ui.div(
+                        ui.input_action_button("btn_modal_cancel", _("Close")),
+                    )
+                )
+            )
     
     # Show a notification if a new version of Kittyhack is available
     if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
@@ -949,33 +976,6 @@ def server(input, output, session):
         else:
             additional_info = ""
         ui.notification_show(_("Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{}).").format(free_disk_space, additional_info), duration=20, type="warning")
-
-    # Show user notification if available
-    user_notifications = UserNotifications.get_all()
-    if len(user_notifications) > 0:
-        # Create a combined message from all notifications
-        combined_message = ""
-        for i, notification in enumerate(user_notifications):
-            combined_message += f"## {notification['header']}\n\n{notification['message']}"
-            # Add a separator between notifications, but not after the last one
-            if i < len(user_notifications) - 1:
-                combined_message += "\n\n---\n\n"
-            UserNotifications.remove(notification['id'])
-        
-        # Show all notifications in a single modal
-        ui.modal_show(
-            ui.modal(
-                ui.div(
-                    ui.markdown(combined_message),
-                ),
-                title=_("Notifications"),
-                easy_close=False,
-                size="lg",
-                footer=ui.div(
-                    ui.input_action_button("btn_modal_cancel", _("Close")),
-                )
-            )
-        )
 
     # Show changelogs, if the version was updated
     state = get_update_progress()
@@ -1028,6 +1028,9 @@ def server(input, output, session):
 
     # When a new WebGUI session is opened, check if a model training is in progress:
     RemoteModelTrainer.check_model_training_result(show_notification=True)
+
+    # Show user notifications if there are any
+    show_user_notifications()
 
     @reactive.effect
     def ext_trigger_reload_photos():
@@ -2217,6 +2220,10 @@ def server(input, output, session):
 
         # Check if a model training is in progress
         training_status = RemoteModelTrainer.check_model_training_result(show_notification=True, show_in_progress=True, return_pretty_status=True)
+
+        # Show user notifications, if they are any
+        show_user_notifications()
+        
         # URLs for different languages
         wiki_url = {
             "de": "https://github.com/floppyFK/kittyhack/wiki/%5BDE%5D-Kittyhack-v2.0-%E2%80%90-Eigene-KI%E2%80%90Modelle-trainieren",

@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 import time as tm
 import multiprocessing
-from src.baseconfig import CONFIG, set_language, update_single_config_parameter
+from src.baseconfig import CONFIG, set_language, update_single_config_parameter, UserNotifications
 from src.camera import videostream, image_buffer, VideoStream, DetectedObject
 from src.helper import sigterm_monitor, get_timezone, is_valid_uuid4
 from src.database import get_cat_names_list
@@ -233,6 +233,23 @@ class RemoteModelTrainer:
                 else:
                     if show_notification:
                         ui.notification_show(_("Model training completed, but the model could not be downloaded. Please retry later."), duration=30, type="error")
+            elif training_status == "aborted":
+                # Abort on client side as well
+                CONFIG["MODEL_TRAINING"] = ""
+                update_single_config_parameter("MODEL_TRAINING")
+                # Show user notification
+                UserNotifications.add(
+                    header=_("Model Training Aborted"),
+                    message=_(
+                        "The model training was aborted. This can happen if the provided training data was not correct. "
+                        "Please ensure you have exported the data from Label Studio as **'YOLO with Images'** and that your labels are set correctly in the images."
+                    ),
+                    type="error",
+                    id="model_training_aborted",
+                    skip_if_id_exists=True
+                )
+                if show_notification:
+                    ui.notification_show(_("Model training was aborted. Please check your training data and try again."), duration=30, type="error")
             else:
                 if show_notification and show_in_progress:
                     ui.notification_show(_("Model training is in progress. Please check back later."), duration=5, type="default")

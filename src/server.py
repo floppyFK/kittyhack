@@ -1545,7 +1545,42 @@ def server(input, output, session):
     @output
     @render.ui
     def ui_live_view_footer():
+        # Quick access controls for ALLOWED_TO_ENTER and ALLOWED_TO_EXIT
         return ui.div(
+            ui.card(
+                ui.row(
+                    ui.column(
+                        6,
+                        ui.input_select(
+                            id="quick_allowed_to_enter",
+                            label=_("Inside direction:"),
+                            choices={
+                                AllowedToEnter.ALL.value: _("All cats"),
+                                AllowedToEnter.ALL_RFIDS.value: _("All cats with a RFID chip"),
+                                AllowedToEnter.KNOWN.value: _("Only registered cats"),
+                                AllowedToEnter.NONE.value: _("No cats"),
+                            },
+                            selected=str(CONFIG['ALLOWED_TO_ENTER'].value),
+                            width="100%",
+                        ),
+                    ),
+                    ui.column(
+                        6,
+                        ui.input_select(
+                            id="quick_allowed_to_exit",
+                            label=_("Outside direction:"),
+                            choices={
+                                "True": _("Allow cats to exit"),
+                                "False": _("Do not allow exit"),
+                            },
+                            selected=str(CONFIG['ALLOWED_TO_EXIT']),
+                            width="100%",
+                        ),
+                    ),
+                ),
+                class_="image-container",
+                style_="margin-top: 0px; margin-bottom: 20px; padding-top: 8px; padding-bottom: 0px;",
+            ),
             ui.card(
                 ui.input_action_button(id="bManualOverride", label=_("Manual unlock not yet initialized..."), icon=icon_svg("unlock"), disabled=True),
                 class_="image-container",
@@ -1556,7 +1591,19 @@ def server(input, output, session):
                 class_="image-container",
                 style_="margin-top: 10px;"
             ),
-        ),
+        )
+
+    @reactive.Effect
+    @reactive.event(input.quick_allowed_to_enter)
+    def quick_update_allowed_to_enter():
+        CONFIG['ALLOWED_TO_ENTER'] = AllowedToEnter(input.quick_allowed_to_enter())
+        update_single_config_parameter("ALLOWED_TO_ENTER")
+
+    @reactive.Effect
+    @reactive.event(input.quick_allowed_to_exit)
+    def quick_update_allowed_to_exit():
+        CONFIG['ALLOWED_TO_EXIT'] = input.quick_allowed_to_exit() == "True"
+        update_single_config_parameter("ALLOWED_TO_EXIT")
     
     @reactive.Effect
     @reactive.event(input.bManualOverride)

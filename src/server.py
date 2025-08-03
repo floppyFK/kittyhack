@@ -1598,12 +1598,18 @@ def server(input, output, session):
     def quick_update_allowed_to_enter():
         CONFIG['ALLOWED_TO_ENTER'] = AllowedToEnter(input.quick_allowed_to_enter())
         update_single_config_parameter("ALLOWED_TO_ENTER")
+        update_mqtt_config('ALLOWED_TO_ENTER')
+        # Sync config page input
+        reload_trigger_config.set(reload_trigger_config.get() + 1)
 
     @reactive.Effect
     @reactive.event(input.quick_allowed_to_exit)
     def quick_update_allowed_to_exit():
         CONFIG['ALLOWED_TO_EXIT'] = input.quick_allowed_to_exit() == "True"
         update_single_config_parameter("ALLOWED_TO_EXIT")
+        update_mqtt_config('ALLOWED_TO_EXIT')
+        # Sync config page input
+        reload_trigger_config.set(reload_trigger_config.get() + 1)
     
     @reactive.Effect
     @reactive.event(input.bManualOverride)
@@ -3732,6 +3738,11 @@ def server(input, output, session):
                 # Just update the door configuration in MQTT
                 update_mqtt_config('ALLOWED_TO_ENTER')
                 update_mqtt_config('ALLOWED_TO_EXIT')
+            
+            # Sync live view input
+            ui.update_select("quick_allowed_to_enter", selected=str(CONFIG['ALLOWED_TO_ENTER'].value))
+            ui.update_select("quick_allowed_to_exit", selected=str(CONFIG['ALLOWED_TO_EXIT']))
+
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=10, type="error")
 

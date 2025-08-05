@@ -420,6 +420,41 @@ def get_wlan_connections():
         logging.error(f"[SYSTEM] Error getting WLAN connections: {e.stderr}")
         return []
     
+def get_default_gateways():
+    gateways = []
+    # IPv4
+    try:
+        result = subprocess.run(["ip", "route"], capture_output=True, text=True, check=True)
+        for line in result.stdout.splitlines():
+            if line.startswith("default"):
+                gateways.append(line.split()[2])
+    except Exception:
+        pass
+    # IPv6
+    try:
+        result = subprocess.run(["ip", "-6", "route"], capture_output=True, text=True, check=True)
+        for line in result.stdout.splitlines():
+            if line.startswith("default"):
+                gateways.append(line.split()[2])
+    except Exception:
+        pass
+    return gateways
+
+def is_gateway_reachable():
+    gateways = get_default_gateways()
+    for gw in gateways:
+        if ":" in gw:  # IPv6
+            ping_cmd = ["ping", "-6", "-c", "1", "-W", "2", gw]
+        else:  # IPv4
+            ping_cmd = ["ping", "-c", "1", "-W", "2", gw]
+        try:
+            ping = subprocess.run(ping_cmd, capture_output=True)
+            if ping.returncode == 0:
+                return True
+        except Exception:
+            continue
+    return False
+    
 def get_labelstudio_installed_version():
     """
     Get the installed version of Label Studio.

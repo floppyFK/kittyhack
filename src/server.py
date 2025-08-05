@@ -630,7 +630,39 @@ def show_event_server(input, output, session, block_id: int):
                     full_screen=False,
                     class_="image-container"
                 ),
-                footer=ui.div(),
+                footer=ui.div(
+                    ui.input_action_button("modal_pulse", "", style_="visibility:hidden; width:1px; height:1px;"),
+                    ui.HTML("""
+                        <script>
+                        (function() {
+                            function setupPulseObserver() {
+                                var modal = document.querySelector('.modal');
+                                var btn = document.querySelector('button[id$="modal_pulse"]');
+                                if (!modal || !btn) {
+                                    // Try again in 100ms
+                                    setTimeout(setupPulseObserver, 100);
+                                    return;
+                                }
+                                var observer = new MutationObserver(function(mutations) {
+                                    mutations.forEach(function(mutation) {
+                                        if (
+                                            mutation.type === "attributes" &&
+                                            mutation.attributeName === "class" &&
+                                            mutation.target.classList.contains("modal-static") &&
+                                            (!mutation.oldValue || !mutation.oldValue.includes("modal-static"))
+                                        ) {
+                                            btn.click();
+                                            console.log('Shiny modal_pulse button clicked');
+                                        }
+                                    });
+                                });
+                                observer.observe(modal, { attributes: true, attributeOldValue: true });
+                            }
+                            setupPulseObserver();
+                        })();
+                        </script>
+                    """)
+                ),
                 size='l',
                 easy_close=False,
                 class_="transparent-modal-content"
@@ -703,7 +735,7 @@ def show_event_server(input, output, session, block_id: int):
         return ui.HTML(img_html)
 
     @reactive.effect
-    @reactive.event(input.btn_modal_cancel)
+    @reactive.event(input.btn_modal_cancel, input.modal_pulse)
     def modal_cancel():
         ui.modal_remove()
         # Clear pictures and timestamps lists and reset frame index

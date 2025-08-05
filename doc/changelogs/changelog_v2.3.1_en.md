@@ -5,3 +5,4 @@
 
 ## Bugfixes
 - **Watchdog for Wi-Fi connection**: If the Wi-Fi connection is lost, the system now automatically attempts to reconnect. After several unsuccessful attempts, the Kittyflap will automatically restart.
+- **Event window**: An event can now also be closed by clicking outside the event window

@@ -5,3 +5,4 @@
 
 ## Bugfixes
 - **Watchdog für WLAN Verbindung**: Bei Verlust der WLAN-Verbindung wird nun automatisch versucht, die Verbindung wiederherzustellen. Nach mehreren erfolglosen Versuchen erfolgt ein automatischer Neustart der Kittyflap.
+- **Event Fenster**: Ein Event kann nun auch durch einen Klick außerhalb des Event-Fensters geschlossen werden

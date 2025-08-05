@@ -72,7 +72,8 @@ from src.system import (
     scan_wlan_networks,
     get_hostname,
     set_hostname,
-    update_kittyhack
+    update_kittyhack,
+    is_gateway_reachable
 )
 
 # Prepare gettext for translations based on the configured language
@@ -271,76 +272,150 @@ CONFIG["LABELSTUDIO_VERSION"] = get_labelstudio_installed_version()
 # Global for the free disk space:
 free_disk_space = get_free_disk_space()
 
+# Global flag to indicate if a user WLAN action is in progress
+user_wlan_action_in_progress = False
+
 # Frontend background task in a separate thread
 def start_background_task():
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
 
     def run_periodically():
+        wlan_disconnect_counter = 0
+        wlan_reconnect_attempted = False
+        last_periodic_jobs_run = tm.time()
+
         while not sigterm_monitor.stop_now:
-            global free_disk_space
+            if user_wlan_action_in_progress:
+                # Skip automatic reconnect/reboot while user action is in progress
+                logging.info("[WLAN CHECK] User WLAN action in progress, skipping automatic reconnect/reboot checks.")
+                wlan_disconnect_counter = 0
+                wlan_reconnect_attempted = False
+                for __ in range(5):
+                    if sigterm_monitor.stop_now:
+                        break
+                    tm.sleep(1.0)
+                continue
 
+            # --- WLAN connection check every 5 seconds ---
+            # Check WLAN connection state
+            try:
+                wlan_connections = get_wlan_connections()
+                wlan_connected = any(wlan['connected'] for wlan in wlan_connections)
+                gateway_reachable = is_gateway_reachable()
+            except Exception as e:
+                logging.error(f"[WLAN CHECK] Failed to get WLAN connections or gateway state: {e}")
+                wlan_connected = False
+                gateway_reachable = False
+
+            # Consider WLAN as not connected if either the interface or gateway is not reachable
+            if not wlan_connected or not gateway_reachable:
+                wlan_disconnect_counter += 1
+                if wlan_disconnect_counter <= 5:
+                    logging.warning(
+                        f"[WLAN CHECK] WLAN not fully connected (attempt {wlan_disconnect_counter}/5): "
+                        f"Interface connected: {wlan_connected}, Gateway reachable: {gateway_reachable}"
+                    )
+                elif wlan_disconnect_counter <= 8:
+                    logging.error(
+                        f"[WLAN CHECK] WLAN still not connected after proactive reconnect attempt (attempt {wlan_disconnect_counter}/8)! "
+                        f"LAST CHANCES! REBOOTING SYSTEM IF NOT RECONNECTED WITHIN 8 ATTEMPTS!"
+                        f"Interface connected: {wlan_connected}, Gateway reachable: {gateway_reachable}"
+                    )
+            else:
+                wlan_disconnect_counter = 0
+                wlan_reconnect_attempted = False
+
+            # If disconnected for 5 consecutive checks (25 seconds), try to reconnect
+            if wlan_disconnect_counter == 5 and not wlan_reconnect_attempted:
+                logging.warning("[WLAN CHECK] Attempting to reconnect WLAN after 5 failed checks...")
+                # Sort configured WLANs by priority (highest first) and limit to max 3
+                sorted_wlans = sorted(wlan_connections, key=lambda w: w.get('priority', 0), reverse=True)[:3]
+                for wlan in sorted_wlans:
+                    ssid = wlan['ssid']
+                    systemctl("stop", f"NetworkManager")
+                    tm.sleep(2)
+                    systemctl("start", f"NetworkManager")
+                    tm.sleep(2)
+                    switch_wlan_connection(ssid)
+                    # Wait up to 10 seconds for connection
+                    for __ in range(10):
+                        tm.sleep(1)
+                        wlan_connections = get_wlan_connections()
+                        if any(w['connected'] for w in wlan_connections) and is_gateway_reachable():
+                            logging.info(f"[WLAN CHECK] Successfully reconnected to SSID: {ssid}")
+                            break
+                wlan_reconnect_attempted = True
+
+            # If still disconnected after 3 more checks (total 8, 40 seconds), reboot
+            if wlan_disconnect_counter >= 8:
+                logging.error("[WLAN CHECK] WLAN still not connected after reconnect attempts. Rebooting system...")
+                systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
+                break
+
+            # --- Main periodic jobs (every PERIODIC_JOBS_INTERVAL seconds) ---
             # Periodically check that the kwork and manager services are NOT running anymore
-            check_and_stop_kittyflap_services(CONFIG['SIMULATE_KITTYFLAP'])
-            
-            immediate_bg_task("background task")
+            now = tm.time()
+            if now - last_periodic_jobs_run >= CONFIG['PERIODIC_JOBS_INTERVAL']:
+                last_periodic_jobs_run = now
+                check_and_stop_kittyflap_services(CONFIG['SIMULATE_KITTYFLAP'])
+                immediate_bg_task("background task")
 
-            # Cleanup the events table
-            cleanup_deleted_events(CONFIG['KITTYHACK_DATABASE_PATH'])
+                # Cleanup the events table
+                cleanup_deleted_events(CONFIG['KITTYHACK_DATABASE_PATH'])
+                ids_without_thumbnail = get_ids_without_thumbnail(CONFIG['KITTYHACK_DATABASE_PATH'])
+                if ids_without_thumbnail:
+                    # Limit the number of thumbnails to generate in one run to 200 to avoid high CPU load
+                    ids_without_thumbnail.reverse()
+                    thumbnails_to_process = ids_without_thumbnail[:200]
+                    logging.info(f"[TRIGGER: background task] Start generating thumbnails for {len(thumbnails_to_process)} events (out of {len(ids_without_thumbnail)} total)...")
+                    for id in thumbnails_to_process:
+                        get_thubmnail_by_id(database=CONFIG['KITTYHACK_DATABASE_PATH'], photo_id=id)
+                else:
+                    logging.info("[TRIGGER: background task] No events found without thumbnail.")
 
-            ids_without_thumbnail = get_ids_without_thumbnail(CONFIG['KITTYHACK_DATABASE_PATH'])
-            if ids_without_thumbnail:
-                # Limit the number of thumbnails to generate in one run to 200 to avoid high CPU load
-                ids_without_thumbnail.reverse()
-                thumbnails_to_process = ids_without_thumbnail[:200]
-                logging.info(f"[TRIGGER: background task] Start generating thumbnails for {len(thumbnails_to_process)} events (out of {len(ids_without_thumbnail)} total)...")
-                for id in thumbnails_to_process:
-                    get_thubmnail_by_id(database=CONFIG['KITTYHACK_DATABASE_PATH'], photo_id=id)
-            else:
-                logging.info("[TRIGGER: background task] No events found without thumbnail.")
+                # Check the free disk space
+                free_disk_space = get_free_disk_space()
 
-            # Check the free disk space
-            free_disk_space = get_free_disk_space()
-            
-            # Check the latest version of kittyhack on GitHub, if the periodic version check is enabled
-            if CONFIG['PERIODIC_VERSION_CHECK']:
-                CONFIG['LATEST_VERSION'] = read_latest_kittyhack_version()
+                # Check the latest version of kittyhack on GitHub, if the periodic version check is enabled
+                if CONFIG['PERIODIC_VERSION_CHECK']:
+                    CONFIG['LATEST_VERSION'] = read_latest_kittyhack_version()
 
-            # Check if the last backup date is stored in the configuration
-            if CONFIG['LAST_DB_BACKUP_DATE']:
-                last_backup_date = datetime.strptime(CONFIG['LAST_DB_BACKUP_DATE'], '%Y-%m-%d %H:%M:%S')
-            else:
-                last_backup_date = datetime.min
+                # Check if the last backup date is stored in the configuration
+                if CONFIG['LAST_DB_BACKUP_DATE']:
+                    last_backup_date = datetime.strptime(CONFIG['LAST_DB_BACKUP_DATE'], '%Y-%m-%d %H:%M:%S')
+                else:
+                    last_backup_date = datetime.min
 
-            # Check if the last scheduled vacuum date is stored in the configuration
-            if CONFIG['LAST_VACUUM_DATE']:
-                last_vacuum_date = datetime.strptime(CONFIG['LAST_VACUUM_DATE'], '%Y-%m-%d %H:%M:%S')
-            else:
-                last_vacuum_date = datetime.min
+                # Check if the last scheduled vacuum date is stored in the configuration
+                if CONFIG['LAST_VACUUM_DATE']:
+                    last_vacuum_date = datetime.strptime(CONFIG['LAST_VACUUM_DATE'], '%Y-%m-%d %H:%M:%S')
+                else:
+                    last_vacuum_date = datetime.min
 
-            # Perform backup only between 2:00 and 4:00 AM if last backup is >22h old
-            current_time = datetime.now()
-            backup_window = 2 <= current_time.hour < 4
-            backup_needed = (current_time - last_backup_date) > timedelta(hours=22)
-            
-            if backup_needed and backup_window:
-                logging.info(f"[TRIGGER: background task] It is {current_time.hour}:{current_time.minute}:{current_time.second}. Start backup of the kittyhack database...")
-                db_backup = backup_database(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
-                if db_backup and db_backup.message == "kittyhack_db_corrupted":
-                    restore_database_backup(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
+                # Perform backup only between 2:00 and 4:00 AM if last backup is >22h old
+                current_time = datetime.now()
+                backup_window = 2 <= current_time.hour < 4
+                backup_needed = (current_time - last_backup_date) > timedelta(hours=22)
+                
+                if backup_needed and backup_window:
+                    logging.info(f"[TRIGGER: background task] It is {current_time.hour}:{current_time.minute}:{current_time.second}. Start backup of the kittyhack database...")
+                    db_backup = backup_database(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
+                    if db_backup and db_backup.message == "kittyhack_db_corrupted":
+                        restore_database_backup(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
 
-            # Perform Scheduled VACUUM only if the last scheduled vacuum date is older than 24 hours
-            if (datetime.now() - last_vacuum_date) > timedelta(days=1):
-                logging.info("[TRIGGER: background task] Start VACUUM of the kittyhack database...")
-                vacuum_database(CONFIG['KITTYHACK_DATABASE_PATH'])
-                CONFIG['LAST_VACUUM_DATE'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                update_single_config_parameter("LAST_VACUUM_DATE")
+                # Perform Scheduled VACUUM only if the last scheduled vacuum date is older than 24 hours
+                if (datetime.now() - last_vacuum_date) > timedelta(days=1):
+                    logging.info("[TRIGGER: background task] Start VACUUM of the kittyhack database...")
+                    vacuum_database(CONFIG['KITTYHACK_DATABASE_PATH'])
+                    CONFIG['LAST_VACUUM_DATE'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    update_single_config_parameter("LAST_VACUUM_DATE")
 
-            # Log system information
-            log_system_information()
+                # Log system information
+                log_system_information()
 
-            # Use a shorter sleep interval and check for sigterm_monitor.stop_now to allow graceful shutdown
-            for __ in range(int(CONFIG['PERIODIC_JOBS_INTERVAL'])):
+            # Sleep 5 seconds before next WLAN check
+            for __ in range(5):
                 if sigterm_monitor.stop_now:
                     break
                 tm.sleep(1.0)
@@ -709,6 +784,8 @@ def wlan_connect_server(input, output, session, ssid: str):
     @reactive.effect
     @reactive.event(input.btn_wlan_connect)
     def wlan_connect():
+        global user_wlan_action_in_progress
+        user_wlan_action_in_progress = True
         ui.modal_show(
             ui.modal(
                 _("The WLAN connection will be interrupted now!"),
@@ -719,6 +796,7 @@ def wlan_connect_server(input, output, session, ssid: str):
             )
         )
         switch_wlan_connection(ssid)
+        user_wlan_action_in_progress = False
         reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
         ui.modal_remove()
 
@@ -3823,6 +3901,8 @@ def server(input, output, session):
     @reactive.effect
     @reactive.event(input.btn_wlan_save)
     def wlan_save():
+        global user_wlan_action_in_progress
+        user_wlan_action_in_progress = True
         ssid = input.txtWlanSSID()
         password = input.txtWlanPassword()
         priority = input.numWlanPriority()
@@ -3839,6 +3919,7 @@ def server(input, output, session):
             )
         )
         success = manage_and_switch_wlan(ssid, password, priority, password_changed)
+        user_wlan_action_in_progress = False
         if success:
             ui.notification_show(_("WLAN configuration for {} updated successfully.").format(ssid), duration=5, type="message")
             reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)

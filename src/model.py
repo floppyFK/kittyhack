@@ -900,6 +900,9 @@ class ModelHandler:
         if videostream is not None:
             try:
                 videostream.stop()
+                # Stop journal monitor if switching to internal camera
+                if CONFIG['CAMERA_SOURCE'] == "internal":
+                    videostream.stop_journal_monitor()
                 videostream = None
                 logging.info("[MODEL] Stopped previous videostream.")
                 tm.sleep(1.0) # Give some time for the stream to stop

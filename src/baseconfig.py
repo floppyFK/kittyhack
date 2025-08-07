@@ -99,7 +99,9 @@ DEFAULT_CONFIG = {
         "mqtt_enabled": False,
         "mqtt_image_publish_interval": 5.0,
         "show_cats_only": False,
-        "show_mice_only": False
+        "show_mice_only": False,
+        "restart_ip_camera_stream_on_failure": True,
+        "wlan_watchdog_enabled": True
     }
 }
 
@@ -189,7 +191,9 @@ def load_config():
         "MQTT_ENABLED": parser.getboolean('Settings', 'mqtt_enabled', fallback=DEFAULT_CONFIG['Settings'].get('mqtt_enabled', False)),
         "MQTT_IMAGE_PUBLISH_INTERVAL": parser.getfloat('Settings', 'mqtt_image_publish_interval', fallback=DEFAULT_CONFIG['Settings']['mqtt_image_publish_interval']),
         "SHOW_CATS_ONLY": parser.getboolean('Settings', 'show_cats_only', fallback=DEFAULT_CONFIG['Settings']['show_cats_only']),
-        "SHOW_MICE_ONLY": parser.getboolean('Settings', 'show_mice_only', fallback=DEFAULT_CONFIG['Settings']['show_mice_only'])
+        "SHOW_MICE_ONLY": parser.getboolean('Settings', 'show_mice_only', fallback=DEFAULT_CONFIG['Settings']['show_mice_only']),
+        "RESTART_IP_CAMERA_STREAM_ON_FAILURE": parser.getboolean('Settings', 'restart_ip_camera_stream_on_failure', fallback=DEFAULT_CONFIG['Settings'].get('restart_ip_camera_stream_on_failure', True)),
+        "WLAN_WATCHDOG_ENABLED": parser.getboolean('Settings', 'wlan_watchdog_enabled', fallback=DEFAULT_CONFIG['Settings'].get('wlan_watchdog_enabled', True))
     }
 
 def save_config():
@@ -268,6 +272,8 @@ def save_config():
     settings['mqtt_image_publish_interval'] = CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL']
     settings['show_cats_only'] = CONFIG['SHOW_CATS_ONLY']
     settings['show_mice_only'] = CONFIG['SHOW_MICE_ONLY']
+    settings['restart_ip_camera_stream_on_failure'] = CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE']
+    settings['wlan_watchdog_enabled'] = CONFIG['WLAN_WATCHDOG_ENABLED']
 
     # Write updated configuration back to the file
     try:

@@ -6,11 +6,13 @@
 import cv2
 import numpy as np
 import subprocess
+import re
 import shlex
 import threading
 import logging
 import time as tm
 from typing import List, Optional
+from src.baseconfig import CONFIG
 class VideoStream:
     """Camera object that controls video streaming from the Picamera or an IP camera"""
 
@@ -68,9 +70,64 @@ class VideoStream:
 
     def start(self):
         self.camera_state = self.STATE_INITIALIZING
+        self.stopped = False
         self.thread = threading.Thread(target=self.update, args=(), daemon=True)
         self.thread.start()
+        if self.source == "ip_camera":
+            self._start_journal_monitor()
         return self
+    
+    def stop_journal_monitor(self):
+        # Signal the monitor thread to stop
+        self._journal_monitor_stopped = True
+        if hasattr(self, 'journal_monitor_thread') and self.journal_monitor_thread is not None:
+            self.journal_monitor_thread.join(timeout=2)
+            self.journal_monitor_thread = None
+
+    def _start_journal_monitor(self):
+        self._journal_monitor_stopped = False
+        self.journal_monitor_thread = threading.Thread(target=self._monitor_journal_for_h264_errors, daemon=True)
+        self.journal_monitor_thread.start()
+
+    def _monitor_journal_for_h264_errors(self, threshold=5, interval=20):
+        error_count = 0
+        last_reset = tm.time()
+        pattern = re.compile(r"\[h264 @.*error while decoding MB")
+        proc = subprocess.Popen(
+            ["journalctl", "-u", "kittyhack.service", "-f", "-p", "info"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        while not self.stopped and not getattr(self, '_journal_monitor_stopped', False):
+            line = proc.stdout.readline()
+            if not line:
+                continue
+            if pattern.search(line):
+                error_count += 1
+                logging.warning(f"[CAMERA] Journal detected H264 decode error (count={error_count})")
+                if error_count >= threshold:
+                    if CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE']:
+                        logging.error("[CAMERA] Too many H264 errors detected in journal, reconnecting IP camera stream...")
+                        self._trigger_ip_camera_reconnect()
+                    else:
+                        logging.warning("[CAMERA] Too many H264 errors detected, but automatic IP camera reconnect is disabled by configuration.")
+                    error_count = 0
+                    last_reset = tm.time()
+            if tm.time() - last_reset > interval:
+                error_count = 0
+                last_reset = tm.time()
+        proc.terminate()
+
+    def _trigger_ip_camera_reconnect(self):
+        # Set stopped to True to break the update loop and reconnect
+        self.stopped = True
+        # Wait a moment before restarting
+        tm.sleep(2)
+        self.stopped = False
+        self.thread = threading.Thread(target=self.update, args=(), daemon=True)
+        self.thread.start()
 
     def update(self):
         if self.source == "internal":
@@ -121,6 +178,8 @@ class VideoStream:
         elif self.source == "ip_camera" and self.ip_camera_url:
             self.camera_state = self.STATE_IP_CAMERA
             retry_delay = 5  # seconds
+            corrupt_frame_count = 0
+            max_corrupt_frames = 5  # reconnect after 5 consecutive corrupt frames
 
             # Define maximum allowed resolutions for common aspect ratios
             MAX_PIXELS = 1280 * 720  # 921600
@@ -176,18 +235,16 @@ class VideoStream:
                 self.camera_state = self.STATE_RUNNING
                 while not self.stopped:
                     ret, frame = self.cap.read()
-                    if not ret:
-                        logging.warning("[CAMERA] Failed to read frame from IP camera. Attempting to reconnect...")
-                        self.camera_state = self.STATE_ERROR
-                        break  # Break inner loop to reconnect
-
-                    # DO NOT RESIZE HERE, let the IP camera handle it. Resizing is too CPU intensive.
-                    # Resize if frame exceeds allowed size, keeping aspect ratio
-                    #h, w = frame.shape[:2]
-                    #if w * h > MAX_PIXELS or w > max_w or h > max_h:
-                    #    scale = min(max_w / w, max_h / h)
-                    #    new_w, new_h = int(w * scale), int(h * scale)
-                    #    frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                    if not ret or frame is None or frame.size == 0 or np.count_nonzero(frame) < frame.size * 0.01:
+                        corrupt_frame_count += 1
+                        logging.warning(f"[CAMERA] Corrupt frame detected from IP camera (count={corrupt_frame_count})")
+                        if corrupt_frame_count >= max_corrupt_frames:
+                            logging.error("[CAMERA] Too many corrupt frames, reconnecting IP camera stream...")
+                            self.camera_state = self.STATE_ERROR
+                            break  # Break inner loop to reconnect
+                        continue
+                    else:
+                        corrupt_frame_count = 0  # Reset on good frame
 
                     with self.lock:
                         self.frames.append(frame)
@@ -207,7 +264,7 @@ class VideoStream:
             self.camera_state = self.STATE_STOPPED
             final_frame = np.zeros((self.resolution[1], self.resolution[0], 3), dtype=np.uint8)
             # Calculate text size
-            text = "Stream Ended. Please restart the Kittyflap."
+            text = "Stream Ended."
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 1
             thickness = 2
@@ -220,6 +277,9 @@ class VideoStream:
             # Draw background rectangle
             cv2.rectangle(final_frame, (text_x - 10, text_y - text_size[1] - 10),
                           (text_x + text_size[0] + 10, text_y + 10), (128, 128, 128), cv2.FILLED)
+            
+            # Draw the text itself
+            cv2.putText(final_frame, text, (text_x, text_y), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
             with self.lock:
                 self.frames = [final_frame]
@@ -245,6 +305,7 @@ class VideoStream:
     def stop(self):
         # Stop the video stream
         self.stopped = True
+        self.stop_journal_monitor()
         if self.thread is not None:
             self.thread.join(timeout=5)  # Wait for the thread to finish
         if self.source == "internal" and self.process:

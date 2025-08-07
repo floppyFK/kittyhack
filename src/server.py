@@ -308,50 +308,57 @@ def start_background_task():
                 wlan_connected = False
                 gateway_reachable = False
 
-            # Consider WLAN as not connected if either the interface or gateway is not reachable
-            if not wlan_connected or not gateway_reachable:
-                wlan_disconnect_counter += 1
-                if wlan_disconnect_counter <= 5:
-                    logging.warning(
-                        f"[WLAN CHECK] WLAN not fully connected (attempt {wlan_disconnect_counter}/5): "
-                        f"Interface connected: {wlan_connected}, Gateway reachable: {gateway_reachable}"
-                    )
-                elif wlan_disconnect_counter <= 8:
-                    logging.error(
-                        f"[WLAN CHECK] WLAN still not connected after proactive reconnect attempt (attempt {wlan_disconnect_counter}/8)! "
-                        f"LAST CHANCES! REBOOTING SYSTEM IF NOT RECONNECTED WITHIN 8 ATTEMPTS!"
-                        f"Interface connected: {wlan_connected}, Gateway reachable: {gateway_reachable}"
-                    )
+            # Only perform reconnect/reboot if WLAN watchdog is enabled
+            if CONFIG['WLAN_WATCHDOG_ENABLED']:
+                # Consider WLAN as not connected if either the interface or gateway is not reachable
+                if not wlan_connected or not gateway_reachable:
+                    wlan_disconnect_counter += 1
+                    if wlan_disconnect_counter <= 5:
+                        logging.warning(
+                            f"[WLAN CHECK] WLAN not fully connected (attempt {wlan_disconnect_counter}/5): "
+                            f"Interface connected: {wlan_connected}, Gateway reachable: {gateway_reachable}"
+                        )
+                    elif wlan_disconnect_counter <= 8:
+                        logging.error(
+                            f"[WLAN CHECK] WLAN still not connected after proactive reconnect attempt (attempt {wlan_disconnect_counter}/8)! "
+                            f"LAST CHANCES! REBOOTING SYSTEM IF NOT RECONNECTED WITHIN 8 ATTEMPTS!"
+                            f"Interface connected: {wlan_connected}, Gateway reachable: {gateway_reachable}"
+                        )
+                else:
+                    wlan_disconnect_counter = 0
+                    wlan_reconnect_attempted = False
+
+                # If disconnected for 5 consecutive checks (25 seconds), try to reconnect
+                if wlan_disconnect_counter == 5 and not wlan_reconnect_attempted:
+                    logging.warning("[WLAN CHECK] Attempting to reconnect WLAN after 5 failed checks...")
+                    # Sort configured WLANs by priority (highest first) and limit to max 3
+                    sorted_wlans = sorted(wlan_connections, key=lambda w: w.get('priority', 0), reverse=True)[:3]
+                    for wlan in sorted_wlans:
+                        ssid = wlan['ssid']
+                        systemctl("stop", f"NetworkManager")
+                        tm.sleep(2)
+                        systemctl("start", f"NetworkManager")
+                        tm.sleep(2)
+                        switch_wlan_connection(ssid)
+                        # Wait up to 10 seconds for connection
+                        for __ in range(10):
+                            tm.sleep(1)
+                            wlan_connections = get_wlan_connections()
+                            if any(w['connected'] for w in wlan_connections) and is_gateway_reachable():
+                                logging.info(f"[WLAN CHECK] Successfully reconnected to SSID: {ssid}")
+                                break
+                    wlan_reconnect_attempted = True
+
+                # If still disconnected after 3 more checks (total 8, 40 seconds), reboot
+                if wlan_disconnect_counter >= 8:
+                    logging.error("[WLAN CHECK] WLAN still not connected after reconnect attempts. Rebooting system...")
+                    systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
+                    break
             else:
-                wlan_disconnect_counter = 0
-                wlan_reconnect_attempted = False
-
-            # If disconnected for 5 consecutive checks (25 seconds), try to reconnect
-            if wlan_disconnect_counter == 5 and not wlan_reconnect_attempted:
-                logging.warning("[WLAN CHECK] Attempting to reconnect WLAN after 5 failed checks...")
-                # Sort configured WLANs by priority (highest first) and limit to max 3
-                sorted_wlans = sorted(wlan_connections, key=lambda w: w.get('priority', 0), reverse=True)[:3]
-                for wlan in sorted_wlans:
-                    ssid = wlan['ssid']
-                    systemctl("stop", f"NetworkManager")
-                    tm.sleep(2)
-                    systemctl("start", f"NetworkManager")
-                    tm.sleep(2)
-                    switch_wlan_connection(ssid)
-                    # Wait up to 10 seconds for connection
-                    for __ in range(10):
-                        tm.sleep(1)
-                        wlan_connections = get_wlan_connections()
-                        if any(w['connected'] for w in wlan_connections) and is_gateway_reachable():
-                            logging.info(f"[WLAN CHECK] Successfully reconnected to SSID: {ssid}")
-                            break
-                wlan_reconnect_attempted = True
-
-            # If still disconnected after 3 more checks (total 8, 40 seconds), reboot
-            if wlan_disconnect_counter >= 8:
-                logging.error("[WLAN CHECK] WLAN still not connected after reconnect attempts. Rebooting system...")
-                systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
-                break
+                # If watchdog is disabled, just reset counters if connected, but do nothing on disconnect
+                if wlan_connected and gateway_reachable:
+                    wlan_disconnect_counter = 0
+                    wlan_reconnect_attempted = False
 
             # --- Main periodic jobs (every PERIODIC_JOBS_INTERVAL seconds) ---
             # Periodically check that the kwork and manager services are NOT running anymore
@@ -3615,6 +3622,42 @@ def server(input, output, session):
                             ),
                             ui.column( 12, ui.markdown("> " + _("NOTE: This setting requires a restart of the kittyflap to take effect.")), style_="color: grey;"),
                         ),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.input_switch(
+                                    "btnRestartIpCameraStreamOnFailure",
+                                    _("IP camera watchdog"),
+                                    CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE']
+                                ),
+                            ),
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _("If enabled, the stream of an external camera will be automatically restarted if corrupted frames are detected.")
+                                ),
+                                style_="color: grey;"
+                            ),
+                        ),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.input_switch(
+                                    "btnWlanWatchdogEnabled",
+                                    _("WLAN watchdog"),
+                                    CONFIG['WLAN_WATCHDOG_ENABLED']
+                                ),
+                            ),
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _("If enabled, the WLAN connection will be monitored and automatically reconnected on failure. If this also fails, the Kittyflap will automatically restart."),
+                                ),
+                                style_="color: grey;"
+                            ),
+                        ),
                         ui.br(),
                         full_screen=False,
                         class_="generic-container align-left",
@@ -3802,6 +3845,8 @@ def server(input, output, session):
         CONFIG['MQTT_USERNAME'] = input.txtMqttUsername()
         CONFIG['MQTT_PASSWORD'] = input.txtMqttPassword()
         CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL'] = float(input.mqtt_image_publish_interval())
+        CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE'] = input.btnRestartIpCameraStreamOnFailure()
+        CONFIG['WLAN_WATCHDOG_ENABLED'] = input.btnWlanWatchdogEnabled()
 
         # Update the log level
         configure_logging(input.txtLoglevel())

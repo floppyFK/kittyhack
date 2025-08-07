@@ -3133,9 +3133,10 @@ def server(input, output, session):
                             ui.column(
                                 8,
                                 ui.markdown(
-                                    _("Kittyhack decides based on this value, if a picture contains a mouse.") + "  \n" + 
-                                    _("If the detected mouse probability of a picture exceeds this value, the flap will remain closed.") + "  \n" + 
-                                    "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['mouse_threshold']) + ")*"
+                                    _("Kittyhack decides based on this value, if a picture contains a mouse.") + "  \n" +
+                                    _("If the detected mouse probability of a picture exceeds this value, the flap will remain closed.") + "  \n" +
+                                    "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['mouse_threshold']) + ")*" + "  \n\n" +
+                                    "**" + _("Note: The minimum of this value is always coupled to the configured value of 'Minimum detection threshold' below.") + "**"
                                 ), style_="color: grey;"
                             ),
                         ),
@@ -3145,7 +3146,7 @@ def server(input, output, session):
                             ui.column(
                                 8,
                                 ui.markdown(
-                                    _("This threshold will only be used for the decision, if an motion event on the outside shall be logged or not:") + "\n\n" +
+                                    _("This threshold will be used for the decision, if an motion event on the outside shall be logged or not:") + "\n\n" +
                                     _("The detected probability of objects must exceed this threshold at least in one picture of a motion event. Otherwise the pictures will be discarded and the event will not be logged.") + "\n\n" +
                                     "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['min_threshold']) + ")*"
                                 ), style_="color: grey;"
@@ -3246,7 +3247,8 @@ def server(input, output, session):
                                 ui.markdown(
                                     _("Kittyhack decides based on this value, if a picture contains your cat.") + "  \n" + 
                                     _("If the detected probability of your cat exceeds this value in a picture, and the setting `Use camera for cat detection` is enabled, the flap will be opened.") + "  \n" +
-                                    "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['cat_threshold']) + ")*"
+                                    "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['cat_threshold']) + ")*" + "  \n\n" +
+                                    "**" + _("Note: The minimum of this value is always coupled to the configured value of 'Minimum detection threshold' above.") + "**"
                                 ), style_="color: grey;"
                             ),
                         ),
@@ -3693,6 +3695,11 @@ def server(input, output, session):
         ui.update_slider(
             "sldMouseThreshold",
             value=max(input.sldMouseThreshold(), input.sldMinThreshold()),
+            min=input.sldMinThreshold(),
+        )
+        ui.update_slider(
+            "sldCatThreshold",
+            value=max(input.sldCatThreshold(), input.sldMinThreshold()),
             min=input.sldMinThreshold(),
         )
 

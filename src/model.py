@@ -566,11 +566,14 @@ class ModelHandler:
                             
                             for r in results:
                                 detected_info = []
+                                probability_threshold_exceeded = False
                                 for i, (box, conf, cls) in enumerate(zip(r.boxes.xyxy, r.boxes.conf, r.boxes.cls)):
                                     xmin, ymin, xmax, ymax = box
                                     object_name = labels[int(cls)]
                                     probability = float(conf * 100)
                                     detected_info.append(f"{object_name} ({probability:.1f}%)")
+                                    if probability >= CONFIG['MIN_THRESHOLD']:
+                                        probability_threshold_exceeded = True
                                     
                                     # Map bounding box coordinates back to original size
                                     xmin_orig = float((xmin - pad_x) / scale)
@@ -598,7 +601,7 @@ class ModelHandler:
                                     elif object_name.lower() in cat_names:
                                         own_cat_probability = int(probability)
 
-                                if detected_info:
+                                if detected_info and probability_threshold_exceeded:
                                     logging.info(f"[MODEL] Detected {len(detected_info)} objects in image: {', '.join(detected_info)}")
                             
                             # Return results through the output queue

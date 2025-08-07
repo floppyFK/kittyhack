@@ -488,25 +488,31 @@ class ModelHandler:
                     mouse_probability = 0
                     own_cat_probability = 0
                     detected_objects = []
-                    
+                    detected_info = []
+                    probability_threshold_exceeded = False
+                    min_threshold = CONFIG.get('MIN_THRESHOLD', 0)
+
                     for r in results:
                         for i, (box, conf, cls) in enumerate(zip(r.boxes.xyxy, r.boxes.conf, r.boxes.cls)):
                             xmin, ymin, xmax, ymax = box
                             object_name = self.labels[int(cls)]
                             probability = float(conf * 100)
-                            
+                            detected_info.append(f"{object_name} ({probability:.1f}%)")
+                            if probability >= min_threshold:
+                                probability_threshold_exceeded = True
+
                             # Calculate original dimensions from the scale
                             imH, imW = frame.shape[:2]
                             scale = int(input_size) / max(imW, imH)
                             pad_x = (input_size - imW * scale) / 2
                             pad_y = (input_size - imH * scale) / 2
-                            
+
                             # Map bounding box coordinates back to original size
                             xmin_orig = float((xmin - pad_x) / scale)
                             ymin_orig = float((ymin - pad_y) / scale)
                             xmax_orig = float((xmax - pad_x) / scale)
                             ymax_orig = float((ymax - pad_y) / scale)
-                            
+
                             detected_object = {
                                 'x': float(xmin_orig / imW * 100),
                                 'y': float(ymin_orig / imH * 100),
@@ -515,14 +521,17 @@ class ModelHandler:
                                 'name': object_name,
                                 'probability': probability
                             }
-                            
+
                             detected_objects.append(detected_object)
-                            
+
                             if object_name.lower() in ["prey", "beute"]:
                                 mouse_probability = int(probability)
                             elif object_name.lower() in self.cat_names:
                                 own_cat_probability = int(probability)
-                    
+
+                    if detected_info and probability_threshold_exceeded:
+                        logging.info(f"[MODEL] Detected {len(detected_info)} objects in image: {', '.join(detected_info)} (MIN_THRESHOLD={min_threshold})")
+
                     return (mouse_probability, own_cat_probability, detected_objects)
                 
                 self._yolo = direct_inference
@@ -554,7 +563,7 @@ class ModelHandler:
                             if job is None:  # None is our signal to exit
                                 break
                                 
-                            job_id, frame, input_size, pad_x, pad_y, scale, labels, cat_names = job
+                            job_id, frame, input_size, pad_x, pad_y, scale, labels, cat_names, min_threshold = job
                             
                             # Perform inference
                             results = model(frame, stream=True, imgsz=input_size)
@@ -572,7 +581,7 @@ class ModelHandler:
                                     object_name = labels[int(cls)]
                                     probability = float(conf * 100)
                                     detected_info.append(f"{object_name} ({probability:.1f}%)")
-                                    if probability >= CONFIG['MIN_THRESHOLD']:
+                                    if probability >= min_threshold:
                                         probability_threshold_exceeded = True
                                     
                                     # Map bounding box coordinates back to original size
@@ -602,7 +611,7 @@ class ModelHandler:
                                         own_cat_probability = int(probability)
 
                                 if detected_info and probability_threshold_exceeded:
-                                    logging.info(f"[MODEL] Detected {len(detected_info)} objects in image: {', '.join(detected_info)}")
+                                    logging.info(f"[MODEL] Detected {len(detected_info)} objects in image: {', '.join(detected_info)} (MIN_THRESHOLD={min_threshold})")
                             
                             # Return results through the output queue
                             output_queue.put((job_id, mouse_probability, own_cat_probability, detected_objects))
@@ -646,7 +655,7 @@ class ModelHandler:
         pad_y = (input_size - imH * scale) / 2
         
         # Put the job in the queue
-        self._input_queue.put((job_id, frame, input_size, pad_x, pad_y, scale, self.labels, self.cat_names))
+        self._input_queue.put((job_id, frame, input_size, pad_x, pad_y, scale, self.labels, self.cat_names, CONFIG['MIN_THRESHOLD']))
         return job_id
     
     def _get_result(self, job_id, timeout=1.0):

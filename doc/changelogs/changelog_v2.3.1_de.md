@@ -6,6 +6,7 @@
 ## Bugfixes
 - **Event Fenster**: Ein Event kann nun auch durch einen Klick außerhalb des Event-Fensters geschlossen werden
 - **Schwellwert für Katzenerkennung**: Der Minimalwert für diese Einstellung ist jetzt an den den Wert *Minimale Erkennungsschwelle* gekoppelt, da niedrigere Werte hier keinen Sinn machen würden.
+- **Live View**: Der äußere Bewegungs-Status im Live View Tab zeigt nun korrekt den Zustand der Kameradetektion an, wenn diese als Quelle für die Bewegungserkennung außen konfiguriert ist (`Kamera für die Bewegungserkennung verwenden`). Vorher wurde fälschlicherweise immer der PIR-Bewegungsmelder-Status angezeigt.
 
 ## Verbesserungen
 - **Watchdog für WLAN Verbindung**: Bei Verlust der WLAN-Verbindung wird nun automatisch versucht, die Verbindung wiederherzustellen. Nach mehreren erfolglosen Versuchen erfolgt ein automatischer Neustart der Kittyflap (standardmäßig aktiv, kann in den Advanced-Einstellungen aber deaktiviert werden).

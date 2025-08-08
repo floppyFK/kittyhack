@@ -1177,7 +1177,11 @@ def server(input, output, session):
             inside_lock_state = Magnets.instance.get_inside_state()
             outside_lock_state = Magnets.instance.get_outside_state()
 
-            outside_pir_state, inside_pir_state, motion_outside_raw, motion_inside_raw = Pir.instance.get_states()
+            from src.backend import motion_state, motion_state_lock
+
+            with motion_state_lock:
+                outside_motion_state = motion_state["outside"]
+                inside_motion_state = motion_state["inside"]
 
             if hasattr(backend_main, "prey_detection_tm"):
                 delta_to_last_prey_detection = tm.time() - float(backend_main.prey_detection_tm)
@@ -1195,8 +1199,8 @@ def server(input, output, session):
 
             inside_lock_icon = icon_svg('lock-open') if inside_lock_state else icon_svg('lock')
             outside_lock_icon = icon_svg('lock-open') if outside_lock_state else icon_svg('lock')
-            outside_pir_state_icon = "🟢" if outside_pir_state else "⚫"
-            inside_pir_state_icon = "🟢" if inside_pir_state else "⚫"
+            outside_pir_state_icon = "🟢" if outside_motion_state else "⚫"
+            inside_pir_state_icon = "🟢" if inside_motion_state else "⚫"
             ui_html = ui.HTML(_("<b>Locks:</b> Inside {} | Outside {}<br><b>Motion:</b> Inside {} | Outside {}").format(inside_lock_icon, outside_lock_icon, inside_pir_state_icon, outside_pir_state_icon))
             if forced_lock_due_prey:
                 ui.update_action_button("bResetPreyCooldown", disabled=False)

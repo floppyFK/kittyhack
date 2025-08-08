@@ -331,8 +331,8 @@ def start_background_task():
                 # If disconnected for 5 consecutive checks (25 seconds), try to reconnect
                 if wlan_disconnect_counter == 5 and not wlan_reconnect_attempted:
                     logging.warning("[WLAN CHECK] Attempting to reconnect WLAN after 5 failed checks...")
-                    # Sort configured WLANs by priority (highest first) and limit to max 3
-                    sorted_wlans = sorted(wlan_connections, key=lambda w: w.get('priority', 0), reverse=True)[:3]
+                    # Sort configured WLANs by priority (highest first) and limit to max 6
+                    sorted_wlans = sorted(wlan_connections, key=lambda w: w.get('priority', 0), reverse=True)[:6]
                     for wlan in sorted_wlans:
                         ssid = wlan['ssid']
                         systemctl("stop", f"NetworkManager")

@@ -368,6 +368,15 @@ class Magnets:
         try:
             # Empty the shared queue
             self.command_queue.empty_queue()
+            
+            # Get the current time to calculate delays
+            current_time = tm.time()
+            
+            # Check if we need to respect a delay from the last hardware command
+            if current_time - self.command_queue.last_command_time < MAG_RFID_CMD_DELAY:
+                delay = MAG_RFID_CMD_DELAY - (current_time - self.command_queue.last_command_time)
+                logging.info(f"[MAGNETS] Waiting {delay:.1f} seconds before locking directions after emptying queue.")
+                tm.sleep(delay)
                     
             if self.get_outside_state():
                 if shutdown:
@@ -377,6 +386,13 @@ class Magnets:
                 # Directly call _lock_outside without queuing to ensure immediate action during shutdown
                 self._lock_outside()
                 
+                # Update the last command time to track this hardware operation
+                self.command_queue.last_command_time = tm.time()
+                
+                # Ensure delay between locking outside and inside if both are needed
+                if self.get_inside_state():
+                    tm.sleep(MAG_RFID_CMD_DELAY)
+                
             if self.get_inside_state():
                 if shutdown:
                     logging.info("[MAGNETS] Shutdown detected! Locking inside direction.")
@@ -384,6 +400,9 @@ class Magnets:
                     logging.info("[MAGNETS] Emptying queue! Locking inside direction.")
                 # Directly call _lock_inside without queuing to ensure immediate action during shutdown
                 self._lock_inside()
+                
+                # Update the last command time for this hardware operation
+                self.command_queue.last_command_time = tm.time()
         except Exception as e:
             logging.error(f"[MAGNETS] Error emptying queue: {e}")
 

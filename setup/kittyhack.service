@@ -1,14 +1,12 @@
 [Unit]
 Description=KittyHack WebGUI for Kittyflap
-After=network.target time-sync.target
-Wants=time-sync.target
+After=network.target
 
 [Service]
 User=root
 Group=root
 WorkingDirectory=/root/kittyhack
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/kittyhack/.venv/bin"
-ExecStartPre=/bin/sh -c 'if timeout 90 bash -c "until [ \"$(timedatectl show --property=NTPSynchronized --value)\" = yes ]; do sleep 1; done"; then echo "Time synchronized successfully"; else echo "Time sync failed, continuing anyway"; fi || true'
 ExecStart=/root/kittyhack/.venv/bin/shiny run --host=0.0.0.0 --port=80
 Restart=always
 RestartSec=5

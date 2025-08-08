@@ -261,6 +261,7 @@ def backend_main(simulate_kittyflap = False):
     unlock_inside = False
     unlock_outside_tm = 0.0
     inside_manually_unlocked = False
+    inside_manually_locked_tm = 0.0
     backend_main.prey_detection_tm = 0.0
     additional_verdict_infos = []
     previous_use_camera_for_motion = None
@@ -545,6 +546,8 @@ def backend_main(simulate_kittyflap = False):
                 cat_rfid_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
                 # Reset the additional verdict infos
                 additional_verdict_infos = []
+                # Reset the manual lock timestamp for a new motion event
+                inside_manually_locked_tm = 0.0
                 if mqtt_publisher:
                     mqtt_publisher.publish_motion_outside(True)
             
@@ -673,7 +676,8 @@ def backend_main(simulate_kittyflap = False):
                 "mouse_check": mouse_check,
                 "outside_locked": magnets.get_outside_state() == False,
                 "no_unlock_queued": magnets.check_queued("unlock_inside") == False,
-                "no_prey_within_timeout": (tm.time() - backend_main.prey_detection_tm) > CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION']
+                "no_prey_within_timeout": (tm.time() - backend_main.prey_detection_tm) > CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'],
+                "not_manually_locked": inside_manually_locked_tm == 0.0 or (tm.time() - inside_manually_locked_tm) > MAX_UNLOCK_TIME
             }
 
             if not hasattr(backend_main, "previous_mouse_check_conditions"):
@@ -732,7 +736,7 @@ def backend_main(simulate_kittyflap = False):
                 
                 manual_door_override['unlock_inside'] = False
 
-            if manual_door_override['unlock_inside']:
+            if manual_door_override['unlock_outside']:
                 if magnets.get_outside_state():
                     logging.info("[BACKEND] Manual override: Outside door is already open.")
                 else:
@@ -741,7 +745,7 @@ def backend_main(simulate_kittyflap = False):
                     magnets.queue_command("unlock_outside")
                     unlock_outside_tm = tm.time()
                 
-                manual_door_override['unlock_inside'] = False
+                manual_door_override['unlock_outside'] = False
 
             if manual_door_override['lock_inside']:
                 if magnets.get_inside_state():
@@ -750,6 +754,7 @@ def backend_main(simulate_kittyflap = False):
                 else:
                     logging.info("[BACKEND] Manual override: Inside door is already locked.")
                 inside_manually_unlocked = False
+                inside_manually_locked_tm = tm.time()  # Set the timestamp when manually locked
                 manual_door_override['lock_inside'] = False
                 additional_verdict_infos.append(str(EventType.MANUALLY_LOCKED))
                 

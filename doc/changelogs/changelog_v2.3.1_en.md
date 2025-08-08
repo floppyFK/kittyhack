@@ -4,6 +4,9 @@
 - **Quick Access to Input and Output Control**: The configuration of input and output direction is now available directly on the live-view tab. Switching to the configuration tab is no longer necessary.
 
 ## Bugfixes
+- **Manual locking/unlocking**: 
+  - ⚠️ When the cat flap was manually locked or unlocked in the Live View tab, this could lead to a complete system crash under certain circumstances
+  - When all conditions for unlocking the inside were met, the flap could not be reliably locked through manual locking (emergency locking)
 - **Event Window**: An event can now also be closed by clicking outside the event window.
 - **Threshold for cat detection**: The minimum value for this setting is now coupled to the value of *Minimum detection threshold*, since lower values would not make sense here.
 - **Live View**: The outside-motion status in the Live View tab now correctly displays the camera detection state when configured as the source for external motion detection (`Use camera for motion detection`). Previously, the PIR motion sensor status was incorrectly always displayed.

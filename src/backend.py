@@ -2,6 +2,7 @@ import threading
 import time as tm
 import logging
 import multiprocessing
+from threading import Lock
 from src.baseconfig import AllowedToEnter, CONFIG, set_language
 from src.pir import Pir
 from src.database import *
@@ -53,6 +54,10 @@ manual_door_override = {'unlock_inside': False, 'unlock_outside': False, 'lock_i
 # Global variables for MQTT client
 mqtt_client = None
 mqtt_publisher = None
+
+# Global variable for motion states
+motion_state = {"outside": 0, "inside": 0}
+motion_state_lock = Lock()
 
 def handle_manual_override(payload):
     """Handle manual override commands from MQTT"""
@@ -386,6 +391,11 @@ def backend_main(simulate_kittyflap = False):
             
             motion_inside = lazy_cat_workaround(motion_inside, last_inside, motion_inside_tm, LAZY_CAT_DELAY_PIR_MOTION)
             motion_inside_raw = lazy_cat_workaround(motion_inside_raw, last_inside_raw, motion_inside_raw_tm, LAZY_CAT_DELAY_PIR_MOTION)
+
+            # Update the shared motion state
+            with motion_state_lock:
+                motion_state["outside"] = motion_outside
+                motion_state["inside"] = motion_inside
 
             previous_tag_id = tag_id
             tag_id, tag_timestamp = rfid.get_tag()

@@ -1116,7 +1116,7 @@ def server(input, output, session):
                     ),
                     title=_("Update"),
                     easy_close=True,
-                    size="xl",
+                    size="m",
                     footer=ui.div(
                         ui.input_action_button("btn_modal_cancel", _("Close")),
                     )

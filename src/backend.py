@@ -781,6 +781,10 @@ def backend_main(simulate_kittyflap = False):
     # MQTT Cleanup on shutdown:
     cleanup_mqtt()
 
+    # Ensure all magnets are locked before exit
+    if Magnets.instance:
+        Magnets.instance.empty_queue(shutdown=True)
+
     logging.info("[BACKEND] Stopped backend.")
     sigterm_monitor.signal_task_done()
 

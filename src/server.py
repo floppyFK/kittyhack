@@ -142,6 +142,12 @@ if normalize_version(last_booted_version) < '1.5.2' and normalize_version(git_ve
 CONFIG['LAST_BOOTED_VERSION'] = git_version
 update_single_config_parameter("LAST_BOOTED_VERSION")
 
+# Check if the CAT_THRESHOLD setting is lower than the MIN_THRESHOLD. If so, set it to the MIN_THRESHOLD
+if CONFIG['CAT_THRESHOLD'] < CONFIG['MIN_THRESHOLD']:
+    logging.warning(f"CAT_THRESHOLD is lower than MIN_THRESHOLD ({CONFIG['MIN_THRESHOLD']}). Setting CAT_THRESHOLD to MIN_THRESHOLD.")
+    CONFIG['CAT_THRESHOLD'] = CONFIG['MIN_THRESHOLD']
+    update_single_config_parameter("CAT_THRESHOLD")
+
 # END OF MIGRATION RULES ############################################################################################
 
 logging.info(f"Current version: {git_version}")
@@ -1102,10 +1108,13 @@ def server(input, output, session):
             ui.modal_show(
                 ui.modal(
                     ui.div(
-                        ui.markdown(changelog_text),
-                        ui.markdown("\n\n---------\n\n" + _("**NOTE**: You can find the changelogs also in the `INFO` section.")),
+                        ui.markdown(
+                            _("✅ Update to version `{}` was successful!").format(git_version)
+                            + "\n\n---------\n\n"
+                            + _("**NOTE**: You can find the changelogs in the `INFO` section.")
+                            ),
                     ),
-                    title=_("Changelog"),
+                    title=_("Update"),
                     easy_close=True,
                     size="xl",
                     footer=ui.div(
@@ -1676,7 +1685,7 @@ def server(input, output, session):
                             id="quick_allowed_to_enter",
                             label=_("Inside direction:"),
                             choices={
-                                AllowedToEnter.ALL.value: _("All cats"),
+                                AllowedToEnter.ALL.value: _("All cats (unlock on every detected motion)"),
                                 AllowedToEnter.ALL_RFIDS.value: _("All cats with a RFID chip"),
                                 AllowedToEnter.KNOWN.value: _("Only registered cats"),
                                 AllowedToEnter.NONE.value: _("No cats"),
@@ -1691,7 +1700,7 @@ def server(input, output, session):
                             id="quick_allowed_to_exit",
                             label=_("Outside direction:"),
                             choices={
-                                "True": _("Allow cats to exit"),
+                                "True": _("Allow exit"),
                                 "False": _("Do not allow exit"),
                             },
                             selected=str(CONFIG['ALLOWED_TO_EXIT']),
@@ -3262,7 +3271,7 @@ def server(input, output, session):
                                 "txtAllowedToEnter",
                                 _("Open inside direction for:"),
                                 {
-                                    AllowedToEnter.ALL.value: _("All cats"), AllowedToEnter.ALL_RFIDS.value: _("All cats with a RFID chip"), AllowedToEnter.KNOWN.value: _("Only registered cats"), AllowedToEnter.NONE.value: _("No cats"),
+                                    AllowedToEnter.ALL.value: _("All cats (unlock on every detected motion)"), AllowedToEnter.ALL_RFIDS.value: _("All cats with a RFID chip"), AllowedToEnter.KNOWN.value: _("Only registered cats"), AllowedToEnter.NONE.value: _("No cats"),
                                 },
                                 selected=str(CONFIG['ALLOWED_TO_ENTER'].value),
                             )),

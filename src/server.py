@@ -26,8 +26,6 @@ from src.baseconfig import (
     configure_logging,
     get_loggable_config_value,
     DEFAULT_CONFIG,
-    JOURNAL_LOG,
-    LOGFILE,
     UserNotifications
 )
 from src.helper import ( 
@@ -4106,29 +4104,40 @@ def server(input, output, session):
             if os.path.exists(zip_file_path):
                 os.remove(zip_file_path)
             
-            # Generate journalctl log and save to temp directory
+            # Export journal to a file. Do NOT filter by unit — include all system logs.
             journal_file_path = os.path.join(temp_dir, "journalctl.log")
-            with open(journal_file_path, 'w') as f:
-                subprocess.run(["/usr/bin/journalctl", "-n", "10000", "--quiet"], 
-                            stdout=f, check=True)
-            
-            # Create a zip file with compression
-            with zipfile.ZipFile(zip_file_path, 'w', compression=zipfile.ZIP_DEFLATED) as z:
-                # Add the journalctl log
-                z.write(journal_file_path, arcname="journalctl.log")
-                
-                # Add all kittyhack.log* files
-                log_dir = os.getcwd()
-                log_base = LOGFILE
-                
-                # Check if log_dir exists before trying to list files
-                if os.path.exists(log_dir):
-                    for file in os.listdir(log_dir):
-                        if file.startswith(log_base):
-                            file_path = os.path.join(log_dir, file)
-                            z.write(file_path, arcname=file)
+            try:
+                result = subprocess.run(
+                    ["/usr/bin/journalctl", "-n", "20000", "--no-pager", "--quiet", "--output=short-iso-precise"],
+                    capture_output=True,
+                    text=True,
+                )
+                # If returncode != 0 capture whatever output we got and stderr for diagnostics
+                if result.returncode == 0:
+                    journal_text = result.stdout
                 else:
-                    logging.warning(f"Log directory does not exist: {log_dir}")
+                    logging.error(f"journalctl exited with code {result.returncode}: {result.stderr.strip()}")
+                    journal_text = (result.stdout or "") + "\n\n--- journalctl stderr ---\n\n" + (result.stderr or "")
+            except FileNotFoundError:
+                logging.error("journalctl not found on system")
+                journal_text = "ERROR: journalctl not found on system. No systemd journal available."
+            except Exception as e:
+                logging.error(f"Failed to export journal: {e}")
+                journal_text = f"ERROR: Failed to run journalctl: {e}"
+
+            # Ensure we always write a file (even if empty or containing the error message)
+            try:
+                with open(journal_file_path, "w", encoding="utf-8") as jf:
+                    jf.write(journal_text or "No journal output captured.")
+            except Exception as e:
+                logging.error(f"Failed to write journal file {journal_file_path}: {e}")
+                # continue — zip will be created without the journal
+
+            # Create a zip file with compression and include only the journal and sanitized config + setup logs
+            with zipfile.ZipFile(zip_file_path, 'w', compression=zipfile.ZIP_DEFLATED) as z:
+                # Add the journalctl export
+                if os.path.exists(journal_file_path):
+                    z.write(journal_file_path, arcname="journalctl.log")
                 
                 # Add a sanitized version of config.ini to the zip file
                 sanitized_config_path = os.path.join(temp_dir, "config_sanitized.ini")
@@ -4179,10 +4188,16 @@ def server(input, output, session):
                                     rel_path = os.path.relpath(file_path, system_log_dir)
                                     z.write(file_path, arcname=f"system_logs/{dir_short_name}/{rel_path}")
             
-            # Clean up the temp directory
+            # Clean up the temp directory files
             for file in os.listdir(temp_dir):
-                os.remove(os.path.join(temp_dir, file))
-            os.rmdir(temp_dir)
+                try:
+                    os.remove(os.path.join(temp_dir, file))
+                except:
+                    pass
+            try:
+                os.rmdir(temp_dir)
+            except:
+                pass
             
             ui.modal_remove()
             return zip_file_path

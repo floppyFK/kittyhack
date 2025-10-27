@@ -512,7 +512,7 @@ class StatePublisher:
             {
                 "name": "Last Event",
                 "unique_id": f"{device_id}_events",
-                "object_id": f"{device_id}_events",
+                "default_entity_id": f"sensor.{device_id}_events",
                 "state_topic": f"kittyhack/{device_id}/events",
                 "value_template": "{{ value_json.event }}",
                 "json_attributes_topic": f"kittyhack/{device_id}/events",

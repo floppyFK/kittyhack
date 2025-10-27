@@ -2,6 +2,13 @@ import os
 import gettext
 import configparser
 import logging
+import sys
+# If the systemd journal Python bindings are available, use them.
+try:
+    from systemd.journal import JournalHandler  # type: ignore
+except Exception:
+    JournalHandler = None
+
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -21,8 +28,6 @@ class AllowedToEnter(Enum):
 
 # Files
 CONFIGFILE = 'config.ini'
-LOGFILE = "kittyhack.log"
-JOURNAL_LOG = "/tmp/kittyhack-journal.log"
 
 # Gettext constants
 LOCALE_DIR = "locales"
@@ -362,19 +367,20 @@ def configure_logging(level_name: str = "INFO"):
     for h in logging.root.handlers[:]:
         logging.root.removeHandler(h)
 
-    # Create a rotating file handler for logging
-    # This handler will create log files with a maximum size of 10 MB each and keep up to 3 backup files
-    handler = RotatingFileHandler(LOGFILE, maxBytes=10*1024*1024, backupCount=3)
+    # Prefer systemd journal handler when available, otherwise stream to stdout
+    if JournalHandler is not None:
+        handler = JournalHandler()
+    else:
+        handler = logging.StreamHandler(sys.stdout)
 
-    # Define the format for log messages
-    formatter = TimeZoneFormatter('%(asctime)s [%(levelname)s] %(message)s')
+    formatter = logging.Formatter('[%(levelname)s] %(message)s')
     handler.setFormatter(formatter)
 
-    # Get the root logger and set its level and handler
+    # Attach to root logger
     logger = logging.getLogger()
     logger.setLevel(level)
     logger.addHandler(handler)
-    logging.info(f"Logger loglevel set to {level_name.upper()}")
+    logging.info(f"Logger loglevel set to {level_name.upper()} (journal/stdout)")
 
 def get_loggable_config_value(key, value):
     """
@@ -391,19 +397,6 @@ def get_loggable_config_value(key, value):
     if key in SENSITIVE_CONFIG_KEYS and value:
         return "********"  # Mask sensitive values
     return value
-
-# Custom formatter with timezone-aware local time
-class TimeZoneFormatter(logging.Formatter):
-    def formatTime(self, record, datefmt=None):
-        # Get current time in local timezone
-        local_time = datetime.fromtimestamp(record.created, tz=ZoneInfo(CONFIG['TIMEZONE']))
-        
-        # Build the timestamp with milliseconds and timezone offset
-        timestamp = local_time.strftime('%Y-%m-%d %H:%M:%S')
-        milliseconds = f"{local_time.microsecond // 1000:03d}"
-        timezone = local_time.strftime('%z (%Z)')
-
-        return f"{timestamp}.{milliseconds} {timezone}"
     
 class UserNotifications:
     """

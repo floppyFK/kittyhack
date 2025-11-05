@@ -379,28 +379,39 @@ class ImageBuffer:
         self._max_no_mouse_prob = max(self._max_no_mouse_prob, no_mouse_probability)
         self._max_own_cat_prob = max(self._max_own_cat_prob, own_cat_probability)
 
-        # Periodic log for appended images and max probabilities
-        if timestamp - self._last_log_time >= 60:
-            logging.info(
-                f"[IMAGEBUFFER] {self._appended_count} images appended in last 60s. "
-                f"Max Mouse prob: {self._max_mouse_prob}, "
-                f"Max No-mouse prob: {self._max_no_mouse_prob}, "
-                f"Max Own-cat prob: {self._max_own_cat_prob}"
-            )
-            self._last_log_time = timestamp
-            self._appended_count = 0
-            self._max_mouse_prob = 0.0
-            self._max_no_mouse_prob = 0.0
-            self._max_own_cat_prob = 0.0
+        # Periodic combined log for appended images, max probabilities and discarded elements
+        if (timestamp - self._last_log_time >= 60) or (timestamp - self._last_discard_log_time >= 60):
+            parts = []
 
-        # Periodic log for discarded elements
-        if timestamp - self._last_discard_log_time >= 60:
-            if self._discarded_count > 0:
-                logging.info(
-                    f"[IMAGEBUFFER] {self._discarded_count} oldest elements discarded from buffer in last 60s (buffer full)."
+            if timestamp - self._last_log_time >= 60:
+                parts.append(
+                    f"{self._appended_count} images appended in last 60s. "
+                    f"Max Mouse prob: {self._max_mouse_prob}, "
+                    f"Max No-mouse prob: {self._max_no_mouse_prob}, "
+                    f"Max Own-cat prob: {self._max_own_cat_prob}."
                 )
+
+            if timestamp - self._last_discard_log_time >= 60:
+                if self._discarded_count > 0:
+                    parts.append(
+                        f"{self._discarded_count} oldest elements discarded from buffer in last 60s."
+                    )
+                else:
+                    parts.append("No discarded elements in last 60s.")
+
+            logging.info("[IMAGEBUFFER] " + " ".join(parts))
+
+            # Reset counters/timestamps only for the sections we just logged
+            if timestamp - self._last_log_time >= 60:
+                self._last_log_time = timestamp
+                self._appended_count = 0
+                self._max_mouse_prob = 0.0
+                self._max_no_mouse_prob = 0.0
+                self._max_own_cat_prob = 0.0
+
+            if timestamp - self._last_discard_log_time >= 60:
+                self._last_discard_log_time = timestamp
                 self._discarded_count = 0
-            self._last_discard_log_time = timestamp
 
         self._next_id += 1
 
@@ -467,7 +478,7 @@ class ImageBuffer:
         for i, element in enumerate(self._buffer):
             if element.id == id:
                 self._buffer.pop(i)
-                logging.info(f"[IMAGEBUFFER] Deleted element with ID {id} from the buffer.")
+                logging.debug(f"[IMAGEBUFFER] Deleted element with ID {id} from the buffer.")
                 return True
         logging.warning(f"[IMAGEBUFFER] Element with ID {id} not found in the buffer. Nothing was deleted.")
         return False

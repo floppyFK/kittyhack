@@ -467,6 +467,11 @@ class Rfid:
             logging.info(f"[RFID] Simulation: RFID power would be {'enabled' if state else 'disabled'}.")
             return
 
+        # FIXME - Test: Do not enable power at all (Issue #134)
+        if state:
+            logging.info(f"[RFID] RFID power enabling is disabled in this build. Ignoring request.")
+            return
+        
         # Use the shared command queue for setting the RFID power
         self.command_queue.queue_command("rfid", self._set_power_hardware, state)
         logging.info(f"[RFID] RFID power {'enable' if state else 'disable'} command queued.")
@@ -498,6 +503,11 @@ class Rfid:
             self.field_state = state
             return
 
+        # FIXME - Test: Do not enable field at all (Issue #134)
+        if state:
+            logging.info(f"[RFID] RFID field enabling is disabled in this build. Ignoring request.")
+            return
+        
         # Use the shared command queue for setting the RFID field
         self.command_queue.queue_command("rfid", self._set_field_hardware, state)
         # Update the field state immediately for status queries

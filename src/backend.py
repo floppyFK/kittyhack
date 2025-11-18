@@ -582,10 +582,11 @@ def backend_main(simulate_kittyflap = False):
                     rfid.set_field(False)
             
             # Start the RFID thread with infinite read cycles, if it is not running and motion is detected outside or inside
-            if motion_outside == 1 or motion_inside == 1:
-                if rfid.get_field() == False and (tag_id == None or tag_id not in known_rfid_tags):
-                    rfid.set_field(True)
-                    logging.info(f"[BACKEND] Enabled RFID field.")
+            # FIXME - Test: Do not enable rfid field at all (Issue #134)
+            #if motion_outside == 1 or motion_inside == 1:
+            #    if rfid.get_field() == False and (tag_id == None or tag_id not in known_rfid_tags):
+            #        rfid.set_field(True)
+            #        logging.info(f"[BACKEND] Enabled RFID field.")
             
             # Close the magnet to the outside after the timeout
             if ( (motion_inside == 0) and

@@ -1,0 +1,126 @@
+---
+config:
+  layout: dagre
+  look: neo
+  theme: neutral
+---
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% NOTE: Render this file with https://www.mermaidchart.com
+%% to generate a flowchart diagram of the unlock logic.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+flowchart TD
+  %% Modus: Alle Katzen mit RFID Chip
+  subgraph all_rfids["Modus: Alle Katzen mit RFID Chip"]
+    direction TB
+    style all_rfids fill:transparent,stroke:none
+
+    all_motion["Bewegung außen erkannt? (durch PIR oder Kamera, je nach Konfiguration)"] -- Nein --> all_no_action["Keine Aktion"]
+    all_motion -- Ja --> all_has_rfid{"RFID erkannt?"}
+    all_has_rfid -- Nein --> all_no_action
+    all_has_rfid -- Ja --> all_prey_global{"Globale Beuteerkennung aktiviert?"}
+    all_prey_global -- Nein --> all_unlock_inside["Eingangsrichtung öffnen"]
+    all_prey_global -- Ja --> all_prey_individual{"Individuelle Beuteerkennung für diese Katze aktiviert?"}
+    all_prey_individual -- Ja --> all_prey_ok{"Beuteprüfung OK?"}
+    all_prey_individual -- Nein --> all_unlock_inside
+    all_prey_ok -- Ja --> all_unlock_inside
+    all_prey_ok -- Nein --> all_keep_closed["Geschlossen lassen"]
+  end
+
+  %% Modus: Nur registrierte Katzen
+  subgraph kn_known["Modus: Nur registrierte Katzen"]
+    direction TB
+    style kn_known fill:transparent,stroke:none
+
+    kn_motion["Bewegung außen erkannt? (durch PIR oder Kamera, je nach Konfiguration)"] -- Nein --> kn_no_action["Keine Aktion"]
+    kn_motion -- Ja --> kn_identify{"Katze identifizieren (per RFID oder Kamera, falls aktiviert)?"}
+    kn_identify -- Nein --> kn_no_action
+    kn_identify -- Ja --> kn_in_db{"Katze in der Datenbank?"}
+    kn_in_db -- Nein --> kn_no_action
+    kn_in_db -- Ja --> kn_prey_global{"Globale Beuteerkennung aktiviert?"}
+    kn_prey_ok{"Beuteprüfung OK?"} -- Ja --> kn_unlock_inside["Eingangsrichtung öffnen"]
+    kn_prey_ok -- Nein --> kn_keep_closed["Geschlossen lassen"]
+    kn_prey_global -- Nein --> kn_unlock_inside
+    kn_prey_global -- Ja --> kn_prey_individual{"Individuelle Beuteerkennung für diese Katze aktiviert?"}
+    kn_prey_individual -- Ja --> kn_prey_ok
+    kn_prey_individual -- Nein --> kn_unlock_inside
+  end
+
+  %% Modus: Alle Katzen
+  subgraph al_all["Modus: Alle Katzen"]
+    direction TB
+    style al_all fill:transparent,stroke:none
+
+    al_motion["Bewegung außen erkannt? (durch PIR oder Kamera, je nach Konfiguration)"] -- Nein --> al_no_action["Keine Aktion"]
+    al_motion -- Ja --> al_prey_global{"Globale Beuteerkennung aktiviert?"}
+    al_prey_global -- Nein --> al_unlock_inside["Eingangsrichtung öffnen"]
+    al_prey_global -- Ja --> al_prey_ok{"Beuteprüfung OK?"}
+    al_prey_ok -- Ja --> al_unlock_inside
+    al_prey_ok -- Nein --> al_keep_closed["Geschlossen lassen"]
+  end
+
+  %% Modus: Keine Katzen
+  subgraph no_none["Modus: Keine Katzen"]
+    direction TB
+    style no_none fill:transparent,stroke:none
+
+    no_motion["Bewegung außen erkannt? (durch PIR oder Kamera, je nach Konfiguration)"] -- Nein --> no_no_action["Keine Aktion"]
+    no_motion -- Ja --> no_no_action
+  end
+
+  %% Modus: Individuelle Konfiguration je Katze
+  subgraph cfg_per_cat["Modus: Individuelle Konfiguration je Katze"]
+    direction TB
+    style cfg_per_cat fill:transparent,stroke:none
+
+    cfg_motion["Bewegung außen erkannt? (durch PIR oder Kamera, je nach Konfiguration)"] -- Nein --> cfg_no_action["Keine Aktion"]
+    cfg_motion -- Ja --> cfg_identify{"Katze identifizieren (per RFID oder Kamera, falls aktiviert)?"}
+    cfg_identify -- Nein --> cfg_no_action
+    cfg_identify -- Ja --> cfg_in_db{"Katze in der Datenbank?"}
+    cfg_in_db -- Nein --> cfg_no_action
+    cfg_in_db -- Ja --> cfg_allow_entry{"Ist der Zugang für diese Katze erlaubt?"}
+    cfg_allow_entry -- Nein --> cfg_no_action
+    cfg_allow_entry -- Ja --> cfg_prey_global{"Globale Beuteerkennung aktiviert?"}
+    cfg_prey_global -- Nein --> cfg_unlock_inside["Eingangsrichtung öffnen"]
+    cfg_prey_global -- Ja --> cfg_prey_individual{"Individuelle Beuteerkennung für diese Katze aktiviert?"}
+    cfg_prey_individual -- Nein --> cfg_unlock_inside
+    cfg_prey_individual -- Ja --> cfg_prey_ok{"Beuteprüfung OK?"}
+    cfg_prey_ok -- Ja --> cfg_unlock_inside
+    cfg_prey_ok -- Nein --> cfg_keep_closed["Geschlossen lassen"]
+  end
+
+%% Modus: Ausgang erlauben
+subgraph ex_allow["Modus: Ausgang erlauben"]
+  direction TB
+  style ex_allow fill:transparent,stroke:none
+
+  ex_allow_motion["Bewegung innen erkannt? (durch PIR)"] -- Nein --> ex_allow_no_action["Keine Aktion"]
+  ex_allow_motion -- Ja --> ex_allow_time{"Innerhalb der erlaubten Ausgangs-Zeitbereiche?"}
+  ex_allow_time -- Nein --> ex_allow_denied["Ausgang nicht erlaubt"]
+  ex_allow_time -- Ja --> ex_allow_unlock["Ausgangsrichtung öffnen"]
+end
+
+%% Modus: Ausgang nicht erlauben
+subgraph ex_deny["Modus: Ausgang nicht erlauben"]
+  direction TB
+  style ex_deny fill:transparent,stroke:none
+
+  ex_deny_motion["Bewegung innen erkannt? (durch PIR)"] -- Nein --> ex_deny_no_action["Keine Aktion"]
+  ex_deny_motion -- Ja --> ex_deny_no_action
+end
+
+%% Modus: Individuelle Konfiguration je Katze (Ausgangsrichtung)
+subgraph ex_cfg["Modus: Individuelle Konfiguration je Katze (Ausgangsrichtung)"]
+  direction TB
+  style ex_cfg fill:transparent,stroke:none
+
+  ex_cfg_motion["Bewegung innen erkannt? (durch PIR)"] -- Nein --> ex_cfg_no_action["Keine Aktion"]
+  ex_cfg_motion -- Ja --> ex_cfg_time{"Innerhalb der erlaubten Ausgangs-Zeitbereiche?"}
+  ex_cfg_time -- Nein --> ex_cfg_denied["Ausgang nicht erlaubt"]
+  ex_cfg_time -- Ja --> ex_cfg_identified{"Katze per RFID identifiziert?"}
+  ex_cfg_identified -- Nein --> ex_cfg_denied
+  ex_cfg_identified -- Ja --> ex_cfg_allowed{"Ist der Ausgang für diese Katze erlaubt?"}
+  ex_cfg_allowed -- Nein --> ex_cfg_denied
+  ex_cfg_allowed -- Ja --> ex_cfg_unlock["Ausgangsrichtung öffnen"]
+end

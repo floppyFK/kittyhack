@@ -28,9 +28,11 @@ document.addEventListener("DOMContentLoaded", function() {
         let allowedToExitRanges = document.getElementById("allowed_to_exit_ranges");
 
         if (btnAllowedToExit && allowedToExitRanges) {
-            allowedToExitRanges.style.display = btnAllowedToExit.checked ? "block" : "none";
+            const show = (btnAllowedToExit.value === 'allow' || btnAllowedToExit.value === 'configure_per_cat');
+            allowedToExitRanges.style.display = show ? "block" : "none";
             btnAllowedToExit.addEventListener("change", function() {
-                allowedToExitRanges.style.display = btnAllowedToExit.checked ? "block" : "none";
+                const showNow = (btnAllowedToExit.value === 'allow' || btnAllowedToExit.value === 'configure_per_cat');
+                allowedToExitRanges.style.display = showNow ? "block" : "none";
             });
         }
     }

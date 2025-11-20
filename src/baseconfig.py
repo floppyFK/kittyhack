@@ -23,6 +23,12 @@ class AllowedToEnter(Enum):
     ALL_RFIDS = 'all_rfids'
     KNOWN = 'known'
     NONE = 'none'
+    CONFIGURE_PER_CAT = 'configure_per_cat'
+
+class AllowedToExit(Enum):
+    ALLOW = 'allow'
+    DENY = 'deny'
+    CONFIGURE_PER_CAT = 'configure_per_cat'
 
 ###### CONSTANT DEFINITIONS ######
 
@@ -58,7 +64,7 @@ DEFAULT_CONFIG = {
         "show_images_with_overlay": True,
         "live_view_refresh_interval": 5.0,
         "kittyflap_config_migrated": False,
-        "allowed_to_exit": True,
+        "allowed_to_exit": "allow",
         "last_vacuum_date": "",
         "periodic_version_check": True,
         "kittyflap_db_nagscreen": False,
@@ -149,7 +155,13 @@ def load_config():
         "SHOW_IMAGES_WITH_OVERLAY": parser.getboolean('Settings', 'show_images_with_overlay', fallback=DEFAULT_CONFIG['Settings']['show_images_with_overlay']),
         "LIVE_VIEW_REFRESH_INTERVAL": parser.getfloat('Settings', 'live_view_refresh_interval', fallback=DEFAULT_CONFIG['Settings']['live_view_refresh_interval']),
         "KITTYFLAP_CONFIG_MIGRATED": parser.getboolean('Settings', 'kittyflap_config_migrated', fallback=DEFAULT_CONFIG['Settings']['kittyflap_config_migrated']),
-        "ALLOWED_TO_EXIT": parser.getboolean('Settings', 'allowed_to_exit', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit']),
+        # Backward compatibility: allowed_to_exit used to be boolean. Accept boolean or enum string.
+        # Map to AllowedToExit enum.
+        "ALLOWED_TO_EXIT": (lambda raw: (
+            AllowedToExit.ALLOW if str(raw).lower() in ["true", "on", "1", "yes", AllowedToExit.ALLOW.value] else 
+            AllowedToExit.DENY if str(raw).lower() in ["false", "off", "0", "no", AllowedToExit.DENY.value] else 
+            AllowedToExit.CONFIGURE_PER_CAT
+        ))(parser.get('Settings', 'allowed_to_exit', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit'])),
         "LAST_VACUUM_DATE": parser.get('Settings', 'last_vacuum_date', fallback=DEFAULT_CONFIG['Settings']['last_vacuum_date']),
         "PERIODIC_VERSION_CHECK": parser.getboolean('Settings', 'periodic_version_check', fallback=DEFAULT_CONFIG['Settings']['periodic_version_check']),
         "KITTYFLAP_DB_NAGSCREEN": parser.getboolean('Settings', 'kittyflap_db_nagscreen', fallback=DEFAULT_CONFIG['Settings']['kittyflap_db_nagscreen']),
@@ -230,7 +242,7 @@ def save_config():
     settings['show_images_with_overlay'] = CONFIG['SHOW_IMAGES_WITH_OVERLAY']
     settings['live_view_refresh_interval'] = CONFIG['LIVE_VIEW_REFRESH_INTERVAL']
     settings['kittyflap_config_migrated'] = CONFIG['KITTYFLAP_CONFIG_MIGRATED']
-    settings['allowed_to_exit'] = CONFIG['ALLOWED_TO_EXIT']
+    settings['allowed_to_exit'] = CONFIG['ALLOWED_TO_EXIT'].value
     settings['last_vacuum_date'] = CONFIG['LAST_VACUUM_DATE']
     settings['periodic_version_check'] = CONFIG['PERIODIC_VERSION_CHECK']
     settings['kittyflap_db_nagscreen'] = CONFIG['KITTYFLAP_DB_NAGSCREEN']

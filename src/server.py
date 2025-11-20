@@ -227,6 +227,25 @@ if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "cats"):
     else:
         logging.warning("Table 'cat' not found in the kittyflap database. No cats migrated to the kittyhack database.")
 
+# v3.4.0: Ensure per-cat settings columns exist (enable_prey_detection, allow_entry, allow_exit)
+for db in [CONFIG['KITTYHACK_DATABASE_PATH'], CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']]:
+    try:
+        if os.path.exists(db):
+            if not check_if_column_exists(db, "cats", "enable_prey_detection"):
+                logging.warning(f"Column 'enable_prey_detection' not found in the 'cats' table of {db}. Adding it...")
+                add_column_to_table(db, "cats", "enable_prey_detection", "INTEGER DEFAULT 1")
+                write_stmt_to_database(db, "UPDATE cats SET enable_prey_detection = 1 WHERE enable_prey_detection IS NULL")
+            if not check_if_column_exists(db, "cats", "allow_entry"):
+                logging.warning(f"Column 'allow_entry' not found in the 'cats' table of {db}. Adding it...")
+                add_column_to_table(db, "cats", "allow_entry", "INTEGER DEFAULT 1")
+                write_stmt_to_database(db, "UPDATE cats SET allow_entry = 1 WHERE allow_entry IS NULL")
+            if not check_if_column_exists(db, "cats", "allow_exit"):
+                logging.warning(f"Column 'allow_exit' not found in the 'cats' table of {db}. Adding it...")
+                add_column_to_table(db, "cats", "allow_exit", "INTEGER DEFAULT 1")
+                write_stmt_to_database(db, "UPDATE cats SET allow_exit = 1 WHERE allow_exit IS NULL")
+    except Exception as e:
+        logging.error(f"Failed to ensure per-cat settings columns in database {db}: {e}")
+
 if check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
     logging.info("Table 'photo' found in the kittyhack database. Migrating it to 'events'...")
     migrate_photos_to_events(CONFIG['KITTYHACK_DATABASE_PATH'])
@@ -382,6 +401,7 @@ def start_background_task():
                     logging.info(f"[TRIGGER: background task] Start generating thumbnails for {len(thumbnails_to_process)} events (out of {len(ids_without_thumbnail)} total)...")
                     for id in thumbnails_to_process:
                         get_thubmnail_by_id(database=CONFIG['KITTYHACK_DATABASE_PATH'], photo_id=id)
+                    logging.info(f"[DATABASE] Generated {len(thumbnails_to_process)} thumbnails for events without thumbnail.")
                 else:
                     logging.info("[TRIGGER: background task] No events found without thumbnail.")
 
@@ -1687,6 +1707,7 @@ def server(input, output, session):
                                 AllowedToEnter.ALL_RFIDS.value: _("All cats with a RFID chip"),
                                 AllowedToEnter.KNOWN.value: _("Only registered cats"),
                                 AllowedToEnter.NONE.value: _("No cats"),
+                                AllowedToEnter.CONFIGURE_PER_CAT.value: _("Individual configuration per cat (Beta)"),
                             },
                             selected=str(CONFIG['ALLOWED_TO_ENTER'].value),
                             width="100%",
@@ -1698,16 +1719,25 @@ def server(input, output, session):
                             id="quick_allowed_to_exit",
                             label=_("Outside direction:"),
                             choices={
-                                "True": _("Allow exit"),
-                                "False": _("Do not allow exit"),
+                                'allow': _("Allow exit"),
+                                'deny': _("Do not allow exit"),
+                                'configure_per_cat': _("Individual configuration per cat (Beta)"),
                             },
-                            selected=str(CONFIG['ALLOWED_TO_EXIT']),
+                            selected=str(CONFIG['ALLOWED_TO_EXIT'].value),
                             width="100%",
                         ),
                     ),
                 ),
+                ui.div(
+                    ui.tooltip(
+                        icon_svg("circle-info", margin_left="-0.1em", margin_right="auto"),
+                        _("The individual configuration per cat can be set in the CATS section. Note that this is a beta feature and may not work completely reliably."),
+                        id="tooltip_configure_per_cat_quick"
+                    ),
+                    style_="position: absolute; top: 6px; right: 10px;"
+                ),
                 class_="image-container",
-                style_="margin-top: 0px; margin-bottom: 20px; padding-top: 8px; padding-bottom: 0px;",
+                style_="margin-top: 0px; margin-bottom: 20px; padding-top: 8px; padding-bottom: 0px; position: relative;",
             ),
             ui.card(
                 ui.input_action_button(id="bManualOverride", label=_("Manual unlock not yet initialized..."), icon=icon_svg("unlock"), disabled=True),
@@ -1733,7 +1763,8 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.quick_allowed_to_exit)
     def quick_update_allowed_to_exit():
-        CONFIG['ALLOWED_TO_EXIT'] = input.quick_allowed_to_exit() == "True"
+        from src.baseconfig import AllowedToExit as ATE
+        CONFIG['ALLOWED_TO_EXIT'] = ATE(input.quick_allowed_to_exit())
         update_single_config_parameter("ALLOWED_TO_EXIT")
         update_mqtt_config('ALLOWED_TO_EXIT')
         # Sync config page input
@@ -2135,12 +2166,45 @@ def server(input, output, session):
 
     @output
     @render.ui
-    @reactive.event(reload_trigger_cats, ignore_none=True)
+    @reactive.event(reload_trigger_cats, reload_trigger_config, ignore_none=True)
     def ui_manage_cats():
+        # Add JavaScript/CSS to highlight unsaved changes in Manage Cats section
+        manage_cats_unsaved_js = ui.HTML("""
+        <script>
+        $(document).ready(function() {
+          let hasUnsavedCats = false;
+          let isInitializingCats = true;
+          $('#mng_cat_save_changes').removeClass('save-button-highlight');
+          $('#manage_cats_container .unsaved-input').removeClass('unsaved-input');
+          function highlightCatInput(el) {
+            if (!isInitializingCats) {
+              $(el).addClass('unsaved-input');
+              $('#mng_cat_save_changes').addClass('save-button-highlight');
+              hasUnsavedCats = true;
+            }
+          }
+          setTimeout(function() { isInitializingCats = false; }, 800);
+            $('#manage_cats_container').on('change input', 'input, select, textarea', function() {
+              highlightCatInput(this);
+            });
+          $(document).on('click', '#mng_cat_save_changes', function() {
+            $('#manage_cats_container .unsaved-input').removeClass('unsaved-input');
+            $('#mng_cat_save_changes').removeClass('save-button-highlight');
+            hasUnsavedCats = false;
+          });
+        });
+        </script>
+        <style>
+        .unsaved-input { border: 2px solid #ffc107 !important; box-shadow: 0 0 0 0.2rem rgba(255, 193, 7, 0.25); }
+        .save-button-highlight { background-color: #ffc107 !important; border-color: #e0a800 !important; color: #000 !important; box-shadow: 0 0 0 0.2rem rgba(255, 193, 7, 0.5); animation: pulse-save 2s infinite; }
+        @keyframes pulse-save { 0% { box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);} 70% { box-shadow: 0 0 0 8px rgba(255, 193, 7, 0);} }
+        </style>
+        """)
         ui_cards = []
         df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all)
         if not df_cats.empty:
-            for index, data_row in df_cats.iterrows():
+            for __, data_row in df_cats.iterrows():
+                # --- Picture ---
                 if data_row["cat_image"]:
                     try:
                         decoded_picture = base64.b64encode(data_row["cat_image"]).decode('utf-8')
@@ -2148,33 +2212,161 @@ def server(input, output, session):
                         decoded_picture = None
                 else:
                     decoded_picture = None
+                img_html = (
+                    f'<div style="text-align: center;"><img style="max-width: 400px !important;" '
+                    f'src="data:image/jpeg;base64,{decoded_picture}" /></div>'
+                    if decoded_picture else
+                    '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
+                )
 
-                if decoded_picture:
-                    img_html = f'''
-                        <div style="text-align: center;">
-                            <img style="max-width: 400px !important;" src="data:image/jpeg;base64,{decoded_picture}" />
-                        </div>
-                        '''
-                else:
-                    img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
+                entry_mode_per_cat = (CONFIG['ALLOWED_TO_ENTER'].value == 'configure_per_cat')
+                exit_mode_per_cat  = (CONFIG['ALLOWED_TO_EXIT'].value == 'configure_per_cat')
+                entry_style = "padding-bottom: 20px;" if entry_mode_per_cat else "pointer-events: none; opacity: 0.6;"
+                exit_style  = "padding-bottom: 20px;" if exit_mode_per_cat else "pointer-events: none; opacity: 0.6;"
+                prey_style  = "padding-bottom: 20px;" if CONFIG['MOUSE_CHECK_ENABLED'] else "pointer-events: none; opacity: 0.6;"
 
+                settings_rows = []
+
+                # Prey detection
+                settings_rows.append(
+                    ui.row(
+                        ui.column(
+                            12,
+                            ui.div(
+                                ui.input_switch(
+                                    id=f"mng_cat_prey_{data_row['id']}",
+                                    label=_("Enable Prey detection"),
+                                    value=bool(int(data_row.get('enable_prey_detection', 1)))
+                                ),
+                                style_=prey_style
+                            )
+                        ),
+                    )
+                )
+                if not CONFIG['MOUSE_CHECK_ENABLED']:
+                    settings_rows.append(
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _("**Disabled:** Global prey detection is turned off in the `CONFIGURATION` section. Enable `Detect prey` to use per-cat settings.")
+                                ), style_="color: grey;"
+                            ),
+                            style_="padding-bottom: 20px;"
+                        )
+                    )
+
+                # Allow entry switch
+                settings_rows.append(
+                    ui.row(
+                        ui.column(
+                            12,
+                            ui.div(
+                                ui.input_switch(
+                                    id=f"mng_cat_allow_entry_{data_row['id']}",
+                                    label=_("Allow entry"),
+                                    value=bool(int(data_row.get('allow_entry', 1)))
+                                ),
+                                style_=entry_style
+                            )
+                        )
+                    )
+                )
+                if not entry_mode_per_cat:
+                    settings_rows.append(
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _("**Disabled:** switch `Open inside direction for` to `Individual configuration per cat` in the `CONFIGURATION` section to enable this feature.")
+                                ), style_="color: grey;"
+                            ),
+                            style_="padding-bottom: 20px;"
+                        )
+                    )
+
+                # Allow exit switch
+                settings_rows.append(
+                    ui.row(
+                        ui.column(
+                            12,
+                            ui.div(
+                                ui.input_switch(
+                                    id=f"mng_cat_allow_exit_{data_row['id']}",
+                                    label=_("Allow exit"),
+                                    value=bool(int(data_row.get('allow_exit', 1)))
+                                ),
+                                style_=exit_style
+                            )
+                        )
+                    )
+                )
+                if not exit_mode_per_cat:
+                    settings_rows.append(
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _("**Disabled:** switch `Outside direction` to `Individual configuration per cat` in the `CONFIGURATION` section to enable this feature.")
+                                ), style_="color: grey;"
+                            ),
+                            style_="padding-bottom: 20px;"
+                        )
+                    )
+
+                settings_section = ui.div(
+                    *settings_rows,
+                    class_="align-left",
+                )
+
+                # --- Assemble card ---
                 ui_cards.append(
                     ui.card(
                         ui.card_header(
                             ui.div(
-                                ui.column(12, ui.input_text(id=f"mng_cat_name_{data_row['id']}", label=_("Name"), value=data_row['name'], width="100%")),
+                                ui.column(
+                                    12,
+                                    ui.input_text(
+                                        id=f"mng_cat_name_{data_row['id']}",
+                                        label=_("Name"),
+                                        value=data_row['name'],
+                                        width="100%"
+                                    )
+                                ),
                                 ui.br(),
-                                ui.column(12, ui.input_text(id=f"mng_cat_rfid_{data_row['id']}", label=_("RFID"), value=data_row['rfid'], width="100%")),
+                                ui.column(
+                                    12,
+                                    ui.input_text(
+                                        id=f"mng_cat_rfid_{data_row['id']}",
+                                        label=_("RFID"),
+                                        value=data_row['rfid'],
+                                        width="100%"
+                                    )
+                                ),
                                 ui.column(12, ui.help_text(_("NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."))),
                                 ui.column(12, ui.help_text(_("If you have entered the RFID correctly here, the name of the cat will be displayed in the [PICTURES] section."))),
                                 ui.br(),
-                                ui.column(12, uix.input_file(id=f"mng_cat_pic_{data_row['id']}", label=_("Change Picture"), accept=[".jpg", ".png"], width="100%")),
+                                settings_section,
+                                ui.br(),
+                                ui.column(
+                                    12,
+                                    uix.input_file(
+                                        id=f"mng_cat_pic_{data_row['id']}",
+                                        label=_("Change Picture"),
+                                        accept=[".jpg", ".png"],
+                                        width="100%"
+                                    )
+                                ),
                             )
                         ),
                         ui.HTML(img_html),
                         ui.card_footer(
                             ui.div(
-                                ui.input_checkbox(id=f"mng_cat_del_{data_row['id']}", label=_("Delete {} from the database").format(data_row['name']), value=False),
+                                ui.input_checkbox(
+                                    id=f"mng_cat_del_{data_row['id']}",
+                                    label=_("Delete {} from the database").format(data_row['name']),
+                                    value=False
+                                ),
                                 style_="padding-top: 20px; display: flex; justify-content: center;"
                             )
                         ),
@@ -2182,23 +2374,29 @@ def server(input, output, session):
                         class_="image-container"
                     )
                 )
-            
             return ui.div(
+                manage_cats_unsaved_js,
                 ui.div(
                     *ui_cards,
+                    id="manage_cats_container",
                     style_="display: flex; flex-direction: column; align-items: center; gap: 20px;"
                 ),
                 ui.panel_absolute(
                     ui.panel_well(
-                        ui.input_action_button(id="mng_cat_save_changes", label=_("Save all changes"), icon=icon_svg("floppy-disk")),
+                        ui.input_action_button(
+                            id="mng_cat_save_changes",
+                            label=_("Save all changes"),
+                            icon=icon_svg("floppy-disk")
+                        ),
                         style_="background: rgba(240, 240, 240, 0.9); text-align: center;"
                     ),
                     draggable=False, width="100%", left="0px", right="0px", bottom="0px", fixed=True,
                 ),
             )
         else:
-            ui_cards.append(ui.help_text(_("No cats found in the database. Please go to the [ADD NEW CAT] section to add a new cat.")))
-
+            ui_cards.append(
+                ui.help_text(_("No cats found in the database. Please go to the [ADD NEW CAT] section to add a new cat."))
+            )
             return ui.div(
                 ui.layout_column_wrap(*ui_cards, width="400px"),
             )
@@ -2213,9 +2411,32 @@ def server(input, output, session):
                 db_id = data_row["id"]
                 db_name = data_row["name"]
                 db_rfid = data_row["rfid"]
+                db_prey = bool(int(data_row.get("enable_prey_detection", 1)))
+                db_allow_entry = bool(int(data_row.get("allow_entry", 1)))
+                db_allow_exit = bool(int(data_row.get("allow_exit", 1)))
 
                 card_name = input[f"mng_cat_name_{db_id}"]()
                 card_rfid = input[f"mng_cat_rfid_{db_id}"]()
+                card_prey = input[f"mng_cat_prey_{db_id}"]()
+                # Only read new per-cat switches if the mode is per-cat; otherwise keep previous DB values
+                if CONFIG['ALLOWED_TO_ENTER'].value == 'configure_per_cat':
+                    card_allow_entry = input[f"mng_cat_allow_entry_{db_id}"]()
+                else:
+                    try:
+                        row = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all_except_photos)
+                        prev = row[row['id']==db_id].iloc[0]
+                        card_allow_entry = bool(int(prev.get('allow_entry', 1)))
+                    except Exception:
+                        card_allow_entry = True
+                if CONFIG['ALLOWED_TO_EXIT'].value == 'configure_per_cat':
+                    card_allow_exit = input[f"mng_cat_allow_exit_{db_id}"]()
+                else:
+                    try:
+                        row = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all_except_photos)
+                        prev = row[row['id']==db_id].iloc[0]
+                        card_allow_exit = bool(int(prev.get('allow_exit', 1)))
+                    except Exception:
+                        card_allow_exit = True
                 card_del = input[f"mng_cat_del_{db_id}"]()
 
                 # Check if the cat should be deleted
@@ -2235,11 +2456,11 @@ def server(input, output, session):
                         card_pic_path = None
 
                     # Only update the cat data if the values have changed
-                    if (db_name != card_name) or (db_rfid != card_rfid) or (card_pic_path is not None):
+                    if (db_name != card_name) or (db_rfid != card_rfid) or (db_prey != card_prey) or (db_allow_entry != card_allow_entry) or (db_allow_exit != card_allow_exit) or (card_pic_path is not None):
                         # Add the ID to the list of updated cats
                         updated_cats.append(db_id)
 
-                        result = db_update_cat_data_by_id(CONFIG['KITTYHACK_DATABASE_PATH'], db_id, card_name, card_rfid, card_pic_path)
+                        result = db_update_cat_data_by_id(CONFIG['KITTYHACK_DATABASE_PATH'], db_id, card_name, card_rfid, card_pic_path, card_prey, card_allow_entry, card_allow_exit)
                         if result.success:
                             ui.notification_show(_("Data for {} updated successfully.").format(card_name), duration=5, type="message")
                         else:
@@ -2252,30 +2473,115 @@ def server(input, output, session):
         
     @output
     @render.ui
-    @reactive.event(reload_trigger_cats, ignore_none=True)
+    @reactive.event(reload_trigger_cats, reload_trigger_config, ignore_none=True)
     def ui_add_new_cat():
         ui_cards = []
+
+        # Flags for per-cat modes
+        entry_mode_per_cat = (CONFIG['ALLOWED_TO_ENTER'].value == 'configure_per_cat')
+        exit_mode_per_cat  = (CONFIG['ALLOWED_TO_EXIT'].value == 'configure_per_cat')
+        entry_style = "padding-bottom: 20px;" if entry_mode_per_cat else "pointer-events: none; opacity: 0.6;"
+        exit_style  = "padding-bottom: 20px;" if exit_mode_per_cat else "pointer-events: none; opacity: 0.6;"
+        prey_style  = "padding-bottom: 20px;" if CONFIG['MOUSE_CHECK_ENABLED'] else "pointer-events: none; opacity: 0.6;"
+
+        # Build settings section inline
+        settings_rows_new = [
+            ui.row(
+                ui.column(
+                    12,
+                    ui.div(
+                        ui.input_switch("add_new_cat_prey", _("Enable Prey detection"), True),
+                        style_=prey_style
+                    )
+                )
+            )
+        ]
+        if not CONFIG['MOUSE_CHECK_ENABLED']:
+            settings_rows_new.append(
+                ui.row(
+                    ui.column(
+                        12,
+                        ui.markdown(
+                            _("**Disabled:** Global prey detection is turned off in the `CONFIGURATION` section. Enable `Detect prey` to use per-cat settings.")
+                        ), style_="color: grey;"
+                    ),
+                    style_="padding-bottom: 20px;"
+                )
+            )
+        settings_rows_new.append(
+            ui.row(
+                ui.column(
+                    12,
+                    ui.div(
+                        ui.input_switch("add_new_cat_allow_entry", _("Allow entry"), True),
+                        style_=entry_style
+                    )
+                )
+            )
+        )
+        if not entry_mode_per_cat:
+            settings_rows_new.append(
+                ui.row(
+                    ui.column(
+                        12,
+                        ui.markdown(
+                            _("**Disabled:** switch `Open inside direction for` to `Individual configuration per cat` in the `CONFIGURATION` section to enable this feature.")
+                        ), style_="color: grey;"
+                    ),
+                    style_="padding-bottom: 20px;"
+                )
+            )
+        settings_rows_new.append(
+            ui.row(
+                ui.column(
+                    12,
+                    ui.div(
+                        ui.input_switch("add_new_cat_allow_exit", _("Allow exit"), True),
+                        style_=exit_style
+                    )
+                )
+            )
+        )
+        if not exit_mode_per_cat:
+            settings_rows_new.append(
+                ui.row(
+                    ui.column(
+                        12,
+                        ui.markdown(
+                            _("**Disabled:** switch `Outside direction` to `Individual configuration per cat` in the `CONFIGURATION` section to enable this feature.")
+                        ), style_="color: grey;"
+                    ),
+                    style_="padding-bottom: 20px;"
+                )
+            )
+
+        settings_section_new_cat = ui.div(
+            *settings_rows_new,
+            class_="align-left"
+        )
+
         ui_cards.append(
             ui.card(
                 ui.card_header(
                     ui.div(
                         ui.h5(_("Add new cat")),
-                        ui.column(12, ui.input_text(id=f"add_new_cat_name", label=_("Name"), value="", width="100%")),
+                        ui.column(12, ui.input_text("add_new_cat_name", label=_("Name"), value="", width="100%")),
                         ui.br(),
-                        ui.column(12, ui.input_text(id=f"add_new_cat_rfid", label=_("RFID"), value="", width="100%")),
+                        ui.column(12, ui.input_text("add_new_cat_rfid", label=_("RFID"), value="", width="100%")),
                         ui.column(12, ui.help_text(_("You can find the RFID in the [PICTURES] section, if the chip of your cat was recognized by the Kittyflap. To read the RFID, just set the entrance mode to 'All Cats' and let pass your cat through the Kittyflap."))),
                         ui.column(12, ui.help_text(_("NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."))),
                         ui.br(),
-                        ui.column(12, uix.input_file(id=f"add_new_cat_pic", label=_("Upload Picture"), accept=".jpg", width="100%")),
+                        settings_section_new_cat,
+                        ui.br(),
+                        ui.column(12, uix.input_file("add_new_cat_pic", label=_("Upload Picture"), accept=".jpg", width="100%")),
                         ui.hr(),
-                        ui.column(12, ui.input_action_button(id=f"add_new_cat_save", label=_("Save"), icon=icon_svg("floppy-disk"))),
+                        ui.column(12, ui.input_action_button("add_new_cat_save", label=_("Save"), icon=icon_svg("floppy-disk"))),
                     )
                 ),
                 full_screen=False,
                 class_="image-container"
             )
         )
-
         return ui.layout_column_wrap(*ui_cards, width="400px"),
     
     @reactive.Effect
@@ -2284,6 +2590,15 @@ def server(input, output, session):
         cat_name = input.add_new_cat_name()
         cat_rfid = input.add_new_cat_rfid()
         cat_pic: list[FileInfo] | None = input.add_new_cat_pic()
+        cat_prey = input.add_new_cat_prey()
+        if CONFIG['ALLOWED_TO_ENTER'].value == 'configure_per_cat':
+            cat_allow_entry = input.add_new_cat_allow_entry()
+        else:
+            cat_allow_entry = True
+        if CONFIG['ALLOWED_TO_EXIT'].value == 'configure_per_cat':
+            cat_allow_exit = input.add_new_cat_allow_exit()
+        else:
+            cat_allow_exit = True
         
         # Get image path, if a file was uploaded
         if cat_pic is not None:
@@ -2291,11 +2606,14 @@ def server(input, output, session):
         else:
             cat_pic_path = None
 
-        result = db_add_new_cat(CONFIG['KITTYHACK_DATABASE_PATH'], cat_name, cat_rfid, cat_pic_path)
+        result = db_add_new_cat(CONFIG['KITTYHACK_DATABASE_PATH'], cat_name, cat_rfid, cat_pic_path, cat_prey, cat_allow_entry, cat_allow_exit)
         if result.success:
             ui.notification_show(_("New cat {} added successfully.").format(cat_name), duration=5, type="message")
             ui.update_text(id="add_new_cat_name", value="")
             ui.update_text(id="add_new_cat_rfid", value="")
+            ui.update_switch(id="add_new_cat_prey", value=True)
+            ui.update_switch(id="add_new_cat_allow_entry", value=True)
+            ui.update_switch(id="add_new_cat_allow_exit", value=True)
             reload_trigger_cats.set(reload_trigger_cats.get() + 1)
         else:
             ui.notification_show(_("An error occurred while adding the new cat: {}").format(result.message), duration=10, type="error")
@@ -2857,6 +3175,12 @@ def server(input, output, session):
 
         hostname = get_hostname()
 
+        lang = CONFIG.get('LANGUAGE', 'en')
+        if lang not in ('en', 'de'):
+            lang = 'en'
+        def logic_svg(name: str) -> str:
+            return f"logic/{name}_{lang}.svg"
+
         # Add JavaScript for tracking unsaved changes
         unsaved_changes_js = ui.HTML("""
         <script>
@@ -2931,58 +3255,6 @@ def server(input, output, session):
           });
         });
         </script>
-
-        <style>
-        .unsaved-input {
-          border: 2px solid #ffc107 !important;
-          box-shadow: 0 0 0 0.2rem rgba(255, 193, 7, 0.25);
-        }
-        
-        /* Special handling for range sliders - target the ion range slider elements */
-        .irs-single.unsaved-input {
-          background-color: #ffc107 !important;
-          color: black !important;
-          border: none !important; /* Remove border for this element */
-        }
-        
-        .irs-bar.unsaved-input {
-          background-color: #ffc107 !important;
-          border-color: #ffc107 !important;
-          border-top: 1px solid #ffc107 !important;
-          border-bottom: 1px solid #ffc107 !important;
-        }
-        
-        .irs-handle.unsaved-input {
-          border: 2px solid #ffc107 !important;
-          background-color: #ffc107 !important;
-        }
-        
-        /* Special handling for switches and checkboxes */
-        .form-check-input.unsaved-input {
-          box-shadow: 0 0 0 0.25rem rgba(255, 193, 7, 0.5);
-        }
-        
-        /* Highlight style for save button */
-        .save-button-highlight {
-          background-color: #ffc107 !important;
-          border-color: #e0a800 !important;
-          color: #000 !important;
-          box-shadow: 0 0 0 0.2rem rgba(255, 193, 7, 0.5);
-          animation: pulse-save 2s infinite;
-        }
-        
-        @keyframes pulse-save {
-          0% {
-            box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);
-          }
-          70% {
-            box-shadow: 0 0 0 8px rgba(255, 193, 7, 0);
-          }
-          100% {
-            box-shadow: 0 0 0 0 rgba(255, 193, 7, 0);
-          }
-        }
-        </style>
         """)
 
         hide_unhide_ip_camera_url = ui.HTML("""
@@ -3186,8 +3458,8 @@ def server(input, output, session):
                             ui.column(
                                 12,
                                 ui.markdown(
-                                    _("If the prey detection is enabled and the mouse detection threshold is exceeded in a picture, the flap will remain closed.") + "  \n" +
-                                    _("> The zones and the probability of detected mice will be stored independently of this setting for every picture.")
+                                    _("If the prey detection is enabled and the mouse detection threshold is exceeded in a picture, the flap will remain closed.") + "\n\n" +
+                                    _("**NOTE:** This is the global setting. You can also configure prey detection individually per cat in the `MANAGE CATS` section.")
                                 ), style_="color: grey;"
                             ),
                         ),
@@ -3227,7 +3499,7 @@ def server(input, output, session):
                                     _("You can configure the required threshold for the cat detection with the slider `Cat detection threshold` below.") + " " +
                                     _("If the detection is successful, the inside direction will be opened.") + "\n\n" +
                                     _("**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models.") + "\n\n" +
-                                    _("This is an *EXPERIMENTAL* feature! It depends heavily on the quality of your model and sufficient lighting conditions.") + " " +
+                                    _("This feature depends heavily on the quality of your model and sufficient lighting conditions.") + " " +
                                     _("If one or both are not good, the detection may either fail or other - similiar looking cats may be detected as your cat.")
                                 ), style_="color: grey;"
                             ),
@@ -3246,7 +3518,8 @@ def server(input, output, session):
                                     _("You can configure the required threshold for the cat detection with the slider `Cat detection threshold` below.") + "  \n\n" +
                                     _("This may be very helpful in areas where environmental factors (moving trees, people passing by) permanently cause false PIR triggers.") + "  \n\n" +
                                     _("**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models.") + "\n\n" +
-                                    _("This is an *EXPERIMENTAL* feature! It depends heavily on the quality of your model and sufficient lighting conditions.")
+                                    _("This feature depends heavily on the quality of your model and sufficient lighting conditions.") + " " +
+                                    _("If one or both are not good, you may experience false triggers or your cat may not be detected correctly.")
                                 ), style_="color: grey;"
                             ),
                         ),
@@ -3269,26 +3542,215 @@ def server(input, output, session):
                                 "txtAllowedToEnter",
                                 _("Open inside direction for:"),
                                 {
-                                    AllowedToEnter.ALL.value: _("All cats (unlock on every detected motion)"), AllowedToEnter.ALL_RFIDS.value: _("All cats with a RFID chip"), AllowedToEnter.KNOWN.value: _("Only registered cats"), AllowedToEnter.NONE.value: _("No cats"),
+                                    AllowedToEnter.ALL.value: _("All cats (unlock on every detected motion)"), 
+                                    AllowedToEnter.ALL_RFIDS.value: _("All cats with a RFID chip"), 
+                                    AllowedToEnter.KNOWN.value: _("Only registered cats"), 
+                                    AllowedToEnter.NONE.value: _("No cats"),
+                                    AllowedToEnter.CONFIGURE_PER_CAT.value: _("Individual configuration per cat (Beta)"),
                                 },
                                 selected=str(CONFIG['ALLOWED_TO_ENTER'].value),
                             )),
                             ui.column(
                                 8,
-                                ui.markdown(
-                                    _("This setting defines which cats are allowed to enter the house.") + "  \n\n" +
-                                    _("- **All cats:** *Every* detected motion on the outside will unlock the flap.") + "  \n" +
-                                    _("- **All cats with a RFID chip:** Every successful RFID detection will unlock the flap.") + "  \n" +
-                                    _("- **Only registered cats:** Only the cats that are registered in the database will unlock the flap (either by RFID or by camera detection, if enabled).") + "  \n" +
-                                    _("- **No cats:** The inside direction will never be opened.")
-                                ), style_="color: grey;"
+                                ui.div(
+                                    ui.markdown(
+                                        _("This setting defines which cats are allowed to enter the house.") + "  \n\n" +
+                                        _("- **All cats:** *Every* detected motion on the outside will unlock the flap.") + "  \n" +
+                                        _("- **All cats with a RFID chip:** Every successful RFID detection will unlock the flap.") + "  \n" +
+                                        _("- **Only registered cats:** Only the cats that are registered in the database will unlock the flap (either by RFID or by camera detection, if enabled).") + "  \n" +
+                                        _("- **Individual configuration per cat:** Configure per cat if it is allowed to enter (in the `MANAGE CATS` section).") + "  \n" +
+                                        _("- **No cats:** The inside direction will never be opened.")
+                                    ),
+                                    style_="color: grey;"
+                                )
                             ),
+                        ),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.div(
+                                    # Precompute translations to avoid _() inside f-strings
+                                    ui.HTML(('''
+                                        <button id="btn_toggle_entry_logic"
+                                                class="btn btn-default"
+                                                style="margin-top:8px;"
+                                                data-show-label="{show}"
+                                                data-hide-label="{hide}">
+                                            <span>{show}</span>
+                                        </button>
+                                        <div id="entry_logic_hint"
+                                             style="display:none; font-size:0.75rem; margin-top:4px; color:#555;">
+                                             {hint}
+                                        </div>
+                                    ''').format(
+                                        show=_("Show decision logic"),
+                                        hide=_("Hide decision logic"),
+                                        hint=_("Only the flowchart for the currently selected mode is shown.")
+                                    )),
+                                    ui.HTML(('''
+                                        <div id="entry_logic_expand" class="logic-section" style="display:none; margin-top:10px;">
+                                          <div id="entry_logic_images">
+                                            <div class="logic-img-wrapper" data-mode="all">
+                                              <img src="{src_all}" alt="Entry logic (ALL)"/>
+                                            </div>
+                                            <div class="logic-img-wrapper" data-mode="all_rfids">
+                                              <img src="{src_all_rfids}" alt="Entry logic (ALL_RFIDS)"/>
+                                            </div>
+                                            <div class="logic-img-wrapper" data-mode="known">
+                                              <img src="{src_known}" alt="Entry logic (KNOWN)"/>
+                                            </div>
+                                            <div class="logic-img-wrapper" data-mode="none">
+                                              <img src="{src_none}" alt="Entry logic (NONE)"/>
+                                            </div>
+                                            <div class="logic-img-wrapper" data-mode="configure_per_cat">
+                                              <img src="{src_cfg}" alt="Entry logic (CONFIGURE_PER_CAT)"/>
+                                            </div>
+                                          </div>
+                                        </div>
+                                    ''').format(
+                                        src_all=logic_svg('entry_all'),
+                                        src_all_rfids=logic_svg('entry_all_rfids'),
+                                        src_known=logic_svg('entry_known'),
+                                        src_none=logic_svg('entry_none'),
+                                        src_cfg=logic_svg('entry_configure_per_cat'),
+                                    )),
+                                    class_="d-flex flex-column align-items-center w-100",
+                                )
+                            )
                         ),
                         ui.hr(),
                         ui.row(
-                            ui.column(12, ui.input_switch("btnAllowedToExit", _("Allow cats to exit"), CONFIG['ALLOWED_TO_EXIT'])),
-                            ui.column(12, ui.markdown( _("If this is disabled, the direction to the outside remains closed. Useful for e.g. new year's eve or an upcoming vet visit.")), style_="color: grey;"),
+                            ui.column(4, ui.input_select(
+                                "btnAllowedToExit",
+                                _("Outside direction:"),
+                                {
+                                    'allow': _("Allow exit"),
+                                    'deny': _("Do not allow exit"),
+                                    'configure_per_cat': _("Individual configuration per cat (Beta)"),
+                                },
+                                selected=str(CONFIG['ALLOWED_TO_EXIT'].value)
+                            )),
+                            ui.column(
+                                8,
+                                ui.div(
+                                    ui.markdown(
+                                        _("This setting defines the behavior of the outside direction.") + "  \n\n" +
+                                        _("- **Allow exit:** The outside direction is always possible. You can also configure time ranges below to restrict the exit times.") + "  \n" +
+                                        _("- **Do not allow exit:** The outside direction is always closed.") + "  \n" +
+                                        _("- **Individual configuration per cat:** Configure per cat if it is allowed to exit (in the `MANAGE CATS` section). The time ranges below are applied in addition.")+ "  \n  " +
+                                        _("**NOTE:** All your cats must be registered **with a RFID chip** to use this mode. Cats without RFID can not go outside in this mode!")
+                                    ),
+                                    style_="color: grey;"
+                                )
+                            ),
                         ),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.div(
+                                    # Precompute translations to avoid _() inside f-strings
+                                    ui.HTML(('''
+                                        <button id="btn_toggle_exit_logic"
+                                                class="btn btn-default"
+                                                style="margin-top:8px;"
+                                                data-show-label="{show}"
+                                                data-hide-label="{hide}">
+                                            <span>{show}</span>
+                                        </button>
+                                        <div id="exit_logic_hint"
+                                             style="display:none; font-size:0.75rem; margin-top:4px; color:#555;">
+                                             {hint}
+                                        </div>
+                                    ''').format(
+                                        show=_("Show decision logic"),
+                                        hide=_("Hide decision logic"),
+                                        hint=_("Only the flowchart for the currently selected mode is shown.")
+                                    )),
+                                    ui.HTML(('''
+                                        <div id="exit_logic_expand" class="logic-section" style="display:none; margin-top:10px;">
+                                          <div id="exit_logic_images">
+                                            <div class="logic-img-wrapper" data-mode="allow">
+                                              <img src="{src_allow}" alt="Exit logic (ALLOW)"/>
+                                            </div>
+                                            <div class="logic-img-wrapper" data-mode="deny">
+                                              <img src="{src_deny}" alt="Exit logic (DENY)"/>
+                                            </div>
+                                            <div class="logic-img-wrapper" data-mode="configure_per_cat">
+                                              <img src="{src_cfg}" alt="Exit logic (CONFIGURE_PER_CAT)"/>
+                                            </div>
+                                          </div>
+                                        </div>
+                                    ''').format(
+                                        src_allow=logic_svg('exit_allow'),
+                                        src_deny=logic_svg('exit_deny'),
+                                        src_cfg=logic_svg('exit_configure_per_cat'),
+                                    )),
+                                    class_="d-flex flex-column align-items-center w-100",
+                                    style_="color: grey;"
+                                ),
+                            ),
+                        ),
+                        # Shared JS/CSS for logic toggles
+                        ui.HTML(f"""
+                        <script>
+                        (function() {{
+                            function toggleSection(btnId, sectionId, hintId) {{
+                                var btn = document.getElementById(btnId);
+                                var section = document.getElementById(sectionId);
+                                var hint = document.getElementById(hintId);
+                                if (!btn || !section) return;
+                                var span = btn.querySelector('span');
+                                var showLbl = btn.getAttribute('data-show-label');
+                                var hideLbl = btn.getAttribute('data-hide-label');
+                                if (section.style.display === 'none' || section.style.display === '') {{
+                                    section.style.display = 'block';
+                                    if (hint) hint.style.display = 'block';
+                                    if (span) span.textContent = hideLbl;
+                                }} else {{
+                                    section.style.display = 'none';
+                                    if (hint) hint.style.display = 'none';
+                                    if (span) span.textContent = showLbl;
+                                }}
+                            }}
+                            function showEntryLogic(mode) {{
+                                var container = document.getElementById('entry_logic_images');
+                                if (!container) return;
+                                container.querySelectorAll('.logic-img-wrapper').forEach(function(el){{
+                                    el.style.display = (el.getAttribute('data-mode') === mode) ? 'block' : 'none';
+                                }});
+                            }}
+                            function showExitLogic(mode) {{
+                                var container = document.getElementById('exit_logic_images');
+                                if (!container) return;
+                                container.querySelectorAll('.logic-img-wrapper').forEach(function(el){{
+                                    el.style.display = (el.getAttribute('data-mode') === mode) ? 'block' : 'none';
+                                }});
+                            }}
+                            document.addEventListener('click', function(e){{
+                                if (e.target.id === 'btn_toggle_entry_logic' || e.target.closest('#btn_toggle_entry_logic')) {{
+                                    toggleSection('btn_toggle_entry_logic','entry_logic_expand','entry_logic_hint');
+                                    var sel = document.getElementById('txtAllowedToEnter');
+                                    if (sel) showEntryLogic(sel.value);
+                                }}
+                                if (e.target.id === 'btn_toggle_exit_logic' || e.target.closest('#btn_toggle_exit_logic')) {{
+                                    toggleSection('btn_toggle_exit_logic','exit_logic_expand','exit_logic_hint');
+                                    var sel2 = document.getElementById('btnAllowedToExit');
+                                    if (sel2) showExitLogic(sel2.value);
+                                }}
+                            }});
+                            document.addEventListener('change', function(e){{
+                                if (e.target.id === 'txtAllowedToEnter') {{
+                                    showEntryLogic(e.target.value);
+                                }}
+                                if (e.target.id === 'btnAllowedToExit') {{
+                                    showExitLogic(e.target.value);
+                                }}
+                            }});
+                        }})();
+                        </script>
+                        """),
+                        ui.br(),
+                        ui.br(),
                         ui.div(
                             ui.row(
                                 ui.column(
@@ -3836,7 +4298,8 @@ def server(input, output, session):
         CONFIG['USE_CAMERA_FOR_MOTION_DETECTION'] = input.btnUseCameraForMotionDetection()
         CONFIG['ALLOWED_TO_ENTER'] = AllowedToEnter(input.txtAllowedToEnter())
         CONFIG['LIVE_VIEW_REFRESH_INTERVAL'] = float(input.numLiveViewUpdateInterval())
-        CONFIG['ALLOWED_TO_EXIT'] = input.btnAllowedToExit()
+        from src.baseconfig import AllowedToExit as ATE
+        CONFIG['ALLOWED_TO_EXIT'] = ATE(input.btnAllowedToExit())
         CONFIG['PERIODIC_VERSION_CHECK'] = input.btnPeriodicVersionCheck()
         # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
         #CONFIG['PIR_OUTSIDE_THRESHOLD'] = 10-int(input.sldPirOutsideThreshold())
@@ -3914,7 +4377,9 @@ def server(input, output, session):
             
             # Sync live view input
             ui.update_select("quick_allowed_to_enter", selected=str(CONFIG['ALLOWED_TO_ENTER'].value))
-            ui.update_select("quick_allowed_to_exit", selected=str(CONFIG['ALLOWED_TO_EXIT']))
+            ui.update_select("quick_allowed_to_exit", selected=str(CONFIG['ALLOWED_TO_EXIT'].value))
+            # Trigger UI components that depend on these settings to re-render
+            reload_trigger_config.set(reload_trigger_config.get() + 1)
 
         else:
             ui.notification_show(_("Failed to save the Kittyhack configuration."), duration=10, type="error")
@@ -4108,7 +4573,7 @@ def server(input, output, session):
             journal_file_path = os.path.join(temp_dir, "journalctl.log")
             try:
                 result = subprocess.run(
-                    ["/usr/bin/journalctl", "-n", "20000", "--no-pager", "--quiet", "--output=short-iso-precise"],
+                    ["/usr/bin/journalctl", "-n", "50000", "--no-pager", "--quiet", "--output=short-iso-precise"],
                     capture_output=True,
                     text=True,
                 )

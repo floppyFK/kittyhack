@@ -321,7 +321,7 @@ def get_thubmnail_by_id(database: str, photo_id: int):
             cursor.execute("UPDATE events SET thumbnail = ? WHERE id = ?", (thumbnail, photo_id))
             conn.commit()
             conn.close()
-            logging.info(f"[DATABASE] Created and stored thumbnail for photo ID {photo_id}")
+            logging.debug(f"[DATABASE] Created and stored thumbnail for photo ID {photo_id}")
         except Exception as e:
             logging.error(f"[DATABASE] Failed to store thumbnail in database: {e}")
         finally:
@@ -339,7 +339,7 @@ def db_get_cats(database: str, return_data: ReturnDataCatDB):
     if return_data == ReturnDataCatDB.all:
          columns = "*"
     elif return_data == ReturnDataCatDB.all_except_photos:
-        columns = "id, created_at, name, rfid"
+        columns = "id, created_at, name, rfid, enable_prey_detection, allow_entry, allow_exit"
 
     stmt = f"SELECT {columns} FROM cats"
     return read_df_from_database(database, stmt)
@@ -469,7 +469,10 @@ def create_kittyhack_cats_table(database: str):
             created_at DATETIME,
             name TEXT,
             rfid TEXT,
-            cat_image BLOB
+            cat_image BLOB,
+            enable_prey_detection INTEGER DEFAULT 1,
+            allow_entry INTEGER DEFAULT 1,
+            allow_exit INTEGER DEFAULT 1
         )
     """
     result = write_stmt_to_database(database, stmt)
@@ -544,7 +547,7 @@ def db_delete_cat_by_id(database: str, cat_id: int) -> Result:
         logging.info(f"[DATABASE] Cat with ID '{cat_id}' deleted successfully.")
     return result
 
-def db_update_cat_data_by_id(database: str, cat_id: int, name: str, rfid: str, cat_image_path: str) -> Result:
+def db_update_cat_data_by_id(database: str, cat_id: int, name: str, rfid: str, cat_image_path: str, enable_prey_detection: bool = True, allow_entry: bool = True, allow_exit: bool = True) -> Result:
     """
     This function updates the cat data based on the ID from the source database.
     If the image should not be updated, set cat_image_path to None.
@@ -568,9 +571,15 @@ def db_update_cat_data_by_id(database: str, cat_id: int, name: str, rfid: str, c
         conn = sqlite3.connect(database, timeout=30)
         cursor = conn.cursor()
         if cat_image_blob is None:
-            cursor.execute("UPDATE cats SET name = ?, rfid = ? WHERE id = ?", (name, rfid, cat_id))
+            cursor.execute(
+                "UPDATE cats SET name = ?, rfid = ?, enable_prey_detection = ?, allow_entry = ?, allow_exit = ? WHERE id = ?",
+                (name, rfid, int(enable_prey_detection), int(allow_entry), int(allow_exit), cat_id)
+            )
         else:
-            cursor.execute("UPDATE cats SET name = ?, rfid = ?, cat_image = ? WHERE id = ?", (name, rfid, cat_image_blob, cat_id))
+            cursor.execute(
+                "UPDATE cats SET name = ?, rfid = ?, cat_image = ?, enable_prey_detection = ?, allow_entry = ?, allow_exit = ? WHERE id = ?",
+                (name, rfid, cat_image_blob, int(enable_prey_detection), int(allow_entry), int(allow_exit), cat_id)
+            )
         conn.commit()
         conn.close()
     except Exception as e:
@@ -583,7 +592,8 @@ def db_update_cat_data_by_id(database: str, cat_id: int, name: str, rfid: str, c
     finally:
         release_database()
 
-def db_add_new_cat(database: str, name: str, rfid: str, cat_image_path: str) -> Result: 
+def db_add_new_cat(database: str, name: str, rfid: str, cat_image_path: str,
+                   enable_prey_detection: bool = True, allow_entry: bool = True, allow_exit: bool = True) -> Result: 
     """
     This function adds a new cat to the database.
     The cat_image_path should be the path to the image file (jpg).
@@ -612,7 +622,10 @@ def db_add_new_cat(database: str, name: str, rfid: str, cat_image_path: str) -> 
             id = 0
         else:
             id += 1
-        cursor.execute("INSERT INTO cats (id, created_at, name, rfid, cat_image) VALUES (?, ?, ?, ?, ?)", (id, get_utc_date_string(tm.time()), name, rfid, cat_image_blob))
+        cursor.execute(
+            "INSERT INTO cats (id, created_at, name, rfid, cat_image, enable_prey_detection, allow_entry, allow_exit) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (id, get_utc_date_string(tm.time()), name, rfid, cat_image_blob, int(enable_prey_detection), int(allow_entry), int(allow_exit))
+        )
         conn.commit()
         conn.close()
     except Exception as e:
@@ -624,6 +637,31 @@ def db_add_new_cat(database: str, name: str, rfid: str, cat_image_path: str) -> 
         return Result(True, "")
     finally:
         release_database()
+
+def get_cat_settings_map(database: str) -> dict:
+    """
+    Returns a mapping from RFID (or fallback name.lower() if RFID empty) to a dict with per-cat settings:
+    { 'enable_prey_detection': bool, 'allow_entry': bool, 'allow_exit': bool }
+    """
+    try:
+        df = read_df_from_database(database, "SELECT name, rfid, enable_prey_detection, allow_entry, allow_exit FROM cats")
+        settings = {}
+        if df.empty:
+            return settings
+        for __, row in df.iterrows():
+            key = row['rfid'] if row['rfid'] else str(row['name']).lower()
+            epd = row['enable_prey_detection'] if 'enable_prey_detection' in row and pd.notna(row['enable_prey_detection']) else 1
+            ae = row['allow_entry'] if 'allow_entry' in row and pd.notna(row['allow_entry']) else 1
+            ax = row['allow_exit'] if 'allow_exit' in row and pd.notna(row['allow_exit']) else 1
+            settings[key] = {
+                'enable_prey_detection': bool(int(epd)),
+                'allow_entry': bool(int(ae)),
+                'allow_exit': bool(int(ax)),
+            }
+        return settings
+    except Exception as e:
+        logging.error(f"[DATABASE] Failed to build cat settings map: {e}")
+        return {}
 
 def read_photo_by_id(database: str, photo_id: int) -> pd.DataFrame:
     """
@@ -778,7 +816,7 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
             cursor.execute(f"SELECT id, created_at FROM events WHERE deleted != 1 ORDER BY created_at ASC LIMIT {excess_photos}")
             photos_to_delete = cursor.fetchall()
             for photo in photos_to_delete:
-                logging.info(f"[DATABASE] Deleting photo ID: {photo[0]}, created_at: {photo[1]}")
+                logging.debug(f"[DATABASE] Deleting photo ID: {photo[0]}, created_at: {photo[1]}")
                 cursor.execute(f"UPDATE events SET deleted = 1, original_image = NULL, modified_image = NULL, thumbnail = NULL WHERE id = {photo[0]}")
 
         conn.commit()
@@ -797,6 +835,7 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
         db_photo_ids = db_get_photos_by_block_id(database, db_block_id, ReturnDataPhotosDB.only_ids)
         for db_photo_id in db_photo_ids['id']:
             get_thubmnail_by_id(database, db_photo_id)
+        logging.info(f"[DATABASE] Generated {len(db_photo_ids)} thumbnails for block ID '{db_block_id}'.")
     
 def create_index_on_events(database: str) -> Result:
     """

@@ -6,7 +6,7 @@ import time as tm
 import base64
 import cv2
 import numpy as np
-from src.baseconfig import CONFIG, AllowedToEnter, update_single_config_parameter
+from src.baseconfig import CONFIG, AllowedToEnter, AllowedToExit, update_single_config_parameter
 from src.helper import get_git_version, EventType
 
 class MQTTConfig:
@@ -206,21 +206,18 @@ class StatePublisher:
         topic = MQTTConfig.topics["manual_override"]
         self.mqtt_client.subscribe(topic, callback_function)
 
-    def publish_allowed_to_exit(self, allowed: bool):
-        """Publish the current state of ALLOWED_TO_EXIT config parameter"""
+    def publish_allowed_to_exit(self, allowed: AllowedToExit):
+        """Publish the current state of ALLOWED_TO_EXIT config parameter (enum)"""
         topic = MQTTConfig.topics["allowed_to_exit"]
-        state = "ON" if allowed else "OFF"
+        translations = {
+            AllowedToExit.ALLOW: {"en": "Allow exit", "de": "Ausgang erlauben"},
+            AllowedToExit.DENY: {"en": "Do not allow exit", "de": "Ausgang verbieten"},
+            AllowedToExit.CONFIGURE_PER_CAT: {"en": "Per-cat configuration", "de": "Pro-Katze Konfiguration"}
+        }
+        friendly = translations.get(allowed, {}).get(CONFIG['LANGUAGE'], allowed.value)
         if self.mqtt_client.connected:
-            self.mqtt_client.client.publish(topic, state, retain=True)
-            logging.info(f"[MQTT] Published ALLOWED_TO_EXIT: {state}")
-
-    def publish_allowed_to_enter(self, allowed: AllowedToEnter):
-        """Publish the current state of ALLOWED_TO_ENTER config parameter"""
-        topic = MQTTConfig.topics["allowed_to_enter"]
-        state = allowed.value
-        if self.mqtt_client.connected:
-            self.mqtt_client.client.publish(topic, state, retain=True)
-            logging.info(f"[MQTT] Published ALLOWED_TO_ENTER: {state}")
+            self.mqtt_client.client.publish(topic, friendly, retain=True)
+            logging.info(f"[MQTT] Published ALLOWED_TO_EXIT: {friendly} (raw: {allowed.value})")
     
     def register_config_handlers(self):
         """Register handlers for configuration topics"""
@@ -231,21 +228,32 @@ class StatePublisher:
     def handle_allowed_to_exit_change(self, payload):
         """Handle changes to the ALLOWED_TO_EXIT configuration parameter"""
         try:
-            if isinstance(payload, dict):
-                new_value = payload.get('state', '').upper() == 'ON'
-            elif isinstance(payload, str):
-                new_value = payload.upper() == 'ON'
-            else:
-                logging.warning(f"[MQTT] Invalid payload type for ALLOWED_TO_EXIT: {type(payload)}")
-                return
-                
-            logging.info(f"[MQTT] Received ALLOWED_TO_EXIT change request: {new_value}")
-            
+            # Accept dict or str payload
+            raw = payload.get('state') if isinstance(payload, dict) else payload
+            raw = "" if raw is None else str(raw)
+            logging.info(f"[MQTT] Received ALLOWED_TO_EXIT change request: {raw}")
+
+            mapping = {
+                'ON': AllowedToExit.ALLOW, 'OFF': AllowedToExit.DENY,
+                'Allow exit': AllowedToExit.ALLOW, 'Do not allow exit': AllowedToExit.DENY, 'Per-cat configuration': AllowedToExit.CONFIGURE_PER_CAT,
+                'Ausgang erlauben': AllowedToExit.ALLOW, 'Ausgang verbieten': AllowedToExit.DENY, 'Pro-Katze Konfiguration': AllowedToExit.CONFIGURE_PER_CAT,
+                'allow': AllowedToExit.ALLOW, 'deny': AllowedToExit.DENY, 'configure_per_cat': AllowedToExit.CONFIGURE_PER_CAT
+            }
+            new_value = mapping.get(raw, None)
+            if new_value is None:
+                low = raw.lower()
+                if low in ["true", "1", "on"]:
+                    new_value = AllowedToExit.ALLOW
+                elif low in ["false", "0", "off"]:
+                    new_value = AllowedToExit.DENY
+                else:
+                    new_value = AllowedToExit.CONFIGURE_PER_CAT
+
             if new_value != CONFIG['ALLOWED_TO_EXIT']:
                 CONFIG['ALLOWED_TO_EXIT'] = new_value
                 update_single_config_parameter('ALLOWED_TO_EXIT')
                 self.publish_allowed_to_exit(new_value)
-                logging.info(f"[MQTT] Updated ALLOWED_TO_EXIT to: {new_value}")
+                logging.info(f"[MQTT] Updated ALLOWED_TO_EXIT to: {new_value.value}")
         except Exception as e:
             logging.error(f"[MQTT] Error handling ALLOWED_TO_EXIT change: {e}")
     
@@ -269,18 +277,21 @@ class StatePublisher:
                 "All cats with RFID": "all_rfids",
                 "Only registered cats": "known",
                 "No cats": "none",
+                "Separate configuration per cat": "configure_per_cat",
                 
                 # German translations
                 "Alle Katzen": "all",
                 "Alle Katzen mit RFID-Chip": "all_rfids",
                 "Nur registrierte Katzen": "known",
                 "Keine Katzen": "none",
+                "Separate Konfiguration pro Katze": "configure_per_cat",
                 
                 # Raw values for backward compatibility
                 "all": "all",
                 "all_rfids": "all_rfids",
                 "known": "known", 
-                "none": "none"
+                "none": "none",
+                "configure_per_cat": "configure_per_cat"
             }
             
             # Convert from friendly name to raw value if needed
@@ -564,6 +575,10 @@ class StatePublisher:
             "none": {
                 "en": "No cats",
                 "de": "Keine Katzen"
+            },
+            "configure_per_cat": {
+                "en": "Separate configuration per cat",
+                "de": "Separate Konfiguration pro Katze"
             }
         }
         

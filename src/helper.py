@@ -19,7 +19,7 @@ import struct
 import uuid
 import time as tm
 from faicons import icon_svg
-from src.baseconfig import set_language, update_single_config_parameter, CONFIG
+from src.baseconfig import set_language, update_single_config_parameter, CONFIG, AllowedToExit
 from src.system import (
     is_service_running, 
     systemctl, 
@@ -44,6 +44,12 @@ class EventType:
     MANUALLY_UNLOCKED = "manually_unlocked"
     MANUALLY_LOCKED = "manually_locked"
     MAX_UNLOCK_TIME_EXCEEDED = "max_unlock_time_exceeded"
+    # Per-cat mode informational flags (appended as additional verdict infos)
+    PER_CAT_PREY_DISABLED = "per_cat_prey_detection_disabled"
+    ENTRY_PER_CAT_ALLOWED = "entry_per_cat_allowed"
+    ENTRY_PER_CAT_DENIED = "entry_per_cat_denied"
+    EXIT_PER_CAT_ALLOWED = "exit_per_cat_allowed"
+    EXIT_PER_CAT_DENIED = "exit_per_cat_denied"
 
     @staticmethod
     def to_pretty_string(event_type):
@@ -56,7 +62,12 @@ class EventType:
             EventType.CAT_WENT_OUTSIDE: _("Cat went outside"),
             EventType.MANUALLY_UNLOCKED: _("Manually unlocked flap"),
             EventType.MANUALLY_LOCKED: _("Manually locked flap"),
-            EventType.MAX_UNLOCK_TIME_EXCEEDED: _("Maximum unlock time exceeded")
+            EventType.MAX_UNLOCK_TIME_EXCEEDED: _("Maximum unlock time exceeded"),
+            EventType.PER_CAT_PREY_DISABLED: _("Per-cat mode: prey detection disabled for this cat"),
+            EventType.ENTRY_PER_CAT_ALLOWED: _("Per-cat mode: entry allowed for this cat"),
+            EventType.ENTRY_PER_CAT_DENIED: _("Per-cat mode: entry denied for this cat"),
+            EventType.EXIT_PER_CAT_ALLOWED: _("Per-cat mode: exit allowed for this cat"),
+            EventType.EXIT_PER_CAT_DENIED: _("Per-cat mode: exit denied for this cat"),
         }.get(event_type, _("Unknown event"))
 
     @staticmethod
@@ -70,7 +81,13 @@ class EventType:
             EventType.CAT_WENT_OUTSIDE: [str(icon_svg("circle-up"))],
             EventType.MANUALLY_UNLOCKED: [str(icon_svg("lock-open"))],
             EventType.MANUALLY_LOCKED: [str(icon_svg("lock"))],
-            EventType.MAX_UNLOCK_TIME_EXCEEDED: [str(icon_svg("clock"))]
+            EventType.MAX_UNLOCK_TIME_EXCEEDED: [str(icon_svg("clock"))],
+            # Use information icons for per-cat notes
+            EventType.PER_CAT_PREY_DISABLED: [str(icon_svg("circle-info"))],
+            EventType.ENTRY_PER_CAT_ALLOWED: [str(icon_svg("circle-check"))],
+            EventType.ENTRY_PER_CAT_DENIED: [str(icon_svg("circle-xmark"))],
+            EventType.EXIT_PER_CAT_ALLOWED: [str(icon_svg("circle-check"))],
+            EventType.EXIT_PER_CAT_DENIED: [str(icon_svg("circle-xmark"))],
         }.get(event_type, [str(icon_svg("circle-question"))])
 
 def icon_svg_local(svg: str, margin_left: str | None = "auto", margin_right: str | None = "0.2em",) -> htmltools.TagChild:
@@ -768,7 +785,14 @@ def check_allowed_to_exit():
     Returns:
         bool: True if the cat is allowed to exit, False otherwise.
     """
-    if CONFIG['ALLOWED_TO_EXIT']:
+    # If exit is globally denied, return False immediately
+    if CONFIG['ALLOWED_TO_EXIT'] == AllowedToExit.DENY:
+        logging.info("[CAT_EXIT_CHECK] Not allowed to exit, as the setting is disabled.")
+        return False
+
+    # For ALLOW and CONFIGURE_PER_CAT we evaluate time ranges (if any). In per-cat mode,
+    # this function provides the base schedule; per-cat filtering happens in backend.
+    if CONFIG['ALLOWED_TO_EXIT'] in (AllowedToExit.ALLOW, AllowedToExit.CONFIGURE_PER_CAT):
         now = datetime.now(get_timezone())
         current_time = now.strftime("%H:%M")
 
@@ -810,9 +834,8 @@ def check_allowed_to_exit():
         else:
             logging.info("[CAT_EXIT_CHECK] Not allowed to exit based on configured ranges.")
             return False
-    else:
-        logging.info("[CAT_EXIT_CHECK] Not allowed to exit, as the setting is disabled.")
-        return False
+    # Fallback safety
+    return False
     
 def get_current_ip(interface: str = "wlan0") -> str:
     """

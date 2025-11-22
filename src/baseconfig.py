@@ -9,13 +9,11 @@ try:
 except Exception:
     JournalHandler = None
 
-from logging.handlers import RotatingFileHandler
-from datetime import datetime
-from zoneinfo import ZoneInfo
 from enum import Enum
 import uuid
 import json
 from configupdater import ConfigUpdater
+from typing import Any, Callable, List, Tuple
 
 ###### ENUM DEFINITIONS ######
 class AllowedToEnter(Enum):
@@ -126,6 +124,9 @@ SENSITIVE_CONFIG_KEYS = {
 def load_config():
     """
     Loads the configuration file and populates the CONFIG dictionary.
+    Invalid / corrupt values are replaced by their defaults and a user notification is added.
+    Missing keys are silently defaulted (not treated as invalid).
+    Invalid keys are removed from config.ini.
     """
     global CONFIG
     if not os.path.exists(CONFIGFILE):
@@ -134,84 +135,192 @@ def load_config():
     
     parser = configparser.ConfigParser()
     parser.read(CONFIGFILE)
-    
+
+    invalid_values: List[Tuple[str, Any]] = []
+
+    def get_raw(section: str, option: str, default: Any) -> Any:
+        if not parser.has_option(section, option):
+            return default
+        return parser.get(section, option)
+
+    def record_invalid(key: str, raw: Any):
+        invalid_values.append((key, raw))
+
+    def safe_get(getter: Callable[[], Any], key: str, default: Any) -> Any:
+        try:
+            return getter()
+        except Exception:
+            # Only mark invalid if the key exists (conversion/parsing failed). Missing key => use default silently.
+            if parser.has_option('Settings', key.lower()):
+                try:
+                    raw = parser.get('Settings', key.lower())
+                except Exception:
+                    raw = ""
+                record_invalid(key, raw)
+            return default
+
+    def safe_int(key: str, default: int) -> int:
+        return safe_get(lambda: parser.getint('Settings', key.lower()), key, default)
+
+    def safe_float(key: str, default: float) -> float:
+        return safe_get(lambda: parser.getfloat('Settings', key.lower()), key, default)
+
+    def safe_bool(key: str, default: bool) -> bool:
+        return safe_get(lambda: parser.getboolean('Settings', key.lower()), key, default)
+
+    def safe_str(key: str, default: str) -> str:
+        return safe_get(lambda: parser.get('Settings', key.lower()), key, default)
+
+    def safe_enum(key: str, enum_cls, default_member):
+        raw = get_raw('Settings', key.lower(), default_member.value)
+        try:
+            return enum_cls(raw)
+        except Exception:
+            if parser.has_option('Settings', key.lower()):
+                record_invalid(key, raw)
+            return default_member
+
+    def safe_allowed_to_exit(default_member):
+        raw = get_raw('Settings', 'allowed_to_exit', default_member.value)
+        low = str(raw).strip().lower()
+
+        # Accept legacy Python-like enum strings: "AllowedToExit.ALLOW"
+        if low.startswith("allowedtoexit."):
+            # keep only the part after the dot
+            low = low.split(".", 1)[1]
+
+        try:
+            # Accept boolean-like values
+            if low in {"true", "on", "1", "yes"}:
+                return AllowedToExit.ALLOW
+            if low in {"false", "off", "0", "no"}:
+                return AllowedToExit.DENY
+            # Accept direct enum value tokens
+            return AllowedToExit(low)
+        except Exception:
+            if parser.has_option('Settings', 'allowed_to_exit'):
+                record_invalid('ALLOWED_TO_EXIT', raw)
+            return default_member
+
+    d = DEFAULT_CONFIG['Settings']
+
     CONFIG = {
-        "TIMEZONE": parser.get('Settings', 'timezone', fallback=DEFAULT_CONFIG['Settings']['timezone']),
-        "LANGUAGE": parser.get('Settings', 'language', fallback=DEFAULT_CONFIG['Settings']['language']),
-        "DATE_FORMAT": parser.get('Settings', 'date_format', fallback=DEFAULT_CONFIG['Settings']['date_format']),
-        "DATABASE_PATH": parser.get('Settings', 'database_path', fallback=DEFAULT_CONFIG['Settings']['database_path']),
-        "KITTYHACK_DATABASE_PATH": parser.get('Settings', 'kittyhack_database_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_path']),
-        "MAX_PHOTOS_COUNT": parser.getint('Settings', 'max_photos_count', fallback=DEFAULT_CONFIG['Settings']['max_photos_count']),
-        "SIMULATE_KITTYFLAP": parser.getboolean('Settings', 'simulate_kittyflap', fallback=DEFAULT_CONFIG['Settings']['simulate_kittyflap']),
-        "MOUSE_THRESHOLD": parser.getfloat('Settings', 'mouse_threshold', fallback=DEFAULT_CONFIG['Settings']['mouse_threshold']), # Currently not used
-        "NO_MOUSE_THRESHOLD": parser.getfloat('Settings', 'no_mouse_threshold', fallback=DEFAULT_CONFIG['Settings']['no_mouse_threshold']),
-        "MIN_THRESHOLD": parser.getfloat('Settings', 'min_threshold', fallback=DEFAULT_CONFIG['Settings']['min_threshold']),
-        "ELEMENTS_PER_PAGE": parser.getint('Settings', 'elements_per_page', fallback=DEFAULT_CONFIG['Settings']['elements_per_page']),
-        "LOGLEVEL": parser.get('Settings', 'loglevel', fallback=DEFAULT_CONFIG['Settings']['loglevel']),
-        "PERIODIC_JOBS_INTERVAL": parser.getint('Settings', 'periodic_jobs_interval', fallback=DEFAULT_CONFIG['Settings']['periodic_jobs_interval']),
-        "ALLOWED_TO_ENTER": AllowedToEnter(parser.get('Settings', 'allowed_to_enter', fallback=DEFAULT_CONFIG['Settings']['allowed_to_enter'])),
-        "MOUSE_CHECK_ENABLED": parser.getboolean('Settings', 'mouse_check_enabled', fallback=DEFAULT_CONFIG['Settings']['mouse_check_enabled']),
-        "MIN_PICTURES_TO_ANALYZE": parser.getint('Settings', 'min_pictures_to_analyze', fallback=DEFAULT_CONFIG['Settings']['min_pictures_to_analyze']),
-        "SHOW_IMAGES_WITH_OVERLAY": parser.getboolean('Settings', 'show_images_with_overlay', fallback=DEFAULT_CONFIG['Settings']['show_images_with_overlay']),
-        "LIVE_VIEW_REFRESH_INTERVAL": parser.getfloat('Settings', 'live_view_refresh_interval', fallback=DEFAULT_CONFIG['Settings']['live_view_refresh_interval']),
-        "KITTYFLAP_CONFIG_MIGRATED": parser.getboolean('Settings', 'kittyflap_config_migrated', fallback=DEFAULT_CONFIG['Settings']['kittyflap_config_migrated']),
-        # Backward compatibility: allowed_to_exit used to be boolean. Accept boolean or enum string.
-        # Map to AllowedToExit enum.
-        "ALLOWED_TO_EXIT": (lambda raw: (
-            AllowedToExit.ALLOW if str(raw).lower() in ["true", "on", "1", "yes", AllowedToExit.ALLOW.value] else 
-            AllowedToExit.DENY if str(raw).lower() in ["false", "off", "0", "no", AllowedToExit.DENY.value] else 
-            AllowedToExit.CONFIGURE_PER_CAT
-        ))(parser.get('Settings', 'allowed_to_exit', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit'])),
-        "LAST_VACUUM_DATE": parser.get('Settings', 'last_vacuum_date', fallback=DEFAULT_CONFIG['Settings']['last_vacuum_date']),
-        "PERIODIC_VERSION_CHECK": parser.getboolean('Settings', 'periodic_version_check', fallback=DEFAULT_CONFIG['Settings']['periodic_version_check']),
-        "KITTYFLAP_DB_NAGSCREEN": parser.getboolean('Settings', 'kittyflap_db_nagscreen', fallback=DEFAULT_CONFIG['Settings']['kittyflap_db_nagscreen']),
-        "LATEST_VERSION": "unknown", # This value will not be written to the config file
-        "LAST_DB_BACKUP_DATE": parser.get('Settings', 'last_db_backup_date', fallback=DEFAULT_CONFIG['Settings']['last_db_backup_date']),
-        "KITTYHACK_DATABASE_BACKUP_PATH": parser.get('Settings', 'kittyhack_database_backup_path', fallback=DEFAULT_CONFIG['Settings']['kittyhack_database_backup_path']),
-        "PIR_OUTSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_outside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_outside_threshold']),
-        "PIR_INSIDE_THRESHOLD": parser.getfloat('Settings', 'pir_inside_threshold', fallback=DEFAULT_CONFIG['Settings']['pir_inside_threshold']),
-        "WLAN_TX_POWER": parser.getint('Settings', 'wlan_tx_power', fallback=DEFAULT_CONFIG['Settings']['wlan_tx_power']),
-        "GROUP_PICTURES_TO_EVENTS": parser.getboolean('Settings', 'group_pictures_to_events', fallback=DEFAULT_CONFIG['Settings']['group_pictures_to_events']),
-        "TFLITE_MODEL_VERSION": parser.get('Settings', 'tflite_model_version', fallback=DEFAULT_CONFIG['Settings']['tflite_model_version']),
-        "LOCK_DURATION_AFTER_PREY_DETECTION": parser.getint('Settings', 'lock_duration_after_prey_detection', fallback=DEFAULT_CONFIG['Settings']['lock_duration_after_prey_detection']),
-        "LAST_READ_CHANGELOGS": parser.get('Settings', 'last_read_changelogs', fallback=DEFAULT_CONFIG['Settings']['last_read_changelogs']),
-        "MAX_PICTURES_PER_EVENT_WITH_RFID": parser.getint('Settings', 'max_pictures_per_event_with_rfid', fallback=DEFAULT_CONFIG['Settings']['max_pictures_per_event_with_rfid']),
-        "MAX_PICTURES_PER_EVENT_WITHOUT_RFID": parser.getint('Settings', 'max_pictures_per_event_without_rfid', fallback=DEFAULT_CONFIG['Settings']['max_pictures_per_event_without_rfid']),
-        "USE_ALL_CORES_FOR_IMAGE_PROCESSING": parser.getboolean('Settings', 'use_all_cores_for_image_processing', fallback=DEFAULT_CONFIG['Settings']['use_all_cores_for_image_processing']),
-        "LAST_BOOTED_VERSION": parser.get('Settings', 'last_booted_version', fallback=DEFAULT_CONFIG['Settings']['last_booted_version']),
-        "ALLOWED_TO_EXIT_RANGE1": parser.getboolean('Settings', 'allowed_to_exit_range1', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range1']),
-        "ALLOWED_TO_EXIT_RANGE1_FROM": parser.get('Settings', 'allowed_to_exit_range1_from', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range1_from']),
-        "ALLOWED_TO_EXIT_RANGE1_TO": parser.get('Settings', 'allowed_to_exit_range1_to', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range1_to']),
-        "ALLOWED_TO_EXIT_RANGE2": parser.getboolean('Settings', 'allowed_to_exit_range2', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range2']),
-        "ALLOWED_TO_EXIT_RANGE2_FROM": parser.get('Settings', 'allowed_to_exit_range2_from', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range2_from']),
-        "ALLOWED_TO_EXIT_RANGE2_TO": parser.get('Settings', 'allowed_to_exit_range2_to', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range2_to']),
-        "ALLOWED_TO_EXIT_RANGE3": parser.getboolean('Settings', 'allowed_to_exit_range3', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range3']),
-        "ALLOWED_TO_EXIT_RANGE3_FROM": parser.get('Settings', 'allowed_to_exit_range3_from', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range3_from']),
-        "ALLOWED_TO_EXIT_RANGE3_TO": parser.get('Settings', 'allowed_to_exit_range3_to', fallback=DEFAULT_CONFIG['Settings']['allowed_to_exit_range3_to']),
-        "LABELSTUDIO_VERSION": parser.get('Settings', 'labelstudio_version', fallback=DEFAULT_CONFIG['Settings']['labelstudio_version']),
-        "EMAIL": parser.get('Settings', 'email', fallback=DEFAULT_CONFIG['Settings']['email']),
-        "USER_NAME": parser.get('Settings', 'user_name', fallback=DEFAULT_CONFIG['Settings']['user_name']),
-        "MODEL_TRAINING": parser.get('Settings', 'model_training', fallback=DEFAULT_CONFIG['Settings']['model_training']),
-        "YOLO_MODEL": parser.get('Settings', 'yolo_model', fallback=DEFAULT_CONFIG['Settings']['yolo_model']),
-        "STARTUP_SHUTDOWN_FLAG": parser.getboolean('Settings', 'startup_shutdown_flag', fallback=DEFAULT_CONFIG['Settings']['startup_shutdown_flag']),
-        "NOT_GRACEFUL_SHUTDOWNS": parser.getint('Settings', 'not_graceful_shutdowns', fallback=DEFAULT_CONFIG['Settings']['not_graceful_shutdowns']),
-        "USE_CAMERA_FOR_CAT_DETECTION": parser.getboolean('Settings', 'use_camera_for_cat_detection', fallback=DEFAULT_CONFIG['Settings']['use_camera_for_cat_detection']),
-        "CAT_THRESHOLD": parser.getfloat('Settings', 'cat_threshold', fallback=DEFAULT_CONFIG['Settings']['cat_threshold']),
-        "USE_CAMERA_FOR_MOTION_DETECTION": parser.getboolean('Settings', 'use_camera_for_motion_detection', fallback=DEFAULT_CONFIG['Settings'].get('use_camera_for_motion_detection', False)),
-        "CAMERA_SOURCE": parser.get('Settings', 'camera_source', fallback=DEFAULT_CONFIG['Settings']['camera_source']),
-        "IP_CAMERA_URL": parser.get('Settings', 'ip_camera_url', fallback=DEFAULT_CONFIG['Settings'].get('ip_camera_url', "")),
-        "MQTT_DEVICE_ID": parser.get('Settings', 'mqtt_device_id', fallback=DEFAULT_CONFIG['Settings']['mqtt_device_id']),
-        "MQTT_BROKER_ADDRESS": parser.get('Settings', 'mqtt_broker_address', fallback=DEFAULT_CONFIG['Settings']['mqtt_broker_address']),
-        "MQTT_BROKER_PORT": parser.getint('Settings', 'mqtt_broker_port', fallback=DEFAULT_CONFIG['Settings']['mqtt_broker_port']),
-        "MQTT_USERNAME": parser.get('Settings', 'mqtt_username', fallback=DEFAULT_CONFIG['Settings']['mqtt_username']),
-        "MQTT_PASSWORD": parser.get('Settings', 'mqtt_password', fallback=DEFAULT_CONFIG['Settings']['mqtt_password']),
-        "MQTT_ENABLED": parser.getboolean('Settings', 'mqtt_enabled', fallback=DEFAULT_CONFIG['Settings'].get('mqtt_enabled', False)),
-        "MQTT_IMAGE_PUBLISH_INTERVAL": parser.getfloat('Settings', 'mqtt_image_publish_interval', fallback=DEFAULT_CONFIG['Settings']['mqtt_image_publish_interval']),
-        "SHOW_CATS_ONLY": parser.getboolean('Settings', 'show_cats_only', fallback=DEFAULT_CONFIG['Settings']['show_cats_only']),
-        "SHOW_MICE_ONLY": parser.getboolean('Settings', 'show_mice_only', fallback=DEFAULT_CONFIG['Settings']['show_mice_only']),
-        "RESTART_IP_CAMERA_STREAM_ON_FAILURE": parser.getboolean('Settings', 'restart_ip_camera_stream_on_failure', fallback=DEFAULT_CONFIG['Settings'].get('restart_ip_camera_stream_on_failure', True)),
-        "WLAN_WATCHDOG_ENABLED": parser.getboolean('Settings', 'wlan_watchdog_enabled', fallback=DEFAULT_CONFIG['Settings'].get('wlan_watchdog_enabled', True))
+        "TIMEZONE": safe_str("TIMEZONE", d['timezone']),
+        "LANGUAGE": safe_str("LANGUAGE", d['language']),
+        "DATE_FORMAT": safe_str("DATE_FORMAT", d['date_format']),
+        "DATABASE_PATH": safe_str("DATABASE_PATH", d['database_path']),
+        "KITTYHACK_DATABASE_PATH": safe_str("KITTYHACK_DATABASE_PATH", d['kittyhack_database_path']),
+        "MAX_PHOTOS_COUNT": safe_int("MAX_PHOTOS_COUNT", int(d['max_photos_count'])),
+        "SIMULATE_KITTYFLAP": safe_bool("SIMULATE_KITTYFLAP", d['simulate_kittyflap']),
+        "MOUSE_THRESHOLD": safe_float("MOUSE_THRESHOLD", float(d['mouse_threshold'])),
+        "NO_MOUSE_THRESHOLD": safe_float("NO_MOUSE_THRESHOLD", float(d['no_mouse_threshold'])),
+        "MIN_THRESHOLD": safe_float("MIN_THRESHOLD", float(d['min_threshold'])),
+        "ELEMENTS_PER_PAGE": safe_int("ELEMENTS_PER_PAGE", int(d['elements_per_page'])),
+        "LOGLEVEL": safe_str("LOGLEVEL", d['loglevel']),
+        "PERIODIC_JOBS_INTERVAL": safe_int("PERIODIC_JOBS_INTERVAL", int(d['periodic_jobs_interval'])),
+        "ALLOWED_TO_ENTER": safe_enum("ALLOWED_TO_ENTER", AllowedToEnter, AllowedToEnter(d['allowed_to_enter'])),
+        "MOUSE_CHECK_ENABLED": safe_bool("MOUSE_CHECK_ENABLED", d['mouse_check_enabled']),
+        "MIN_PICTURES_TO_ANALYZE": safe_int("MIN_PICTURES_TO_ANALYZE", int(d['min_pictures_to_analyze'])),
+        "SHOW_IMAGES_WITH_OVERLAY": safe_bool("SHOW_IMAGES_WITH_OVERLAY", d['show_images_with_overlay']),
+        "LIVE_VIEW_REFRESH_INTERVAL": safe_float("LIVE_VIEW_REFRESH_INTERVAL", float(d['live_view_refresh_interval'])),
+        "KITTYFLAP_CONFIG_MIGRATED": safe_bool("KITTYFLAP_CONFIG_MIGRATED", d['kittyflap_config_migrated']),
+        "ALLOWED_TO_EXIT": safe_allowed_to_exit(AllowedToExit(d['allowed_to_exit'])),
+        "LAST_VACUUM_DATE": safe_str("LAST_VACUUM_DATE", d['last_vacuum_date']),
+        "PERIODIC_VERSION_CHECK": safe_bool("PERIODIC_VERSION_CHECK", d['periodic_version_check']),
+        "KITTYFLAP_DB_NAGSCREEN": safe_bool("KITTYFLAP_DB_NAGSCREEN", d['kittyflap_db_nagscreen']),
+        "LATEST_VERSION": "unknown",
+        "LAST_DB_BACKUP_DATE": safe_str("LAST_DB_BACKUP_DATE", d['last_db_backup_date']),
+        "KITTYHACK_DATABASE_BACKUP_PATH": safe_str("KITTYHACK_DATABASE_BACKUP_PATH", d['kittyhack_database_backup_path']),
+        "PIR_OUTSIDE_THRESHOLD": safe_float("PIR_OUTSIDE_THRESHOLD", float(d['pir_outside_threshold'])),
+        "PIR_INSIDE_THRESHOLD": safe_float("PIR_INSIDE_THRESHOLD", float(d['pir_inside_threshold'])),
+        "WLAN_TX_POWER": safe_int("WLAN_TX_POWER", int(d['wlan_tx_power'])),
+        "GROUP_PICTURES_TO_EVENTS": safe_bool("GROUP_PICTURES_TO_EVENTS", d['group_pictures_to_events']),
+        "TFLITE_MODEL_VERSION": safe_str("TFLITE_MODEL_VERSION", d['tflite_model_version']),
+        "LOCK_DURATION_AFTER_PREY_DETECTION": safe_int("LOCK_DURATION_AFTER_PREY_DETECTION", int(d['lock_duration_after_prey_detection'])),
+        "LAST_READ_CHANGELOGS": safe_str("LAST_READ_CHANGELOGS", d['last_read_changelogs']),
+        "MAX_PICTURES_PER_EVENT_WITH_RFID": safe_int("MAX_PICTURES_PER_EVENT_WITH_RFID", int(d['max_pictures_per_event_with_rfid'])),
+        "MAX_PICTURES_PER_EVENT_WITHOUT_RFID": safe_int("MAX_PICTURES_PER_EVENT_WITHOUT_RFID", int(d['max_pictures_per_event_without_rfid'])),
+        "USE_ALL_CORES_FOR_IMAGE_PROCESSING": safe_bool("USE_ALL_CORES_FOR_IMAGE_PROCESSING", d['use_all_cores_for_image_processing']),
+        "LAST_BOOTED_VERSION": safe_str("LAST_BOOTED_VERSION", d['last_booted_version']),
+        "ALLOWED_TO_EXIT_RANGE1": safe_bool("ALLOWED_TO_EXIT_RANGE1", d['allowed_to_exit_range1']),
+        "ALLOWED_TO_EXIT_RANGE1_FROM": safe_str("ALLOWED_TO_EXIT_RANGE1_FROM", d['allowed_to_exit_range1_from']),
+        "ALLOWED_TO_EXIT_RANGE1_TO": safe_str("ALLOWED_TO_EXIT_RANGE1_TO", d['allowed_to_exit_range1_to']),
+        "ALLOWED_TO_EXIT_RANGE2": safe_bool("ALLOWED_TO_EXIT_RANGE2", d['allowed_to_exit_range2']),
+        "ALLOWED_TO_EXIT_RANGE2_FROM": safe_str("ALLOWED_TO_EXIT_RANGE2_FROM", d['allowed_to_exit_range2_from']),
+        "ALLOWED_TO_EXIT_RANGE2_TO": safe_str("ALLOWED_TO_EXIT_RANGE2_TO", d['allowed_to_exit_range2_to']),
+        "ALLOWED_TO_EXIT_RANGE3": safe_bool("ALLOWED_TO_EXIT_RANGE3", d['allowed_to_exit_range3']),
+        "ALLOWED_TO_EXIT_RANGE3_FROM": safe_str("ALLOWED_TO_EXIT_RANGE3_FROM", d['allowed_to_exit_range3_from']),
+        "ALLOWED_TO_EXIT_RANGE3_TO": safe_str("ALLOWED_TO_EXIT_RANGE3_TO", d['allowed_to_exit_range3_to']),
+        "LABELSTUDIO_VERSION": safe_str("LABELSTUDIO_VERSION", d['labelstudio_version']),
+        "EMAIL": safe_str("EMAIL", d['email']),
+        "USER_NAME": safe_str("USER_NAME", d['user_name']),
+        "MODEL_TRAINING": safe_str("MODEL_TRAINING", d['model_training']),
+        "YOLO_MODEL": safe_str("YOLO_MODEL", d['yolo_model']),
+        "STARTUP_SHUTDOWN_FLAG": safe_bool("STARTUP_SHUTDOWN_FLAG", d['startup_shutdown_flag']),
+        "NOT_GRACEFUL_SHUTDOWNS": safe_int("NOT_GRACEFUL_SHUTDOWNS", int(d['not_graceful_shutdowns'])),
+        "USE_CAMERA_FOR_CAT_DETECTION": safe_bool("USE_CAMERA_FOR_CAT_DETECTION", d['use_camera_for_cat_detection']),
+        "CAT_THRESHOLD": safe_float("CAT_THRESHOLD", float(d['cat_threshold'])),
+        "USE_CAMERA_FOR_MOTION_DETECTION": safe_bool("USE_CAMERA_FOR_MOTION_DETECTION", d.get('use_camera_for_motion_detection', False)),
+        "CAMERA_SOURCE": safe_str("CAMERA_SOURCE", d['camera_source']),
+        "IP_CAMERA_URL": safe_str("IP_CAMERA_URL", d.get('ip_camera_url', "")),
+        "MQTT_DEVICE_ID": safe_str("MQTT_DEVICE_ID", d['mqtt_device_id']),
+        "MQTT_BROKER_ADDRESS": safe_str("MQTT_BROKER_ADDRESS", d['mqtt_broker_address']),
+        "MQTT_BROKER_PORT": safe_int("MQTT_BROKER_PORT", int(d['mqtt_broker_port'])),
+        "MQTT_USERNAME": safe_str("MQTT_USERNAME", d['mqtt_username'] if d['mqtt_username'] is not None else ""),
+        "MQTT_PASSWORD": safe_str("MQTT_PASSWORD", d['mqtt_password'] if d['mqtt_password'] is not None else ""),
+        "MQTT_ENABLED": safe_bool("MQTT_ENABLED", d.get('mqtt_enabled', False)),
+        "MQTT_IMAGE_PUBLISH_INTERVAL": safe_float("MQTT_IMAGE_PUBLISH_INTERVAL", float(d['mqtt_image_publish_interval'])),
+        "SHOW_CATS_ONLY": safe_bool("SHOW_CATS_ONLY", d['show_cats_only']),
+        "SHOW_MICE_ONLY": safe_bool("SHOW_MICE_ONLY", d['show_mice_only']),
+        "RESTART_IP_CAMERA_STREAM_ON_FAILURE": safe_bool("RESTART_IP_CAMERA_STREAM_ON_FAILURE", d.get('restart_ip_camera_stream_on_failure', True)),
+        "WLAN_WATCHDOG_ENABLED": safe_bool("WLAN_WATCHDOG_ENABLED", d.get('wlan_watchdog_enabled', True))
     }
+
+    if invalid_values:
+        # Remove invalid keys from config.ini before notifying user
+        try:
+            updater = ConfigUpdater()
+            updater.read(CONFIGFILE)
+            settings_section = updater['Settings']
+            for k, _ in invalid_values:
+                opt = k.lower()
+                if opt in settings_section:
+                    del settings_section[opt]
+            with open(CONFIGFILE, 'w') as f:
+                updater.write(f)
+            logging.info("[CONFIG] Removed invalid keys from config.ini")
+        except Exception as e:
+            logging.warning(f"[CONFIG] Failed to remove invalid keys from config.ini: {e}")
+
+        lines = []
+        for k, raw in invalid_values:
+            masked = "********" if k in SENSITIVE_CONFIG_KEYS else raw
+            lines.append(f"- {k}: '{masked}'")
+            logging.warning(f"[CONFIG] Invalid value for {k} -> '{raw}'. Using default.")
+        if CONFIG.get('LANGUAGE') == 'de':
+            msg = (
+                "Die folgenden Konfigurationsschlüssel hatten ungültige Werte und wurden auf ihre Standardwerte zurückgesetzt:\n"
+                + "\n".join(lines)
+                + "\n\nBitte prüfe deine Einstellungen im Abschnitt KONFIGURATION."
+            )
+            header = "⚠️ Ungültige Konfiguration erkannt"
+        else:
+            msg = (
+                "The following configuration keys contained invalid values and have been reset to their default values:\n"
+                + "\n".join(lines)
+                + "\n\nPlease check your settings in the CONFIGURATION section."
+            )
+            header = "⚠️ Invalid configuration detected"
+        try:
+            UserNotifications.add(
+                header=header,
+                message=msg,
+                type="warning",
+                id="config_invalid_values",
+                skip_if_id_exists=True
+            )
+        except Exception:
+            logging.warning("[CONFIG] Could not add user notification for invalid values.")
 
 def save_config():
     """

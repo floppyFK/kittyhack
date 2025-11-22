@@ -2184,9 +2184,9 @@ def server(input, output, session):
             }
           }
           setTimeout(function() { isInitializingCats = false; }, 800);
-            $('#manage_cats_container').on('change input', 'input, select, textarea', function() {
-              highlightCatInput(this);
-            });
+          $('#manage_cats_container').on('change input', 'input, select, textarea', function() {
+            highlightCatInput(this);
+          });
           $(document).on('click', '#mng_cat_save_changes', function() {
             $('#manage_cats_container .unsaved-input').removeClass('unsaved-input');
             $('#mng_cat_save_changes').removeClass('save-button-highlight');
@@ -2194,14 +2194,10 @@ def server(input, output, session):
           });
         });
         </script>
-        <style>
-        .unsaved-input { border: 2px solid #ffc107 !important; box-shadow: 0 0 0 0.2rem rgba(255, 193, 7, 0.25); }
-        .save-button-highlight { background-color: #ffc107 !important; border-color: #e0a800 !important; color: #000 !important; box-shadow: 0 0 0 0.2rem rgba(255, 193, 7, 0.5); animation: pulse-save 2s infinite; }
-        @keyframes pulse-save { 0% { box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);} 70% { box-shadow: 0 0 0 8px rgba(255, 193, 7, 0);} }
-        </style>
         """)
         ui_cards = []
         df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all)
+        rfid_ids = []  # collect IDs for JS validator
         if not df_cats.empty:
             for __, data_row in df_cats.iterrows():
                 # --- Picture ---
@@ -2227,6 +2223,20 @@ def server(input, output, session):
 
                 settings_rows = []
 
+                # Cat specific settings header
+                settings_rows.append([
+                    ui.row(
+                        ui.column(
+                            12,
+                            ui.div(
+                                ui.markdown(_("##### Cat-specific settings")),
+                                style_="text-align: center;"
+                            )
+                        )
+                    ),
+                    ui.br(),
+                ])
+
                 # Prey detection
                 settings_rows.append(
                     ui.row(
@@ -2240,7 +2250,7 @@ def server(input, output, session):
                                 ),
                                 style_=prey_style
                             )
-                        ),
+                        )
                     )
                 )
                 if not CONFIG['MOUSE_CHECK_ENABLED']:
@@ -2278,7 +2288,7 @@ def server(input, output, session):
                             ui.column(
                                 12,
                                 ui.markdown(
-                                    _("**Disabled:** switch `Open inside direction for` to `Individual configuration per cat` in the `CONFIGURATION` section to enable this feature.")
+                                    _("**Disabled:** set `Open inside direction for` to `Individual configuration per cat` to enable this feature.")
                                 ), style_="color: grey;"
                             ),
                             style_="padding-bottom: 20px;"
@@ -2301,13 +2311,27 @@ def server(input, output, session):
                         )
                     )
                 )
+                # Show warning if per-cat exit mode is active but no RFID assigned
+                if exit_mode_per_cat and not data_row.get('rfid'):
+                    settings_rows.append(
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _("⚠️ This cat has no RFID configured. The individual exit per cat works only for cats with a RFID chip!")
+                                ),
+                                style_="color:#b94a48;"
+                            ),
+                            style_="padding-bottom: 20px;"
+                        )
+                    )
                 if not exit_mode_per_cat:
                     settings_rows.append(
                         ui.row(
                             ui.column(
                                 12,
                                 ui.markdown(
-                                    _("**Disabled:** switch `Outside direction` to `Individual configuration per cat` in the `CONFIGURATION` section to enable this feature.")
+                                    _("**Disabled:** set `Outside direction` to `Individual configuration per cat` to enable this feature.")
                                 ), style_="color: grey;"
                             ),
                             style_="padding-bottom: 20px;"
@@ -2315,7 +2339,10 @@ def server(input, output, session):
                     )
 
                 settings_section = ui.div(
-                    *settings_rows,
+                    ui.div(
+                        *settings_rows,
+                        class_="cat-settings-container",
+                    ),
                     class_="align-left",
                 )
 
@@ -2341,6 +2368,13 @@ def server(input, output, session):
                                         label=_("RFID"),
                                         value=data_row['rfid'],
                                         width="100%"
+                                    )
+                                ),
+                                ui.column(
+                                    12,
+                                    ui.div(
+                                        id=f"mng_cat_rfid_status_{data_row['id']}",
+                                        class_="rfid-status rfid-empty"
                                     )
                                 ),
                                 ui.column(12, ui.help_text(_("NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."))),
@@ -2374,8 +2408,56 @@ def server(input, output, session):
                         class_="image-container"
                     )
                 )
+
+                rfid_ids.append(str(data_row['id']))
+
+            # Build validator JS AFTER loop
+            validator_js = ui.HTML(f"""
+            <script>
+              (function() {{
+                const ids = {rfid_ids};
+                function validate(id) {{
+                  const inp = document.getElementById('mng_cat_rfid_' + id);
+                  const box = document.getElementById('mng_cat_rfid_status_' + id);
+                  if(!inp || !box) return;
+                  const raw = (inp.value || "");
+                  const val = raw.trim();
+                  const hex = val.toUpperCase();
+                  // Debug
+                  console.log('RFID validate id=' + id + ', val=' + val + ', len=' + hex.length);
+                  if(hex === "") {{
+                    box.textContent = '{_("No RFID entered. Cat identification only via camera (if enabled). See CONFIGURATION section for details.")}';
+                    box.className = 'rfid-status rfid-empty';
+                    return;
+                  }}
+                  if (hex.length === 16 && /^[0-9A-F]{{16}}$/.test(hex)) {{
+                    box.textContent = '{_("Valid RFID")}';
+                    box.className = 'rfid-status rfid-valid';
+                  }} else {{
+                    box.textContent = '{_("Invalid RFID. Must be exactly 16 hex characters (0-9, A-F).")}';
+                    box.className = 'rfid-status rfid-invalid';
+                  }}
+                }}
+                function init() {{
+                  ids.forEach(id => {{
+                    validate(id);
+                    const inp = document.getElementById('mng_cat_rfid_' + id);
+                    if(inp) {{
+                      inp.addEventListener('input', () => validate(id));
+                      inp.addEventListener('change', () => validate(id));
+                      inp.addEventListener('blur', () => validate(id));
+                    }}
+                  }});
+                }}
+                document.addEventListener('DOMContentLoaded', init);
+                setTimeout(init, 800);
+              }})();
+            </script>
+            """)
+
             return ui.div(
                 manage_cats_unsaved_js,
+                validator_js,
                 ui.div(
                     *ui_cards,
                     id="manage_cats_container",
@@ -2394,13 +2476,10 @@ def server(input, output, session):
                 ),
             )
         else:
-            ui_cards.append(
-                ui.help_text(_("No cats found in the database. Please go to the [ADD NEW CAT] section to add a new cat."))
-            )
             return ui.div(
-                ui.layout_column_wrap(*ui_cards, width="400px"),
+                ui.help_text(_("No cats found in the database. Please go to the [ADD NEW CAT] section to add a new cat.")),
             )
-    
+        
     @reactive.Effect
     @reactive.event(input.mng_cat_save_changes)
     def manage_cat_save():
@@ -2416,7 +2495,7 @@ def server(input, output, session):
                 db_allow_exit = bool(int(data_row.get("allow_exit", 1)))
 
                 card_name = input[f"mng_cat_name_{db_id}"]()
-                card_rfid = input[f"mng_cat_rfid_{db_id}"]()
+                card_rfid = input[f"mng_cat_rfid_{db_id}"]().strip().upper()
                 card_prey = input[f"mng_cat_prey_{db_id}"]()
                 # Only read new per-cat switches if the mode is per-cat; otherwise keep previous DB values
                 if CONFIG['ALLOWED_TO_ENTER'].value == 'configure_per_cat':
@@ -2490,6 +2569,16 @@ def server(input, output, session):
                 ui.column(
                     12,
                     ui.div(
+                        ui.markdown(_("##### Cat-specific settings")),
+                        style_="text-align: center;"
+                    )
+                )
+            ),
+            ui.br(),
+            ui.row(
+                ui.column(
+                    12,
+                    ui.div(
                         ui.input_switch("add_new_cat_prey", _("Enable Prey detection"), True),
                         style_=prey_style
                     )
@@ -2525,7 +2614,7 @@ def server(input, output, session):
                     ui.column(
                         12,
                         ui.markdown(
-                            _("**Disabled:** switch `Open inside direction for` to `Individual configuration per cat` in the `CONFIGURATION` section to enable this feature.")
+                            _("**Disabled:** set `Open inside direction for` to `Individual configuration per cat` to enable this feature.")
                         ), style_="color: grey;"
                     ),
                     style_="padding-bottom: 20px;"
@@ -2548,15 +2637,37 @@ def server(input, output, session):
                     ui.column(
                         12,
                         ui.markdown(
-                            _("**Disabled:** switch `Outside direction` to `Individual configuration per cat` in the `CONFIGURATION` section to enable this feature.")
+                            _("**Disabled:** set `Outside direction` to `Individual configuration per cat` to enable this feature.")
                         ), style_="color: grey;"
                     ),
                     style_="padding-bottom: 20px;"
                 )
             )
 
+        settings_rows_new.append([
+            ui.hr(),
+            ui.row(
+                ui.column(
+                    12,
+                    ui.div(
+                        ui.markdown(
+                            _(
+                                "**Important:** Please read the notes about the prerequisites for the "
+                                "individual entry/exit configuration in the `MANAGE CATS` section "
+                                "if you want to use these features."
+                            )
+                        ),
+                        style_="text-align: center;"
+                    )
+                )
+            )
+        ])
+
         settings_section_new_cat = ui.div(
-            *settings_rows_new,
+            ui.div(
+                *settings_rows_new,
+                class_="cat-settings-container",
+            ),
             class_="align-left"
         )
 
@@ -2568,6 +2679,8 @@ def server(input, output, session):
                         ui.column(12, ui.input_text("add_new_cat_name", label=_("Name"), value="", width="100%")),
                         ui.br(),
                         ui.column(12, ui.input_text("add_new_cat_rfid", label=_("RFID"), value="", width="100%")),
+                        ui.column(12, ui.output_ui("add_new_cat_rfid_status")),
+                        ui.br(),
                         ui.column(12, ui.help_text(_("You can find the RFID in the [PICTURES] section, if the chip of your cat was recognized by the Kittyflap. To read the RFID, just set the entrance mode to 'All Cats' and let pass your cat through the Kittyflap."))),
                         ui.column(12, ui.help_text(_("NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."))),
                         ui.br(),
@@ -2583,12 +2696,31 @@ def server(input, output, session):
             )
         )
         return ui.layout_column_wrap(*ui_cards, width="400px"),
+
+    @output
+    @render.ui
+    def add_new_cat_rfid_status():
+        val = (input.add_new_cat_rfid() or "").strip()
+        if val == "":
+            return ui.div(
+                _("No RFID entered. Cat identification only via camera (if enabled). See CONFIGURATION section for details."),
+                class_="rfid-status rfid-empty"
+            )
+        if re.fullmatch(r"[0-9A-Fa-f]{16}", val):
+            return ui.div(
+                _("Valid RFID"),
+                class_="rfid-status rfid-valid"
+            )
+        return ui.div(
+            _("Invalid RFID. Must be exactly 16 hex characters (0-9, A-F)."),
+            class_="rfid-status rfid-invalid"
+        )
     
     @reactive.Effect
     @reactive.event(input.add_new_cat_save)
     def add_new_cat_save():
         cat_name = input.add_new_cat_name()
-        cat_rfid = input.add_new_cat_rfid()
+        cat_rfid = input.add_new_cat_rfid().strip().upper()
         cat_pic: list[FileInfo] | None = input.add_new_cat_pic()
         cat_prey = input.add_new_cat_prey()
         if CONFIG['ALLOWED_TO_ENTER'].value == 'configure_per_cat':
@@ -3150,6 +3282,47 @@ def server(input, output, session):
     @render.ui
     @reactive.event(reload_trigger_config, ignore_none=True)
     def ui_configuration():
+        # Helper for collapsible info blocks (local to this tab)
+        def info_toggle(id_suffix: str, button_label: str, body_md: str):
+            # body_md should already be translated before passing in
+            return ui.HTML(f"""
+            <div class="kh-info-toggle" id="toggle_{id_suffix}">
+            <button type="button"
+                    class="btn btn-link p-0 info-toggle-btn"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#toggle_{id_suffix}_body"
+                    aria-expanded="false"
+                    style="text-decoration:none;">
+                <span class="toggle-chevron" style="display:inline-block; transition:transform .2s;">&#9654;</span>
+                {button_label}
+            </button>
+            <div id="toggle_{id_suffix}_body" class="collapse info-toggle-body" style="margin-top:6px;">
+                <div class="kh-info-box" style="color: grey; font-size:0.9rem; line-height:1.35;">
+                {ui.markdown(body_md)}
+                </div>
+            </div>
+            </div>
+            """)
+
+        # Global CSS/JS for chevron rotation (added once)
+        collapsible_support = ui.HTML("""
+        <style>
+          .kh-info-toggle + .kh-info-toggle { margin-top: 8px; }
+          .kh-info-box { border-left: 4px solid #ddd; padding: 8px 12px; background:#f9f9f9; border-radius:4px; }
+          .info-toggle-btn[aria-expanded="true"] .toggle-chevron { transform:rotate(90deg); }
+        </style>
+        <script>
+          document.addEventListener('shown.bs.collapse', function(e){
+             var btn = document.querySelector('[data-bs-target="#'+e.target.id+'"]');
+             if(btn) btn.setAttribute('aria-expanded','true');
+          });
+          document.addEventListener('hidden.bs.collapse', function(e){
+             var btn = document.querySelector('[data-bs-target="#'+e.target.id+'"]');
+             if(btn) btn.setAttribute('aria-expanded','false');
+          });
+        </script>
+        """)
+
         # Build a dictionary with TFLite model versions from the tflite folder
         tflite_models = {}
         try:
@@ -3276,6 +3449,7 @@ def server(input, output, session):
         """)
 
         ui_config =  ui.div(
+            collapsible_support,
             unsaved_changes_js,
             hide_unhide_ip_camera_url,
             ui.div(
@@ -3333,27 +3507,22 @@ def server(input, output, session):
                     _("Camera settings"),
                     _("Camera specific settings for the internal and external cameras."),
                     ui.div(
-                        ui.br(),
                         ui.column(
                             12,
-                            ui.markdown(
+                            info_toggle(
+                                "camera_intro",
+                                _("Show IP camera usage tips"),
                                 _(
-                                    "You can use an **external IP camera** instead of the internal camera to achieve better viewing angles for prey detection. "
-                                    "This can be especially useful if the internal camera's position is not ideal for your setup. "
-                                    "You can also achieve much better night vision capabilities with an external camera. "
-                                    "\n\n"
+                                    "You can use an **external IP camera** instead of the internal camera to achieve better viewing angles and better night vision.\n\n"
                                     "**Important notes:**\n"
-                                    "- Both the Kittyflap and the IP camera must have a stable and strong WLAN connection for reliable operation. "
-                                    "A **wired (Ethernet) connection** for the IP camera is recommended, as it provides much higher reliability and performance compared to WLAN.\n"
-                                    "- The IP camera must be configured with a **fixed (static) IP address**.\n"
-                                    "- Make sure your IP camera supports a compatible video stream (e.g., RTSP, HTTP MJPEG, or similar formats).\n"
-                                    "- For best performance, use a resolution of up to 1280x720 and a frame rate of up to 15fps (higher resolutions will decrease the performance of the kittyflap drastically).\n"
-                                    "- The resolution can often be configured in the settings of your IP camera. Some cameras also provide different URLs for different resolutions.\n"
-                                    "\n"
-                                    "If you experience connection issues or interruptions, please check the WLAN signal strength and the network configuration of both devices."
+                                    "- Both Kittyflap and the IP camera need a stable WLAN (Ethernet recommended for camera).\n"
+                                    "- Use a **static IP** for the camera.\n"
+                                    "- Ensure a compatible stream (RTSP / HTTP MJPEG / RTMP / UDP / TCP).\n"
+                                    "- Recommended max resolution 1280x720 @ ≤15fps (higher reduces performance).\n"
+                                    "- Configure resolution in camera settings or use alternate stream URLs.\n\n"
+                                    "If you experience interruptions, check WLAN signal and network configuration."
                                 )
                             ),
-                            style_="color: grey;"
                         ),
                         ui.row(
                             ui.column(
@@ -3382,7 +3551,9 @@ def server(input, output, session):
                         ),
                         ui.column(
                             12,
-                            ui.markdown(
+                            info_toggle(
+                                "ip_camera_examples",
+                                _("Show stream URL examples"),
                                 _("**Examples of supported stream URLs:**")
                                 + "\n"
                                 + "- `rtsp://user:pass@192.168.1.100:554/stream1`  _(RTSP)_"
@@ -3396,7 +3567,6 @@ def server(input, output, session):
                                 + "- `tcp://192.168.1.103:8554`  _(TCP stream)_"
                             ),
                             id="ip_camera_warning",
-                            style_="color: grey;"
                         ),
                         full_screen=False,
                         class_="generic-container align-left",
@@ -3412,133 +3582,147 @@ def server(input, output, session):
                     ui.div(
                         ui.br(),
                         ui.row(
-                            ui.column(4, ui.input_slider("sldMouseThreshold", _("Mouse detection threshold"), min=0, max=100, value=CONFIG['MOUSE_THRESHOLD'])),
-                            ui.column(
-                                8,
-                                ui.markdown(
-                                    _("Kittyhack decides based on this value, if a picture contains a mouse.") + "  \n" +
-                                    _("If the detected mouse probability of a picture exceeds this value, the flap will remain closed.") + "  \n" +
-                                    "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['mouse_threshold']) + ")*" + "  \n\n" +
-                                    "**" + _("Note: The minimum of this value is always coupled to the configured value of 'Minimum detection threshold' below.") + "**"
-                                ), style_="color: grey;"
-                            ),
+                            ui.column(12, ui.input_slider("sldMinThreshold", _("Minimum detection threshold"), min=0, max=80, width="90%", value=CONFIG['MIN_THRESHOLD'])),
+                            ui.column(12, info_toggle(
+                                "min_threshold_info",
+                                _("Explain minimum detection threshold"),
+                                _(
+                                    "Used to decide if an outside motion event is logged. "
+                                    "At least one picture must exceed this probability or the "
+                                    "event is discarded.\n*(Default value: {})*"
+                                ).format(DEFAULT_CONFIG['Settings']['min_threshold'])
+                            )),
+                        ),
+                        ui.br(),
+                        ui.row(
+                            ui.column(12, ui.input_slider("sldMouseThreshold", _("Mouse detection threshold"), min=0, max=100, width="90%", value=CONFIG['MOUSE_THRESHOLD'])),
+                            ui.column(12, info_toggle(
+                                "mouse_threshold_info",
+                                _("Explain mouse threshold"),
+                                _(
+                                    "Kittyhack decides if a picture contains a mouse based on this value. "
+                                    "If probability exceeds it, flap stays closed.\n"
+                                    "*(Default value: {})*\n\n"
+                                    "**Note:** Minimum is coupled to 'Minimum detection threshold'."
+                                ).format(DEFAULT_CONFIG['Settings']['mouse_threshold'])
+                            )),
+                        ),
+                        ui.br(),
+                        ui.row(
+                            ui.column(12, ui.input_slider("sldCatThreshold", _("Cat detection threshold"), min=0, max=100, width="90%", value=CONFIG['CAT_THRESHOLD'])),
+                            ui.column(12, info_toggle(
+                                "cat_threshold_info",
+                                _("Explain cat threshold"),
+                                _("Kittyhack decides based on this value, if a picture contains your cat.") + "  \n" + 
+                                _("If the detected probability of your cat exceeds this value in a picture, and the setting `Use camera for cat detection` is enabled, the flap will be opened.") + "  \n" +
+                                "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['cat_threshold']) + ")*" + "  \n\n" +
+                                "**" + _("Note: The minimum of this value is always coupled to the configured value of 'Minimum detection threshold' above.") + "**"
+                            )),
                         ),
                         ui.hr(),
                         ui.row(
-                            ui.column(4, ui.input_slider("sldMinThreshold", _("Minimum detection threshold"), min=0, max=80, value=CONFIG['MIN_THRESHOLD'])),
-                            ui.column(
-                                8,
-                                ui.markdown(
-                                    _("This threshold will be used for the decision, if an motion event on the outside shall be logged or not:") + "\n\n" +
-                                    _("The detected probability of objects must exceed this threshold at least in one picture of a motion event. Otherwise the pictures will be discarded and the event will not be logged.") + "\n\n" +
-                                    "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['min_threshold']) + ")*"
-                                ), style_="color: grey;"
-                            )
+                            ui.column(12, ui.input_numeric("numMinPicturesToAnalyze", _("Minimum pictures before unlock decision"), CONFIG['MIN_PICTURES_TO_ANALYZE'], min=1)),
+                            ui.column(12, info_toggle(
+                                "min_pics_info",
+                                _("Explain minimum pictures"),
+                                _("Minimum number of pictures that must be analyzed before the flap may unlock.") + "  \n" +
+                                _("Unlock is only possible if none of the first N pictures reaches the mouse detection threshold.") + "  \n" +
+                                _("If any of these initial pictures reaches or exceeds the mouse_threshold, the flap stays locked.") + "  \n\n" +
+                                _("After unlocking: If a later picture (after the first N) reaches the mouse_threshold, the flap is locked again.") + "  \n\n" +
+                                _("Summary:") + "  \n" +
+                                "- " + _("Analyze at least N pictures (this setting)") + "  \n" +
+                                "- " + _("Unlock only if no prey detected ≥ mouse_threshold in those N") + "  \n" +
+                                "- " + _("Lock again if a subsequent picture shows prey ≥ mouse_threshold") + "  \n\n" +
+                                "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['min_pictures_to_analyze']) + ")*"
+                            )),
                         ),
                         ui.hr(),
                         ui.row(
-                            ui.column(4, ui.input_numeric("numMinPicturesToAnalyze", _("Minimum pictures before unlock decision"), CONFIG['MIN_PICTURES_TO_ANALYZE'], min=1)),
-                            ui.column(
-                                8,
-                                ui.markdown(
-                                    _("Number of pictures that must be analyzed before deciding to unlock the flap. If a picture exceeds the mouse threshold, the flap will remain closed.") + "  \n" +
-                                    _("If a picture after this minimum number of pictures exceeds the mouse threshold, the flap will be closed again.") + "  \n" +
-                                    "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['min_pictures_to_analyze']) + ")*"
-                                ), style_="color: grey;"
-                            ),
-                        ),
-                        ui.hr(),
-                        ui.row(
-                            ui.column(4, ui.input_slider("sldLockAfterPreyDetect", _("Lock duration after prey detection (in s)"), min=30, max=1800, step=5, value=CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'])),
-                            ui.column(8, ui.markdown(_("The flap will remain closed for this time after a prey detection.")), style_="color: grey;")
+                            ui.column(12, ui.input_slider("sldLockAfterPreyDetect", _("Lock duration after prey detection (in s)"), min=30, max=1800, step=5, width="90%", value=CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'])),
+                            ui.column(12, info_toggle(
+                                "lock_after_prey_info",
+                                _("Explain lock duration"),
+                                _("The flap will remain closed for this time after a prey detection.")
+                            )),
                         ),
                         ui.hr(),
                         ui.row(
                             ui.column(12, ui.input_switch("btnDetectPrey", _("Detect prey"), CONFIG['MOUSE_CHECK_ENABLED'])),
-                            ui.column(
-                                12,
-                                ui.markdown(
-                                    _("If the prey detection is enabled and the mouse detection threshold is exceeded in a picture, the flap will remain closed.") + "\n\n" +
-                                    _("**NOTE:** This is the global setting. You can also configure prey detection individually per cat in the `MANAGE CATS` section.")
-                                ), style_="color: grey;"
-                            ),
-                        ),
-                        ui.hr(),
-                        ui.row(
-                            ui.column(4, ui.input_select(
-                                "selectedModel",
-                                _("Version of the object detection model"),
-                                combined_models,
-                                selected=(
-                                    f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}"
-                                    if f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}" in combined_models
-                                    else (
-                                        f"yolo::{CONFIG['YOLO_MODEL']}"
-                                        if f"yolo::{CONFIG['YOLO_MODEL']}" in combined_models
-                                        else next(iter(combined_models), "")
-                                    )
+                            ui.column(12, info_toggle(
+                                "detect_prey_info",
+                                _("Explain prey detection"),
+                                _(
+                                    "If the prey detection is enabled and the mouse detection threshold "
+                                    "is exceeded in a picture, the flap will remain closed.\n\n"
+                                    "**NOTE:** This is the global setting. It can also be configured "
+                                    "per cat in the `MANAGE CATS` section."
                                 )
                             )),
-                            ui.column(
-                                8,
-                                ui.markdown(
-                                    "- **" + _("Original Kittyflap Model v1:") + "** " + _("Always tries to detect objects `Mouse` and `No Mouse`, even if there is no such object in the picture (this was the default in Kittyhack v1.4.0 and lower)") + "\n\n" +
-                                    "- **" + _("Original Kittyflap Model v2:") + "** " + _("Only tries to detect objects `Mouse` and `No Mouse` if there is a cat in the picture.") + "\n\n" +
-                                    "- **" + _("Custom Models:") + "** " + _("These are your own trained models, which you have created in the `AI TRAINING` section.") + "\n\n" +
-                                    "> " + _("If you change this setting, the Kittyflap must be restarted to apply the new model version.")
-                                ), style_="color: grey;"
-                            ),
                         ),
                         ui.hr(),
                         ui.row(
-                            ui.column(12, ui.input_switch("btnUseCameraForCatDetection", _("Use camera for cat detection"), CONFIG['USE_CAMERA_FOR_CAT_DETECTION'])),
                             ui.column(
-                                12,
-                                ui.markdown(
-                                    _("If this setting is enabled, the camera will also be used for cat detection (in addition to the RFID reader).") + "  \n\n" +
-                                    _("You can configure the required threshold for the cat detection with the slider `Cat detection threshold` below.") + " " +
-                                    _("If the detection is successful, the inside direction will be opened.") + "\n\n" +
-                                    _("**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models.") + "\n\n" +
-                                    _("This feature depends heavily on the quality of your model and sufficient lighting conditions.") + " " +
-                                    _("If one or both are not good, the detection may either fail or other - similiar looking cats may be detected as your cat.")
-                                ), style_="color: grey;"
+                                12, 
+                                ui.input_select(
+                                    "selectedModel",
+                                    _("Version of the object detection model"),
+                                    combined_models,
+                                    selected=(
+                                        f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}"
+                                        if f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}" in combined_models
+                                        else (
+                                            f"yolo::{CONFIG['YOLO_MODEL']}"
+                                            if f"yolo::{CONFIG['YOLO_MODEL']}" in combined_models
+                                            else next(iter(combined_models), "")
+                                        )
+                                    ),
+                                    width="90%",
+                                )
                             ),
+                            ui.column(12, info_toggle(
+                                "model_versions_info",
+                                _("Show model version explanation"),
+                                "- **" + _("Original Kittyflap Model v1:") + "** " + _("Always tries to detect objects `Mouse` and `No Mouse`, even if there is no such object in the picture.") + "\n\n" +
+                                "- **" + _("Original Kittyflap Model v2:") + "** " + _("Only tries to detect objects `Mouse` and `No Mouse` if there is a cat in the picture.") + "\n\n" +
+                                "- **" + _("Custom Models:") + "** " + _("These are your own trained models, which you have created in the `AI TRAINING` section.") + "\n\n" +
+                                "> " + _("If you change this setting, the Kittyflap must be restarted to apply the new model version.")
+                            )),
                         ),
                         ui.hr(),
                         ui.row(
-                            ui.column(12, ui.input_switch("btnUseCameraForMotionDetection", _("Use camera for motion detection"), CONFIG['USE_CAMERA_FOR_MOTION_DETECTION'])),
-                            ui.column(
-                                12,
-                                ui.markdown(
-                                    _("If this setting is enabled, instead of the outside PIR sensor, the camera will be used for motion detection.") + "  \n\n" +
-                                    _("**How it works:**") + "  \n" +
-                                    _("- In regular operation, Kittyhack waits for a trigger from the outside PIR sensor before starting camera analysis") + "  \n" + 
-                                    _("- With this feature enabled, the PIR sensor is disabled and the camera continuously analyzes images") + "  \n" + 
-                                    _("- When a cat is detected in the camera feed, it's treated as equivalent to a motion detection outside") + "  \n\n" +
-                                    _("You can configure the required threshold for the cat detection with the slider `Cat detection threshold` below.") + "  \n\n" +
-                                    _("This may be very helpful in areas where environmental factors (moving trees, people passing by) permanently cause false PIR triggers.") + "  \n\n" +
-                                    _("**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models.") + "\n\n" +
-                                    _("This feature depends heavily on the quality of your model and sufficient lighting conditions.") + " " +
-                                    _("If one or both are not good, you may experience false triggers or your cat may not be detected correctly.")
-                                ), style_="color: grey;"
-                            ),
+                            ui.column(12, ui.input_switch("btnUseCameraForCatDetection", _("Use camera for cat detection"), CONFIG['USE_CAMERA_FOR_CAT_DETECTION'], width="90%")),
+                            ui.column(12, info_toggle(
+                                "camera_cat_detection_info",
+                                _("Explain camera cat detection"),
+                                _("If this setting is enabled, the camera will also be used for cat detection (in addition to the RFID reader).") + "  \n\n" +
+                                _("You can configure the required threshold for the cat detection with the slider `Cat detection threshold` below.") + " " +
+                                _("If the detection is successful, the inside direction will be opened.") + "\n\n" +
+                                _("**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models.") + "\n\n" +
+                                _("This feature depends heavily on the quality of your model and sufficient lighting conditions.") + " " +
+                                _("If one or both are not good, the detection may either fail or other - similiar looking cats may be detected as your cat.")
+                            )),
                         ),
                         ui.hr(),
                         ui.row(
-                            ui.column(4, ui.input_slider("sldCatThreshold", _("Cat detection threshold"), min=0, max=100, value=CONFIG['CAT_THRESHOLD'])),
-                            ui.column(
-                                8,
-                                ui.markdown(
-                                    _("Kittyhack decides based on this value, if a picture contains your cat.") + "  \n" + 
-                                    _("If the detected probability of your cat exceeds this value in a picture, and the setting `Use camera for cat detection` is enabled, the flap will be opened.") + "  \n" +
-                                    "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['cat_threshold']) + ")*" + "  \n\n" +
-                                    "**" + _("Note: The minimum of this value is always coupled to the configured value of 'Minimum detection threshold' above.") + "**"
-                                ), style_="color: grey;"
-                            ),
+                            ui.column(12, ui.input_switch("btnUseCameraForMotionDetection", _("Use camera for motion detection"), CONFIG['USE_CAMERA_FOR_MOTION_DETECTION'], width="90%")),
+                            ui.column(12, info_toggle(
+                                "camera_motion_detection_info",
+                                _("Explain camera motion detection"),
+                                _("Disables the outside PIR sensor and uses the camera for motion detection instead.") + "  \n\n" +
+                                _("**How it works:**") + "  \n" +
+                                _("- In regular operation, Kittyhack waits for a trigger from the outside PIR sensor before starting camera analysis") + "  \n" + 
+                                _("- With this feature enabled, the PIR sensor is disabled and the camera continuously analyzes images") + "  \n" + 
+                                _("- When a cat is detected in the camera feed, it's treated as equivalent to a motion detection outside") + "  \n\n" +
+                                _("You can configure the required threshold for the cat detection with the slider `Cat detection threshold` below.") + "  \n\n" +
+                                _("This may be very helpful in areas where environmental factors (moving trees, people passing by) permanently cause false PIR triggers.") + "  \n\n" +
+                                _("**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models.") + "\n\n" +
+                                _("This feature depends heavily on the quality of your model and sufficient lighting conditions.") + " " +
+                                _("If one or both are not good, you may experience false triggers or your cat may not be detected correctly.")
+                            )),
                         ),
                         ui.hr(),
                         ui.row(
-                            ui.column(4, ui.input_select(
+                            ui.column(12, ui.input_select(
                                 "txtAllowedToEnter",
                                 _("Open inside direction for:"),
                                 {
@@ -3549,21 +3733,17 @@ def server(input, output, session):
                                     AllowedToEnter.CONFIGURE_PER_CAT.value: _("Individual configuration per cat (Beta)"),
                                 },
                                 selected=str(CONFIG['ALLOWED_TO_ENTER'].value),
+                                width="90%",
                             )),
-                            ui.column(
-                                8,
-                                ui.div(
-                                    ui.markdown(
-                                        _("This setting defines which cats are allowed to enter the house.") + "  \n\n" +
-                                        _("- **All cats:** *Every* detected motion on the outside will unlock the flap.") + "  \n" +
-                                        _("- **All cats with a RFID chip:** Every successful RFID detection will unlock the flap.") + "  \n" +
-                                        _("- **Only registered cats:** Only the cats that are registered in the database will unlock the flap (either by RFID or by camera detection, if enabled).") + "  \n" +
-                                        _("- **Individual configuration per cat:** Configure per cat if it is allowed to enter (in the `MANAGE CATS` section).") + "  \n" +
-                                        _("- **No cats:** The inside direction will never be opened.")
-                                    ),
-                                    style_="color: grey;"
-                                )
-                            ),
+                            ui.column(12, info_toggle(
+                                "allowed_to_enter_info",
+                                _("Explain entrance modes"),
+                                _("- **All cats:** *Every* detected motion on the outside will unlock the flap.") + "  \n" +
+                                _("- **All cats with a RFID chip:** Every successful RFID detection will unlock the flap.") + "  \n" +
+                                _("- **Only registered cats:** Only the cats that are registered in the database will unlock the flap (either by RFID or by camera detection, if enabled).") + "  \n" +
+                                _("- **Individual configuration per cat:** Configure per cat if it is allowed to enter (in the `MANAGE CATS` section).") + "  \n" +
+                                _("- **No cats:** The inside direction will never be opened.")
+                            )),
                         ),
                         ui.row(
                             ui.column(
@@ -3620,7 +3800,7 @@ def server(input, output, session):
                         ),
                         ui.hr(),
                         ui.row(
-                            ui.column(4, ui.input_select(
+                            ui.column(12, ui.input_select(
                                 "btnAllowedToExit",
                                 _("Outside direction:"),
                                 {
@@ -3628,21 +3808,17 @@ def server(input, output, session):
                                     'deny': _("Do not allow exit"),
                                     'configure_per_cat': _("Individual configuration per cat (Beta)"),
                                 },
-                                selected=str(CONFIG['ALLOWED_TO_EXIT'].value)
+                                selected=str(CONFIG['ALLOWED_TO_EXIT'].value),
+                                width="90%",
                             )),
-                            ui.column(
-                                8,
-                                ui.div(
-                                    ui.markdown(
-                                        _("This setting defines the behavior of the outside direction.") + "  \n\n" +
-                                        _("- **Allow exit:** The outside direction is always possible. You can also configure time ranges below to restrict the exit times.") + "  \n" +
-                                        _("- **Do not allow exit:** The outside direction is always closed.") + "  \n" +
-                                        _("- **Individual configuration per cat:** Configure per cat if it is allowed to exit (in the `MANAGE CATS` section). The time ranges below are applied in addition.")+ "  \n  " +
-                                        _("**NOTE:** All your cats must be registered **with a RFID chip** to use this mode. Cats without RFID can not go outside in this mode!")
-                                    ),
-                                    style_="color: grey;"
-                                )
-                            ),
+                            ui.column(12, info_toggle(
+                                "allowed_to_exit_info",
+                                _("Explain exit modes"),
+                                _("- **Allow exit:** The outside direction is always possible. You can also configure time ranges below to restrict the exit times.") + "  \n" +
+                                _("- **Do not allow exit:** The outside direction is always closed.") + "  \n" +
+                                _("- **Individual configuration per cat:** Configure per cat if it is allowed to exit (in the `MANAGE CATS` section). The time ranges below are applied in addition.")+ "  \n  " +
+                                _("**NOTE:** All your cats must be registered **with a RFID chip** to use this mode. Cats without RFID can not go outside in this mode!")
+                            )),
                         ),
                         ui.row(
                             ui.column(
@@ -3755,10 +3931,20 @@ def server(input, output, session):
                             ui.row(
                                 ui.column(
                                     12, 
-                                    ui.markdown(
-                                        _("You can specify here up to 3 time ranges, in which your cats are **allowed to exit**.") + "  \n" +
-                                        _("If no time range is activated, the cats are allowed to exit at any time.") + "  \n" +
-                                        _("Please set the time in 24h format with `:` (e.g. `13:00`)")
+                                    info_toggle(
+                                        "exit_time_ranges",
+                                        _("Show exit time range rules"),
+                                        _("You can specify up to 3 time ranges, in which your cats are allowed to exit.") + "  \n\n" +
+                                        _("Rules:") + "  \n" +
+                                        "- " + _("The time ranges are global and apply to all cats.") + "  \n" +
+                                        "- " + _("If no range is enabled, cats may exit at any time (subject to other settings).") + "  \n" +
+                                        "- " + _("If any range is enabled, cats may exit only during the configured time windows.") + "  \n" +
+                                        "- " + _("Outside these windows, no cat may exit, even if the per‑cat setting in 'Manage Cats' allows exit.") + "  \n" +
+                                        "- " + _("Per‑cat settings are an additional restriction when 'Outside direction' is set to 'Individual configuration per cat'.") + "  \n" +
+                                        "  - " + _("A cat marked 'Allow exit' may exit only during the global time windows.") + "  \n" +
+                                        "  - " + _("A cat marked 'Do not allow exit' can never exit.") + "  \n\n" +
+                                        _("Enter times in 24h format HH:MM (e.g., 13:00).") + "  \n" +
+                                        _("Example: If ranges are 10:00–18:00 and it is 20:00, no cat may exit, even if that cat is allowed per‑cat in 'Manage Cats'.")
                                     )
                                 )
                             ),
@@ -3786,14 +3972,28 @@ def server(input, output, session):
                         # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
                         #ui.column(12, ui.input_slider("sldPirOutsideThreshold", _("Sensitivity of the motion sensor on the outside"), min=0.1, max=6, step=0.1, value=CONFIG['PIR_OUTSIDE_THRESHOLD'])),
                         ui.row(
-                            ui.column(4, ui.input_slider("sldPirInsideThreshold", _("Reaction speed (in s) of the motion sensor on the inside"), min=0.1, max=6, step=0.1, value=CONFIG['PIR_INSIDE_THRESHOLD'])),
                             ui.column(
-                                8,
-                                ui.markdown(
-                                    _("A low value means a fast reaction, but also a higher probability of false alarms. A high value means a slow reaction, but also a lower probability of false alarms.") + "  \n" +
+                                12,
+                                ui.input_slider(
+                                    "sldPirInsideThreshold",
+                                    _("Reaction speed (in s) of the motion sensor on the inside"),
+                                    min=0.1,
+                                    max=6,
+                                    step=0.1,
+                                    value=CONFIG['PIR_INSIDE_THRESHOLD'],
+                                    width="90%",
+                                )
+                            ),
+                            ui.column(
+                                12,
+                                info_toggle(
+                                    "pir_inside_threshold_info",
+                                    _("Explain inside PIR reaction speed"),
+                                    _("A low value means a fast reaction, but also a higher probability of false alarms. "
+                                      "A high value means a slow reaction, but also a lower probability of false alarms.") + "  \n" +
                                     _("The default setting should be a good value for most cases.") + "  \n" +
                                     "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['pir_inside_threshold']) + ")*"
-                                ), style_="color: grey;"
+                                )
                             )
                         ),
                         full_screen=False,

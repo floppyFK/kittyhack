@@ -553,3 +553,38 @@ select::-ms-expand {
   color:#555;
   margin-top:4px;
 }
+
+.cat-settings-container {
+    border: 1px solid #ddd;
+    padding: 14px 18px;
+    border-radius: 10px;
+    background: #f9f9f9;
+    margin-top: 6px;
+    margin-bottom: 14px;
+}
+
+.rfid-status {
+    padding:6px 10px;
+    border-radius:6px;
+    font-size:0.9rem;
+    line-height:1.3;
+}
+.rfid-valid {
+    background:#e6f9e6;
+    border:1px solid #28a745;
+    color:#1e7a34;
+    font-weight:600;
+    margin-top: 8px;
+}
+.rfid-invalid {
+    background:#fff8e1;
+    border:1px solid #ffc107;
+    color:#8a6d00;
+    margin-top: 8px;
+}
+.rfid-empty {
+    background:#eef2f7;
+    border:1px solid #b5c1d1;
+    color:#516175;
+    margin-top: 8px;
+}

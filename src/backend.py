@@ -230,6 +230,9 @@ def cleanup_mqtt():
     mqtt_client = None
     mqtt_publisher = None
 
+# Capture startup state (does not change at runtime)
+DISABLE_RFID_READER_STARTUP = CONFIG.get('DISABLE_RFID_READER', False)
+
 def backend_main(simulate_kittyflap = False):
 
     global manual_door_override
@@ -286,7 +289,10 @@ def backend_main(simulate_kittyflap = False):
     # Initialize PIRs, Magnets and RFID
     pir = Pir(simulate_kittyflap=simulate_kittyflap)
     pir.init()
-    rfid = Rfid(simulate_kittyflap=simulate_kittyflap)
+    if DISABLE_RFID_READER_STARTUP:
+        rfid = Rfid(simulate_kittyflap=True)
+    else:
+        rfid = Rfid(simulate_kittyflap=simulate_kittyflap)
     magnets = Magnets(simulate_kittyflap=simulate_kittyflap)
     magnets.init()
     

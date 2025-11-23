@@ -559,12 +559,12 @@ class Rfid:
             self.set_run_state(RfidRunState.running)
 
             if self.simulate_kittyflap:
-                tag_id = "BAADF00DBAADFEED"
+                tag_id = None
                 cycle = 0
                 while read_cycles == 0 or cycle < read_cycles:
                     delay = random.uniform(0.5, 15.0)
                     tm.sleep(delay)
-                    logging.info(f"[RFID] Simulation: Tag ID: {tag_id} (read cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'})")
+                    logging.debug(f"[RFID] Simulation: Tag ID: {tag_id} (read cycle {cycle+1}/{read_cycles if read_cycles != 0 else '∞'})")
                     timestamp = tm.time()
                     self.set_tag(tag_id, timestamp)
                     cycle += 1

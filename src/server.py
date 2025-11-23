@@ -4333,6 +4333,27 @@ def server(input, output, session):
                                 style_="color: grey;"
                             ),
                         ),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.input_switch(
+                                    "btnDisableRfidReader",
+                                    _("Disable RFID reader"),
+                                    CONFIG['DISABLE_RFID_READER']
+                                ),
+                            ),
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _("If this option is enabled, the RFID reader will NOT be powered when motion is detected. "
+                                      "Use only for troubleshooting hardware defects or undervoltage reboots. "
+                                      "You must rely on 'Open inside direction for: All cats' or camera-based cat detection instead.") +
+                                    "\n\n> " + _("Default: Disabled")
+                                ),
+                                style_="color: grey;"
+                            ),
+                        ),
                         ui.br(),
                         full_screen=False,
                         class_="generic-container align-left",
@@ -4462,6 +4483,7 @@ def server(input, output, session):
 
         # override the variable with the data from the configuration page
         language_changed = CONFIG['LANGUAGE'] != input.txtLanguage()
+        rfid_state_changed = CONFIG['DISABLE_RFID_READER'] != input.btnDisableRfidReader()
         if (input.selectedModel().startswith("tflite::") and
             input.selectedModel() != f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}"):
             selected_model_changed = True
@@ -4528,6 +4550,7 @@ def server(input, output, session):
         CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL'] = float(input.mqtt_image_publish_interval())
         CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE'] = input.btnRestartIpCameraStreamOnFailure()
         CONFIG['WLAN_WATCHDOG_ENABLED'] = input.btnWlanWatchdogEnabled()
+        CONFIG['DISABLE_RFID_READER'] = input.btnDisableRfidReader()
 
         # Update the log level
         configure_logging(input.txtLoglevel())
@@ -4562,7 +4585,8 @@ def server(input, output, session):
             if (
                 selected_model_changed or
                 hostname_changed or
-                img_processing_cores_changed
+                img_processing_cores_changed or
+                rfid_state_changed
             ):
                 ui.modal_remove()
                 ui.modal_show(

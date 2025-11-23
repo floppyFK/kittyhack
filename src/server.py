@@ -4559,12 +4559,24 @@ def server(input, output, session):
                 ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the new language."), duration=30, type="message")
                 update_mqtt_language()
 
-            if selected_model_changed:
-                ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the new detection model."), duration=30, type="message")
+            if (
+                selected_model_changed or
+                hostname_changed or
+                img_processing_cores_changed
+            ):
+                ui.modal_remove()
+                ui.modal_show(
+                    ui.modal(
+                        _("A restart is required to apply the changes. Do you want to reboot the kittyflap now?"),
+                        title=_("Restart required"),
+                        easy_close=True,
+                        footer=ui.div(
+                            ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
+                            ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                        )
+                    )
+                )
             
-            if img_processing_cores_changed or hostname_changed:
-                ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the changed configuration."), duration=30, type="message")
-
             if mqtt_settings_changed:
                 logging.info("MQTT settings changed. Restarting MQTT client...")
                 success = restart_mqtt()

@@ -14,7 +14,7 @@ import shutil
 import json
 from datetime import datetime, time, timezone
 from src.baseconfig import CONFIG, update_single_config_parameter
-from typing import TypedDict, List
+from typing import TypedDict, List, Iterable
 from src.helper import (
     get_utc_date_string,
     process_image,
@@ -25,6 +25,53 @@ from src.helper import (
     Result
     )
 from src.camera import image_buffer, DetectedObject
+
+# -----------------------------------------------------------------------------
+# Filesystem storage for original images and thumbnails (v2.4+)
+# New events will no longer store 'original_image' and 'thumbnail' as BLOBs.
+# Instead they are written as JPEG files to the filesystem. Filenames are
+# <id>.jpg where <id> is the autoincrement primary key of the event row.
+# Backward compatibility: if a file is missing we fall back to the legacy
+# BLOBs stored in the database (for older rows) when reading.
+# -----------------------------------------------------------------------------
+ORIGINAL_IMAGE_DIR = "/root/pictures/original_images"
+THUMBNAIL_DIR = "/root/pictures/thumbnails"
+os.makedirs(ORIGINAL_IMAGE_DIR, exist_ok=True)
+os.makedirs(THUMBNAIL_DIR, exist_ok=True)
+
+def _original_image_path(image_id: int) -> str:
+    return os.path.join(ORIGINAL_IMAGE_DIR, f"{image_id}.jpg")
+
+def _thumbnail_image_path(image_id: int) -> str:
+    return os.path.join(THUMBNAIL_DIR, f"{image_id}.jpg")
+
+def _remove_event_image_files(ids: Iterable[int]) -> tuple[int, int]:
+    """
+    Remove filesystem-stored original and thumbnail JPGs for the given event IDs.
+    Returns a tuple (removed_originals, removed_thumbnails).
+    """
+    removed_orig = 0
+    removed_thumb = 0
+    for pid in set(int(i) for i in ids):
+        # Original
+        try:
+            orig_path = _original_image_path(pid)
+            if os.path.exists(orig_path):
+                os.remove(orig_path)
+                removed_orig += 1
+                logging.debug(f"[DATABASE] Removed original image file '{orig_path}'.")
+        except Exception as e:
+            logging.warning(f"[DATABASE] Failed removing original image file for ID {pid}: {e}")
+        # Thumbnail
+        try:
+            thumb_path = _thumbnail_image_path(pid)
+            if os.path.exists(thumb_path):
+                os.remove(thumb_path)
+                removed_thumb += 1
+                logging.debug(f"[DATABASE] Removed thumbnail file '{thumb_path}'.")
+        except Exception as e:
+            logging.warning(f"[DATABASE] Failed removing thumbnail file for ID {pid}: {e}")
+    return removed_orig, removed_thumb
 
 # database actions
 class db_action(Enum):
@@ -246,7 +293,21 @@ def db_get_photos(database: str,
 
     logging.debug(f"[DATABASE] query db_get_photos: return_data={return_data}, date_start={date_start}, date_end={date_end}, cats_only={cats_only}, mouse_only={mouse_only}, mouse_probability={mouse_probability}, page_index={page_index}, elements_per_page={elements_per_page}, ignore_deleted={ignore_deleted}")
 
-    return read_df_from_database(database, stmt)
+    df = read_df_from_database(database, stmt)
+
+    # Inject filesystem stored original images (backward compatibility)
+    if not df.empty and 'original_image' in df.columns:
+        for idx, row in df.iterrows():
+            if row.get('original_image') is None:
+                img_path = _original_image_path(int(row['id'])) if 'id' in row else None
+                if img_path and os.path.exists(img_path):
+                    try:
+                        with open(img_path, 'rb') as f:
+                            df.at[idx, 'original_image'] = f.read()
+                    except Exception as e:
+                        logging.warning(f"[DATABASE] Failed to read original image file '{img_path}': {e}")
+
+    return df
 
 def db_get_photos_by_block_id(database: str, block_id: int, return_data: ReturnDataPhotosDB = ReturnDataPhotosDB.all):
     """
@@ -270,7 +331,30 @@ def db_get_photos_by_block_id(database: str, block_id: int, return_data: ReturnD
         columns = "id"
         
     stmt = f"SELECT {columns} FROM events WHERE block_id = {block_id}"
-    return read_df_from_database(database, stmt)
+    df = read_df_from_database(database, stmt)
+
+    if not df.empty and 'original_image' in df.columns:
+        for idx, row in df.iterrows():
+            if row.get('original_image') is None:
+                img_path = _original_image_path(int(row['id'])) if 'id' in row else None
+                if img_path and os.path.exists(img_path):
+                    try:
+                        with open(img_path, 'rb') as f:
+                            df.at[idx, 'original_image'] = f.read()
+                    except Exception as e:
+                        logging.warning(f"[DATABASE] Failed to read original image file '{img_path}': {e}")
+
+    if not df.empty and 'thumbnail' in df.columns:
+        for idx, row in df.iterrows():
+            if row.get('thumbnail') is None:
+                thumb_path = _thumbnail_image_path(int(row['id'])) if 'id' in row else None
+                if thumb_path and os.path.exists(thumb_path):
+                    try:
+                        with open(thumb_path, 'rb') as f:
+                            df.at[idx, 'thumbnail'] = f.read()
+                    except Exception as e:
+                        logging.warning(f"[DATABASE] Failed to read thumbnail file '{thumb_path}': {e}")
+    return df
 
 def get_ids_without_thumbnail(database: str):
     """
@@ -281,52 +365,71 @@ def get_ids_without_thumbnail(database: str):
     """
     stmt = "SELECT id FROM events WHERE thumbnail IS NULL AND deleted != 1"
     df = read_df_from_database(database, stmt)
-    return df['id'].tolist() if not df.empty else []
+    if df.empty:
+        return []
+    result_ids = []
+    for __, row in df.iterrows():
+        img_id = int(row['id'])
+        thumb_path = _thumbnail_image_path(img_id)
+        # Only report IDs where both DB thumbnail is NULL and no file exists
+        if not os.path.exists(thumb_path):
+            result_ids.append(img_id)
+    return result_ids
 
 def get_thubmnail_by_id(database: str, photo_id: int):
     """
     This function reads a specific thumbnail image based on the ID from the source database.
     If no thumbnail exists, it creates one from the original image.
     """
+    thumb_path = _thumbnail_image_path(photo_id)
+    if os.path.exists(thumb_path):
+        try:
+            with open(thumb_path, 'rb') as f:
+                return f.read()
+        except Exception as e:
+            logging.warning(f"[DATABASE] Failed to read thumbnail file '{thumb_path}': {e}")
+
+    # Legacy DB fallback / or need to create new thumbnail
     stmt = f"SELECT thumbnail, original_image FROM events WHERE id = {photo_id}"
     df = read_df_from_database(database, stmt)
-    
     if df.empty:
         logging.error(f"[DATABASE] Photo with ID {photo_id} not found")
         return None
-        
-    # Check if thumbnail exists
-    if df.iloc[0]['thumbnail'] is not None:
-        return df.iloc[0]['thumbnail']
-    
-    # If no thumbnail exists, create one from the original image
-    original_image = df.iloc[0]['original_image']
+
+    # If legacy thumbnail blob exists, write it to file (for migration) and return
+    legacy_thumb = df.iloc[0]['thumbnail']
+    if legacy_thumb is not None:
+        try:
+            with open(thumb_path, 'wb') as f:
+                f.write(legacy_thumb)
+        except Exception as e:
+            logging.warning(f"[DATABASE] Failed to persist legacy thumbnail for ID {photo_id}: {e}")
+        return legacy_thumb
+
+    # Determine original image source: file preferred, fallback to DB blob
+    orig_path = _original_image_path(photo_id)
+    original_image = None
+    if os.path.exists(orig_path):
+        try:
+            with open(orig_path, 'rb') as f:
+                original_image = f.read()
+        except Exception as e:
+            logging.warning(f"[DATABASE] Failed to read original image file '{orig_path}': {e}")
+    else:
+        original_image = df.iloc[0]['original_image']
+
     if original_image is None:
         logging.error(f"[DATABASE] Original image not found for photo ID {photo_id}")
         return None
-        
+
     try:
-        # Create thumbnail
         thumbnail = process_image(original_image, 640, 480, 50)
-        
-        # Store thumbnail in database
-        result = lock_database()
-        if not result.success:
-            logging.error(f"[DATABASE] Failed to acquire lock to update thumbnail: {result.message}")
-            return thumbnail
-            
+        # Persist thumbnail to filesystem (no longer stored as BLOB for new rows)
         try:
-            conn = sqlite3.connect(database, timeout=30)
-            cursor = conn.cursor()
-            cursor.execute("UPDATE events SET thumbnail = ? WHERE id = ?", (thumbnail, photo_id))
-            conn.commit()
-            conn.close()
-            logging.debug(f"[DATABASE] Created and stored thumbnail for photo ID {photo_id}")
+            with open(thumb_path, 'wb') as f:
+                f.write(thumbnail)
         except Exception as e:
-            logging.error(f"[DATABASE] Failed to store thumbnail in database: {e}")
-        finally:
-            release_database()
-            
+            logging.warning(f"[DATABASE] Failed to write thumbnail file '{thumb_path}': {e}")
         return thumbnail
     except Exception as e:
         logging.error(f"[DATABASE] Failed to create thumbnail from original image: {e}")
@@ -669,26 +772,45 @@ def read_photo_by_id(database: str, photo_id: int) -> pd.DataFrame:
     """
     columns = "id, block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, own_cat_probability, rfid, event_text"
     stmt = f"SELECT {columns} FROM events WHERE id = {photo_id}"
-    return read_df_from_database(database, stmt)
+    df = read_df_from_database(database, stmt)
+    if not df.empty and 'original_image' in df.columns:
+        row = df.iloc[0]
+        if row.get('original_image') is None:
+            img_path = _original_image_path(int(row['id']))
+            if os.path.exists(img_path):
+                try:
+                    with open(img_path, 'rb') as f:
+                        df.at[0, 'original_image'] = f.read()
+                except Exception as e:
+                    logging.warning(f"[DATABASE] Failed to read original image file '{img_path}': {e}")
+    return df
 
 def delete_photo_by_id(database: str, photo_id: int) -> Result:
     """
-    This function deletes a specific dataframe based on the ID from the source database.
+    This function deletes a specific dataframe based on the ID from the source database
+    and removes the corresponding image files from the filesystem.
     """
     stmt = f"UPDATE events SET original_image = NULL, modified_image = NULL, thumbnail = NULL, deleted = 1 WHERE id = {photo_id}"
     result = write_stmt_to_database(database, stmt)
-    if result.success == True:
-        logging.info(f"[DATABASE] Photo with ID '{photo_id}' deleted successfully.")
+    if result.success is True:
+        removed_orig, removed_thumb = _remove_event_image_files([photo_id])
+        logging.info(f"[DATABASE] Photo with ID '{photo_id}' deleted (filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}).")
     return result
 
 def delete_photos_by_block_id(database: str, block_id: int) -> Result:
     """
-    This function deletes all dataframes based on the block_id from the source database.
+    This function deletes all dataframes based on the block_id from the source database
+    and removes corresponding image files from the filesystem.
     """
+    # Collect IDs in this block first
+    df_ids = read_df_from_database(database, f"SELECT id FROM events WHERE block_id = {block_id}")
+    ids = df_ids['id'].tolist() if not df_ids.empty else []
+
     stmt = f"UPDATE events SET original_image = NULL, modified_image = NULL, thumbnail = NULL, deleted = 1 WHERE block_id = {block_id}"
     result = write_stmt_to_database(database, stmt)
-    if result.success == True:
-        logging.info(f"[DATABASE] Photos with block ID '{block_id}' deleted successfully.")
+    if result.success is True:
+        removed_orig, removed_thumb = _remove_event_image_files(ids)
+        logging.info(f"[DATABASE] Photos with block ID '{block_id}' deleted (filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}).")
     return result
 
 def create_json_from_event(detected_objects: List[DetectedObject]) -> str:
@@ -790,7 +912,7 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
                     db_block_id,
                     get_utc_date_string(element.timestamp),
                     event_type,
-                    None if element.original_image is None else element.original_image,
+                    None,  # original_image now stored on filesystem
                     None if element.modified_image is None else element.modified_image,
                     element.mouse_probability,
                     element.no_mouse_probability,
@@ -799,6 +921,15 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
                     event_json
                 ]
                 cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
+                new_row_id = cursor.lastrowid
+                # Persist original image to filesystem (if available)
+                if element.original_image is not None:
+                    orig_path = _original_image_path(new_row_id)
+                    try:
+                        with open(orig_path, 'wb') as f:
+                            f.write(element.original_image)
+                    except Exception as e:
+                        logging.warning(f"[DATABASE] Failed to write original image file '{orig_path}': {e}")
                 index += 1
 
             # Delete the image from the buffer
@@ -815,9 +946,17 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
             logging.info(f"[DATABASE] Number of photos exceeds limit. Deleting {excess_photos} oldest photos.")
             cursor.execute(f"SELECT id, created_at FROM events WHERE deleted != 1 ORDER BY created_at ASC LIMIT {excess_photos}")
             photos_to_delete = cursor.fetchall()
+            ids_to_purge: List[int] = []
             for photo in photos_to_delete:
-                logging.debug(f"[DATABASE] Deleting photo ID: {photo[0]}, created_at: {photo[1]}")
-                cursor.execute(f"UPDATE events SET deleted = 1, original_image = NULL, modified_image = NULL, thumbnail = NULL WHERE id = {photo[0]}")
+                photo_id = photo[0]
+                logging.debug(f"[DATABASE] Deleting photo ID: {photo_id}, created_at: {photo[1]}")
+                cursor.execute("UPDATE events SET deleted = 1, original_image = NULL, modified_image = NULL, thumbnail = NULL WHERE id = ?", (photo_id,))
+                ids_to_purge.append(photo_id)
+
+            # Remove filesystem-stored original image and thumbnail for purged IDs
+            if ids_to_purge:
+                removed_orig, removed_thumb = _remove_event_image_files(ids_to_purge)
+                logging.info(f"[DATABASE] Purged oldest photos (filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}).")
 
         conn.commit()
         conn.close()
@@ -835,7 +974,66 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
         db_photo_ids = db_get_photos_by_block_id(database, db_block_id, ReturnDataPhotosDB.only_ids)
         for db_photo_id in db_photo_ids['id']:
             get_thubmnail_by_id(database, db_photo_id)
-        logging.info(f"[DATABASE] Generated {len(db_photo_ids)} thumbnails for block ID '{db_block_id}'.")
+        logging.info(f"[DATABASE] Generated {len(db_photo_ids)} thumbnails for block ID '{db_block_id}'. (Filesystem storage)")
+
+def cleanup_orphan_image_files(database: str) -> Result:
+    """
+    Remove JPG files in ORIGINAL_IMAGE_DIR and THUMBNAIL_DIR that have no corresponding event id in DB.
+    Only considers filenames '<id>.jpg'. Safe to run periodically.
+    """
+    try:
+        # Collect valid IDs from DB (include non-deleted only)
+        result = lock_database()
+        if not result.success:
+            return result
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM events WHERE deleted != 1")
+            valid_ids = set(int(r[0]) for r in cursor.fetchall())
+            conn.close()
+        except Exception as e:
+            logging.error(f"[ORPHAN_CLEANUP] Failed to read event IDs: {e}")
+            return Result(False, "read_ids_failed")
+        finally:
+            release_database()
+
+        def collect_orphans(dir_path: str) -> List[str]:
+            orphans = []
+            try:
+                for name in os.listdir(dir_path):
+                    if not name.lower().endswith(".jpg"):
+                        continue
+                    stem = name[:-4]
+                    try:
+                        fid = int(stem)
+                    except ValueError:
+                        # Not an <id>.jpg, leave it untouched
+                        continue
+                    if fid not in valid_ids:
+                        orphans.append(os.path.join(dir_path, name))
+                return orphans
+            except Exception as e:
+                logging.warning(f"[ORPHAN_CLEANUP] Failed to list '{dir_path}': {e}")
+                return []
+
+        orphan_originals = collect_orphans(ORIGINAL_IMAGE_DIR)
+        orphan_thumbs = collect_orphans(THUMBNAIL_DIR)
+
+        removed = 0
+        for path in orphan_originals + orphan_thumbs:
+            try:
+                os.remove(path)
+                removed += 1
+            except Exception as e:
+                logging.warning(f"[ORPHAN_CLEANUP] Failed removing '{path}': {e}")
+
+        logging.info(f"[ORPHAN_CLEANUP] Removed {removed} orphan image files "
+                     f"(originals: {len(orphan_originals)}, thumbnails: {len(orphan_thumbs)}).")
+        return Result(True, "")
+    except Exception as e:
+        logging.error(f"[ORPHAN_CLEANUP] Unexpected error: {e}")
+        return Result(False, "unexpected_error")
     
 def create_index_on_events(database: str) -> Result:
     """
@@ -1203,175 +1401,41 @@ def check_database_integrity(database: str, skip_lock: bool = False) -> Result:
         if not skip_lock:
             release_database()
         
-def backup_database(database: str, backup_path: str) -> Result:
+def backup_database_sqlite(database: str, destination_path: str) -> Result:
     """
-    Backup the main database file to a specified backup location.
-    This function performs a database backup with various safety checks.
-    Args:
-        database (str): Path to the source database file
-        backup_path (str): Path where the backup should be created
-    Returns:
-        Result: Object containing:
-            - success (bool): True if backup completed successfully
-            - message (str): Error message if backup failed, possible values:
-                - "database_locked": Could not acquire database lock
-                - "kittyhack_db_corrupted": Source database is invalid or empty
-                - "disk_space_full": Insufficient disk space for backup
-                - "backup_verification_failed": Backup file failed integrity check
-                - "backup_failed": General backup operation failure
-                - None: If backup succeeded
+    Perform a simple SQLite backup using the built-in backup API.
+    Creates destination_path and writes a consistent snapshot of `database` into it.
     """
-    free_disk_space = get_free_disk_space()
-    current_time = datetime.now()
-
-    logging.info("[DATABASE_BACKUP] Starting database backup...")
-    # Try to acquire database lock
-    result = lock_database()
-    if not result.success:
-        logging.error(f"[DATABASE_BACKUP] Failed to lock database: {result.message}")
-        return Result(False, "database_locked")
-    
     try:
-        # Check prerequisites for backup
-        db_integrity = check_database_integrity(database, skip_lock=True)
-        kittyhack_db_size = get_database_size()
-        kittyhack_db_backup_size = get_file_size(backup_path) if os.path.exists(backup_path) else 0
+        # Use short lock window to avoid long blocking
+        lock_res = lock_database()
+        if not lock_res.success:
+            logging.error(f"[DATABASE_BACKUP] Failed to lock database: {lock_res.message}")
+            return Result(False, "database_locked")
+        try:
+            src = sqlite3.connect(database, timeout=30)
+            dst = sqlite3.connect(destination_path, timeout=30)
+            src.backup(dst)
+            dst.close()
+            src.close()
+        except Exception as e:
+            logging.error(f"[DATABASE_BACKUP] SQLite backup failed: {e}")
+            # Clean up a potentially half-written file
+            try:
+                if os.path.exists(destination_path):
+                    os.remove(destination_path)
+            except Exception as ex:
+                logging.warning(f"[DATABASE_BACKUP] Failed to remove incomplete backup: {ex}")
+            return Result(False, "backup_failed")
+        finally:
+            release_database()
 
-        # Check database is valid
-        if kittyhack_db_size == 0 or not db_integrity.success:
-            logging.error("[DATABASE_BACKUP] Source database is invalid or empty")
-            return Result(False, "kittyhack_db_corrupted")
-
-        # Verify we would have enough disk space (>500MB) after backup
-        required_space = kittyhack_db_size - kittyhack_db_backup_size + 500
-        if free_disk_space < required_space:
-            logging.error(f"[DATABASE_BACKUP] Insufficient disk space: {free_disk_space}MB free, need {required_space}MB")
-            return Result(False, "disk_space_full")
-
-        if not os.path.exists(backup_path):
-            # Create a full backup if the backup file does not exist
-            shutil.copy2(database, backup_path)
-        else:
-            # Synchronize tables from the source database to the backup database
-            conn_src = sqlite3.connect(database, timeout=30)
-            conn_dst = sqlite3.connect(backup_path, timeout=30)
-            cursor_src = conn_src.cursor()
-            cursor_dst = conn_dst.cursor()
-
-            # Synchronize events table
-            # Compare only the 'id' and 'deleted' columns in the event tables of both databases.
-            cursor_src.execute("SELECT id, deleted FROM events")
-            events_src = cursor_src.fetchall()
-            cursor_dst.execute("SELECT id, deleted FROM events")
-            events_dst = cursor_dst.fetchall()
-            events_dst_dict = {row[0]: row[1] for row in events_dst}
-
-            for row in events_src:
-                src_id, src_deleted = row
-                if src_id not in events_dst_dict:
-                    cursor_src.execute("SELECT * FROM events WHERE id = ?", (src_id,))
-                    full_row = cursor_src.fetchone()
-                    cursor_dst.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", full_row)
-                elif events_dst_dict[src_id] != src_deleted:
-                    cursor_src.execute("SELECT * FROM events WHERE id = ?", (src_id,))
-                    full_row = cursor_src.fetchone()
-                    cursor_dst.execute("UPDATE events SET block_id = ?, created_at = ?, event_type = ?, original_image = ?, modified_image = ?, mouse_probability = ?, no_mouse_probability = ?, own_cat_probability = ?, rfid = ?, event_text = ?, deleted = ?, thumbnail = ? WHERE id = ?", full_row[1:] + (src_id,))
-
-            # Delete events from backup that don't exist in source
-            cursor_src.execute("SELECT id FROM events")
-            events_src_ids = {row[0] for row in cursor_src.fetchall()}
-            cursor_dst.execute("DELETE FROM events WHERE id NOT IN (%s)" % ','.join('?' * len(events_src_ids)), tuple(events_src_ids)) if events_src_ids else cursor_dst.execute("DELETE FROM events")
-
-            # Synchronize cats table
-            cursor_dst.execute("DELETE FROM cats")
-            cursor_src.execute("SELECT * FROM cats")
-            cats_src = cursor_src.fetchall()
-            for row in cats_src:
-                cursor_dst.execute("INSERT INTO cats VALUES (?, ?, ?, ?, ?)", row)
-
-            conn_dst.commit()
-            conn_src.close()
-            conn_dst.close()
-
-            # Verify backup integrity
-            if check_database_integrity(backup_path, skip_lock=True).success:
-                CONFIG['LAST_DB_BACKUP_DATE'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
-                update_single_config_parameter("LAST_DB_BACKUP_DATE")
-                logging.info("[DATABASE_BACKUP] Backup completed successfully")
-                return Result(True, "")
-            else:
-                logging.error("[DATABASE_BACKUP] Backup verification failed - will retry next run")
-                try:
-                    os.remove(backup_path)
-                except Exception as e:
-                    logging.error(f"[DATABASE_BACKUP] Failed to delete corrupted backup file: {e}")
-                return Result(False, "backup_verification_failed")
-                
+        logging.info(f"[DATABASE_BACKUP] Backup written to '{destination_path}'")
+        return Result(True, "")
     except Exception as e:
-        logging.error(f"[DATABASE_BACKUP] Backup failed: {e}")
-        try:
-            os.remove(backup_path)
-        except Exception as e:
-            logging.error(f"[DATABASE_BACKUP] Failed to delete corrupted backup file: {e}")
+        logging.error(f"[DATABASE_BACKUP] Unexpected error: {e}")
         return Result(False, "backup_failed")
-            
-    finally:
-        # Always release the lock
-        release_database()
-        duration = (datetime.now() - current_time).total_seconds()
-        logging.info(f"[DATABASE_BACKUP] Database backup done within {duration} seconds")
-
-        # Vacuum the backup database to reclaim space
-        try:
-            conn = sqlite3.connect(backup_path, timeout=30)
-            cursor = conn.cursor()
-            cursor.execute("VACUUM")
-            conn.close()
-            logging.info("[DATABASE_BACKUP] Successfully vacuumed backup database")
-        except Exception as e:
-            logging.warning(f"[DATABASE_BACKUP] Failed to vacuum backup database: {e}")
-        
-
-def restore_database_backup(database: str, backup_path: str) -> Result:
-    """
-    Restores a database from a backup file.
-    This function attempts to restore a database from a specified backup file.
-    Args:
-        database (str): The path to the target database file that will be restored.
-        backup_path (str): The path to the backup file that will be used for restoration.
-    Returns:
-        Result: A Result object containing:
-            - success (bool): True if restore was successful, False otherwise
-            - message (str): Error message if failed, None if successful
-                Possible error messages:
-                - 'database_locked': Could not acquire database lock
-                - 'backup_not_found': Backup file does not exist
-                - 'restore_failed': Error occurred during restore
-    """
-    # Try to acquire database lock
-    result = lock_database()
-    if not result.success:
-        logging.error(f"[DATABASE_BACKUP] Failed to lock database: {result.message}")
-        return Result(False, "database_locked")
     
-    try:
-        # Check if backup file exists
-        if not os.path.exists(backup_path):
-            logging.error(f"[DATABASE_BACKUP] Backup file not found: {backup_path}")
-            return Result(False, "backup_not_found")
-        
-        # Perform the restore
-        try:
-            shutil.copy2(backup_path, database)
-            logging.info("[DATABASE_BACKUP] Restore completed successfully")
-            return Result(True, "")
-        except Exception as e:
-            logging.error(f"[DATABASE_BACKUP] Restore failed: {e}")
-            return Result(False, "restore_failed")
-            
-    finally:
-        # Always release the lock
-        release_database()
 
 def cleanup_deleted_events(database: str) -> Result:
     """
@@ -1413,3 +1477,191 @@ def cleanup_deleted_events(database: str) -> Result:
         return Result(False, error_message)
     finally:
         release_database()
+
+def get_ids_with_original_blob(database: str, include_deleted: bool = False) -> List[int]:
+    """
+    Fast retrieval of event IDs where original_image IS NOT NULL.
+    Avoids loading blobs and Pandas overhead.
+    """
+    where = "original_image IS NOT NULL"
+    if not include_deleted and check_if_column_exists(database, "events", "deleted"):
+        where += " AND deleted != 1"
+
+    result = lock_database()
+    if not result.success:
+        logging.error(f"[DATABASE] Failed to lock DB for get_ids_with_original_blob: {result.message}")
+        return []
+
+    ids: List[int] = []
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT id FROM events WHERE {where} ORDER BY id")
+        # Stream rows to avoid large memory spikes on huge tables
+        fetch_size = 10000
+        while True:
+            rows = cursor.fetchmany(fetch_size)
+            if not rows:
+                break
+            ids.extend(int(r[0]) for r in rows)
+        conn.close()
+    except Exception as e:
+        logging.error(f"[DATABASE] Failed to fetch IDs with original blobs: {e}")
+    finally:
+        release_database()
+    return ids
+
+def perform_event_image_migration_ids(database: str,
+                                      ids: List[int],
+                                      progress_fn=None,
+                                      chunk_size: int = 1000,
+                                      batch_size: int = 200) -> Result:
+    """
+    Migrate legacy BLOB images (original_image / thumbnail) to filesystem for a specific list of event IDs.
+    Steps per ID:
+      1. Validate row exists.
+      2. Validate BLOB(s) still present (not already migrated).
+      3. Write file(s) if missing, then NULL the corresponding BLOB column(s).
+    Skips IDs that are missing or already migrated.
+
+    Returns Result with summary message.
+    """
+    start = tm.time()
+    if not ids:
+        return Result(True, "no_ids_provided")
+
+    # Deduplicate & sort for predictable processing order
+    target_ids = sorted(set(int(i) for i in ids if isinstance(i, (int, str))))
+    logging.info(f"[MIGRATION_IDS] Starting targeted migration for {len(target_ids)} IDs...")
+
+    migrated_original = 0
+    migrated_thumbnail = 0
+    missing_ids = 0
+    skipped_existing_file_original = 0
+    skipped_existing_file_thumbnail = 0
+
+    # 1) Pre-scan blobs without holding the global lock to avoid blocking writers
+    rows_cache: dict[int, tuple[bytes | None, bytes | None]] = {}
+    total_units = 0
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        for i in range(0, len(target_ids), chunk_size):
+            chunk = target_ids[i:i+chunk_size]
+            if not chunk:
+                continue
+            placeholders = ','.join('?' for _ in chunk)
+            cursor.execute(f"SELECT id, original_image, thumbnail FROM events WHERE id IN ({placeholders})", chunk)
+            for rid, orig_blob, thumb_blob in cursor.fetchall():
+                rows_cache[int(rid)] = (orig_blob, thumb_blob)
+                if orig_blob is not None:
+                    total_units += 1
+                if thumb_blob is not None:
+                    total_units += 1
+        conn.close()
+    except Exception as e:
+        logging.error(f"[MIGRATION_IDS] Pre-scan failed: {e}")
+        return Result(False, "prescan_failed")
+
+    missing_set = set(target_ids) - set(rows_cache.keys())
+    missing_ids = len(missing_set)
+    if missing_ids:
+        logging.info(f"[MIGRATION_IDS] {missing_ids} IDs not found and will be skipped.")
+
+    processed_units = 0
+
+    # Pending updates to be applied under short locks
+    pending_null_original: list[int] = []
+    pending_null_thumbnail: list[int] = []
+
+    def flush_updates():
+        """Apply batched NULL updates under a short lock/transaction."""
+        nonlocal pending_null_original, pending_null_thumbnail
+        if not pending_null_original and not pending_null_thumbnail:
+            return
+        lock_res = lock_database()
+        if not lock_res.success:
+            logging.error(f"[MIGRATION_IDS] Failed to acquire DB lock for batch update: {lock_res.message}")
+            return
+        try:
+            conn_u = sqlite3.connect(database, timeout=30)
+            cur_u = conn_u.cursor()
+            if pending_null_original:
+                cur_u.executemany("UPDATE events SET original_image = NULL WHERE id = ?", [(rid,) for rid in pending_null_original])
+            if pending_null_thumbnail:
+                cur_u.executemany("UPDATE events SET thumbnail = NULL WHERE id = ?", [(rid,) for rid in pending_null_thumbnail])
+            conn_u.commit()
+            conn_u.close()
+        except Exception as e:
+            logging.error(f"[MIGRATION_IDS] Batch NULL update failed: {e}")
+        finally:
+            release_database()
+            pending_null_original.clear()
+            pending_null_thumbnail.clear()
+
+    # 2) Migration pass: write files unlocked, queue DB updates
+    for rid in target_ids:
+        if rid not in rows_cache:
+            continue
+        orig_blob, thumb_blob = rows_cache[rid]
+
+        # Original image -> filesystem
+        if orig_blob is not None:
+            orig_path = _original_image_path(rid)
+            if not os.path.exists(orig_path):
+                try:
+                    with open(orig_path, 'wb') as f:
+                        f.write(orig_blob)
+                    migrated_original += 1
+                except Exception as e:
+                    logging.warning(f"[MIGRATION_IDS] Failed writing original image for id={rid}: {e}")
+                    # keep blob, skip nulling
+                else:
+                    pending_null_original.append(rid)
+            else:
+                pending_null_original.append(rid)
+                skipped_existing_file_original += 1
+            processed_units += 1
+            if progress_fn:
+                try:
+                    progress_fn(processed_units, total_units)
+                except Exception:
+                    pass
+
+        # Thumbnail -> filesystem
+        if thumb_blob is not None:
+            thumb_path = _thumbnail_image_path(rid)
+            if not os.path.exists(thumb_path):
+                try:
+                    with open(thumb_path, 'wb') as f:
+                        f.write(thumb_blob)
+                    migrated_thumbnail += 1
+                except Exception as e:
+                    logging.warning(f"[MIGRATION_IDS] Failed writing thumbnail for id={rid}: {e}")
+                else:
+                    pending_null_thumbnail.append(rid)
+            else:
+                pending_null_thumbnail.append(rid)
+                skipped_existing_file_thumbnail += 1
+            processed_units += 1
+            if progress_fn:
+                try:
+                    progress_fn(processed_units, total_units)
+                except Exception:
+                    pass
+
+        # Flush when batch is full to minimize lock time and memory
+        if len(pending_null_original) + len(pending_null_thumbnail) >= batch_size:
+            flush_updates()
+
+    # Final flush for remaining updates
+    flush_updates()
+
+    duration = round(tm.time() - start, 2)
+    msg = (f"migrated_original={migrated_original}, migrated_thumbnail={migrated_thumbnail}, "
+           f"skipped_existing_file_original={skipped_existing_file_original}, "
+           f"skipped_existing_file_thumbnail={skipped_existing_file_thumbnail}, "
+           f"missing_ids={missing_ids}, total_units={total_units}, duration_sec={duration}")
+    logging.info(f"[MIGRATION_IDS] Finished targeted migration: {msg}")
+    return Result(True, msg)
+

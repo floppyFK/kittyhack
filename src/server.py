@@ -17,6 +17,8 @@ import asyncio
 import io
 import zipfile
 import uuid
+import glob
+import shutil
 from typing import List
 from src.baseconfig import (
     CONFIG,
@@ -166,6 +168,41 @@ if os.path.exists("/tmp/kittyhack.db"):
     except:
         logging.error("Failed to delete the temporary kittyhack.db file.")
 
+# Remove deprecated backup database file (pre v2.4) at startup
+if os.path.exists(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']):
+    try:
+        os.remove(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
+        logging.info(f"Deleted deprecated backup database file: {CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']}")
+    except Exception as e:
+        logging.warning(f"Failed to delete deprecated backup database file '{CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']}': {e}")
+
+def prune_old_backups(backup_dir: str, keep: int = 3):
+    """
+    Keep only the newest `keep` kittyhack_backup_*.db files in backup_dir.
+    """
+    try:
+        pattern = os.path.join(backup_dir, "kittyhack_backup_*.db")
+        files = [f for f in glob.glob(pattern) if os.path.isfile(f)]
+        if len(files) <= keep:
+            return
+        # Sort by modification time (newest first)
+        files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+        to_delete = files[keep:]
+        for f in to_delete:
+            try:
+                os.remove(f)
+                logging.info(f"[DATABASE_BACKUP] Pruned old backup: {f}")
+            except Exception as e:
+                logging.warning(f"[DATABASE_BACKUP] Failed to delete old backup '{f}': {e}")
+    except Exception as e:
+        logging.warning(f"[DATABASE_BACKUP] Failed pruning backups: {e}")
+
+# Initial prune at startup (in case of manual or accumulated backups)
+try:
+    prune_old_backups(os.path.dirname(CONFIG['KITTYHACK_DATABASE_PATH']) or ".")
+except Exception:
+    pass
+
 # Initial database integrity check
 if os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
     db_check = check_database_integrity(CONFIG['KITTYHACK_DATABASE_PATH'])
@@ -173,16 +210,45 @@ if os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
         logging.info("Initial Database integrity check successful.")
     else:
         logging.error(f"Initial Database integrity check failed: {db_check.message}")
-        if os.path.exists(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']):
-            restore_database_backup(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
-        else:
-            logging.error("No backup found to restore the database from. Deleting the database file...")
+        backup_dir = os.path.dirname(CONFIG['KITTYHACK_DATABASE_PATH']) or "."
+        pattern = os.path.join(backup_dir, "kittyhack_backup_*.db")
+        backup_files = [f for f in glob.glob(pattern) if os.path.isfile(f)]
+        if backup_files:
+            # Newest first
+            backup_files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+            latest_backup = backup_files[0]
+            logging.info(f"[DATABASE_BACKUP] Attempting restore from latest backup: {latest_backup}")
             try:
-                os.remove(CONFIG['KITTYHACK_DATABASE_PATH'])
-            except:
-                logging.error("Failed to delete the kittyhack database file.")
-            else:
-                logging.info("Kittyhack Database file deleted.")
+                # Preserve corrupted file
+                corrupt_archive = CONFIG['KITTYHACK_DATABASE_PATH'] + f".corrupt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+                try:
+                    shutil.move(CONFIG['KITTYHACK_DATABASE_PATH'], corrupt_archive)
+                    logging.info(f"Corrupted database archived as: {corrupt_archive}")
+                except Exception as e:
+                    logging.warning(f"Failed to archive corrupted database: {e}")
+                shutil.copy2(latest_backup, CONFIG['KITTYHACK_DATABASE_PATH'])
+                # Re-check integrity after restore
+                post_restore = check_database_integrity(CONFIG['KITTYHACK_DATABASE_PATH'])
+                if post_restore.success:
+                    logging.info(f"[DATABASE_BACKUP] Restore successful from {latest_backup}")
+                    # --- User notification about successful restore ---
+                    try:
+                        UserNotifications.add(
+                            header=_("Database restored"),
+                            message=_("The kittyhack database was corrupted at startup and has been restored from backup: {}. The corrupted file was archived as: {}").format(latest_backup, corrupt_archive),
+                            type="warning",
+                            id="db_restored",
+                            skip_if_id_exists=True
+                        )
+                    except Exception as e:
+                        logging.warning(f"Failed to create user notification for DB restore: {e}")
+                else:
+                    logging.error(f"[DATABASE_BACKUP] Restore failed: {post_restore.message}")
+            except Exception as e:
+                logging.error(f"[DATABASE_BACKUP] Unexpected error during restore: {e}")
+        else:
+            logging.error("[DATABASE_BACKUP] No backup files (kittyhack_backup_*.db) found. Remove corrupted database and start fresh.")
+            os.remove(CONFIG['KITTYHACK_DATABASE_PATH'])
 else:
     logging.warning(f"Database '{CONFIG['KITTYHACK_DATABASE_PATH']}' not found. This is probably the first start of the application.")
     CONFIG['LAST_READ_CHANGELOGS'] = git_version
@@ -201,17 +267,11 @@ if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events"):
 if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "thumbnail"):
     logging.warning(f"Column 'thumbnail' not found in the 'events' table. Adding it...")
     add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "thumbnail", "BLOB")
-if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'], "events", "thumbnail"):
-    logging.warning(f"Column 'thumbnail' not found in the 'events' table of the backup database. Adding it...")
-    add_column_to_table(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'], "events", "thumbnail", "BLOB")
 
 # v2.0.0: Check if the "own_cat_probability" column exists in the "events" table. If not, add it
 if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "own_cat_probability"):
     logging.warning(f"Column 'own_cat_probability' not found in the 'events' table. Adding it...")
     add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "own_cat_probability", "REAL")
-if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'], "events", "own_cat_probability"):
-    logging.warning(f"Column 'own_cat_probability' not found in the 'events' table of the backup database. Adding it...")
-    add_column_to_table(CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'], "events", "own_cat_probability", "REAL")
 
 if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
     logging.warning(f"Legacy table 'photo' not found in the kittyhack database. Creating it...")
@@ -228,7 +288,7 @@ if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "cats"):
         logging.warning("Table 'cat' not found in the kittyflap database. No cats migrated to the kittyhack database.")
 
 # v3.4.0: Ensure per-cat settings columns exist (enable_prey_detection, allow_entry, allow_exit)
-for db in [CONFIG['KITTYHACK_DATABASE_PATH'], CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']]:
+for db in [CONFIG['KITTYHACK_DATABASE_PATH']]:
     try:
         if os.path.exists(db):
             if not check_if_column_exists(db, "cats", "enable_prey_detection"):
@@ -298,6 +358,14 @@ free_disk_space = get_free_disk_space()
 # Global flag to indicate if a user WLAN action is in progress
 user_wlan_action_in_progress = False
 
+# Check ids with images in the database
+# In v2.4 we moved the images from the kittyhack database to the filesystem.
+logging.info("Checking ids with images in the database...")
+ids_with_original_blob = get_ids_with_original_blob(CONFIG['KITTYHACK_DATABASE_PATH'])
+logging.info(f"Found {len(ids_with_original_blob)} images in the database with original_image blob.")
+if len(ids_with_original_blob) == 0:
+    CONFIG['EVENT_IMAGES_FS_MIGRATED'] = True
+
 # Frontend background task in a separate thread
 def start_background_task():
     # Register task in the sigterm_monitor object
@@ -307,6 +375,12 @@ def start_background_task():
         wlan_disconnect_counter = 0
         wlan_reconnect_attempted = False
         last_periodic_jobs_run = tm.time()
+
+        # --- Added migration control state ---
+        migration_last_ts = tm.time() - 5  # allow immediate first run
+        migration_in_progress = False
+        migration_batch_size = 200
+        global ids_with_original_blob  # reuse list defined at startup
 
         while not sigterm_monitor.stop_now:
             if user_wlan_action_in_progress:
@@ -319,6 +393,41 @@ def start_background_task():
                         break
                     tm.sleep(1.0)
                 continue
+
+            # --- Background legacy image migration (every >=5s) ---
+            # Migrate original_image / thumbnail BLOBs batch-wise (max 100 IDs) to filesystem
+            try:
+                if (not migration_in_progress
+                    and ids_with_original_blob
+                    and (tm.time() - migration_last_ts) >= 5):
+                    migration_in_progress = True
+                    batch = ids_with_original_blob[:migration_batch_size]
+                    logging.info(f"[BG_MIGRATION] Starting migration batch of {len(batch)} IDs (remaining total: {len(ids_with_original_blob)})")
+                    result = perform_event_image_migration_ids(
+                        CONFIG['KITTYHACK_DATABASE_PATH'],
+                        batch,
+                        chunk_size=migration_batch_size
+                    )
+                    if result.success:
+                        # Remove migrated IDs from list
+                        migrated_set = set(batch)
+                        ids_with_original_blob = [i for i in ids_with_original_blob if i not in migrated_set]
+                        logging.info(f"[BG_MIGRATION] Batch done. Remaining legacy IDs: {len(ids_with_original_blob)} | {result.message}")
+                        if not ids_with_original_blob:
+                            # Perform a single VACUUM at the very end to reclaim space
+                            logging.info("[BG_MIGRATION] Running final VACUUM on database after full migration...")
+                            vacuum_database(CONFIG['KITTYHACK_DATABASE_PATH'])
+                            logging.info("[BG_MIGRATION] Final VACUUM completed.")
+                            CONFIG['EVENT_IMAGES_FS_MIGRATED'] = True
+                            logging.info("[BG_MIGRATION] All legacy image blobs migrated successfully.")
+                    else:
+                        logging.warning(f"[BG_MIGRATION] Batch migration failed: {result.message}")
+                    migration_last_ts = tm.time()
+                    migration_in_progress = False
+            except Exception as e:
+                logging.error(f"[BG_MIGRATION] Unexpected migration error: {e}")
+                migration_in_progress = False
+                migration_last_ts = tm.time()
 
             # --- WLAN connection check every 5 seconds ---
             # Check WLAN connection state
@@ -430,13 +539,27 @@ def start_background_task():
                 backup_needed = (current_time - last_backup_date) > timedelta(hours=22)
                 
                 if backup_needed and backup_window:
-                    logging.info(f"[TRIGGER: background task] It is {current_time.hour}:{current_time.minute}:{current_time.second}. Start backup of the kittyhack database...")
-                    db_backup = backup_database(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
-                    if db_backup and db_backup.message == "kittyhack_db_corrupted":
-                        restore_database_backup(database=CONFIG['KITTYHACK_DATABASE_PATH'], backup_path=CONFIG['KITTYHACK_DATABASE_BACKUP_PATH'])
+                    if CONFIG.get('EVENT_IMAGES_FS_MIGRATED', False):
+                        logging.info(f"[TRIGGER: background task] It is {current_time.hour}:{current_time.minute}:{current_time.second}. Start backup of the kittyhack database...")
+                        # Write timestamped backup next to the main DB
+                        backup_dir = os.path.dirname(CONFIG['KITTYHACK_DATABASE_PATH']) or "."
+                        backup_name = f"kittyhack_backup_{current_time.strftime('%Y%m%d_%H%M%S')}.db"
+                        backup_dest = os.path.join(backup_dir, backup_name)
+                        result = backup_database_sqlite(CONFIG['KITTYHACK_DATABASE_PATH'], backup_dest)
+                        if result.success:
+                            CONFIG['LAST_DB_BACKUP_DATE'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
+                            update_single_config_parameter("LAST_DB_BACKUP_DATE")
+                            logging.info(f"[DATABASE_BACKUP] Backup successful: {backup_dest}")
+                            prune_old_backups(backup_dir, keep=3)
+                        else:
+                            logging.error(f"[DATABASE_BACKUP] Backup failed: {result.message}")
+                    else:
+                        logging.info("[DATABASE_BACKUP] Skipping backup: legacy image migration not finished (EVENT_IMAGES_FS_MIGRATED = False).")
 
                 # Perform Scheduled VACUUM only if the last scheduled vacuum date is older than 24 hours
                 if (datetime.now() - last_vacuum_date) > timedelta(days=1):
+                    logging.info("[TRIGGER: background task] Start cleanup of orphan image files...")
+                    cleanup_orphan_image_files(CONFIG['KITTYHACK_DATABASE_PATH'])
                     logging.info("[TRIGGER: background task] Start VACUUM of the kittyhack database...")
                     vacuum_database(CONFIG['KITTYHACK_DATABASE_PATH'])
                     CONFIG['LAST_VACUUM_DATE'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -445,7 +568,7 @@ def start_background_task():
                 # Log system information
                 log_system_information()
 
-            # Sleep 5 seconds before next WLAN check
+            # Sleep 5 seconds (split to allow faster shutdown)
             for __ in range(5):
                 if sigterm_monitor.stop_now:
                     break
@@ -1175,6 +1298,24 @@ def server(input, output, session):
 
     # Show user notifications if there are any
     show_user_notifications()
+
+    # Migration in progress notice
+    @reactive.effect
+    def migration_progress_notification():
+        reactive.invalidate_later(15)
+        global ids_with_original_blob
+        if len(ids_with_original_blob) > 0:
+            # Estimate remaining time: 15 seconds per 200 IDs (10s processing + 5s delay)
+            batches_remaining = math.ceil(len(ids_with_original_blob) / 200)
+            remaining_seconds = batches_remaining * 15
+            remaining_minutes = max(1, round(remaining_seconds / 60))
+            ui.notification_show(
+                _("Database migration in progress. Performance may be a bit slower until finished ({} pictures remaining, ~{} min). Please be patient...").format(
+                    len(ids_with_original_blob), remaining_minutes
+                ),
+                duration=14,
+                type="warning"
+            )
 
     @reactive.effect
     def ext_trigger_reload_photos():
@@ -2288,7 +2429,7 @@ def server(input, output, session):
                             ui.column(
                                 12,
                                 ui.markdown(
-                                    _("**Disabled:** set `Open inside direction for` to `Individual configuration per cat` to enable this feature.")
+                                    _("**Disabled:** This feature is only available in `Individual configuration per cat` mode for entry.")
                                 ), style_="color: grey;"
                             ),
                             style_="padding-bottom: 20px;"
@@ -2331,7 +2472,7 @@ def server(input, output, session):
                             ui.column(
                                 12,
                                 ui.markdown(
-                                    _("**Disabled:** set `Outside direction` to `Individual configuration per cat` to enable this feature.")
+                                    _("**Disabled:** This feature is only available in `Individual configuration per cat` mode for exit.")
                                 ), style_="color: grey;"
                             ),
                             style_="padding-bottom: 20px;"
@@ -2614,7 +2755,7 @@ def server(input, output, session):
                     ui.column(
                         12,
                         ui.markdown(
-                            _("**Disabled:** set `Open inside direction for` to `Individual configuration per cat` to enable this feature.")
+                            _("**Disabled:** This feature is only available in `Individual configuration per cat` mode for entry.")
                         ), style_="color: grey;"
                     ),
                     style_="padding-bottom: 20px;"
@@ -2637,7 +2778,7 @@ def server(input, output, session):
                     ui.column(
                         12,
                         ui.markdown(
-                            _("**Disabled:** set `Outside direction` to `Individual configuration per cat` to enable this feature.")
+                            _("**Disabled:** This feature is only available in `Individual configuration per cat` mode for exit.")
                         ), style_="color: grey;"
                     ),
                     style_="padding-bottom: 20px;"

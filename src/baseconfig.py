@@ -111,7 +111,8 @@ DEFAULT_CONFIG = {
         "show_mice_only": False,
         "restart_ip_camera_stream_on_failure": True,
         "wlan_watchdog_enabled": True,
-        "disable_rfid_reader": False
+        "disable_rfid_reader": False,
+        "event_images_fs_migrated": False
     }
 }
 
@@ -275,7 +276,8 @@ def load_config():
         "SHOW_MICE_ONLY": safe_bool("SHOW_MICE_ONLY", d['show_mice_only']),
         "RESTART_IP_CAMERA_STREAM_ON_FAILURE": safe_bool("RESTART_IP_CAMERA_STREAM_ON_FAILURE", d.get('restart_ip_camera_stream_on_failure', True)),
         "WLAN_WATCHDOG_ENABLED": safe_bool("WLAN_WATCHDOG_ENABLED", d.get('wlan_watchdog_enabled', True)),
-        "DISABLE_RFID_READER": safe_bool("DISABLE_RFID_READER", d.get('disable_rfid_reader', False))
+        "DISABLE_RFID_READER": safe_bool("DISABLE_RFID_READER", d.get('disable_rfid_reader', False)),
+        "EVENT_IMAGES_FS_MIGRATED": safe_bool("EVENT_IMAGES_FS_MIGRATED", d.get('event_images_fs_migrated', False))
     }
 
     if invalid_values:
@@ -403,6 +405,7 @@ def save_config():
     settings['restart_ip_camera_stream_on_failure'] = CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE']
     settings['wlan_watchdog_enabled'] = CONFIG['WLAN_WATCHDOG_ENABLED']
     settings['disable_rfid_reader'] = CONFIG['DISABLE_RFID_READER']
+    #settings['event_images_fs_migrated'] = CONFIG['EVENT_IMAGES_FS_MIGRATED']  # This value may not be written to the config file
 
     # Write updated configuration back to the file
     try:

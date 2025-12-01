@@ -1627,7 +1627,6 @@ def server(input, output, session):
         date_start = format_date_minmax(input.date_selector(), True)
         date_end = format_date_minmax(input.date_selector(), False)
         timezone = ZoneInfo(CONFIG['TIMEZONE'])
-        # Convert date_start and date_end to timezone-aware datetime strings in the UTC timezone
         date_start = datetime.strptime(date_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
         date_end = datetime.strptime(date_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
         df_photo_ids = db_get_photos(
@@ -1645,9 +1644,20 @@ def server(input, output, session):
         except:
             data_elements_count = 0
         tabs_count = int(math.ceil(data_elements_count / CONFIG['ELEMENTS_PER_PAGE']))
+        # Encode current filter state into the tab value to ensure a single, deterministic trigger
+        cat_flag = 1 if input.button_cat_only() else 0
+        mouse_flag = 1 if input.button_mouse_only() else 0
+
         if tabs_count > 0:
             for i in range(tabs_count, 0, -1):
-                ui_tabs.append(ui.nav_panel(f"{i}", "", value=f"{date_start}_{date_end}_{i}"))
+                # value format: "{date_start}_{date_end}_{page}|{cat_flag}|{mouse_flag}"
+                ui_tabs.append(
+                    ui.nav_panel(
+                        f"{i}",
+                        "",
+                        value=f"{date_start}_{date_end}_{i}|{cat_flag}|{mouse_flag}"
+                    )
+                )
         else:
             ui_tabs.append(ui.nav_panel("1", "", value="empty"))
         logging.debug(f"[WEBGUI] Pictures-Nav: Recalculating tabs: {tabs_count} tabs for {data_elements_count} elements")
@@ -1655,20 +1665,36 @@ def server(input, output, session):
 
     @output
     @render.ui
-    @reactive.event(input.button_events_view, ignore_none=True)
+    @reactive.event(
+        input.ui_photos_cards_tabs,       # single source of truth
+        input.button_events_view,         # to clear when switching view mode
+        input.button_detection_overlay,   # to toggle overlays without extra reloads
+        ignore_none=True
+    )
     def ui_photos_cards():
         ui_cards = []
 
-        if input.ui_photos_cards_tabs() == "empty":
+        if input.button_events_view():
+            return ui.div()
+
+        current_tab = input.ui_photos_cards_tabs()
+        if not current_tab:
+            return ui.help_text(_("No tab selected. Please choose a page."), class_="no-images-found")
+        if current_tab == "empty":
             logging.info("No pictures for the selected filter criteria found.")
             return ui.help_text(_("No pictures for the selected filter criteria found."), class_="no-images-found")
-        
-        selected_page = input.ui_photos_cards_tabs().split('_')
-        logging.debug(f"[WEBGUI] Pictures: Fetching images for {selected_page}")
 
-        date_start = selected_page[0]
-        date_end = selected_page[1]
-        page_index = int(selected_page[2])-1
+        # Split encoded value: "{date_start}_{date_end}_{page}|{cat_flag}|{mouse_flag}"
+        base = current_tab.split('|', 1)[0]
+
+        try:
+            base_parts = base.rsplit('_', 2)  # safe from right
+            date_start = base_parts[0]
+            date_end = base_parts[1]
+            page_index = int(base_parts[2]) - 1
+        except Exception as e:
+            logging.warning(f"[WEBGUI] Failed to parse tab value '{current_tab}': {e}")
+            return ui.help_text(_("Failed to parse page selection."), class_="no-images-found")
 
         df_photos = db_get_photos(
             CONFIG['KITTYHACK_DATABASE_PATH'],
@@ -1721,7 +1747,6 @@ def server(input, output, session):
             else:
                 card_footer_cat = ""
             
-
             if decoded_picture:
                 img_html = f'''
                 <div style="position: relative; display: inline-block;">
@@ -1750,30 +1775,32 @@ def server(input, output, session):
                                 {detected_object.object_name} ({detected_object.probability:.0f}%)
                             </div>
                         </div>'''
+                    pass
                 img_html += "</div>"
             else:
                 img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
                 logging.warning(f"No blob_picture found for entry {photo_timestamp}")
             
             ui_cards.append(
-                        ui.card(
-                        ui.card_header(
-                            ui.div(
-                                ui.HTML(f"{photo_timestamp} | {data_row['id']}"),
-                                ui.div(ui.input_checkbox(id=f"delete_photo_{data_row['id']}", label="", value=False), style_="float: right; width: 15px;"),
-                            ),
+                ui.card(
+                    ui.card_header(
+                        ui.div(
+                            ui.HTML(f"{photo_timestamp} | {data_row['id']}"),
+                            ui.div(ui.input_checkbox(id=f"delete_photo_{data_row['id']}", label="", value=False), style_="float: right; width: 15px;"),
                         ),
-                        ui.HTML(img_html),
-                        ui.card_footer(
-                            ui.div(
-                                ui.tooltip(ui.HTML(card_footer_mouse), _("Mouse probability")),
-                                ui.HTML(card_footer_cat),
-                            )
-                        ),
-                        full_screen=True,
-                        class_="image-container" + (" image-container-alert" if mouse_probability >= CONFIG['MOUSE_THRESHOLD'] else "")
-                    )
+                    ),
+                    ui.HTML(img_html),
+                    ui.card_footer(
+                        ui.div(
+                            ui.tooltip(ui.HTML(card_footer_mouse), _("Mouse probability")),
+                            ui.HTML(card_footer_cat),
+                        )
+                    ),
+                    full_screen=True,
+                    class_="image-container" + (" image-container-alert" if mouse_probability >= CONFIG['MOUSE_THRESHOLD'] else "")
+                )
             )
+            pass
 
         return ui.div(
             ui.layout_column_wrap(*ui_cards, width="400px"),

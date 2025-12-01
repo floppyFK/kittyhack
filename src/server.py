@@ -5160,28 +5160,31 @@ def server(input, output, session):
 
         # Check if the original kittyflap database file still exists
         kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
-        if kittyflap_db_file_exists:
-            if get_file_size(CONFIG['DATABASE_PATH']) > 100:
-                ui_kittyflap_db = ui.div(
-                    ui.markdown(
-                        _("The original kittyflap database file consumes currently **{:.1f} MB** of disk space.").format(get_file_size(CONFIG['DATABASE_PATH'])) + "\n\n" +
-                        _("The file contains a lot pictures which could not be uploaded to the original kittyflap servers anymore.") + "\n\n" +
-                        _("You could delete the pictures from it to free up disk space.")
-                    ),
-                    ui.input_task_button("clear_kittyflap_db", _("Remove pictures from original Kittyflap Database"), icon=icon_svg("trash")),
-                    ui.download_button("download_kittyflap_db", _("Download Kittyflap Database"), icon=icon_svg("download")),
-                )
-            elif get_file_size(CONFIG['DATABASE_PATH']) > 0:
-                    ui_kittyflap_db = ui.div(
-                        ui.markdown(_("The original kittyflap database file exists and has a regular size of **{:.1f} MB**. Nothing to do here.").format(get_file_size(CONFIG['DATABASE_PATH']))),
-                        ui.download_button("download_kittyflap_db", _("Download Kittyflap Database"), icon=icon_svg("download")),
-                    )
-            else:
-                ui_kittyflap_db = ui.markdown(_("The original kittyflap database seems to be empty.") + "\n\n" +
-                                              _("**WARNING:** A downgrade to Kittyhack v1.1.0 will probably not work!"))
-        else:
-            ui_kittyflap_db = ui.markdown(_("The original kittyflap database file does not exist anymore.") + "\n\n" +
-                                          _("**WARNING:** A downgrade to Kittyhack v1.1.0 is not possible without the original database file!"))
+        ui_kittyflap_section = None
+        if kittyflap_db_file_exists and (get_file_size(CONFIG['DATABASE_PATH']) > 50):
+            ui_kittyflap_db = ui.div(
+                ui.markdown(
+                    _("The original kittyflap database file consumes currently **{:.1f} MB** of disk space.").format(get_file_size(CONFIG['DATABASE_PATH'])) + "\n\n" +
+                    _("The file contains a lot pictures which could not be uploaded to the original kittyflap servers anymore.") + "\n\n" +
+                    _("You could delete the pictures from it to free up disk space.")
+                ),
+                ui.input_task_button("clear_kittyflap_db", _("Remove pictures from original Kittyflap Database"), icon=icon_svg("trash")),
+                ui.download_button("download_kittyflap_db", _("Download Kittyflap Database"), icon=icon_svg("download")),
+            )
+
+            # Build the whole section (card) only if the file exists
+            ui_kittyflap_section = ui.div(
+                ui.card(
+                    ui.card_header(ui.h4(_("Original Kittyflap Database"), style_="text-align: center;")),
+                    ui.br(),
+                    ui_kittyflap_db,
+                    ui.br(),
+                    full_screen=False,
+                    class_="generic-container",
+                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                ),
+                width="400px"
+            )
         return ui.div(
             ui.div(
                 ui.card(
@@ -5242,18 +5245,8 @@ def server(input, output, session):
                 ),
                 width="400px"
             ),
-            ui.div(
-                ui.card(
-                    ui.card_header(ui.h4(_("Original Kittyflap Database"), style_="text-align: center;")),
-                    ui.br(),
-                    ui_kittyflap_db,
-                    ui.br(),
-                    full_screen=False,
-                    class_="generic-container",
-                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
-                ),
-                width="400px"
-            ),
+            # Include Original Kittyflap Database card only if present
+            (ui_kittyflap_section if ui_kittyflap_section else ui.HTML("")),
             ui.div(
                 ui.card(
                     ui.card_header(ui.h4(_("Progressive Web App (PWA)"), style_="text-align: center;")),

@@ -979,7 +979,10 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
 def cleanup_orphan_image_files(database: str) -> Result:
     """
     Remove JPG files in ORIGINAL_IMAGE_DIR and THUMBNAIL_DIR that have no corresponding event id in DB.
-    Only considers filenames '<id>.jpg'. Safe to run periodically.
+    Considers:
+      - files named '<id>.jpg' where <id> not in active event IDs (deleted != 1)
+      - any other '*.jpg' file whose stem is NOT a pure integer (e.g. 'asdf.jpg'): treated as orphan
+    Safe to run periodically.
     """
     try:
         # Collect valid IDs from DB (include non-deleted only)
@@ -1005,12 +1008,12 @@ def cleanup_orphan_image_files(database: str) -> Result:
                     if not name.lower().endswith(".jpg"):
                         continue
                     stem = name[:-4]
-                    try:
+                    if stem.isdigit():
                         fid = int(stem)
-                    except ValueError:
-                        # Not an <id>.jpg, leave it untouched
-                        continue
-                    if fid not in valid_ids:
+                        if fid not in valid_ids:
+                            orphans.append(os.path.join(dir_path, name))
+                    else:
+                        # Any non-numeric *.jpg in these dedicated dirs is considered orphan
                         orphans.append(os.path.join(dir_path, name))
                 return orphans
             except Exception as e:

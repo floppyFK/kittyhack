@@ -138,6 +138,21 @@ def load_config():
     parser = configparser.ConfigParser()
     parser.read(CONFIGFILE)
 
+    # Detect empty or corrupt config and recreate it
+    try:
+        is_empty = os.path.exists(CONFIGFILE) and os.path.getsize(CONFIGFILE) == 0
+    except Exception:
+        is_empty = False
+    if is_empty or not parser.has_section('Settings'):
+        logging.warning("[CONFIG] Config file exists but is empty/corrupt (no [Settings]). Recreating fresh config.ini")
+        try:
+            os.remove(CONFIGFILE)
+        except Exception as e:
+            logging.warning(f"[CONFIG] Failed to remove corrupt config.ini: {e}")
+        create_default_config()
+        parser = configparser.ConfigParser()
+        parser.read(CONFIGFILE)
+
     invalid_values: List[Tuple[str, Any]] = []
 
     def get_raw(section: str, option: str, default: Any) -> Any:
@@ -335,6 +350,10 @@ def save_config():
     updater = ConfigUpdater()
     updater.read(CONFIGFILE)
 
+    # Ensure [Settings] section exists
+    if 'Settings' not in updater:
+        updater.add_section('Settings')
+
     settings = updater['Settings']
     settings['timezone'] = CONFIG['TIMEZONE']
     settings['language'] = CONFIG['LANGUAGE']
@@ -424,6 +443,11 @@ def update_config_images_overlay():
     """
     updater = ConfigUpdater()
     updater.read(CONFIGFILE)
+
+    # Ensure [Settings] section exists
+    if 'Settings' not in updater:
+        updater.add_section('Settings')
+
     updater['Settings']['show_images_with_overlay'] = CONFIG['SHOW_IMAGES_WITH_OVERLAY']
 
     # Write updated configuration back to the file
@@ -443,6 +467,10 @@ def update_single_config_parameter(parameter: str):
     """
     updater = ConfigUpdater()
     updater.read(CONFIGFILE)
+    
+    # Ensure [Settings] section exists
+    if 'Settings' not in updater:
+        updater.add_section('Settings')
     
     # Get the value to write
     value = CONFIG[parameter.upper()]

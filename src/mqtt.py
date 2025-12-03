@@ -212,7 +212,7 @@ class StatePublisher:
         translations = {
             AllowedToExit.ALLOW: {"en": "Allow exit", "de": "Ausgang erlauben"},
             AllowedToExit.DENY: {"en": "Do not allow exit", "de": "Ausgang verbieten"},
-            AllowedToExit.CONFIGURE_PER_CAT: {"en": "Per-cat configuration", "de": "Pro-Katze Konfiguration"}
+            AllowedToExit.CONFIGURE_PER_CAT: {"en": "Per-cat configuration", "de": "Separate Konfiguration pro Katze"}
         }
         friendly = translations.get(allowed, {}).get(CONFIG['LANGUAGE'], allowed.value)
         if self.mqtt_client.connected:
@@ -236,7 +236,7 @@ class StatePublisher:
             mapping = {
                 'ON': AllowedToExit.ALLOW, 'OFF': AllowedToExit.DENY,
                 'Allow exit': AllowedToExit.ALLOW, 'Do not allow exit': AllowedToExit.DENY, 'Per-cat configuration': AllowedToExit.CONFIGURE_PER_CAT,
-                'Ausgang erlauben': AllowedToExit.ALLOW, 'Ausgang verbieten': AllowedToExit.DENY, 'Pro-Katze Konfiguration': AllowedToExit.CONFIGURE_PER_CAT,
+                'Ausgang erlauben': AllowedToExit.ALLOW, 'Ausgang verbieten': AllowedToExit.DENY, 'Separate Konfiguration pro Katze': AllowedToExit.CONFIGURE_PER_CAT,
                 'allow': AllowedToExit.ALLOW, 'deny': AllowedToExit.DENY, 'configure_per_cat': AllowedToExit.CONFIGURE_PER_CAT
             }
             new_value = mapping.get(raw, None)
@@ -408,8 +408,29 @@ class StatePublisher:
             self.image_publish_thread.join(timeout=1.0)
             logging.info("[MQTT] Stopped periodic image publishing thread")
 
+    def cleanup_old_discovery_topics(self):
+        """Publish empty retained payloads to remove deprecated HA discovery entries"""
+        try:
+            device_id = CONFIG['MQTT_DEVICE_ID']
+            discovery_prefix = "homeassistant"
+
+            # Old entity: switch for allow_exit (now replaced by select)
+            old_topics = [
+                f"{discovery_prefix}/switch/{device_id}/{device_id}_allow_exit/config"
+            ]
+
+            for t in old_topics:
+                # Empty retained payload removes the entity from Home Assistant
+                self.mqtt_client.client.publish(t, "", retain=True)
+                logging.info(f"[MQTT] Cleaned old discovery topic: {t}")
+        except Exception as e:
+            logging.warning(f"[MQTT] Could not clean old discovery topics: {e}")
+
     def publish_discovery_topics(self):
         """Publish Home Assistant MQTT discovery topics for auto-configuration"""
+        # First, clean up deprecated discovery topics (e.g., old switch for allow_exit)
+        self.cleanup_old_discovery_topics()
+
         device_id = CONFIG['MQTT_DEVICE_ID']
         discovery_prefix = "homeassistant"
         
@@ -428,6 +449,39 @@ class StatePublisher:
             "payload_available": "online",
             "payload_not_available": "offline"
         }
+
+        # Language-dependent labels
+        is_de = CONFIG['LANGUAGE'] == "de"
+        allowed_exit_options = (
+            [
+                "Ausgang erlauben",
+                "Ausgang verbieten",
+                "Separate Konfiguration pro Katze"
+            ]
+            if is_de
+            else [
+                "Allow exit",
+                "Do not allow exit",
+                "Per-cat configuration"
+            ]
+        )
+        allowed_enter_options = (
+            [
+                "Alle Katzen",
+                "Alle Katzen mit RFID-Chip",
+                "Nur registrierte Katzen",
+                "Keine Katzen",
+                "Separate Konfiguration pro Katze",
+            ]
+            if is_de
+            else [
+                "All cats",
+                "All cats with RFID",
+                "Only registered cats",
+                "No cats",
+                "Separate configuration per cat",
+            ]
+        )
         
         # Define all entities to create
         entities = {
@@ -489,51 +543,40 @@ class StatePublisher:
                     "image_encoding": "b64"
                 }
             ],
-            # Switch for ALLOWED_TO_EXIT
-            "switch": [
+            # Selects for ALLOWED_TO_EXIT and ALLOWED_TO_ENTER
+            "select": [
                 {
                     "name": "Allow Exit",
                     "unique_id": f"{device_id}_allow_exit",
                     "state_topic": f"kittyhack/{device_id}/config/allowed_to_exit",
                     "command_topic": f"kittyhack/{device_id}/config/allowed_to_exit/set",
-                    "payload_on": "ON",
-                    "payload_off": "OFF",
-                    "state_on": "ON",
-                    "state_off": "OFF",
+                    "options": allowed_exit_options,
                     "icon": "mdi:arrow-up-bold-circle"
-                }
-            ],
-            # Select for ALLOWED_TO_ENTER
-            "select": [
+                },
                 {
                     "name": "Allow Enter",
                     "unique_id": f"{device_id}_allow_enter",
                     "state_topic": f"kittyhack/{device_id}/config/allowed_to_enter",
                     "command_topic": f"kittyhack/{device_id}/config/allowed_to_enter/set",
-                    "options": [
-                        "Alle Katzen" if CONFIG['LANGUAGE'] == "de" else "All cats",
-                        "Alle Katzen mit RFID-Chip" if CONFIG['LANGUAGE'] == "de" else "All cats with RFID",
-                        "Nur registrierte Katzen" if CONFIG['LANGUAGE'] == "de" else "Only registered cats",
-                        "Keine Katzen" if CONFIG['LANGUAGE'] == "de" else "No cats"
-                    ],
+                    "options": allowed_enter_options,
                     "icon": "mdi:arrow-down-bold-circle"
                 }
             ],
             "sensor": [
-            {
-                "name": "Last Event",
-                "unique_id": f"{device_id}_events",
-                "default_entity_id": f"sensor.{device_id}_events",
-                "state_topic": f"kittyhack/{device_id}/events",
-                "value_template": "{{ value_json.event }}",
-                "json_attributes_topic": f"kittyhack/{device_id}/events",
-                "icon": "mdi:cat",
-                "force_update": True,
-                "availability_topic": f"kittyhack/{device_id}/status",
-                "payload_available": "online",
-                "payload_not_available": "offline"
-            }
-        ]
+                {
+                    "name": "Last Event",
+                    "unique_id": f"{device_id}_events",
+                    "default_entity_id": f"sensor.{device_id}_events",
+                    "state_topic": f"kittyhack/{device_id}/events",
+                    "value_template": "{{ value_json.event }}",
+                    "json_attributes_topic": f"kittyhack/{device_id}/events",
+                    "icon": "mdi:cat",
+                    "force_update": True,
+                    "availability_topic": f"kittyhack/{device_id}/status",
+                    "payload_available": "online",
+                    "payload_not_available": "offline"
+                }
+            ]
         }
         
         # Publish discovery messages

@@ -4393,7 +4393,7 @@ def server(input, output, session):
                                     "        name: " + _("Open entrance for...") + "\n" +
                                     "        icon: \"\"\n" +
                                     "        secondary_info: none\n" +
-                                    "      - entity: switch.{}_allow_exit\n".format(CONFIG['MQTT_DEVICE_ID']) +
+                                    "      - entity: select.{}_allow_exit\n".format(CONFIG['MQTT_DEVICE_ID']) +
                                     "        name: " + _("Allow cats to exit") + "\n" +
                                     "        icon: \"\"\n" +
                                     "        secondary_info: none\n" +

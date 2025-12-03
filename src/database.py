@@ -73,6 +73,33 @@ def _remove_event_image_files(ids: Iterable[int]) -> tuple[int, int]:
             logging.warning(f"[DATABASE] Failed removing thumbnail file for ID {pid}: {e}")
     return removed_orig, removed_thumb
 
+def _make_placeholder_image(text: str, size=(640, 480), bg=(230, 230, 230), fg=(30, 30, 30)) -> bytes:
+    """
+    Create a simple JPEG placeholder with a message.
+    """
+    try:
+        h, w = size[1], size[0]
+        img = np.full((h, w, 3), bg, dtype=np.uint8)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 1.0
+        thickness = 2
+        line_type = cv2.LINE_AA
+        # Split text into lines and center them
+        lines = [text]
+        y0 = h // 2 - 20 * (len(lines) - 1)
+        for i, line in enumerate(lines):
+            (tw, th), _ = cv2.getTextSize(line, font, scale, thickness)
+            x = (w - tw) // 2
+            y = y0 + i * (th + 12)
+            cv2.putText(img, line, (x, y), font, scale, fg, thickness, line_type)
+        ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if ok:
+            return buf.tobytes()
+    except Exception as e:
+        logging.error(f"[PLACEHOLDER] Failed to build placeholder image: {e}")
+    # Fallback: minimal empty JPEG header if something goes wrong
+    return bytes([0xFF, 0xD8, 0xFF, 0xD9])
+
 # database actions
 class db_action(Enum):
     get_photos = 0
@@ -394,7 +421,8 @@ def get_thubmnail_by_id(database: str, photo_id: int):
     df = read_df_from_database(database, stmt)
     if df.empty:
         logging.error(f"[DATABASE] Photo with ID {photo_id} not found")
-        return None
+        # Return a placeholder thumbnail
+        return _make_placeholder_image("Image not found", size=(320, 240))
 
     # If legacy thumbnail blob exists, write it to file (for migration) and return
     legacy_thumb = df.iloc[0]['thumbnail']
@@ -420,7 +448,14 @@ def get_thubmnail_by_id(database: str, photo_id: int):
 
     if original_image is None:
         logging.error(f"[DATABASE] Original image not found for photo ID {photo_id}")
-        return None
+        # Provide a placeholder thumbnail and persist it
+        thumbnail = _make_placeholder_image("Image not found", size=(320, 240))
+        try:
+            with open(thumb_path, 'wb') as f:
+                f.write(thumbnail)
+        except Exception as e:
+            logging.warning(f"[DATABASE] Failed to write placeholder thumbnail '{thumb_path}': {e}")
+        return thumbnail
 
     try:
         thumbnail = process_image(original_image, 640, 480, 50)
@@ -433,7 +468,8 @@ def get_thubmnail_by_id(database: str, photo_id: int):
         return thumbnail
     except Exception as e:
         logging.error(f"[DATABASE] Failed to create thumbnail from original image: {e}")
-        return None
+        # Return a placeholder if processing fails
+        return _make_placeholder_image("Image not found", size=(320, 240))
 
 def db_get_cats(database: str, return_data: ReturnDataCatDB):
     """
@@ -783,6 +819,10 @@ def read_photo_by_id(database: str, photo_id: int) -> pd.DataFrame:
                         df.at[0, 'original_image'] = f.read()
                 except Exception as e:
                     logging.warning(f"[DATABASE] Failed to read original image file '{img_path}': {e}")
+            else:
+                # Provide a placeholder original image instead of None
+                logging.error(f"[DATABASE] Original image not found for photo ID {photo_id}")
+                df.at[0, 'original_image'] = _make_placeholder_image("Image not found", size=(640, 480))
     return df
 
 def delete_photo_by_id(database: str, photo_id: int) -> Result:

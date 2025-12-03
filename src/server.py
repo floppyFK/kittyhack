@@ -14,7 +14,7 @@ import subprocess
 import re
 import hashlib
 import asyncio
-import io
+from io import BytesIO
 import zipfile
 import uuid
 import glob
@@ -914,26 +914,69 @@ def show_event_server(input, output, session, block_id: int):
 
     @render.download(filename=f"kittyhack_event_{block_id}.zip")
     def btn_download():
-        if slideshow_running[0]:
-            slideshow_running[0] = False
-        
-        # Create a BytesIO object to store the zip file
-        zip_buffer = io.BytesIO()
-        try:
-            # Create a ZipFile object
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                # Add each picture to the zip file
-                for i, (timestamp, picture, _, _) in enumerate(zip(timestamps, orig_pictures, event_datas, pictures)):
-                    # Create filename from timestamp
-                    filename = f"{timestamp.replace(':', '-')}.jpg"
-                    zip_file.writestr(filename, picture)
-            
-            # Reset buffer position to the beginning
-            zip_buffer.seek(0)
-            return zip_buffer
-        except Exception as e:
-            logging.error(f"Failed to create the zip file for event with block_id {block_id}: {e}")
-            return None
+        # Fetch all rows in this block, including original and modified images
+        df = db_get_photos_by_block_id(
+            CONFIG['KITTYHACK_DATABASE_PATH'],
+            block_id,
+            ReturnDataPhotosDB.all
+        )
+
+        # Collect files to zip
+        files: list[tuple[str, bytes]] = []
+        if not df.empty:
+            for __, row in df.iterrows():
+                pid = int(row['id'])
+                # Safe timestamp for filename
+                try:
+                    # get_local_date_from_utc_date expects a single UTC timestamp string
+                    local_dt_str = get_local_date_from_utc_date(str(row['created_at']))
+                    ts = pd.to_datetime(local_dt_str, errors='coerce')
+                    ts = ts.strftime("%Y%m%d_%H%M%S") if isinstance(ts, pd.Timestamp) else "unknown"
+                except Exception as e:
+                    logging.warning(f"[DOWNLOAD] Failed to format timestamp for ID {pid}: {e}")
+                    ts = "unknown"
+
+                # Original image bytes from FS or DB
+                orig_bytes = None
+                # Try filesystem path
+                try:
+                    fp = os.path.join("/root/pictures/original_images", f"{pid}.jpg")
+                    if os.path.exists(fp):
+                        with open(fp, "rb") as f:
+                            orig_bytes = f.read()
+                except Exception as e:
+                    logging.warning(f"[DOWNLOAD] Failed reading original file for ID {pid}: {e}")
+                # Fallback to DB blob if present
+                if orig_bytes is None:
+                    ob = row.get('original_image')
+                    if isinstance(ob, (bytes, bytearray)) and len(ob) > 0:
+                        orig_bytes = bytes(ob)
+
+                # Add original if present
+                if isinstance(orig_bytes, (bytes, bytearray)) and len(orig_bytes) > 0:
+                    files.append((f"{pid}_{ts}.jpg", bytes(orig_bytes)))
+
+        # If we have no files, add a minimal ZIP with README
+        if len(files) == 0:
+            logging.warning(f"[DOWNLOAD] No images available for block_id {block_id}. Returning placeholder ZIP.")
+            readme = (
+                "Kittyhack event download\n"
+                f"block_id: {block_id}\n\n"
+                "No images are available for this event.\n"
+                "- They may have been deleted due to retention limits,\n"
+                "- or migrated but missing on disk,\n"
+                "- or were never stored.\n"
+            ).encode("utf-8")
+            files.append(("README.txt", readme))
+
+        # Write ZIP to a temp file and return its path
+        tmp_dir = "/tmp"
+        zip_path = os.path.join(tmp_dir, f"kittyhack_event_{block_id}_{int(tm.time())}.zip")
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for name, data in files:
+                zf.writestr(name, data)
+
+        return zip_path
     
     @reactive.effect
     @reactive.event(input.btn_play_pause)

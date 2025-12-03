@@ -5258,13 +5258,23 @@ def server(input, output, session):
                     ui.br(),
                     ui.output_ui("ui_system_info"),
                     ui.hr(),
+                    ui.h5(_("Kittyhack Database")),
+                    ui.h6(_("Backup and Restore your Kittyhack database")),
                     ui.div(ui.download_button("download_kittyhack_db", _("Download Kittyhack Database"), icon=icon_svg("download"))),
+                    ui.div(
+                        uix.input_file("upload_kittyhack_db", _("Restore Kittyhack Database (.db)"), accept=[".db"], multiple=False, width="100%")
+                    ),
                     ui.markdown(
-                        _("**WARNING:** To download the database, the Kittyhack software will be stopped and the flap will be locked. ") + "\n\n" +
+                        _("**WARNING:** To download/upload the database, the Kittyhack software will be stopped and the flap will be locked. ") + "\n\n" +
                         _("You have to restart the Kittyflap afterwards to return to normal operation.")
                     ),
                     ui.hr(),
+                    ui.h5(_("Configuration File")),
+                    ui.h6(_("Backup and Restore your Kittyhack configuration")),
                     ui.div(ui.download_button("download_config", _("Download Configuration File"), icon=icon_svg("download"))),
+                    ui.div(
+                        uix.input_file("upload_config", _("Restore Configuration File (config.ini)"), accept=[".ini"], multiple=False, width="100%")
+                    ),
                     ui.br(),
                     full_screen=False,
                     class_="generic-container",
@@ -5440,6 +5450,100 @@ def server(input, output, session):
             logging.error(f"Failed to download config.ini file: {e}")
             ui.notification_show(_("Failed to download config.ini file: {}").format(e), duration=10, type="error")
             return None
+
+    @reactive.Effect
+    @reactive.event(input.upload_kittyhack_db)
+    def on_upload_kittyhack_db():
+        files = input.upload_kittyhack_db()
+        if not files:
+            ui.notification_show(_("No file selected."), duration=8, type="error")
+            return
+        f = files[0]
+        name = f.get('name', '')
+        src_path = f.get('datapath', '')
+        if not src_path or not os.path.exists(src_path):
+            ui.notification_show(_("Uploaded file not found."), duration=8, type="error")
+            return
+        if not name.lower().endswith(".db"):
+            ui.notification_show(_("Invalid file type. Please upload a .db file."), duration=10, type="error")
+            return
+        try:
+            # Stop backend to avoid DB locks
+            sigterm_monitor.halt_backend()
+            tm.sleep(1.0)
+            # Backup current DB before overwrite
+            backup_dir = os.path.dirname(CONFIG['KITTYHACK_DATABASE_PATH']) or "."
+            backup_name = f"kittyhack_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            backup_dest = os.path.join(backup_dir, backup_name)
+            try:
+                shutil.copy2(CONFIG['KITTYHACK_DATABASE_PATH'], backup_dest)
+                logging.info(f"[UPLOAD_DB] Backup created: {backup_dest}")
+            except Exception as e:
+                logging.warning(f"[UPLOAD_DB] Failed to create backup: {e}")
+            # Overwrite DB
+            shutil.copy2(src_path, CONFIG['KITTYHACK_DATABASE_PATH'])
+            ui.notification_show(_("Database uploaded successfully."), duration=6, type="message")
+            # Prompt reboot to apply
+            logging.info(f"A upload of a new kittyhack database was performed --> Restart pending.")
+            # Show the restart dialog
+            m = ui.modal(
+                ui.markdown(
+                    _("Please click the 'Reboot' button to restart the Kittyflap.")
+                ),
+                title=_("Reboot required"),
+                easy_close=False,
+                footer=ui.div(
+                    ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
+                )
+            )
+            ui.modal_show(m)
+        except Exception as e:
+            logging.error(f"[UPLOAD_DB] Failed to upload database: {e}")
+            ui.notification_show(_("Failed to upload database: {}").format(e), duration=12, type="error")
+
+    @reactive.Effect
+    @reactive.event(input.upload_config)
+    def on_upload_config():
+        files = input.upload_config()
+        if not files:
+            ui.notification_show(_("No file selected."), duration=8, type="error")
+            return
+        f = files[0]
+        name = f.get('name', '')
+        src_path = f.get('datapath', '')
+        if not src_path or not os.path.exists(src_path):
+            ui.notification_show(_("Uploaded file not found."), duration=8, type="error")
+            return
+        if not name.lower().endswith(".ini"):
+            ui.notification_show(_("Invalid file type. Please upload a config.ini file."), duration=10, type="error")
+            return
+        try:
+            # Optional quick validation: ensure it contains a [Settings] section
+            with open(src_path, 'r', encoding='utf-8', errors='ignore') as fcfg:
+                content = fcfg.read()
+            if "[Settings]" not in content:
+                ui.notification_show(_("Invalid configuration file: missing [Settings] section."), duration=12, type="error")
+                return
+            config_path = os.path.join(os.getcwd(), "config.ini")
+            # Overwrite config
+            shutil.copy2(src_path, config_path)
+            ui.notification_show(_("Configuration uploaded successfully."), duration=6, type="message")
+            logging.info(f"A upload of a new kittyhack configuration was performed --> Restart pending.")
+            # Show the restart dialog
+            m = ui.modal(
+                ui.markdown(
+                    _("Please click the 'Reboot' button to restart the Kittyflap.")
+                ),
+                title=_("Reboot required"),
+                easy_close=False,
+                footer=ui.div(
+                    ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
+                )
+            )
+            ui.modal_show(m)
+        except Exception as e:
+            logging.error(f"[UPLOAD_CFG] Failed to upload configuration: {e}")
+            ui.notification_show(_("Failed to upload configuration: {}").format(e), duration=12, type="error")
 
     @reactive.Effect
     @reactive.event(input.update_kittyhack)

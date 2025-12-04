@@ -3935,7 +3935,7 @@ def server(input, output, session):
                                 "camera_cat_detection_info",
                                 _("Explain camera cat detection"),
                                 _("If this setting is enabled, the camera will also be used for cat detection (in addition to the RFID reader).") + "  \n\n" +
-                                _("You can configure the required threshold for the cat detection with the slider `Cat detection threshold` below.") + " " +
+                                _("You can configure the required threshold for the cat detection with the slider `Cat detection threshold`.") + " " +
                                 _("If the detection is successful, the inside direction will be opened.") + "\n\n" +
                                 _("**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models.") + "\n\n" +
                                 _("This feature depends heavily on the quality of your model and sufficient lighting conditions.") + " " +
@@ -3953,7 +3953,7 @@ def server(input, output, session):
                                 _("- In regular operation, Kittyhack waits for a trigger from the outside PIR sensor before starting camera analysis") + "  \n" + 
                                 _("- With this feature enabled, the PIR sensor is disabled and the camera continuously analyzes images") + "  \n" + 
                                 _("- When a cat is detected in the camera feed, it's treated as equivalent to a motion detection outside") + "  \n\n" +
-                                _("You can configure the required threshold for the cat detection with the slider `Cat detection threshold` below.") + "  \n\n" +
+                                _("You can configure the required threshold for the cat detection with the slider `Cat detection threshold`.") + "  \n\n" +
                                 _("This may be very helpful in areas where environmental factors (moving trees, people passing by) permanently cause false PIR triggers.") + "  \n\n" +
                                 _("**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models.") + "\n\n" +
                                 _("This feature depends heavily on the quality of your model and sufficient lighting conditions.") + " " +
@@ -4180,9 +4180,7 @@ def server(input, output, session):
                                         "- " + _("If no range is enabled, cats may exit at any time (subject to other settings).") + "  \n" +
                                         "- " + _("If any range is enabled, cats may exit only during the configured time windows.") + "  \n" +
                                         "- " + _("Outside these windows, no cat may exit, even if the per‑cat setting in 'Manage Cats' allows exit.") + "  \n" +
-                                        "- " + _("Per‑cat settings are an additional restriction when 'Outside direction' is set to 'Individual configuration per cat'.") + "  \n" +
-                                        "  - " + _("A cat marked 'Allow exit' may exit only during the global time windows.") + "  \n" +
-                                        "  - " + _("A cat marked 'Do not allow exit' can never exit.") + "  \n\n" +
+                                        _("See the decision logic flowchart above for details.") + "  \n\n" +
                                         _("Enter times in 24h format HH:MM (e.g., 13:00).") + "  \n" +
                                         _("Example: If ranges are 10:00–18:00 and it is 20:00, no cat may exit, even if that cat is allowed per‑cat in 'Manage Cats'.")
                                     )

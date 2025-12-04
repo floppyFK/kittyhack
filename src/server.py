@@ -3084,8 +3084,72 @@ def server(input, output, session):
             "en": "https://github.com/floppyFK/kittyhack/wiki/%5BEN%5D-Kittyhack-v2.0-%E2%80%90-Train-own-AI%E2%80%90Models"
         }.get(CONFIG["LANGUAGE"], "https://github.com/floppyFK/kittyhack/wiki/%5BEN%5D-Kittyhack-v2.0-%E2%80%90-Train-own-AI%E2%80%90Models")
         
+        # --- Server maintenance check when no training is in progress ---
+        server_status = None
+        training_in_progress = is_valid_uuid4(CONFIG["MODEL_TRAINING"])
+        if not training_in_progress:
+            server_status = RemoteModelTrainer.get_server_status()
+
+        # Build Model Training section content depending on maintenance state or active training
+        if training_in_progress:
+            # Already in progress: show existing status UI only
+            training_content = ui.div(
+                ui.markdown(_("A model training is currently in progress.") + (_("You will be notified by email when the training is finished.") if CONFIG['EMAIL'] else "")),
+                ui.markdown(_("Current status: {}").format(training_status)),
+                ui.br(),
+                ui.br(),
+                ui.input_task_button("btn_reload_model_training_status", _("Reload Model Training Status"), class_="btn-primary"),
+                ui.hr(),
+                ui.markdown(_("Your individual Training ID:") + "\n\n" + f"`{CONFIG['MODEL_TRAINING']}`"),
+                ui.help_text(_("(use this ID for support requests)")),
+                ui.br(),
+                ui.br(),
+                ui.input_task_button("btn_cancel_model_training", _("Cancel Model Training"), class_="btn-danger"),
+                id="model_training_status",
+                style_="text-align: center;"
+            )
+        else:
+            # No training in progress: check maintenance or timeout/error
+            is_maintenance = bool(server_status and server_status.get("maintenance", False))
+            maintenance_msg = (server_status or {}).get("message", "")
+            if server_status is None:
+                # Timeout or request failure: inform user
+                training_content = ui.div(
+                    ui.markdown(f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} " +
+                                _("Unable to reach the model training server right now. Please check your network or try again later.")),
+                    ui.br(),
+                    ui.markdown(_("If the issue persists, the server may be temporarily unavailable.")),
+                    style_="text-align: center;"
+                )
+            elif is_maintenance:
+                # Show maintenance notice and do not render upload inputs
+                msg = _("The model training server is currently in maintenance. Please try again later.")
+                if maintenance_msg:
+                    msg += "\n\n" + maintenance_msg
+                training_content = ui.div(
+                    ui.markdown(f"{icon_svg('wrench', margin_left='-0.1em')} {msg}"),
+                    style_="text-align: center;"
+                )
+            else:
+                # Show the original upload form
+                training_content = ui.div(
+                    ui.div(
+                        ui.div(
+                            uix.input_file("model_training_data", _("Upload Label-Studio Training Data (ZIP file)"), accept=".zip", multiple=False, width="90%"),
+                            ui.input_text("model_name", _("Model Name (optional)"), placeholder=_("Enter a name for your model"), width="90%"),
+                            ui.input_text("user_name", _("Username (optional)"), value=CONFIG['USER_NAME'], placeholder=_("Enter your name"), width="90%"),
+                            ui.input_text("email_notification", _("Email for Notification (optional)"), value=CONFIG['EMAIL'], placeholder=_("Enter your email address"), width="90%"),
+                            ui.help_text(_("If you provide an email address, you will be notified when the model training is finished.")),
+                            ui.br(),
+                            ui.input_task_button("submit_model_training", _("Submit Model for Training"), class_="btn-primary"),
+                            id="model_training_form",
+                            style_="display: flex; flex-direction: column; align-items: center; justify-content: center;"
+                        ),
+                        style_="text-align: center;"
+                    ),
+                )
+
         ui_ai_training =  ui.div(
-            # --- Description ---
             ui.div(
                 ui.card(
                     ui.card_header(
@@ -3097,7 +3161,7 @@ def server(input, output, session):
                         _("1. **Label Studio**: In this step, you can label your cat(s) and their prey in the captured images. This is done using the Label Studio tool.") + "  \n" +
                         _("2. **Model Training**: In this step, the labeled images are used to train a new AI model.") + "  \n" +
                         _("To achieve the best results, it is recommended to label at least 100 images of each cat and their prey. The more images you label, the better the model will be.") + " " +
-                        _("The training process can take several hours, depending on the number of images.") + "  \n\n" +
+                        _("The training process can take from several minutes up to an hour, depending on the number of images.") + "  \n" +
                         _("Please read the instructions before creating your own model! Following these exact instructions is crucial for successful training:")
                     ),
                     ui.div(
@@ -3113,8 +3177,6 @@ def server(input, output, session):
                 ),
                 width="400px"
             ),
-
-            # --- Label Studio ---
             ui.div(
                 ui.card(
                     ui.card_header(
@@ -3129,44 +3191,13 @@ def server(input, output, session):
                 ),
                 width="400px"
             ),
-
-            # --- Model Training ---
             ui.div(
                 ui.card(
                     ui.card_header(
                         ui.h4(_("Model Training"), style_="text-align: center;"),
                     ),
                     ui.br(),
-                    ui.div(
-                        ui.div(
-                            ui.div(
-                                uix.input_file("model_training_data", _("Upload Label-Studio Training Data (ZIP file)"), accept=".zip", multiple=False, width="90%"),
-                                ui.input_text("model_name", _("Model Name (optional)"), placeholder=_("Enter a name for your model"), width="90%"),
-                                ui.input_text("user_name", _("Username (optional)"), value=CONFIG['USER_NAME'],placeholder=_("Enter your name"), width="90%"),
-                                ui.input_text("email_notification", _("Email for Notification (optional)"), value=CONFIG['EMAIL'],placeholder=_("Enter your email address"), width="90%"),
-                                ui.help_text(_("If you provide an email address, you will be notified when the model training is finished.")),
-                                ui.br(),
-                                ui.input_task_button("submit_model_training", _("Submit Model for Training"), class_="btn-primary"),
-                                id="model_training_form",
-                                style_="display: flex; flex-direction: column; align-items: center; justify-content: center;"
-                            ),
-                            style_="text-align: center;"
-                        ) if not is_valid_uuid4(CONFIG["MODEL_TRAINING"]) else ui.div(
-                            ui.markdown(_("A model training is currently in progress. This can take several hours.") + _("You will be notified by email when the training is finished.") if CONFIG['EMAIL'] else ""),
-                            ui.markdown(_("Current status: {}").format(training_status)),
-                            ui.br(),
-                            ui.br(),
-                            ui.input_task_button("btn_reload_model_training_status", _("Reload Model Training Status"), class_="btn-primary"),
-                            ui.hr(),
-                            ui.markdown(_("Your individual Training ID:") + "\n\n" + f"`{CONFIG['MODEL_TRAINING']}`"),
-                            ui.help_text(_("(use this ID for support requests)")),
-                            ui.br(),
-                            ui.br(),
-                            ui.input_task_button("btn_cancel_model_training", _("Cancel Model Training"), class_="btn-danger"),
-                            id="model_training_status",
-                            style_="text-align: center;"
-                        ),
-                    ),
+                    training_content,
                     ui.br(),
                     full_screen=False,
                     class_="generic-container align-left",
@@ -3174,8 +3205,6 @@ def server(input, output, session):
                 ),
                 width="400px"
             ),
-
-            # --- Model Management ---
             ui.div(
                 ui.card(
                     ui.card_header(

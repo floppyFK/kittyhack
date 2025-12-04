@@ -28,6 +28,33 @@ class RemoteModelTrainer:
     BASE_URL = "https://kittyhack-models.fk-cloud.de"
 
     @staticmethod
+    def get_server_status():
+        """
+        Checks the availability/maintenance state of the model training server.
+
+        Expected JSON response example:
+        {
+            "maintenance": false,
+            "message": "Optional maintenance info text"
+        }
+
+        Returns:
+            dict | None: Parsed JSON on success, or None on error.
+        """
+        url = f"{RemoteModelTrainer.BASE_URL}/server_status"
+        try:
+            response = requests.get(url, verify=True, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            # Normalize keys and defaults
+            maintenance = bool(data.get("maintenance", False))
+            message = data.get("message") or data.get("maintenance_text") or ""
+            return {"maintenance": maintenance, "message": message}
+        except Exception as e:
+            logging.warning(f"[MODEL_TRAINING] Server status check failed: {e}")
+            return None
+
+    @staticmethod
     def enqueue_model_training(zip_file_path, model_name = "", user_name = "", email = ""):
         """
         Uploads a zip file to the remote server to start model training.

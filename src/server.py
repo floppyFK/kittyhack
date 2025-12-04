@@ -5334,7 +5334,7 @@ def server(input, output, session):
                     ui.h6(_("Backup and Restore your Kittyhack database")),
                     ui.div(ui.download_button("download_kittyhack_db", _("Download Kittyhack Database"), icon=icon_svg("download"))),
                     ui.div(
-                        uix.input_file("upload_kittyhack_db", _("Restore Kittyhack Database (.db)"), accept=[".db"], multiple=False, width="100%")
+                        uix.input_file("upload_kittyhack_db", _("Restore Kittyhack Database (.db)"), accept=[".db"], multiple=False, width="90%")
                     ),
                     ui.markdown(
                         _("**WARNING:** To download/upload the database, the Kittyhack software will be stopped and the flap will be locked. ") + "\n\n" +
@@ -5345,7 +5345,7 @@ def server(input, output, session):
                     ui.h6(_("Backup and Restore your Kittyhack configuration")),
                     ui.div(ui.download_button("download_config", _("Download Configuration File"), icon=icon_svg("download"))),
                     ui.div(
-                        uix.input_file("upload_config", _("Restore Configuration File (config.ini)"), accept=[".ini"], multiple=False, width="100%")
+                        uix.input_file("upload_config", _("Restore Configuration File (config.ini)"), accept=[".ini"], multiple=False, width="90%")
                     ),
                     ui.br(),
                     full_screen=False,

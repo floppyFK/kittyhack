@@ -28,6 +28,9 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Run apt/dpkg non-interactively to avoid prompts blocking the script
+export DEBIAN_FRONTEND=noninteractive
+
 # Log apt package information
 zgrep "install\|remove" /var/log/dpkg.log* > "${LOGPATH}/apt_changes.log"
 dpkg-query -W > "${LOGPATH}/installed_packages_before_kittyhack_setup.log"
@@ -599,8 +602,17 @@ install_kittyhack() {
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 2: Set up Python virtual environment ---${NC}"
     python3.11 -m venv /root/kittyhack/.venv
     source /root/kittyhack/.venv/bin/activate
-    pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt
-    if ! pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt; then
+
+    # Force pip to use PyPI only to satisfy --require-hashes entries in requirements.txt
+    # Some systems have PIP_EXTRA_INDEX_URL=piwheels; unset it to avoid hash mismatches.
+    unset PIP_EXTRA_INDEX_URL
+    export PIP_INDEX_URL="https://pypi.org/simple"
+
+    # Upgrade pip/setuptools/wheel to improve compatibility
+    pip install --timeout 120 --no-cache-dir -U pip setuptools wheel
+
+    # Install project dependencies from PyPI (no extra indexes), fail fast if hashes don’t match
+    if ! pip install --timeout 120 --no-cache-dir -r /root/kittyhack/requirements.txt; then
         ((FAIL_COUNT++))
         echo -e "${RED}Failed to install Python dependencies.${NC}"
     else
@@ -660,8 +672,6 @@ install_kittyhack() {
     echo # move to the next line after the loop
     journalctl -n 20000 > "${LOGPATH}/journal.log"
     journalctl -n 1000 -u kwork > "${LOGPATH}/journal_kwork.log"
-    journalctl -n 1000 -u kittyhack > "${LOGPATH}/journal_kittyhack.log"
-    cp /root/kittyhack/kittyhack.log "${LOGPATH}/kittyhack.log"
     dpkg-query -W > "${LOGPATH}/installed_packages_after_kittyhack_setup.log"
     systemctl list-units --type=service --all > "${LOGPATH}/systemd-services_after_kittyhack_setup.log"
 }

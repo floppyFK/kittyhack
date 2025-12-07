@@ -895,7 +895,7 @@ class ModelHandler:
                             self._frame_count_since_log = 0
                             self._fps_sum_since_log = 0.0
                     else:
-                        logging.info(f"[MODEL] Model processing time: {time1:.2f} sec, Frame Rate: {frame_rate_calc:.2f} fps")
+                        logging.debug(f"[MODEL] Model processing time: {time1:.2f} sec, Frame Rate: {frame_rate_calc:.2f} fps")
 
                     # Set first_run to False after processing the first frame
                     first_run = False

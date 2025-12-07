@@ -562,6 +562,7 @@ def backend_main(simulate_kittyflap = False):
                 known_rfid_tags = db_get_all_rfid_tags(CONFIG['KITTYHACK_DATABASE_PATH'])
                 cat_rfid_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
                 cat_settings_map = get_cat_settings_map(CONFIG['KITTYHACK_DATABASE_PATH'])
+                logging.info(f"[BACKEND] cat_settings_map: {cat_settings_map}")
                 # Reset the additional verdict infos
                 additional_verdict_infos = []
                 # Reset the manual lock timestamp for a new motion event
@@ -575,9 +576,11 @@ def backend_main(simulate_kittyflap = False):
 
             if last_inside == 0 and motion_inside == 1: # Inside motion detected
                 logging.info("[BACKEND] Motion detected INSIDE")
+                cat_settings_map = get_cat_settings_map(CONFIG['KITTYHACK_DATABASE_PATH'])
+                logging.info(f"[BACKEND] cat_settings_map: {cat_settings_map}")
                 first_motion_inside_tm = tm.time()
                 # Determine if exit is allowed globally and per-cat (if identifiable and configured per-cat)
-                per_cat_exit_allowed = True
+                per_cat_exit_allowed = False
                 try:
                     # In per-cat mode we must base the decision on RFID only (camera is outside-facing)
                     if CONFIG['ALLOWED_TO_EXIT'] == AllowedToExit.CONFIGURE_PER_CAT:
@@ -592,10 +595,9 @@ def backend_main(simulate_kittyflap = False):
                                 per_cat_exit_allowed = cat_settings_map[tag_id].get('allow_exit', True)
                             # Add per-cat exit note once tag is known in per-cat mode
                             try:
-                                if CONFIG['ALLOWED_TO_EXIT'] == AllowedToExit.CONFIGURE_PER_CAT and tag_id is not None:
-                                    flag = str(EventType.EXIT_PER_CAT_ALLOWED) if per_cat_exit_allowed else str(EventType.EXIT_PER_CAT_DENIED)
-                                    if flag not in additional_verdict_infos:
-                                        additional_verdict_infos.append(flag)
+                                flag = str(EventType.EXIT_PER_CAT_ALLOWED) if per_cat_exit_allowed else str(EventType.EXIT_PER_CAT_DENIED)
+                                if flag not in additional_verdict_infos:
+                                    additional_verdict_infos.append(flag)
                             except Exception:
                                 pass
                     else:
@@ -675,7 +677,7 @@ def backend_main(simulate_kittyflap = False):
                     logging.info("[BACKEND] Inside motion ended before RFID tag was detected; outside will remain locked.")
                 elif tag_id is not None:
                     try:
-                        per_cat_exit_allowed2 = True
+                        per_cat_exit_allowed2 = False
                         if tag_id in cat_settings_map:
                             per_cat_exit_allowed2 = cat_settings_map[tag_id].get('allow_exit', True)
 
@@ -769,9 +771,12 @@ def backend_main(simulate_kittyflap = False):
                     if cat_settings_map[current_tag_any].get('enable_prey_detection', True) is False:
                         prey_detection_enabled = False
                         per_cat_prey_detection_disabled = True
-                        # Annotate per-cat prey override for the current motion block (once)
-                        if str(EventType.PER_CAT_PREY_DISABLED) not in additional_verdict_infos:
-                            additional_verdict_infos.append(str(EventType.PER_CAT_PREY_DISABLED))
+                        try:
+                            flag = str(EventType.PER_CAT_PREY_DISABLED)
+                            if flag not in additional_verdict_infos:
+                                additional_verdict_infos.append(flag)
+                        except Exception:
+                            pass
             except Exception:
                 pass
 

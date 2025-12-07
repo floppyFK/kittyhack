@@ -567,7 +567,7 @@ install_kittyhack() {
         # If still empty, use fallback version
         if [[ -z "$GIT_TAG" ]]; then
             echo -e "${YELLOW}Failed to fetch latest version. Using latest known version.${NC}"
-            GIT_TAG="v2.0.0"
+            GIT_TAG="v2.4.0"
         fi
     else
         GIT_TAG="v1.1.1"

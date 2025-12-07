@@ -1353,7 +1353,7 @@ def server(input, output, session):
             remaining_seconds = batches_remaining * 15
             remaining_minutes = max(1, round(remaining_seconds / 60))
             ui.notification_show(
-                _("Database migration in progress. Performance may be a bit slower until finished ({} pictures remaining, ~{} min). Please be patient...").format(
+                _("Database migration in progress. Performance may be a bit slower until finished ({} pictures remaining, ~{} min).").format(
                     len(ids_with_original_blob), remaining_minutes
                 ),
                 duration=14,
@@ -5146,45 +5146,51 @@ def server(input, output, session):
             ui.modal_remove()
             return None
         
-    @render.download(filename="kittyhack.db")
+    @render.download(filename=lambda: (
+        "kittyhack_database_unavailable.txt" if (ids_with_original_blob and len(ids_with_original_blob) > 0)
+        else "kittyhack_database.db"
+    ))
     def download_kittyhack_db():
         try:
-            # Show a modal dialog to prevent a double click of the download button
-            ui.modal_show(
-                ui.modal(
-                    ui.div(
-                        ui.markdown(_("Please wait...")),
-                        ui.HTML('<div class="spinner-container"><div class="spinner"></div></div>'),
-                    ),
-                    title=_("Preparing Download"),
-                    easy_close=False,
-                    footer=None
+            from io import BytesIO
+
+            # Block snapshot download while legacy image migration is in progress
+            global ids_with_original_blob
+            if ids_with_original_blob and len(ids_with_original_blob) > 0:
+                # Inform user and return a small text file to avoid server-side exceptions
+                ui.notification_show(
+                    _("Database snapshot is unavailable during image migration ({} pictures remaining). Please try again later.").format(len(ids_with_original_blob)),
+                    duration=12,
+                    type="warning"
                 )
-            )
-            sigterm_monitor.halt_backend()
-            tm.sleep(1.0)
-            ui.modal_remove()
-            return CONFIG['KITTYHACK_DATABASE_PATH']
+                msg = (
+                    "Kittyhack database snapshot is currently unavailable.\n"
+                    f"Legacy image migration in progress: {len(ids_with_original_blob)} pictures remaining.\n"
+                    "Please try again later."
+                )
+                return BytesIO(msg.encode("utf-8"))
+
+            dest_path = os.path.join("/tmp", "kittyhack_database.db")
+            result = backup_database_sqlite(CONFIG['KITTYHACK_DATABASE_PATH'], dest_path)
+            if not result.success:
+                logging.error(f"[DOWNLOAD_DB] Backup snapshot failed: {result.message}")
+                ui.notification_show(_("Failed to create a consistent snapshot: {}").format(result.message), duration=12, type="error")
+                # Ensure we don't return None; provide a small error text payload
+                err_msg = f"Failed to create database snapshot: {result.message}\nCheck server logs for details."
+                try:
+                    if os.path.exists(dest_path):
+                        os.remove(dest_path)
+                except Exception:
+                    pass
+                return BytesIO(err_msg.encode("utf-8"))
+
+            return dest_path
         except Exception as e:
-            logging.error(f"Failed to halt the backend processes: {e}")
-            ui.notification_show(_("Failed to halt the backend processes: {}").format(e), duration=10, type="error")
-            ui.modal_remove()
-            return None
-        finally:
-            logging.info(f"A download of the kittyhack database was requested --> Restart pending.")
-            # Show the restart dialog
-            m = ui.modal(
-                ui.markdown(
-                    _("Please click the 'Reboot' button to restart the Kittyflap **after** the download has finished.") + "\n\n" +
-                    _("NOTE: The download will start in the background, so check your browser's download section.")
-                ),
-                title=_("Download started..."),
-                easy_close=False,
-                footer=ui.div(
-                    ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
-                )
-            )
-            ui.modal_show(m)
+            logging.error(f"[DOWNLOAD_DB] Unexpected error: {e}")
+            ui.notification_show(_("Failed to prepare database download: {}").format(e), duration=12, type="error")
+            # Return a minimal error payload to avoid NoneType iteration errors
+            from io import BytesIO
+            return BytesIO(f"Unexpected error while preparing download: {e}".encode("utf-8"))
     
     @render.download(filename="kittyflap.db")
     def download_kittyflap_db():
@@ -5298,6 +5304,15 @@ def server(input, output, session):
                         _("If you find any bugs or have suggestions for improvement, please report them on the GitHub page.")
                     ),
                     ui.HTML(f"<center><p><a href='https://github.com/floppyFK/kittyhack' target='_blank'>{icon_svg('square-github')} {_('GitHub Repository')}</a></p></center>"),
+                    ui.hr(),
+                    ui.markdown(
+                        _("**License**") + "\n\n" +
+                        _("This project is licensed under the MIT License.") + " " +
+                        _("Copyright (c) 2025 Florian Kispert.")
+                    ),
+                    ui.HTML(f"<center><p><a href='https://github.com/floppyFK/kittyhack/blob/main/LICENSE' target='_blank'>{icon_svg('file-lines')} {_('MIT License (full text)')}</a></p></center>"),
+                    ui.HTML(f"<center><p style='margin-bottom: 0.3rem;'>{_('If you like Kittyhack, you can support the project with a small donation:')}</p></center>"),
+                    ui.HTML(f"<center><p><a href='https://www.paypal.com/donate?hosted_button_id=QY57YUADYRVW2' target='_blank' class='btn btn-primary'>{icon_svg('paypal')} {_('Donate via PayPal')}</a></p></center>"),
                     ui.br(),
                     full_screen=False,
                     class_="generic-container",
@@ -5322,7 +5337,7 @@ def server(input, output, session):
                 ),
                 width="400px"
             ),
-            ui.div(
+ui.div(
                 ui.card(
                     ui.card_header(ui.h4(_("System Information"), style_="text-align: center;")),
                     ui.br(),
@@ -5334,10 +5349,6 @@ def server(input, output, session):
                     ui.div(
                         uix.input_file("upload_kittyhack_db", _("Restore Kittyhack Database (.db)"), accept=[".db"], multiple=False, width="90%")
                     ),
-                    ui.markdown(
-                        _("**WARNING:** To download/upload the database, the Kittyhack software will be stopped and the flap will be locked. ") + "\n\n" +
-                        _("You have to restart the Kittyflap afterwards to return to normal operation.")
-                    ),
                     ui.hr(),
                     ui.h5(_("Configuration File")),
                     ui.h6(_("Backup and Restore your Kittyhack configuration")),
@@ -5346,6 +5357,7 @@ def server(input, output, session):
                         uix.input_file("upload_config", _("Restore Configuration File (config.ini)"), accept=[".ini"], multiple=False, width="90%")
                     ),
                     ui.br(),
+                    ui.markdown(_("> Note: If the database or the configuration gets restored from a backup, then the Kittyflap will be rebooted afterwards to apply the new configuration.")),
                     full_screen=False,
                     class_="generic-container",
                     style_="padding-left: 1rem !important; padding-right: 1rem !important;",

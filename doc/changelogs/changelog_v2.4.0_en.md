@@ -3,6 +3,7 @@
 ## New Features
 - **Entry and exit per cat** (BETA): Entry and exit can now be controlled separately for each cat.
   - Note for Home Assistant: Due to this enhancement, some entities have changed. Please use the updated dashboard configuration from the configuration tab.
+- **Prey detection per cat**: Prey detection can now be enabled or disabled individually for each cat.
 
 ## Bug Fixes
 - **MQTT**: Deprecated `object_id` values for Home Assistant have been removed.

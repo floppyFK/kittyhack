@@ -5327,16 +5327,16 @@ def server(input, output, session):
                         _("I have no connection to the manufacturer of Kittyflap. This project was developed on my own initiative to continue using my Kittyflap.") + "\n\n" +
                         _("If you find any bugs or have suggestions for improvement, please report them on the GitHub page.")
                     ),
-                    ui.HTML(f"<center><p><a href='https://github.com/floppyFK/kittyhack' target='_blank'>{icon_svg('square-github')} {_('GitHub Repository')}</a></p></center>"),
+                    ui.HTML("<center><p><a href='https://github.com/floppyFK/kittyhack' target='_blank'>" + str(icon_svg('square-github')) + " " + _("GitHub Repository") + "</a></p></center>"),
                     ui.hr(),
                     ui.markdown(
                         _("**License**") + "\n\n" +
                         _("This project is licensed under the MIT License.") + " " +
                         _("Copyright (c) 2025 Florian Kispert.")
                     ),
-                    ui.HTML(f"<center><p><a href='https://github.com/floppyFK/kittyhack/blob/main/LICENSE' target='_blank'>{icon_svg('file-lines')} {_('MIT License (full text)')}</a></p></center>"),
-                    ui.HTML(f"<center><p style='margin-bottom: 0.3rem;'>{_('If you like Kittyhack, you can support the project with a small donation:')}</p></center>"),
-                    ui.HTML(f"<center><p><a href='https://www.paypal.com/donate?hosted_button_id=QY57YUADYRVW2' target='_blank' class='btn btn-primary'>{icon_svg('paypal')} {_('Donate via PayPal')}</a></p></center>"),
+                    ui.HTML("<center><p><a href='https://github.com/floppyFK/kittyhack/blob/main/LICENSE' target='_blank'>" + str(icon_svg('file-lines')) + " " + _("MIT License (full text)") + "</a></p></center>"),
+                    ui.HTML("<center><p style='margin-bottom: 0.3rem;'>" + _("If you like Kittyhack, you can support the project with a small donation:") + "</p></center>"),
+                    ui.HTML("<center><p><a href='https://www.paypal.com/donate?hosted_button_id=QY57YUADYRVW2' target='_blank' class='btn btn-primary'>" + str(icon_svg('paypal')) + " " + _("Donate via PayPal") + "</a></p></center>"),
                     ui.br(),
                     full_screen=False,
                     class_="generic-container",

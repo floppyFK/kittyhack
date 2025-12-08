@@ -602,6 +602,178 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
             return False, str(e)
     return True, "Update completed"
 
+def upgrade_base_system_packages(packages: list[str] | None = None) -> tuple[bool, str]:
+    """
+    Refresh APT lists and upgrade a curated set of base-system packages.
+
+    Args:
+        packages: Optional explicit list of package names to --only-upgrade.
+                  If None, a safe default list is used. Held packages are skipped.
+
+    Returns:
+        (success, message) where message contains the full stdout of the performed steps.
+    """
+    # Pre-flight recovery: clear stale locks and finish incomplete configurations
+    def preflight_recovery(env) -> str:
+        out = []
+        try:
+            # Kill stray apt/dpkg processes and remove locks
+            subprocess.run(["/usr/bin/fuser", "-kv", "/var/lib/dpkg/lock"], check=False, text=True, capture_output=True)
+            subprocess.run(["/usr/bin/fuser", "-kv", "/var/lib/apt/lists/lock"], check=False, text=True, capture_output=True)
+            subprocess.run(["/usr/bin/fuser", "-kv", "/var/cache/apt/archives/lock"], check=False, text=True, capture_output=True)
+            for lock in ["/var/lib/dpkg/lock", "/var/lib/apt/lists/lock", "/var/cache/apt/archives/lock"]:
+                try:
+                    if os.path.exists(lock):
+                        os.remove(lock)
+                        out.append(f"[APT] Removed stale lock: {lock}\n")
+                except Exception as e:
+                    out.append(f"[APT] Could not remove lock {lock}: {e}\n")
+            # Fix broken installs and configure pending packages
+            res_cfg = subprocess.run(["/usr/bin/dpkg", "--configure", "-a"], check=False, text=True, capture_output=True, env=env)
+            if res_cfg.stdout:
+                out.append("=== dpkg --configure -a ===\n" + res_cfg.stdout + "\n")
+            if res_cfg.stderr:
+                out.append("[stderr]\n" + res_cfg.stderr + "\n")
+            res_fix = subprocess.run(["/usr/bin/apt-get", "-y", "-f", "install"], check=False, text=True, capture_output=True, env=env)
+            if res_fix.stdout:
+                out.append("=== apt-get -f install ===\n" + res_fix.stdout + "\n")
+            if res_fix.stderr:
+                out.append("[stderr]\n" + res_fix.stderr + "\n")
+        except Exception as e:
+            out.append(f"[APT] Preflight recovery error: {e}\n")
+        return ''.join(out)
+
+    # Default set focuses on core runtime and update tooling
+    default_packages = [
+        "ca-certificates",
+        "tzdata",
+        "openssl",
+        "libssl3",
+        "wget",
+        "git",
+        "systemd",
+        "systemd-sysv",
+        "sudo",
+        "bash",
+        "apt",
+        "gnupg",
+        "gpg",
+        "libc6",
+        "libstdc++6",
+        "python3",
+        "python3-pip",
+    ]
+    pkgs = packages or default_packages
+
+    # Remove duplicates while preserving order
+    seen = set()
+    pkgs = [p for p in pkgs if not (p in seen or seen.add(p))]
+
+    env = os.environ.copy()
+    env["DEBIAN_FRONTEND"] = "noninteractive"
+    env.setdefault("APT_LISTCHANGES_FRONTEND", "none")
+
+    full_output = []
+
+    full_output.append(preflight_recovery(env))
+
+    # Skip held packages
+    try:
+        held_res = subprocess.run(
+            ["/usr/bin/apt-mark", "showhold"],
+            check=False, text=True, capture_output=True, env=env
+        )
+        held = {h.strip() for h in held_res.stdout.splitlines() if h.strip()}
+        if held:
+            before = set(pkgs)
+            pkgs = [p for p in pkgs if p not in held]
+            skipped = list(before - set(pkgs))
+            if skipped:
+                logging.info(f"[APT] Skipping held packages: {', '.join(skipped)}")
+                full_output.append(f"[APT] Skipping held packages: {', '.join(skipped)}\n")
+    except Exception as e:
+        logging.debug(f"[APT] Could not query held packages: {e}")
+
+    if not pkgs:
+        return True, "[APT] Nothing to upgrade (all requested packages are held or none specified)."
+
+    # apt-get update
+    try:
+        logging.info("[APT] Running apt-get update...")
+        res = subprocess.run(
+            ["/usr/bin/apt-get", "update"],
+            check=True, text=True, capture_output=True, env=env
+        )
+        full_output.append("=== apt-get update ===\n")
+        full_output.append(res.stdout or "")
+        if res.stderr:
+            full_output.append("\n[stderr]\n" + res.stderr)
+        logging.info("[APT] apt-get update done.")
+    except subprocess.CalledProcessError as e:
+        msg = (e.stdout or "") + ("\n" if e.stdout else "") + (e.stderr or str(e))
+        logging.error(f"[APT] apt-get update failed: {e.stderr or e}")
+        return False, msg
+
+    def try_selected_upgrade(package_list: list[str]) -> tuple[bool, str]:
+        upgrade_cmd = [
+            "/usr/bin/apt-get", "-y",
+            "--option", "Dpkg::Options::=--force-confnew",
+            "--option", "Acquire::Retries=3",
+            "--no-install-recommends",
+            "install", "--only-upgrade",
+            *package_list
+        ]
+        logging.info(f"[APT] Upgrading selected packages: {', '.join(package_list)}")
+        try:
+            res = subprocess.run(
+                upgrade_cmd,
+                check=True, text=True, capture_output=True, env=env
+            )
+            out = "\n=== apt-get install --only-upgrade (selected) ===\n" + (res.stdout or "")
+            if res.stderr:
+                out += "\n[stderr]\n" + res.stderr
+            logging.info("[APT] Selected upgrades completed.")
+            return True, out
+        except subprocess.CalledProcessError as e:
+            msg = (e.stdout or "") + ("\n" if e.stdout else "") + (e.stderr or str(e))
+            logging.error(f"[APT] Selected upgrades failed: {e.stderr or e}")
+            return False, msg
+
+    ok, out = try_selected_upgrade(pkgs)
+    full_output.append("\n" + out)
+    if not ok:
+        try:
+            subprocess.run(["/usr/bin/apt-get", "autoremove", "-y"], check=False, text=True, capture_output=True, env=env)
+            subprocess.run(["/usr/bin/apt-get", "autoclean"], check=False, text=True, capture_output=True, env=env)
+        except Exception:
+            pass
+        return False, ''.join(full_output)
+
+    # Cleanup
+    try:
+        res1 = subprocess.run(["/usr/bin/apt-get", "autoremove", "-y"], check=False, text=True, capture_output=True, env=env)
+        res2 = subprocess.run(["/usr/bin/apt-get", "autoclean"], check=False, text=True, capture_output=True, env=env)
+        full_output.append("\n=== apt-get autoremove ===\n")
+        full_output.append(res1.stdout or "")
+        if res1.stderr:
+            full_output.append("\n[stderr]\n" + res1.stderr)
+        full_output.append("\n=== apt-get autoclean ===\n")
+        full_output.append(res2.stdout or "")
+        if res2.stderr:
+            full_output.append("\n[stderr]\n" + res2.stderr)
+    except Exception as e:
+        logging.debug(f"[APT] Cleanup ignored error: {e}")
+
+    try:
+        if os.path.exists("/var/run/reboot-required"):
+            reboot_msg = "[APT] Reboot recommended by the system (reboot-required file present)."
+            logging.info(reboot_msg)
+            full_output.append("\n" + reboot_msg + "\n")
+    except Exception:
+        pass
+
+    return True, ''.join(full_output)
+
 def get_hostname():
     """
     Get the hostname of the system.

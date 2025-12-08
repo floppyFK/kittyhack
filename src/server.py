@@ -73,7 +73,8 @@ from src.system import (
     get_hostname,
     set_hostname,
     update_kittyhack,
-    is_gateway_reachable
+    is_gateway_reachable,
+    upgrade_base_system_packages
 )
 
 # Prepare gettext for translations based on the configured language
@@ -374,13 +375,16 @@ def start_background_task():
     def run_periodically():
         wlan_disconnect_counter = 0
         wlan_reconnect_attempted = False
-        last_periodic_jobs_run = tm.time()
+        last_periodic_jobs_run = tm.time() # Start the first periodic jobs in PERIODIC_JOBS_INTERVAL seconds
 
         # --- Added migration control state ---
         migration_last_ts = tm.time() - 5  # allow immediate first run
         migration_in_progress = False
         migration_batch_size = 200
         global ids_with_original_blob  # reuse list defined at startup
+
+        # --- APT updates cadence state (24h) ---
+        last_apt_update_ts = tm.time() - 86400  # allow immediate first check on boot
 
         while not sigterm_monitor.stop_now:
             if user_wlan_action_in_progress:
@@ -499,6 +503,26 @@ def start_background_task():
                 last_periodic_jobs_run = now
                 check_and_stop_kittyflap_services(CONFIG['SIMULATE_KITTYFLAP'])
                 immediate_bg_task("background task")
+
+                # --- Base-system APT updates (once per 24h, only at night between 2:00 and 4:00) ---
+                try:
+                    hours_since_last_apt = (tm.time() - last_apt_update_ts) / 3600.0
+                    current_time = datetime.now()
+                    in_night_window = 2 <= current_time.hour < 4
+
+                    if hours_since_last_apt >= 24:
+                        if in_night_window:
+                            logging.info("[APT] Starting base-system package refresh and upgrades...")
+                            ok, msg = upgrade_base_system_packages()
+                            if ok:
+                                logging.info(f"[APT] Upgrade finished successfully: {msg}")
+                            else:
+                                logging.error(f"[APT] Upgrade failed: {msg}")
+                            # Update timestamp regardless to avoid retry storms
+                            last_apt_update_ts = tm.time()
+                except Exception as e:
+                    logging.error(f"[APT] Unexpected error in periodic APT update: {e}")
+                    last_apt_update_ts = tm.time()
 
                 # Cleanup the events table
                 cleanup_deleted_events(CONFIG['KITTYHACK_DATABASE_PATH'])

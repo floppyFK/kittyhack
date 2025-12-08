@@ -272,6 +272,7 @@ def backend_main(simulate_kittyflap = False):
     backend_main.prey_detection_tm = 0.0
     additional_verdict_infos = []
     previous_use_camera_for_motion = None
+    exit_in_progress = False
 
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
@@ -428,6 +429,8 @@ def backend_main(simulate_kittyflap = False):
                 tag_id_valid = False
                 last_motion_outside_tm = tm.time()
                 logging.info(f"[BACKEND] {motion_source}-based motion detection: Motion stopped OUTSIDE (Block ID: '{motion_block_id}')")
+                # Reset exit flag on block end
+                exit_in_progress = False
                 if (magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and inside_manually_unlocked == False):
                     magnets.queue_command("lock_inside")
 
@@ -563,10 +566,6 @@ def backend_main(simulate_kittyflap = False):
                 cat_rfid_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
                 cat_settings_map = get_cat_settings_map(CONFIG['KITTYHACK_DATABASE_PATH'])
                 logging.info(f"[BACKEND] cat_settings_map: {cat_settings_map}")
-                # Reset the additional verdict infos
-                additional_verdict_infos = []
-                # Reset the manual lock timestamp for a new motion event
-                inside_manually_locked_tm = 0.0
                 if mqtt_publisher:
                     mqtt_publisher.publish_motion_outside(True)
             
@@ -598,6 +597,7 @@ def backend_main(simulate_kittyflap = False):
                                 flag = str(EventType.EXIT_PER_CAT_ALLOWED) if per_cat_exit_allowed else str(EventType.EXIT_PER_CAT_DENIED)
                                 if flag not in additional_verdict_infos:
                                     additional_verdict_infos.append(flag)
+                                    logging.info(f"[BACKEND] Per-cat exit: added verdict info '{flag}' for RFID tag '{tag_id}'.")
                             except Exception:
                                 pass
                     else:
@@ -616,6 +616,8 @@ def backend_main(simulate_kittyflap = False):
                             if magnets.check_queued("unlock_outside") == False:
                                 magnets.queue_command("unlock_outside")
                                 unlock_outside_tm = tm.time()
+                                # Mark this motion block as exit
+                                exit_in_progress = True
                     else:
                         logging.info("[BACKEND] No cats are allowed to exit. YOU SHALL NOT PASS!")
                 
@@ -681,25 +683,24 @@ def backend_main(simulate_kittyflap = False):
                         if tag_id in cat_settings_map:
                             per_cat_exit_allowed2 = cat_settings_map[tag_id].get('allow_exit', True)
 
-                        # Add per-cat exit note when the RFID becomes known during pending check
-                        try:
-                            if CONFIG['ALLOWED_TO_EXIT'] == AllowedToExit.CONFIGURE_PER_CAT:
-                                flag = str(EventType.EXIT_PER_CAT_ALLOWED) if per_cat_exit_allowed2 else str(EventType.EXIT_PER_CAT_DENIED)
-                                if flag not in additional_verdict_infos:
-                                    additional_verdict_infos.append(flag)
-                        except Exception:
-                            pass
-
                         if magnets.get_inside_state() == True:
                             logging.info("[BACKEND] Inside magnet is already unlocked. Only one magnet is allowed. --> Outside magnet will not be unlocked.")
                         else:
+                            flag = str(EventType.EXIT_PER_CAT_ALLOWED) if per_cat_exit_allowed2 else str(EventType.EXIT_PER_CAT_DENIED)
                             if check_allowed_to_exit() and per_cat_exit_allowed2:
                                 logging.info("[BACKEND] Allow cats to exit (per-cat: RFID tag detected).")
                                 if magnets.check_queued("unlock_outside") == False:
                                     magnets.queue_command("unlock_outside")
                                     unlock_outside_tm = tm.time()
+                                    # Mark this motion block as exit
+                                    exit_in_progress = True
                             else:
                                 logging.info("[BACKEND] No cats are allowed to exit (per-cat decision). YOU SHALL NOT PASS!")
+
+                            if flag not in additional_verdict_infos:
+                                additional_verdict_infos.append(flag)
+                                logging.info(f"[BACKEND] Per-cat exit: added verdict info '{flag}' for RFID tag '{tag_id}'.")
+                                
                     except Exception as _e:
                         logging.error(f"[BACKEND] Error while deciding per-cat exit after RFID detection: {_e}")
                     finally:
@@ -707,44 +708,50 @@ def backend_main(simulate_kittyflap = False):
 
             # Check if we are allowed to open the inside direction
             if motion_outside and not unlock_inside_decision_made:
-                # Determine identified tag (RFID preferred, else camera tag)
-                identified_tag = tag_id if tag_id in known_rfid_tags else (tag_id_from_video if tag_id_from_video in known_rfid_tags else None)
+                # Skip entry decision if this motion block represents an exit
+                if exit_in_progress:
+                    unlock_inside_decision_made = True
+                    logging.info("[BACKEND] Skipping entry decision because exit is in progress for this motion block.")
+                else:
+                    # Determine identified tag (RFID preferred, else camera tag)
+                    identified_tag = tag_id if tag_id in known_rfid_tags else (tag_id_from_video if tag_id_from_video in known_rfid_tags else None)
 
-                # Decide by mode
-                if CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.CONFIGURE_PER_CAT and identified_tag is not None:
-                    per_cat_entry_allowed = False
-                    if identified_tag in cat_settings_map:
-                        per_cat_entry_allowed = cat_settings_map[identified_tag].get('allow_entry', True)
-                    # Only allow entry if identified and per-cat says True
-                    tag_id_valid = bool(identified_tag) and per_cat_entry_allowed
-                    unlock_inside_decision_made = True
-                    # Annotate per-cat entry decision
-                    try:
-                        flag = str(EventType.ENTRY_PER_CAT_ALLOWED) if tag_id_valid else str(EventType.ENTRY_PER_CAT_DENIED)
-                        if flag not in additional_verdict_infos:
-                            additional_verdict_infos.append(flag)
-                    except Exception:
-                        pass
-                    if tag_id_valid:
-                        logging.info("[BACKEND] Per-cat mode: entry allowed for this cat.")
-                    else:
-                        logging.info("[BACKEND] Per-cat mode: entry not allowed (unknown or disabled).")
-                elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.KNOWN and identified_tag is not None:
-                    tag_id_valid = True
-                    unlock_inside_decision_made = True
-                    logging.info("[BACKEND] Detected RFID tag is in the database. Kitty is allowed to enter...")
-                elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.ALL_RFIDS and tag_id is not None:
-                    tag_id_valid = True
-                    unlock_inside_decision_made = True
-                    logging.info("[BACKEND] All RFID tags are allowed. Kitty is allowed to enter...")
-                elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.NONE:
-                    tag_id_valid = False
-                    unlock_inside_decision_made = True
-                    logging.info("[BACKEND] No cats are allowed to enter. The door stays closed.")
-                elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.ALL:
-                    tag_id_valid = True
-                    unlock_inside_decision_made = True
-                    logging.info("[BACKEND] All cats are allowed to enter. Kitty is allowed to enter...")
+                    # Decide by mode
+                    if CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.CONFIGURE_PER_CAT and identified_tag is not None:
+                        per_cat_entry_allowed = False
+                        if identified_tag in cat_settings_map:
+                            per_cat_entry_allowed = cat_settings_map[identified_tag].get('allow_entry', True)
+                        # Only allow entry if identified and per-cat says True
+                        tag_id_valid = bool(identified_tag) and per_cat_entry_allowed
+                        unlock_inside_decision_made = True
+                        # Annotate per-cat entry decision
+                        try:
+                            flag = str(EventType.ENTRY_PER_CAT_ALLOWED) if tag_id_valid else str(EventType.ENTRY_PER_CAT_DENIED)
+                            if flag not in additional_verdict_infos:
+                                additional_verdict_infos.append(flag)
+                                logging.info(f"[BACKEND] Per-cat entry: added verdict info '{flag}' for RFID tag '{identified_tag}'.")
+                        except Exception:
+                            pass
+                        if tag_id_valid:
+                            logging.info("[BACKEND] Per-cat mode: entry allowed for this cat.")
+                        else:
+                            logging.info("[BACKEND] Per-cat mode: entry not allowed (unknown or disabled).")
+                    elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.KNOWN and identified_tag is not None:
+                        tag_id_valid = True
+                        unlock_inside_decision_made = True
+                        logging.info("[BACKEND] Detected RFID tag is in the database. Kitty is allowed to enter...")
+                    elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.ALL_RFIDS and tag_id is not None:
+                        tag_id_valid = True
+                        unlock_inside_decision_made = True
+                        logging.info("[BACKEND] All RFID tags are allowed. Kitty is allowed to enter...")
+                    elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.NONE:
+                        tag_id_valid = False
+                        unlock_inside_decision_made = True
+                        logging.info("[BACKEND] No cats are allowed to enter. The door stays closed.")
+                    elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.ALL:
+                        tag_id_valid = True
+                        unlock_inside_decision_made = True
+                        logging.info("[BACKEND] All cats are allowed to enter. Kitty is allowed to enter...")
 
             # Forget the tag after the tag timeout and no motion outside:
             if ( (tag_id is not None) and 
@@ -775,6 +782,7 @@ def backend_main(simulate_kittyflap = False):
                             flag = str(EventType.PER_CAT_PREY_DISABLED)
                             if flag not in additional_verdict_infos:
                                 additional_verdict_infos.append(flag)
+                                logging.info(f"[BACKEND] Per-cat prey detection: added verdict info '{flag}' for RFID tag '{current_tag_any}'.")
                         except Exception:
                             pass
             except Exception:
@@ -858,7 +866,10 @@ def backend_main(simulate_kittyflap = False):
                     unlock_inside_tm = tm.time()
                     if manual_door_override['unlock_inside']:
                         inside_manually_unlocked = True
-                        additional_verdict_infos.append(str(EventType.MANUALLY_UNLOCKED))
+                        flag = str(EventType.MANUALLY_UNLOCKED)
+                        if flag not in additional_verdict_infos:
+                            additional_verdict_infos.append(flag)
+                            logging.info(f"[BACKEND] Added verdict info '{flag}' due to manual inside unlock.")
                     else:
                         inside_manually_unlocked = False
                 
@@ -884,7 +895,10 @@ def backend_main(simulate_kittyflap = False):
                 inside_manually_unlocked = False
                 inside_manually_locked_tm = tm.time()  # Set the timestamp when manually locked
                 manual_door_override['lock_inside'] = False
-                additional_verdict_infos.append(str(EventType.MANUALLY_LOCKED))
+                flag = str(EventType.MANUALLY_LOCKED)
+                if flag not in additional_verdict_infos:
+                    additional_verdict_infos.append(flag)
+                    logging.info(f"[BACKEND] Added verdict info '{flag}' due to manual inside lock.")
                 
             # Check if maximum unlock time is exceeded
             if magnets.get_inside_state() and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_inside") == False:
@@ -895,6 +909,7 @@ def backend_main(simulate_kittyflap = False):
                 flag = str(EventType.MAX_UNLOCK_TIME_EXCEEDED)
                 if flag not in additional_verdict_infos:
                      additional_verdict_infos.append(flag)
+                     logging.info(f"[BACKEND] Added verdict info '{flag}' due to maximum inside unlock time exceeded.")
                 
             if magnets.get_outside_state() and (tm.time() - unlock_outside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_outside") == False:
                 logging.warning("[BACKEND] Maximum unlock time exceeded for outside door. Forcing lock.")

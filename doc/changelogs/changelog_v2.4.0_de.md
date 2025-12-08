@@ -9,6 +9,7 @@
 - **Logging**: Logfiles wurden teilweise nicht korrekt geschrieben; dieses Verhalten ist behoben.
 - **Konfigurationsdatei**: Fehlerhafte Einträge in `config.ini` führen nicht mehr zu Abstürzen.
 - **Bildansicht**: Die klassische (ungruppierte) Bildansicht funktioniert wieder.
+- **Innere Verriegelung**: Nach dem eine Katze nach draußen gegangen ist, wurde die Innenseite fälschlicherweise kurz entriegelt und wieder verriegelt; dieses Verhalten ist nun behoben.
 
 ## Kleinere Änderungen
 - **RFID-Reader deaktivieren**: Im Konfigurations-Tab kann der RFID-Reader optional komplett deaktiviert werden (z. B. bei Hardwaredefekt, der sonst einen Neustart der Katzenklappe verursacht).

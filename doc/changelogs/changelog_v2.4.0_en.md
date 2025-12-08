@@ -9,6 +9,7 @@
 - **Logging**: Log files were partially not written correctly; this behavior has been fixed.
 - **Configuration file**: Invalid entries in `config.ini` no longer cause crashes.
 - **Image view**: The classic (ungrouped) image view works again.
+- **Inner lock:** After a cat went outside, the inside was incorrectly briefly unlocked and then locked again; this behavior has now been fixed.
 
 ## Minor Changes
 - **Disable RFID reader**: In the configuration tab, the RFID reader can optionally be completely disabled (e.g., in case of hardware defects that would otherwise cause the cat flap to restart).

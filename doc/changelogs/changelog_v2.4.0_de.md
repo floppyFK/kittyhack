@@ -3,6 +3,7 @@
 ## Neue Features
 - **Ein- und Ausgang pro Katze** (BETA): Eingang und Ausgang können jetzt für jede Katze separat gesteuert werden.
   - Hinweis für Home Assistant: Durch diese Erweiterung haben sich einige Entitäten geändert. Bitte die aktualisierte Dashboard-Konfiguration aus dem Konfigurations-Tab verwenden.
+- **Beuteerkennung pro Katze**: Die Beuteerkennung kann jetzt für jede Katze individuell ein- bzw. ausgeschaltet werden.
 
 ## Bugfixes
 - **MQTT**: Veraltete `object_id`-Werte für Home Assistant wurden entfernt.

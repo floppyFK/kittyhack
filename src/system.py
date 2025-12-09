@@ -645,23 +645,24 @@ def upgrade_base_system_packages(packages: list[str] | None = None) -> tuple[boo
 
     # Default set focuses on core runtime and update tooling
     default_packages = [
-        "ca-certificates",
-        "tzdata",
-        "openssl",
-        "libssl3",
-        "wget",
-        "git",
-        "systemd",
-        "systemd-sysv",
-        "sudo",
-        "bash",
         "apt",
+        "bash",
+        "ca-certificates",
+        "dpkg",
+        "git",
         "gnupg",
         "gpg",
         "libc6",
+        "libssl3",
         "libstdc++6",
+        "openssl",
         "python3",
         "python3-pip",
+        "sudo",
+        "systemd",
+        "systemd-sysv",
+        "tzdata",
+        "wget",
     ]
     pkgs = packages or default_packages
 

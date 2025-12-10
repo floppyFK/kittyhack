@@ -2022,6 +2022,23 @@ def server(input, output, session):
         logging.info(f"[SERVER] Resetting prey cooldown now")
         backend_main.prey_detection_tm = 0.0
 
+    # Add a delayed-load flag for the Last Events table
+    last_events_ready = reactive.Value(False)
+
+    @reactive.Effect
+    def init_last_events_delay():
+        # Schedule one re-run ~1s later; set the flag only on that re-run
+        if not hasattr(init_last_events_delay, "scheduled"):
+            init_last_events_delay.scheduled = False
+
+        if not last_events_ready.get():
+            if not init_last_events_delay.scheduled:
+                reactive.invalidate_later(1.0)
+                init_last_events_delay.scheduled = True
+                return
+            # Second run (after 1s): mark ready
+            last_events_ready.set(True)
+
     @output
     @render.ui
     def ui_last_events():
@@ -2042,8 +2059,11 @@ def server(input, output, session):
         )
     
     @render.text
-    @reactive.event(reload_trigger_photos, ignore_none=True)
+    @reactive.event(reload_trigger_photos, last_events_ready, ignore_none=True)
     def ui_last_events_table():
+        # Show a loading spinner until the delayed flag is set
+        if not last_events_ready.get():
+            return ui.HTML('<div class="spinner-container"><div class="spinner"></div></div>')
         return get_events_table_html(block_count=25)
     
     @output

@@ -290,14 +290,17 @@ def get_local_date_from_utc_date(utc_date_string: str):
     
     return local_date_string
 
-def read_latest_kittyhack_version():
+def read_latest_kittyhack_version(timeout=10) -> str:
     """
     Reads the latest version of Kittyhack from the GitHub repository.
     If the version cannot be fetched, it returns 'unknown'.
-    """    
+    """
     try:
-        response = requests.get("https://api.github.com/repos/floppyFK/kittyhack/releases/latest", timeout=10)
+        ts_pre = tm.time()
+        response = requests.get("https://api.github.com/repos/floppyFK/kittyhack/releases/latest", timeout=timeout)
+        ts_post = tm.time()
         latest_version = str(response.json().get("tag_name", "unknown"))
+        logging.info(f"GitHub latest version fetch took {ts_post - ts_pre:.3f} seconds. Latest version: {latest_version}")
         return latest_version
     except Exception as e:
         logging.error(f"Failed to fetch the latest version from GitHub: {e}")

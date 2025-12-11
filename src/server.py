@@ -332,10 +332,14 @@ create_index_on_events(CONFIG['KITTYHACK_DATABASE_PATH'])
 # Wait for internet connectivity and NTP sync
 logging.info("Waiting for network connectivity...")
 if wait_for_network(timeout=10):
-    logging.info("Starting backend...")
+    try:
+        CONFIG['LATEST_VERSION'] = read_latest_kittyhack_version(timeout=3)
+        logging.info(f"[VERSION] Latest Kittyhack version fetched at startup: {CONFIG['LATEST_VERSION']}")
+    except Exception as e:
+        logging.warning(f"[VERSION] Failed to fetch latest Kittyhack version at startup: {e}")
 else:
     logging.warning("Timeout for network connectivity reached. Proceeding without network connection.")
-    logging.info("Starting backend...")
+logging.info("Starting backend...")
 backend_thread = threading.Thread(target=backend_main, args=(CONFIG['SIMULATE_KITTYFLAP'],), daemon=True)
 backend_thread.start()
 
@@ -2033,7 +2037,7 @@ def server(input, output, session):
 
         if not last_events_ready.get():
             if not init_last_events_delay.scheduled:
-                reactive.invalidate_later(1.0)
+                reactive.invalidate_later(0.5)
                 init_last_events_delay.scheduled = True
                 return
             # Second run (after 1s): mark ready
@@ -5244,6 +5248,24 @@ def server(input, output, session):
             ui.notification_show(_("The original kittyflap database file does not exist."), duration=10, type="error")
             return None
     
+    @reactive.Effect
+    @reactive.event(input.btn_retry_latest_version)
+    def on_retry_latest_version():
+        try:
+            # Ensure network is up, then fetch latest version
+            if wait_for_network(timeout=5):
+                CONFIG['LATEST_VERSION'] = read_latest_kittyhack_version(timeout=5)
+                if CONFIG['LATEST_VERSION'] == "unknown":
+                    ui.notification_show(_("Latest version check failed."), duration=8, type="warning")
+            else:
+                ui.notification_show(_("Internet connection not available."), duration=8, type="warning")
+        except Exception as e:
+            logging.warning(f"[VERSION] Retry failed: {e}")
+            ui.notification_show(_("Retry failed: {}").format(e), duration=10, type="error")
+        finally:
+            # Trigger re-render of INFO section
+            reload_trigger_info.set(reload_trigger_info.get() + 1)
+
     @output
     @render.ui
     @reactive.event(reload_trigger_info, ignore_none=True)
@@ -5251,7 +5273,14 @@ def server(input, output, session):
         # Check if the current version is different from the latest version
         latest_version = CONFIG['LATEST_VERSION']
         if latest_version == "unknown":
-            ui_update_kittyhack = ui.markdown(_("Unable to fetch the latest version from github. Please try it again later or check your internet connection."))
+            ui_update_kittyhack = ui.div(
+                ui.markdown(_("Unable to fetch the latest version from github. Please try it again later or check your internet connection.")),
+                ui.br(),
+                ui.div(
+                    ui.input_task_button("btn_retry_latest_version", _("Retry latest version check"), icon=icon_svg("rotate")),
+                    style_="text-align: center;"
+                )
+            )
         elif git_version != latest_version:
             # Check for local changes in the git repository
             try:

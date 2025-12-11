@@ -1272,6 +1272,10 @@ def server(input, output, session):
     reload_trigger_cats = reactive.Value(0)
     reload_trigger_info = reactive.Value(0)
 
+    # Hold last uploaded file paths until user confirms restore
+    last_uploaded_db_path = reactive.Value(None)
+    last_uploaded_cfg_path = reactive.Value(None)
+
     def show_user_notifications():
         user_notifications = UserNotifications.get_all()
         if len(user_notifications) > 0:
@@ -5410,7 +5414,7 @@ def server(input, output, session):
                 ),
                 width="400px"
             ),
-ui.div(
+            ui.div(
                 ui.card(
                     ui.card_header(ui.h4(_("System Information"), style_="text-align: center;")),
                     ui.br(),
@@ -5419,15 +5423,37 @@ ui.div(
                     ui.h5(_("Kittyhack Database")),
                     ui.h6(_("Backup and Restore your Kittyhack database")),
                     ui.div(ui.download_button("download_kittyhack_db", _("Download Kittyhack Database"), icon=icon_svg("download"))),
+                    ui.br(),
+                    # Group: Restore Kittyhack DB
                     ui.div(
-                        uix.input_file("upload_kittyhack_db", _("Restore Kittyhack Database (.db)"), accept=[".db"], multiple=False, width="90%")
+                        ui.div(
+                            uix.input_file("upload_kittyhack_db", _("Restore Kittyhack Database (.db)"), accept=[".db"], multiple=False, width="90%"),
+                            ui.div(
+                                ui.input_task_button("restore_kittyhack_db", _("Restore Database"), icon=icon_svg("rotate"), class_="btn-warning"),
+                                style_="text-align: center; margin-top: 6px;"
+                            ),
+                            class_="generic-container",
+                            style_=("border: 1px solid #ddd; border-radius: 6px; padding: 10px; margin-top: 8px;"
+                                    "background: #fafafa;")
+                        )
                     ),
                     ui.hr(),
                     ui.h5(_("Configuration File")),
                     ui.h6(_("Backup and Restore your Kittyhack configuration")),
                     ui.div(ui.download_button("download_config", _("Download Configuration File"), icon=icon_svg("download"))),
+                    ui.br(),
+                    # Group: Restore Configuration
                     ui.div(
-                        uix.input_file("upload_config", _("Restore Configuration File (config.ini)"), accept=[".ini"], multiple=False, width="90%")
+                        ui.div(
+                            uix.input_file("upload_config", _("Restore Configuration File (config.ini)"), accept=[".ini"], multiple=False, width="90%"),
+                            ui.div(
+                                ui.input_task_button("restore_config", _("Restore Configuration"), icon=icon_svg("rotate"), class_="btn-warning"),
+                                style_="text-align: center; margin-top: 6px;"
+                            ),
+                            class_="generic-container",
+                            style_=("border: 1px solid #ddd; border-radius: 6px; padding: 10px; margin-top: 8px;"
+                                    "background: #fafafa;")
+                        )
                     ),
                     ui.br(),
                     ui.markdown(_("> Note: If the database or the configuration gets restored from a backup, then the Kittyflap will be rebooted afterwards to apply the new configuration.")),
@@ -5612,15 +5638,29 @@ ui.div(
         files = input.upload_kittyhack_db()
         if not files:
             ui.notification_show(_("No file selected."), duration=8, type="error")
+            last_uploaded_db_path.set(None)
             return
         f = files[0]
         name = f.get('name', '')
         src_path = f.get('datapath', '')
         if not src_path or not os.path.exists(src_path):
             ui.notification_show(_("Uploaded file not found."), duration=8, type="error")
+            last_uploaded_db_path.set(None)
             return
         if not name.lower().endswith(".db"):
             ui.notification_show(_("Invalid file type. Please upload a .db file."), duration=10, type="error")
+            last_uploaded_db_path.set(None)
+            return
+        # Only store path and inform user; do not restore yet
+        last_uploaded_db_path.set(src_path)
+        ui.notification_show(_("Database file uploaded. Click 'Restore Database' to apply."), duration=8, type="message")
+
+    @reactive.Effect
+    @reactive.event(input.restore_kittyhack_db)
+    def on_restore_kittyhack_db():
+        src_path = last_uploaded_db_path.get()
+        if not src_path or not os.path.exists(src_path):
+            ui.notification_show(_("No uploaded database ready to restore."), duration=8, type="error")
             return
         try:
             # Stop backend to avoid DB locks
@@ -5635,16 +5675,13 @@ ui.div(
                 logging.info(f"[UPLOAD_DB] Backup created: {backup_dest}")
             except Exception as e:
                 logging.warning(f"[UPLOAD_DB] Failed to create backup: {e}")
-            # Overwrite DB
+            # Overwrite DB with uploaded file
             shutil.copy2(src_path, CONFIG['KITTYHACK_DATABASE_PATH'])
-            ui.notification_show(_("Database uploaded successfully."), duration=6, type="message")
+            ui.notification_show(_("Database restored successfully."), duration=6, type="message")
             # Prompt reboot to apply
-            logging.info(f"A upload of a new kittyhack database was performed --> Restart pending.")
-            # Show the restart dialog
+            logging.info("Database restore performed --> Restart pending.")
             m = ui.modal(
-                ui.markdown(
-                    _("Please click the 'Reboot' button to restart the Kittyflap.")
-                ),
+                ui.markdown(_("Please click the 'Reboot' button to restart the Kittyflap.")),
                 title=_("Reboot required"),
                 easy_close=False,
                 footer=ui.div(
@@ -5653,8 +5690,8 @@ ui.div(
             )
             ui.modal_show(m)
         except Exception as e:
-            logging.error(f"[UPLOAD_DB] Failed to upload database: {e}")
-            ui.notification_show(_("Failed to upload database: {}").format(e), duration=12, type="error")
+            logging.error(f"[RESTORE_DB] Failed to restore database: {e}")
+            ui.notification_show(_("Failed to restore database: {}").format(e), duration=12, type="error")
 
     @reactive.Effect
     @reactive.event(input.upload_config)
@@ -5662,33 +5699,49 @@ ui.div(
         files = input.upload_config()
         if not files:
             ui.notification_show(_("No file selected."), duration=8, type="error")
+            last_uploaded_cfg_path.set(None)
             return
         f = files[0]
         name = f.get('name', '')
         src_path = f.get('datapath', '')
         if not src_path or not os.path.exists(src_path):
             ui.notification_show(_("Uploaded file not found."), duration=8, type="error")
+            last_uploaded_cfg_path.set(None)
             return
         if not name.lower().endswith(".ini"):
             ui.notification_show(_("Invalid file type. Please upload a config.ini file."), duration=10, type="error")
+            last_uploaded_cfg_path.set(None)
             return
+        # Optional quick validation
         try:
-            # Optional quick validation: ensure it contains a [Settings] section
             with open(src_path, 'r', encoding='utf-8', errors='ignore') as fcfg:
                 content = fcfg.read()
             if "[Settings]" not in content:
                 ui.notification_show(_("Invalid configuration file: missing [Settings] section."), duration=12, type="error")
+                last_uploaded_cfg_path.set(None)
                 return
+        except Exception as e:
+            ui.notification_show(_("Failed to validate configuration: {}").format(e), duration=10, type="error")
+            last_uploaded_cfg_path.set(None)
+            return
+        # Only store path and inform user; do not restore yet
+        last_uploaded_cfg_path.set(src_path)
+        ui.notification_show(_("Configuration file uploaded. Click 'Restore Configuration' to apply."), duration=8, type="message")
+
+    @reactive.Effect
+    @reactive.event(input.restore_config)
+    def on_restore_config():
+        src_path = last_uploaded_cfg_path.get()
+        if not src_path or not os.path.exists(src_path):
+            ui.notification_show(_("No uploaded configuration ready to restore."), duration=8, type="error")
+            return
+        try:
             config_path = os.path.join(os.getcwd(), "config.ini")
-            # Overwrite config
             shutil.copy2(src_path, config_path)
-            ui.notification_show(_("Configuration uploaded successfully."), duration=6, type="message")
-            logging.info(f"A upload of a new kittyhack configuration was performed --> Restart pending.")
-            # Show the restart dialog
+            ui.notification_show(_("Configuration restored successfully."), duration=6, type="message")
+            logging.info("Configuration restore performed --> Restart pending.")
             m = ui.modal(
-                ui.markdown(
-                    _("Please click the 'Reboot' button to restart the Kittyflap.")
-                ),
+                ui.markdown(_("Please click the 'Reboot' button to restart the Kittyflap.")),
                 title=_("Reboot required"),
                 easy_close=False,
                 footer=ui.div(
@@ -5697,8 +5750,8 @@ ui.div(
             )
             ui.modal_show(m)
         except Exception as e:
-            logging.error(f"[UPLOAD_CFG] Failed to upload configuration: {e}")
-            ui.notification_show(_("Failed to upload configuration: {}").format(e), duration=12, type="error")
+            logging.error(f"[RESTORE_CFG] Failed to restore configuration: {e}")
+            ui.notification_show(_("Failed to restore configuration: {}").format(e), duration=12, type="error")
 
     @reactive.Effect
     @reactive.event(input.update_kittyhack)

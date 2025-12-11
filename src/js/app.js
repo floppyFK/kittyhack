@@ -48,10 +48,27 @@ document.addEventListener("DOMContentLoaded", function() {
             isNavigatingAway = true;
         });
 
+        // Reset flags when page is shown from bfcache or app switch
+        window.addEventListener('pageshow', function() {
+            isNavigatingAway = false;
+            // Attempt service worker update on HTTPS
+            if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+                navigator.serviceWorker.ready.then(reg => {
+                    try { reg.update(); } catch (e) {}
+                });
+            }
+        });
+
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'visible') {
+                isNavigatingAway = false;
+            }
+        });
+
         function checkForDisconnectOverlay() {
             const overlay = document.getElementById("shiny-disconnected-overlay");
 
-            if (overlay && !isNavigatingAway) {
+            if (overlay) {
                 if (!reloadedOnce) {
                     reloadedOnce = true;
                     console.log("Detected disconnection overlay. Reloading...");
@@ -61,7 +78,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (!reloadInterval) {
                     reloadInterval = setInterval(() => {
                         const stillOverlay = document.getElementById("shiny-disconnected-overlay");
-                        if (stillOverlay && !isNavigatingAway) {
+                        if (stillOverlay) {
                             console.log("Still disconnected. Reloading again...");
                             location.reload();
                         } else {
@@ -80,6 +97,50 @@ document.addEventListener("DOMContentLoaded", function() {
 
         // Also check immediately in case it's already present
         checkForDisconnectOverlay();
+
+        // --- Service Worker recovery hooks (HTTPS only) ---
+        if ('serviceWorker' in navigator) {
+            // When controller changes (new SW takes control), force a one-time reload
+            let swReloaded = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (!swReloaded) {
+                    swReloaded = true;
+                    console.log('Service worker controller changed, reloading...');
+                    location.reload();
+                }
+            });
+
+            // Emergency kill switch: if the app remains blank for >3s after load, unregister SW once.
+            // Helps recover from corrupted caches on mobile.
+            window.addEventListener('load', () => {
+                setTimeout(async () => {
+                    const hasBodyContent = (document.body && document.body.children && document.body.children.length > 0);
+                    // Heuristic: blank page or only head-level wrappers
+                    if (!hasBodyContent) {
+                        try {
+                            const regs = await navigator.serviceWorker.getRegistrations();
+                            for (const r of regs) {
+                                // Only unregister our scope
+                                if (r.scope && r.scope.endsWith('/')) {
+                                    console.warn('Unregistering service worker due to blank page heuristic');
+                                    await r.unregister();
+                                }
+                            }
+                            // Clear caches to avoid stale shell
+                            if (window.caches && caches.keys) {
+                                const keys = await caches.keys();
+                                for (const k of keys) {
+                                    await caches.delete(k);
+                                }
+                            }
+                            location.reload();
+                        } catch (e) {
+                            console.error('SW emergency recovery failed:', e);
+                        }
+                    }
+                }, 3000);
+            });
+        }
     })();
 
     // --- Collapse navbar on nav-link click (mobile fix) ---
@@ -93,7 +154,13 @@ document.addEventListener("DOMContentLoaded", function() {
     });
 
     // --- Register Service Worker for PWA ---
-    if('serviceWorker' in navigator) {
+    // Only register on HTTPS or localhost. Avoid registering on plain HTTP to prevent caching/stale pages.
+    const isSecureOrigin =
+        window.location.protocol === 'https:' ||
+        window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1';
+
+    if (isSecureOrigin && 'serviceWorker' in navigator) {
         navigator.serviceWorker
             .register('/pwa-service-worker.js', { scope: '/' })
             .then(function(registration) { 
@@ -102,6 +169,8 @@ document.addEventListener("DOMContentLoaded", function() {
             .catch(function(error) {
                 console.error('Service Worker registration failed:', error);
             });
+    } else {
+        console.warn('Skipping Service Worker registration: not a secure origin');
     }
     
     // --- PWA Installation functionality ---
@@ -200,4 +269,33 @@ document.addEventListener("DOMContentLoaded", function() {
     if (document.getElementById('pwa_install_container')) {
         initPwaInstallation();
     }
+
+    // Force reconnect when app returns to foreground or network returns
+    function tryReconnect() {
+        // If Shiny overlay exists, reload; otherwise, ping server and reload on failure.
+        const overlay = document.getElementById("shiny-disconnected-overlay");
+        if (overlay) {
+            console.log("Reconnect: overlay present, reloading...");
+            location.reload();
+            return;
+        }
+        // Lightweight ping to check reachability
+        fetch('/', { cache: 'no-store', method: 'HEAD' })
+            .then(() => {
+                // If reachable, optionally trigger a Shiny input to reinitialize
+                console.log("Reconnect: server reachable");
+            })
+            .catch(() => {
+                console.log("Reconnect: server not reachable, reloading...");
+                location.reload();
+            });
+    }
+
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') {
+            tryReconnect();
+        }
+    });
+
+    window.addEventListener('online', tryReconnect);
 });

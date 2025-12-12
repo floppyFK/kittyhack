@@ -286,8 +286,14 @@ document.addEventListener("DOMContentLoaded", function() {
                 console.log("Reconnect: server reachable");
             })
             .catch(() => {
-                console.log("Reconnect: server not reachable, reloading...");
-                location.reload();
+                console.log("Reconnect: server not reachable, showing offline page...");
+                // Prefer offline page to avoid blank screen when SW is present
+                try {
+                    window.location.href = '/offline.html';
+                } catch (e) {
+                    // Fallback to reload if redirect fails
+                    location.reload();
+                }
             });
     }
 

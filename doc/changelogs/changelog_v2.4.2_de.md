@@ -1,0 +1,6 @@
+# v2.4.2
+
+Nur ein kleiner Bugfix-Release nach dem großen Release 2.4.0. Die Änderungen der v2.4.0 sind [hier](https://github.com/floppyFK/kittyhack/blob/main/doc/changelogs/changelog_v2.4.0_de.md) einsehbar.
+
+## Bugfixes
+- **HTTPS**: Das Problem beim erneuten Verbindungsaufbau über HTTPS zu Kittyhack war nach v2.4.1 weiterhin vorhanden. Es wurde nun aber endgültig behoben (Betraf nur HTTPS, nicht HTTP)

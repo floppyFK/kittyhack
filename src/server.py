@@ -1468,6 +1468,9 @@ def server(input, output, session):
             live_view_main.last_frame_hash = None
             live_view_main.last_change_time = tm.time()
             live_view_main.last_frame_jpg = None
+            # Track last known aspect ratio (defaults to 4:3)
+            live_view_main.last_ar_w = 4
+            live_view_main.last_ar_h = 3
 
         warning_html = ""
         # Check for IP camera resolution warning (moved here)
@@ -1476,6 +1479,10 @@ def server(input, output, session):
                 res = model_handler.get_camera_resolution()
                 if res and isinstance(res, (tuple, list)) and len(res) == 2:
                     width, height = res
+                    # Update last known aspect ratio based on camera resolution
+                    if width > 0 and height > 0:
+                        live_view_main.last_ar_w = int(width)
+                        live_view_main.last_ar_h = int(height)
                     if width * height > 1280 * 720:
                         warning_html = ui.div(
                             ui.div(
@@ -1493,26 +1500,29 @@ def server(input, output, session):
             frame = model_handler.get_camera_frame()
             if frame is None:
                 if CONFIG.get("CAMERA_SOURCE") == "ip_camera":
+                    # Reserve layout space using last known aspect ratio
+                    container_style = f'style="width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
                     img_html = (
-                        '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
+                        f'<div {container_style}><div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
                         '<div></div>' +
                         '<div><strong>' + _('Connection to the IP camera failed.') + '</strong></div>' +
                         '<div>' + _("Please check the stream URL and the network connection of your IP camera.") + '</div>' +
                         '<div class="spinner-container"><div class="spinner"></div></div>' +
                         '<div>' + _('If you have just changed the camera settings, please wait a few seconds for the camera to reconnect.') + '</div>' +
                         '<div>' + _('Current status: ') + (str(model_handler.get_camera_state()) if model_handler.get_camera_state() is not None else _('Unknown')) + '</div>' +                        '<div></div>' +
-                        '</div>'
+                        '</div></div>'
                     )
                 else:
+                    container_style = f'style="width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
                     img_html = (
-                        '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
+                        f'<div {container_style}><div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
                         '<div></div>' +
                         '<div><strong>' + _('Connection to the camera failed.') + '</strong></div>' +
                         '<div>' + _("Please wait...") + '</div>' +
                         '<div class="spinner-container"><div class="spinner"></div></div>' +
                         '<div>' + _('If this message does not disappear within 30 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>' +
                         '<div></div>' +
-                        '</div>'
+                        '</div></div>'
                     )
             else:
                 frame_jpg = model_handler.encode_jpg_image(frame)
@@ -1520,6 +1530,15 @@ def server(input, output, session):
                 frame_hash = hashlib.md5(frame_jpg).hexdigest() if frame_jpg else None
 
                 if frame_jpg:
+                    # Update aspect ratio from actual frame
+                    try:
+                        h, w = frame.shape[:2]
+                        if w > 0 and h > 0:
+                            live_view_main.last_ar_w = int(w)
+                            live_view_main.last_ar_h = int(h)
+                    except Exception:
+                        pass
+
                     # If frame changed, update last_change_time and last_frame_jpg
                     if frame_hash != live_view_main.last_frame_hash:
                         live_view_main.last_change_time = tm.time()
@@ -1531,20 +1550,24 @@ def server(input, output, session):
                         tm.time() - live_view_main.last_change_time > 5
                         and CONFIG.get("CAMERA_SOURCE") == "ip_camera"
                     ):
+                        container_style = f'style="width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
                         img_html = (
-                            '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
+                            f'<div {container_style}><div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
                             '<div></div>'
                             '<div><strong>' + _('Camera stream appears to be frozen.') + '</strong></div>'
                             '<div>' + _("Please check your external IP camera connection or network settings.") + '</div>'
                             '<div class="spinner-container"><div class="spinner"></div></div>'
                             '<div></div>'
-                            '</div>'
+                            '</div></div>'
                         )
                     else:
                         frame_b64 = base64.b64encode(live_view_main.last_frame_jpg).decode('utf-8')
-                        img_html = f'<img src="data:image/jpeg;base64,{frame_b64}" />'
+                        container_style = f'style="width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
+                        img_style = 'style="width:100%;height:100%;display:block;object-fit:cover;"'
+                        img_html = f'<div {container_style}><img src="data:image/jpeg;base64,{frame_b64}" {img_style} /></div>'
                 else:
-                    img_html = '<div class="placeholder-image"><strong>' + _('Could not read the picture from the camera.') + '</strong></div>'
+                    container_style = f'style="width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
+                    img_html = f'<div {container_style}><div class="placeholder-image"><strong>' + _('Could not read the picture from the camera.') + '</strong></div></div>'
         except Exception as e:
             logging.error(f"Failed to fetch the live view image: {e}")
             img_html = '<div class="placeholder-image"><strong>' + _('An error occured while fetching the live view image.') + '</strong></div>'

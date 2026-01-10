@@ -46,6 +46,11 @@ document.addEventListener("DOMContentLoaded", function() {
         // Listen for navigation attempts
         window.addEventListener('beforeunload', function() {
             isNavigatingAway = true;
+            // Stop any pending forced reload loops when user navigates away
+            if (reloadInterval) {
+                clearInterval(reloadInterval);
+                reloadInterval = null;
+            }
         });
 
         // Reset flags when page is shown from bfcache or app switch
@@ -69,7 +74,7 @@ document.addEventListener("DOMContentLoaded", function() {
             const overlay = document.getElementById("shiny-disconnected-overlay");
 
             if (overlay) {
-                if (!reloadedOnce) {
+                if (!reloadedOnce && !isNavigatingAway) {
                     reloadedOnce = true;
                     console.log("Detected disconnection overlay. Reloading...");
                     location.reload();
@@ -78,6 +83,12 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (!reloadInterval) {
                     reloadInterval = setInterval(() => {
                         const stillOverlay = document.getElementById("shiny-disconnected-overlay");
+                        if (isNavigatingAway) {
+                            // User is leaving; stop reload attempts
+                            clearInterval(reloadInterval);
+                            reloadInterval = null;
+                            return;
+                        }
                         if (stillOverlay) {
                             console.log("Still disconnected. Reloading again...");
                             location.reload();
@@ -105,6 +116,11 @@ document.addEventListener("DOMContentLoaded", function() {
             navigator.serviceWorker.addEventListener('controllerchange', () => {
                 if (!swReloaded) {
                     swReloaded = true;
+                    // Avoid interrupting user-initiated navigation (Firefox)
+                    if (isNavigatingAway) {
+                        console.log('Service worker controller changed during navigation; skip reload');
+                        return;
+                    }
                     console.log('Service worker controller changed, reloading...');
                     location.reload();
                 }
@@ -276,7 +292,9 @@ document.addEventListener("DOMContentLoaded", function() {
         const overlay = document.getElementById("shiny-disconnected-overlay");
         if (overlay) {
             console.log("Reconnect: overlay present, reloading...");
-            location.reload();
+            if (!isNavigatingAway) {
+                location.reload();
+            }
             return;
         }
         // Lightweight ping to check reachability
@@ -288,11 +306,13 @@ document.addEventListener("DOMContentLoaded", function() {
             .catch(() => {
                 console.log("Reconnect: server not reachable, showing offline page...");
                 // Prefer offline page to avoid blank screen when SW is present
-                try {
-                    window.location.href = '/offline.html';
-                } catch (e) {
-                    // Fallback to reload if redirect fails
-                    location.reload();
+                if (!isNavigatingAway) {
+                    try {
+                        window.location.href = '/offline.html';
+                    } catch (e) {
+                        // Fallback to reload if redirect fails
+                        location.reload();
+                    }
                 }
             });
     }

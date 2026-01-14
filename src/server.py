@@ -30,17 +30,17 @@ from src.baseconfig import (
     DEFAULT_CONFIG,
     UserNotifications
 )
-from src.helper import ( 
-    EventType,  
-    get_git_version, 
-    wait_for_network, 
-    get_free_disk_space, 
-    check_and_stop_kittyflap_services, 
-    read_latest_kittyhack_version, 
-    execute_update_step, 
-    get_file_size, 
-    get_local_date_from_utc_date, 
-    format_date_minmax, 
+from src.helper import (
+    EventType,
+    get_git_version,
+    wait_for_network,
+    get_free_disk_space,
+    check_and_stop_kittyflap_services,
+    read_latest_kittyhack_version,
+    execute_update_step,
+    get_file_size,
+    get_local_date_from_utc_date,
+    format_date_minmax,
     normalize_version,
     log_relevant_deb_packages,
     log_system_information,
@@ -753,6 +753,28 @@ def show_event_server(input, output, session, block_id: int):
         sorted_data = sorted(zip(timestamps, pictures, event_datas, orig_pictures), key=lambda x: x[0])
         timestamps[:], pictures[:], event_datas[:], orig_pictures[:] = zip(*sorted_data)
 
+        # Initialize double-buffer state for the slideshow: visible + preload
+        try:
+            if len(pictures) > 0:
+                show_event_picture.visible_index = 0
+                show_event_picture.visible_b64 = pictures[0]
+                if len(pictures) > 1:
+                    show_event_picture.preload_index = 1
+                    show_event_picture.preload_b64 = pictures[1]
+                    frame_index[0] = 1
+                else:
+                    show_event_picture.preload_index = None
+                    show_event_picture.preload_b64 = None
+                    frame_index[0] = 0
+            else:
+                show_event_picture.visible_index = None
+                show_event_picture.visible_b64 = None
+                show_event_picture.preload_index = None
+                show_event_picture.preload_b64 = None
+                frame_index[0] = 0
+        except Exception:
+            pass
+
         if int(CONFIG['SHOW_IMAGES_WITH_OVERLAY']):
             overlay_icon = icon_svg_local('prey-frame-on', margin_left="-0.1em")
         else:
@@ -856,16 +878,38 @@ def show_event_server(input, output, session, block_id: int):
         reactive.invalidate_later(0.2)
         try:
             if len(pictures) > 0:
-                frame = pictures[frame_index[0]]
-                # Get the detection areas from the current frame's EventSchema object
-                detected_objects = event_datas[frame_index[0]]
-                if frame is not None:
-                    # Start the HTML for the container and image
-                    img_html = f'''
-                    <div style="position: relative; display: inline-block;">
-                        <img src="data:image/jpeg;base64,{frame}" style="min-width: 250px;" />'''
+                # Promote preloaded frame to visible if available
+                if getattr(show_event_picture, 'preload_b64', None) is not None and getattr(show_event_picture, 'preload_index', None) is not None:
+                    show_event_picture.visible_b64 = show_event_picture.preload_b64
+                    show_event_picture.visible_index = show_event_picture.preload_index
+                    show_event_picture.preload_b64 = None
+                    show_event_picture.preload_index = None
 
-                    # Iterate over the detected objects and draw bounding boxes
+                # Preload the next intended frame
+                if frame_index[0] is not None and len(pictures) > 0:
+                    next_idx = int(frame_index[0]) % len(pictures)
+                    show_event_picture.preload_b64 = pictures[next_idx]
+                    show_event_picture.preload_index = next_idx
+
+                # Build layered image HTML
+                container_style = 'position: relative; display: inline-block; width: 100%; max-width: 800px;'
+                front_style = 'position: relative; display: block; width: 100%; height: auto; min-width: 250px; z-index: 2;'
+                back_style = 'position: absolute; top: 0; left: 0; width: 100%; height: auto; z-index: 1; pointer-events: none;'
+
+                img_html = f'<div style="{container_style}">'
+                # Bottom (preloaded)
+                if getattr(show_event_picture, 'preload_b64', None):
+                    img_html += f'<img src="data:image/jpeg;base64,{show_event_picture.preload_b64}" style="{back_style}" aria-hidden="true" />'
+                # Top (visible)
+                if getattr(show_event_picture, 'visible_b64', None):
+                    img_html += f'<img src="data:image/jpeg;base64,{show_event_picture.visible_b64}" style="{front_style}" />'
+                else:
+                    img_html += '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
+
+                # Overlays for detections (use visible index)
+                if getattr(show_event_picture, 'visible_index', None) is not None:
+                    vis_idx = show_event_picture.visible_index
+                    detected_objects = event_datas[vis_idx] if vis_idx < len(event_datas) else []
                     if input.btn_toggle_overlay() % 2 == (1 - int(CONFIG['SHOW_IMAGES_WITH_OVERLAY'])):
                         for detected_object in detected_objects:
                             if detected_object.object_name != "false-accept":
@@ -877,7 +921,7 @@ def show_event_server(input, output, session, block_id: int):
                                             height: {detected_object.height}%; 
                                             border: 2px solid #ff0000; 
                                             background-color: rgba(255, 0, 0, 0.05);
-                                            pointer-events: none;">
+                                            pointer-events: none; z-index: 3;">
                                     <div style="position: absolute; 
                                                 {f'bottom: -26px' if detected_object.y < 16 else 'top: -26px'}; 
                                                 left: 0px; 
@@ -891,27 +935,26 @@ def show_event_server(input, output, session, block_id: int):
                                     </div>
                                 </div>'''
 
-                    # Add the timestamp and frame counter overlays
-                    # Remove the date part and the milliseconds from the timestamp
-                    timestamp_display = timestamps[frame_index[0]][11:-4]
+                    # Timestamp and frame counter overlays (use visible index)
+                    ts_display = timestamps[vis_idx][11:-4] if vis_idx < len(timestamps) else ""
                     img_html += f'''
-                        <div style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px;">
-                            {timestamp_display}
+                        <div style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px; z-index: 3;">
+                            {ts_display}
                         </div>
-                        <div style="position: absolute; bottom: 12px; right: 8px; background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px;">
-                            {frame_index[0] + 1}/{len(pictures)}
+                        <div style="position: absolute; bottom: 12px; right: 8px; background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px; z-index: 3;">
+                            {vis_idx + 1}/{len(pictures)}
                         </div>
                     </div>
                     '''
                 else:
-                    img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
+                    img_html += '</div>'
             else:
                 img_html = '<div class="placeholder-image"><strong>' + _('No pictures found for this event.') + '</strong></div>'
         except Exception as e:
             logging.error(f"Failed to show the picture for event: {e}")
             img_html = '<div class="placeholder-image"><strong>' + _('An error occured while reading the image.') + '</strong></div>'
-        
-        # Update frame index using standard list, if the play/pause button is in play mode
+
+        # Advance the slideshow index only when playing
         if slideshow_running[0] and len(pictures) > 0:
             frame_index[0] = (frame_index[0] + 1) % max(len(pictures), 1)
         return ui.HTML(img_html)
@@ -1471,6 +1514,11 @@ def server(input, output, session):
             # Track last known aspect ratio (defaults to 4:3)
             live_view_main.last_ar_w = 4
             live_view_main.last_ar_h = 3
+            # Double-buffering: keep a visible and a preloaded frame
+            live_view_main.visible_frame_jpg = None
+            live_view_main.visible_frame_hash = None
+            live_view_main.preload_frame_jpg = None
+            live_view_main.preload_frame_hash = None
 
         warning_html = ""
         # Check for IP camera resolution warning (moved here)
@@ -1497,6 +1545,15 @@ def server(input, output, session):
                 logging.error(f"Failed to check IP camera resolution: {e}")
 
         try:
+            # On each tick, promote the preloaded frame to visible (if available).
+            # This ensures we display the previously loaded image while we
+            # preload the next one in the background to avoid flicker.
+            if getattr(live_view_main, 'preload_frame_jpg', None) is not None:
+                live_view_main.visible_frame_jpg = live_view_main.preload_frame_jpg
+                live_view_main.visible_frame_hash = live_view_main.preload_frame_hash
+                live_view_main.preload_frame_jpg = None
+                live_view_main.preload_frame_hash = None
+
             frame = model_handler.get_camera_frame()
             if frame is None:
                 if CONFIG.get("CAMERA_SOURCE") == "ip_camera":
@@ -1539,11 +1596,13 @@ def server(input, output, session):
                     except Exception:
                         pass
 
-                    # If frame changed, update last_change_time and last_frame_jpg
+                    # If frame changed, update last_change_time and remember as PRELOAD only.
                     if frame_hash != live_view_main.last_frame_hash:
                         live_view_main.last_change_time = tm.time()
                         live_view_main.last_frame_hash = frame_hash
-                        live_view_main.last_frame_jpg = frame_jpg
+                        # Stage the next frame for the next tick; keep current visible unchanged.
+                        live_view_main.preload_frame_jpg = frame_jpg
+                        live_view_main.preload_frame_hash = frame_hash
 
                     # If frame hasn't changed for >5s and using external IP camera, show spinner and warning
                     if (
@@ -1561,10 +1620,31 @@ def server(input, output, session):
                             '</div></div>'
                         )
                     else:
-                        frame_b64 = base64.b64encode(live_view_main.last_frame_jpg).decode('utf-8')
-                        container_style = f'style="width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
-                        img_style = 'style="width:100%;height:100%;display:block;object-fit:cover;"'
-                        img_html = f'<div {container_style}><img src="data:image/jpeg;base64,{frame_b64}" {img_style} /></div>'
+                        # Double-buffering overlay: render current visible frame on top and
+                        # preloaded next frame underneath at the exact same position.
+                        # Keeps a painted image while the top one decodes, mitigating flicker.
+                        container_style = f'style="position:relative;width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
+                        front_style = 'style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:2;"'
+                        back_style = 'style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:1;"'
+                        visible_html = ''
+                        preload_html = ''
+                        if getattr(live_view_main, 'visible_frame_jpg', None):
+                            visible_b64 = base64.b64encode(live_view_main.visible_frame_jpg).decode('utf-8')
+                            visible_html = f'<img src="data:image/jpeg;base64,{visible_b64}" {front_style} />'
+                        else:
+                            # First frame: show current immediately as visible
+                            now_b64 = base64.b64encode(frame_jpg).decode('utf-8')
+                            visible_html = f'<img src="data:image/jpeg;base64,{now_b64}" {front_style} />'
+                            live_view_main.visible_frame_jpg = frame_jpg
+                            live_view_main.visible_frame_hash = frame_hash
+                            live_view_main.preload_frame_jpg = None
+                            live_view_main.preload_frame_hash = None
+
+                        if getattr(live_view_main, 'preload_frame_jpg', None):
+                            preload_b64 = base64.b64encode(live_view_main.preload_frame_jpg).decode('utf-8')
+                            preload_html = f'<img src="data:image/jpeg;base64,{preload_b64}" {back_style} aria-hidden="true" />'
+
+                        img_html = f'<div {container_style}>{preload_html}{visible_html}</div>'
                 else:
                     container_style = f'style="width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
                     img_html = f'<div {container_style}><div class="placeholder-image"><strong>' + _('Could not read the picture from the camera.') + '</strong></div></div>'

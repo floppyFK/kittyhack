@@ -120,6 +120,7 @@ DEFAULT_CONFIG = {
 SENSITIVE_CONFIG_KEYS = {
     'MQTT_PASSWORD',
     'MQTT_USERNAME',
+    'EMAIL',
     'IP_CAMERA_URL'  # May contain embedded credentials
 }
 

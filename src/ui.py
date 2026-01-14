@@ -13,10 +13,14 @@ app_ui = ui.page_fillable(
     ui.include_js(js_file),
     ui.include_css("styles.css"),
     ui.head_content(
+        ui.tags.meta(name="theme-color", content="#FFFFFF"),
         ui.tags.link(rel="manifest", href="manifest.json"),
-        ui.tags.link(rel="icon", type="image/png", sizes="64x64", href="favicon-64x64.png"),
-        ui.tags.link(rel="icon", type="image/png", sizes="32x32", href="favicon-32x32.png"),
-        ui.tags.link(rel="icon", type="image/png", sizes="16x16", href="favicon-16x16.png"),
+        ui.tags.link(rel="icon", type="image/png", sizes="64x64", href="favicon-64x64.png?v=6"),
+        ui.tags.link(rel="icon", type="image/png", sizes="48x48", href="favicon-48x48.png?v=6"),
+        ui.tags.link(rel="icon", type="image/png", sizes="32x32", href="favicon-32x32.png?v=6"),
+        ui.tags.link(rel="icon", type="image/png", sizes="16x16", href="favicon-16x16.png?v=6"),
+        ui.tags.link(rel="apple-touch-icon", sizes="180x180", href="apple-touch-icon.png?v=6"),
+        ui.tags.link(rel="icon", type="image/x-icon", href="favicon.ico?v=6"),
     ),
     ui.navset_bar(
         ui.nav_panel(

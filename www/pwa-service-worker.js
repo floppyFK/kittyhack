@@ -1,7 +1,7 @@
 // Service Worker for online-only PWA with offline notification
 
 // Version your cache to force updates
-const CACHE_VERSION = '2';
+const CACHE_VERSION = '3';
 const CACHE_NAME = 'offline-only-v' + CACHE_VERSION;
 
 // The offline fallback page

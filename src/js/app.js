@@ -11,6 +11,73 @@ window.addEventListener('beforeinstallprompt', (e) => {
 });
 
 document.addEventListener("DOMContentLoaded", function() {
+    // Shared navigation/visibility state used by reconnect/reload logic.
+    // Goal: reload on real disconnects, but never during user-initiated navigation away.
+    let isNavigatingAway = false;
+    let isPageHidden = (document.visibilityState !== 'visible');
+
+    // --- Reload debug helpers ---
+    // Stores recent reload attempts in sessionStorage so mobile debugging is possible even after a reload.
+    const RELOAD_DEBUG_KEY = 'kittyhack_reload_debug_v1';
+    function recordReloadAttempt(entry) {
+        try {
+            const existing = JSON.parse(sessionStorage.getItem(RELOAD_DEBUG_KEY) || '[]');
+            existing.push(entry);
+            // keep last 25 entries
+            const trimmed = existing.slice(-25);
+            sessionStorage.setItem(RELOAD_DEBUG_KEY, JSON.stringify(trimmed));
+        } catch (e) {
+            // ignore storage errors (private mode / quota)
+        }
+    }
+
+    function dumpLastReloadAttempts() {
+        try {
+            const existing = JSON.parse(sessionStorage.getItem(RELOAD_DEBUG_KEY) || '[]');
+            if (existing.length > 0) {
+                const last = existing[existing.length - 1];
+                console.warn('[ReloadDebug] Last reload attempt:', last);
+                if (last && last.stack) {
+                    console.debug('[ReloadDebug] Stack of last reload attempt:\n' + last.stack);
+                }
+            }
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    function attemptReload(reason, opts) {
+        const options = opts || {};
+        const entry = {
+            ts: new Date().toISOString(),
+            reason: reason,
+            href: window.location.href,
+            visibilityState: document.visibilityState,
+            isNavigatingAway: isNavigatingAway,
+            isPageHidden: isPageHidden,
+            userAgent: navigator.userAgent,
+            stack: (new Error('reload attempt: ' + reason)).stack
+        };
+        recordReloadAttempt(entry);
+        console.warn('[ReloadDebug] reload attempt:', entry);
+
+        if (!options.allowWhenNavigatingAway && isNavigatingAway) {
+            console.warn('[ReloadDebug] suppressed (navigating away)');
+            return;
+        }
+        if (!options.allowWhenHidden && document.visibilityState !== 'visible') {
+            console.warn('[ReloadDebug] suppressed (page hidden)');
+            return;
+        }
+        location.reload();
+    }
+
+    // Print previous reload attempt on load (helps on Android after the page already reloaded)
+    dumpLastReloadAttempts();
+
+    // Track visibility transitions to distinguish real backgrounding from brief UI flicker
+    let lastVisibilityState = document.visibilityState;
+    let lastHiddenAtMs = (lastVisibilityState === 'hidden') ? Date.now() : null;
     // observe for the presence of the "allowed_to_exit_ranges" element
     let observer = new MutationObserver(function(mutations) {
         mutations.forEach(function(mutation) {
@@ -41,21 +108,54 @@ document.addEventListener("DOMContentLoaded", function() {
     (function() {
         let reloadInterval = null;
         let reloadedOnce = false;
-        let isNavigatingAway = false;
+        let pendingReloadTimeout = null;
+
+        function clearReloadTimers() {
+            if (pendingReloadTimeout) {
+                clearTimeout(pendingReloadTimeout);
+                pendingReloadTimeout = null;
+            }
+            if (reloadInterval) {
+                clearInterval(reloadInterval);
+                reloadInterval = null;
+            }
+        }
+
+        function scheduleReload(reason) {
+            // Defer reload slightly so navigation-away events can win the race (Android Firefox).
+            if (pendingReloadTimeout || reloadedOnce) return;
+            if (isNavigatingAway || isPageHidden) return;
+            pendingReloadTimeout = setTimeout(() => {
+                pendingReloadTimeout = null;
+                if (isNavigatingAway || isPageHidden) return;
+                const stillOverlay = document.getElementById("shiny-disconnected-overlay");
+                if (!stillOverlay) return;
+                reloadedOnce = true;
+                attemptReload(reason);
+            }, 250);
+        }
 
         // Listen for navigation attempts
         window.addEventListener('beforeunload', function() {
             isNavigatingAway = true;
             // Stop any pending forced reload loops when user navigates away
-            if (reloadInterval) {
-                clearInterval(reloadInterval);
-                reloadInterval = null;
-            }
+            clearReloadTimers();
+        });
+
+        // Mobile browsers are more reliable with pagehide/unload than beforeunload.
+        window.addEventListener('pagehide', function() {
+            isNavigatingAway = true;
+            clearReloadTimers();
+        });
+        window.addEventListener('unload', function() {
+            isNavigatingAway = true;
+            clearReloadTimers();
         });
 
         // Reset flags when page is shown from bfcache or app switch
         window.addEventListener('pageshow', function() {
             isNavigatingAway = false;
+            isPageHidden = (document.visibilityState !== 'visible');
             // Attempt service worker update on HTTPS
             if (navigator.serviceWorker && navigator.serviceWorker.ready) {
                 navigator.serviceWorker.ready.then(reg => {
@@ -65,7 +165,9 @@ document.addEventListener("DOMContentLoaded", function() {
         });
 
         document.addEventListener('visibilitychange', function() {
-            if (document.visibilityState === 'visible') {
+            isPageHidden = (document.visibilityState !== 'visible');
+            // When coming back to foreground, allow reconnect/reload attempts again.
+            if (!isPageHidden) {
                 isNavigatingAway = false;
             }
         });
@@ -74,27 +176,21 @@ document.addEventListener("DOMContentLoaded", function() {
             const overlay = document.getElementById("shiny-disconnected-overlay");
 
             if (overlay) {
-                if (!reloadedOnce && !isNavigatingAway) {
-                    reloadedOnce = true;
-                    console.log("Detected disconnection overlay. Reloading...");
-                    location.reload();
-                }
+                scheduleReload("Detected disconnection overlay. Reloading...");
 
                 if (!reloadInterval) {
                     reloadInterval = setInterval(() => {
                         const stillOverlay = document.getElementById("shiny-disconnected-overlay");
-                        if (isNavigatingAway) {
+                        if (isNavigatingAway || isPageHidden) {
                             // User is leaving; stop reload attempts
-                            clearInterval(reloadInterval);
-                            reloadInterval = null;
+                            clearReloadTimers();
                             return;
                         }
                         if (stillOverlay) {
                             console.log("Still disconnected. Reloading again...");
-                            location.reload();
+                            attemptReload('Still disconnected. Reloading again...');
                         } else {
-                            clearInterval(reloadInterval);
-                            reloadInterval = null;
+                            clearReloadTimers();
                             reloadedOnce = false;
                         }
                     }, 3000);
@@ -122,7 +218,7 @@ document.addEventListener("DOMContentLoaded", function() {
                         return;
                     }
                     console.log('Service worker controller changed, reloading...');
-                    location.reload();
+                    attemptReload('Service worker controller changed, reloading...');
                 }
             });
 
@@ -149,7 +245,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                     await caches.delete(k);
                                 }
                             }
-                            location.reload();
+                            attemptReload('SW emergency recovery reload', { allowWhenHidden: true, allowWhenNavigatingAway: true });
                         } catch (e) {
                             console.error('SW emergency recovery failed:', e);
                         }
@@ -287,13 +383,20 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     // Force reconnect when app returns to foreground or network returns
-    function tryReconnect() {
-        // If Shiny overlay exists, reload; otherwise, ping server and reload on failure.
+    function tryReconnect(opts) {
+        const options = opts || {};
+        const source = options.source || 'unknown';
+        const allowOverlayReload = (options.allowOverlayReload === true);
+
+        // If Shiny overlay exists, optionally reload.
+        // NOTE: The overlay may already be present when returning from background, and
+        // the MutationObserver won't fire again; in that case we need an explicit check.
         const overlay = document.getElementById("shiny-disconnected-overlay");
         if (overlay) {
-            console.log("Reconnect: overlay present, reloading...");
-            if (!isNavigatingAway) {
-                location.reload();
+            if (allowOverlayReload && !isNavigatingAway && document.visibilityState === 'visible') {
+                attemptReload(`Reconnect(${source}): overlay present`);
+            } else {
+                console.log(`Reconnect(${source}): overlay present (no reload)`);
             }
             return;
         }
@@ -311,17 +414,40 @@ document.addEventListener("DOMContentLoaded", function() {
                         window.location.href = '/offline.html';
                     } catch (e) {
                         // Fallback to reload if redirect fails
-                        location.reload();
+                        attemptReload('Reconnect: offline redirect failed');
                     }
                 }
             });
     }
 
     document.addEventListener('visibilitychange', function() {
-        if (document.visibilityState === 'visible') {
-            tryReconnect();
+        // Keep shared flags in sync (there are multiple listeners)
+        isPageHidden = (document.visibilityState !== 'visible');
+
+        const nowState = document.visibilityState;
+        if (nowState === 'hidden') {
+            lastVisibilityState = 'hidden';
+            lastHiddenAtMs = Date.now();
+            return;
+        }
+
+        if (nowState === 'visible') {
+            const hiddenDurationMs = (lastHiddenAtMs ? (Date.now() - lastHiddenAtMs) : 0);
+            lastHiddenAtMs = null;
+            lastVisibilityState = 'visible';
+
+            // Only treat this as a real "return to foreground" if we were hidden long enough.
+            // This avoids address-bar / UI flicker on Android Firefox triggering reconnect logic.
+            if (hiddenDurationMs >= 750) {
+                // Only auto-reload when overlay is present if we were hidden long enough that
+                // a websocket idle timeout is plausible. This avoids rare bounce-backs.
+                const allowOverlayReload = (hiddenDurationMs >= 2500);
+                tryReconnect({ source: `visibility/${hiddenDurationMs}ms`, allowOverlayReload });
+            } else {
+                console.log('Visibility returned quickly; skip reconnect (ms):', hiddenDurationMs);
+            }
         }
     });
 
-    window.addEventListener('online', tryReconnect);
+    window.addEventListener('online', () => tryReconnect({ source: 'online', allowOverlayReload: true }));
 });

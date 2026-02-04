@@ -2282,7 +2282,7 @@ def server(input, output, session):
                 }
 
             # Start building the HTML table
-            html = '<table class="dataframe shiny-table table w-auto">'
+            html = '<table class="dataframe shiny-table table w-100">'
             html += '<tbody>'
 
             # Iterate through the events and add date rows when the date changes

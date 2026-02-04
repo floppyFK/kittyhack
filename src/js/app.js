@@ -16,6 +16,80 @@ document.addEventListener("DOMContentLoaded", function() {
     let isNavigatingAway = false;
     let isPageHidden = (document.visibilityState !== 'visible');
 
+    // --- Theme (auto/dark/light) ---
+    // Uses Bootstrap 5.3 color modes if available (data-bs-theme), with a safe fallback.
+    const THEME_PREF_KEY = 'kittyhack_theme_pref_v1'; // 'auto' | 'dark' | 'light'
+    const themeToggleButton = document.getElementById('theme_toggle_button');
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    const prefersDarkQuery = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
+
+    function safeGetThemePref() {
+        try {
+            const raw = localStorage.getItem(THEME_PREF_KEY);
+            if (raw === 'dark' || raw === 'light' || raw === 'auto') return raw;
+        } catch (e) {
+            // ignore storage errors
+        }
+        return 'auto';
+    }
+
+    function getSystemTheme() {
+        return (prefersDarkQuery && prefersDarkQuery.matches) ? 'dark' : 'light';
+    }
+
+    function setThemeColorMeta(effectiveTheme) {
+        if (!themeColorMeta) return;
+        // Pick colors that look reasonable in browser UI chrome.
+        const color = (effectiveTheme === 'dark') ? '#111827' : '#FFFFFF';
+        themeColorMeta.setAttribute('content', color);
+    }
+
+    function updateThemeToggleLabel(pref, effective) {
+        if (!themeToggleButton) return;
+        const prefLabel = (pref === 'auto') ? 'Auto' : (pref === 'dark' ? 'Dark' : 'Light');
+        themeToggleButton.textContent = `Theme: ${prefLabel}`;
+        themeToggleButton.setAttribute('data-theme-pref', pref);
+        themeToggleButton.setAttribute('data-theme-effective', effective);
+    }
+
+    function applyTheme(pref) {
+        const effective = (pref === 'auto') ? getSystemTheme() : pref;
+        document.documentElement.setAttribute('data-bs-theme', effective);
+        document.documentElement.setAttribute('data-theme-pref', pref);
+        setThemeColorMeta(effective);
+        updateThemeToggleLabel(pref, effective);
+    }
+
+    function cycleThemePref(currentPref) {
+        if (currentPref === 'auto') return 'dark';
+        if (currentPref === 'dark') return 'light';
+        return 'auto';
+    }
+
+    let themePref = safeGetThemePref();
+    applyTheme(themePref);
+
+    if (themeToggleButton) {
+        themeToggleButton.addEventListener('click', function() {
+            themePref = cycleThemePref(themePref);
+            try { localStorage.setItem(THEME_PREF_KEY, themePref); } catch (e) {}
+            applyTheme(themePref);
+        });
+    }
+
+    // If user is in Auto mode and OS theme changes, follow it.
+    if (prefersDarkQuery) {
+        const onPrefersChange = function() {
+            if (themePref === 'auto') applyTheme('auto');
+        };
+        if (typeof prefersDarkQuery.addEventListener === 'function') {
+            prefersDarkQuery.addEventListener('change', onPrefersChange);
+        } else if (typeof prefersDarkQuery.addListener === 'function') {
+            // Safari / older browsers
+            prefersDarkQuery.addListener(onPrefersChange);
+        }
+    }
+
     // --- Reload debug helpers ---
     // Stores recent reload attempts in sessionStorage so mobile debugging is possible even after a reload.
     const RELOAD_DEBUG_KEY = 'kittyhack_reload_debug_v1';

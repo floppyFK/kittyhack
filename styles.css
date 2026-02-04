@@ -11,6 +11,126 @@
     text-align: left;
 }
 
+/* Theme toggle button (in navbar title area) */
+.theme-toggle-btn {
+    font-weight: 600;
+    letter-spacing: 0.1px;
+    white-space: nowrap;
+}
+
+/* On desktop, keep the theme toggle on the far right */
+@media (min-width: 992px) {
+    .theme-toggle-container {
+        position: fixed;
+        right: 0.75rem;
+        top: 0.55rem;
+        z-index: 2000; /* keep above navbar/collapse on narrow desktop */
+    }
+}
+
+/* Dark mode support (Bootstrap 5.3 uses data-bs-theme="dark") */
+html[data-bs-theme="dark"],
+html[data-bs-theme="dark"] body {
+    background-color: #121212;
+    color: #f8f9fa;
+}
+
+html[data-bs-theme="dark"] {
+    /* Encourage native controls (select, scrollbars) to use dark palette */
+    color-scheme: dark;
+}
+
+html[data-bs-theme="dark"] .card {
+    background-color: rgba(33, 37, 41, 0.92);
+    border: 1px solid rgba(73, 80, 87, 0.9);
+    box-shadow: 0px 1px 2px rgba(0, 0, 0, .35), 0px 3px 7px rgba(0, 0, 0, .35), 0px 12px 30px rgba(0, 0, 0, .28);
+}
+
+html[data-bs-theme="dark"] .card-header,
+html[data-bs-theme="dark"] .card-footer {
+    background-color: rgba(33, 37, 41, 0.92);
+    color: #f8f9fa;
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+html[data-bs-theme="dark"] .card-header {
+    border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+
+html[data-bs-theme="dark"] .card-footer {
+    border-top-color: rgba(255, 255, 255, 0.12);
+}
+
+html[data-bs-theme="dark"] .collapsible-section {
+    background: rgba(33, 37, 41, 0.92);
+    border: 1px solid rgba(73, 80, 87, 0.9);
+    box-shadow: 0px 1px 2px rgba(0,0,0,.35), 0px 3px 7px rgba(0,0,0,.35), 0px 12px 30px rgba(0,0,0,.28);
+}
+
+html[data-bs-theme="dark"] .collapsible-header-btn {
+    background: #212529;
+    border-color: #495057;
+    color: #f8f9fa;
+}
+
+html[data-bs-theme="dark"] .collapsible-header-btn:hover,
+html[data-bs-theme="dark"] .collapsible-header-btn:focus {
+    background: #2b3035;
+    color: #f8f9fa;
+}
+
+html[data-bs-theme="dark"] .collapsible-section-intro {
+    color: #adb5bd;
+}
+
+html[data-bs-theme="dark"] .collapsible-section > .collapse,
+html[data-bs-theme="dark"] .collapsible-section > .collapse.show,
+html[data-bs-theme="dark"] .collapsible-section > div[id$="_body"] {
+    border-top-color: rgba(255, 255, 255, 0.12);
+}
+
+html[data-bs-theme="dark"] .cat-settings-container {
+    background: #212529;
+    border-color: #495057;
+}
+
+html[data-bs-theme="dark"] .well {
+    background: #212529;
+    border: 1px solid #495057;
+    color: #f8f9fa;
+}
+
+html[data-bs-theme="dark"] .generic-container table tr:not(:last-child) td {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+/* generic-container sometimes uses inline light backgrounds; override in dark mode */
+html[data-bs-theme="dark"] .generic-container {
+    color: #f8f9fa;
+}
+
+html[data-bs-theme="dark"] .generic-container[style*="background"],
+html[data-bs-theme="dark"] .generic-container[style*="background-color"] {
+    background: #212529 !important;
+    border-color: #495057 !important;
+    color: #f8f9fa !important;
+}
+
+html[data-bs-theme="dark"] .image-container img {
+    outline: 4px solid rgba(33, 37, 41);
+}
+
+html[data-bs-theme="dark"] .placeholder-image {
+    background-color: #212529;
+    color: #adb5bd;
+    border-color: #495057;
+}
+
+html[data-bs-theme="dark"] .spinner {
+    border: 5px solid rgba(255, 255, 255, 0.15);
+    border-left-color: #f8f9fa;
+}
+
 .image-container img {
     border-radius: .5rem;
     width: 100%;
@@ -235,7 +355,17 @@
   border-bottom: 1px solid #dee2e6;
   border-top: 1px solid #dee2e6;
   padding: 20px 0 5px 0;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0) 0%, rgba(230, 230, 230, 0.25) 100%);
+    background: linear-gradient(to bottom, rgba(255, 255, 255, 0) 0%, rgba(230, 230, 230, 0.25) 100%);
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+}
+
+html[data-bs-theme="dark"] .date-separator-row td {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    border-top: 1px solid rgba(255, 255, 255, 0.15);
+        background: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0%, rgba(255, 255, 255, 0.06) 100%);
+        background-repeat: no-repeat;
+        background-size: 100% 100%;
 }
 
 .event-date-separator {
@@ -454,11 +584,27 @@ select {
     box-sizing: border-box;
 }
 
+html[data-bs-theme="dark"] .form-select,
+html[data-bs-theme="dark"] .shiny-input-select,
+html[data-bs-theme="dark"] select {
+    background-color: #212529;
+    border-color: #495057;
+    color: #f8f9fa;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+}
+
 .form-select:focus,
 .shiny-input-select:focus,
 select:focus {
     border-color: #007bff;
     box-shadow: 0 0 0 2px rgba(0,123,255,0.15);
+}
+
+html[data-bs-theme="dark"] .form-select:focus,
+html[data-bs-theme="dark"] .shiny-input-select:focus,
+html[data-bs-theme="dark"] select:focus {
+    border-color: #66b2ff;
+    box-shadow: 0 0 0 2px rgba(102,178,255,0.25);
 }
 
 .form-select:hover,
@@ -475,6 +621,20 @@ select {
     background-repeat: no-repeat;
     background-position: right 1em center;
     background-size: 1em;
+}
+
+html[data-bs-theme="dark"] .form-select,
+html[data-bs-theme="dark"] .shiny-input-select,
+html[data-bs-theme="dark"] select {
+    background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' fill='%23cbd5e1' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%23cbd5e1' stroke-width='2' fill='none'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1em center;
+    background-size: 1em;
+}
+
+html[data-bs-theme="dark"] select option {
+    background-color: #212529;
+    color: #f8f9fa;
 }
 
 /* Remove default arrow for Chrome */

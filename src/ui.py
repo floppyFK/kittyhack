@@ -67,7 +67,26 @@ app_ui = ui.page_fillable(
             _("Info"),
             ui.output_ui("ui_info")
         ),
-        title=ui.HTML("<span style='font-weight: bold;'>KITTY " + str(icon_svg("shield-cat")) + "HACK</span>"),
+        title=ui.tags.div(
+            {
+                "class": "d-flex align-items-center gap-2 flex-wrap navbar-title-wrap",
+                "style": "font-weight: bold;"
+            },
+            ui.HTML("KITTY " + str(icon_svg("shield-cat")) + "HACK"),
+            ui.tags.span(
+                {"class": "theme-toggle-container"},
+                ui.tags.button(
+                    {
+                        "id": "theme_toggle_button",
+                        "type": "button",
+                        "class": "btn btn-sm btn-outline-secondary theme-toggle-btn",
+                        "aria-label": _("Toggle theme"),
+                        "title": _("Toggle theme")
+                    },
+                    _("Theme: Auto")
+                ),
+            ),
+        ),
         position="fixed-top",
         padding="3rem",
     ),

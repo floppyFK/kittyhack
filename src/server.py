@@ -3393,6 +3393,7 @@ def server(input, output, session):
         # Check labelstudio
         if CONFIG["LABELSTUDIO_VERSION"] is not None:
             labelstudio_latest_version = get_labelstudio_latest_version()
+            labelstudio_latest_version_display = labelstudio_latest_version or _("unknown")
             
             # Check if labelstudio is running
             if get_labelstudio_status() == True:
@@ -3422,7 +3423,7 @@ def server(input, output, session):
                         ),
                         ui.column(
                             12,
-                            ui.help_text(_("Latest version: ") + labelstudio_latest_version),
+                            ui.help_text(_("Latest version: ") + labelstudio_latest_version_display),
                             style_="text-align: center;"
                         ),
                         style_ ="padding-top: 50px;"
@@ -3439,7 +3440,7 @@ def server(input, output, session):
                     ),
                 )
 
-            if labelstudio_latest_version != CONFIG["LABELSTUDIO_VERSION"]:
+            if labelstudio_latest_version is not None and labelstudio_latest_version != CONFIG["LABELSTUDIO_VERSION"]:
                 ui_labelstudio = ui_labelstudio, ui.row(
                     ui.column(
                         12,
@@ -3449,7 +3450,7 @@ def server(input, output, session):
                         ui.br(),
                         ui.help_text(_('Current Version') + ": " + CONFIG['LABELSTUDIO_VERSION']),
                         ui.br(),
-                        ui.help_text(_('Latest Version') + ": " + labelstudio_latest_version),
+                        ui.help_text(_('Latest Version') + ": " + labelstudio_latest_version_display),
                         style_="text-align: center;"
                     ),
                     style_="padding-top: 50px;"
@@ -3820,7 +3821,7 @@ def server(input, output, session):
             
             if success:
                 ui.notification_show(_("Label Studio updated successfully! You can start it now."), duration=15, type="message")
-                CONFIG["LABELSTUDIO_VERSION"] = get_labelstudio_latest_version()
+                CONFIG["LABELSTUDIO_VERSION"] = get_labelstudio_installed_version()
             else:
                 ui.notification_show(_("Label Studio update failed. Please check the logs for details."), duration=None, type="error")
                 

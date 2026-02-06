@@ -657,7 +657,12 @@ def btn_wlan_connect():
 
 @module.ui
 def btn_show_event():
-    return ui.input_action_button(id=f"btn_show_event" , label="", icon=icon_svg("magnifying-glass", margin_left="-1", margin_right="auto"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
+    return ui.input_action_button(
+        id=f"btn_show_event",
+        label="",
+        icon=icon_svg("magnifying-glass", margin_left="0", margin_right="0"),
+        class_="btn-icon-square btn-outline-secondary",
+    )
 
 @module.ui
 def btn_yolo_modify():
@@ -670,11 +675,69 @@ def show_event_server(input, output, session, block_id: int):
     pictures = []
     orig_pictures = []
     timestamps = []
+    photo_ids = []
     # Store lists of DetectedObjects, one list per event
     event_datas: List[List[DetectedObject]] = []
     frame_index = [0]  # Use list to allow modification in nested functions
     fallback_mode = [False]
-    slideshow_running = [True]
+    slideshow_running = reactive.Value(True)
+
+    @render.ui
+    def event_nav_controls():
+        is_playing = bool(slideshow_running.get())
+        play_pause_icon = (
+            icon_svg("pause", margin_left="0", margin_right="0")
+            if is_playing
+            else icon_svg("play", margin_left="0", margin_right="0")
+        )
+
+        return ui.div(
+            ui.input_action_button(
+                id="btn_prev",
+                label="",
+                icon=icon_svg("backward-step", margin_left="0", margin_right="0"),
+                class_="btn-icon-square btn-outline-secondary",
+                disabled=is_playing,
+                style_="opacity: 0.5;" if is_playing else "",
+            ),
+            ui.input_action_button(
+                id="btn_play_pause",
+                label="",
+                icon=play_pause_icon,
+                class_="btn-icon-square btn-outline-secondary",
+            ),
+            ui.input_action_button(
+                id="btn_next",
+                label="",
+                icon=icon_svg("forward-step", margin_left="0", margin_right="0"),
+                class_="btn-icon-square btn-outline-secondary",
+                disabled=is_playing,
+                style_="opacity: 0.5;" if is_playing else "",
+            ),
+            class_="event-modal-toolbar-nav",
+        )
+
+    @render.ui
+    def download_single_ui():
+        disabled = bool(slideshow_running.get())
+        help_text = (
+            _("Pause playback to download the current picture")
+            if disabled
+            else _("Download current picture")
+        )
+
+        return ui.tooltip(
+            ui.download_button(
+                id="btn_download_single",
+                label="",
+                icon=icon_svg("image", margin_left="0", margin_right="0"),
+                class_="btn-icon-square btn-outline-secondary",
+                disabled=disabled,
+                style_="opacity: 0.5;" if disabled else "",
+            ),
+            help_text,
+            id="tooltip_download_single",
+        )
 
     @render.ui
     @reactive.effect
@@ -700,6 +763,7 @@ def show_event_server(input, output, session, block_id: int):
         orig_pictures.clear()
         timestamps.clear()
         event_datas.clear()
+        photo_ids.clear()
 
         # Iterate over the rows and encode the pictures
         async def process_event_row(row):
@@ -728,6 +792,10 @@ def show_event_server(input, output, session, block_id: int):
                         # Encode the bytes to base64 and then to string for HTML
                         pictures.append(base64.b64encode(thumbnail_bytes).decode('utf-8'))
                     orig_pictures.append(row[blob_picture])
+                    try:
+                        photo_ids.append(int(row['id']))
+                    except Exception:
+                        photo_ids.append(None)
                     # Convert the timestamp to the local timezone and format it
                     try:
                         timestamp = pd.to_datetime(row["created_at"])
@@ -776,9 +844,9 @@ def show_event_server(input, output, session, block_id: int):
             pass
 
         if int(CONFIG['SHOW_IMAGES_WITH_OVERLAY']):
-            overlay_icon = icon_svg_local('prey-frame-on', margin_left="-0.1em")
+            overlay_icon = icon_svg('border-all', margin_left="0", margin_right="0")
         else:
-            overlay_icon = icon_svg_local('prey-frame-off', margin_left="-0.1em")
+            overlay_icon = icon_svg('border-none', margin_left="0", margin_right="0")
 
         ui.modal_show(
             ui.modal(
@@ -786,49 +854,61 @@ def show_event_server(input, output, session, block_id: int):
                     ui.output_ui("show_event_picture"),
                     ui.card_footer(
                         ui.div(
-                            # left button group
-                            ui.div(
-                                ui.tooltip(
-                                    ui.input_action_button(id="btn_delete_event", label="", icon=icon_svg("trash"), 
-                                                        class_="btn-vertical-margin btn-narrow btn-danger", 
-                                                        style_="width: 42px;"),
-                                    _("Delete all pictures of this event"),
-                                    id="tooltip_delete_event",
-                                ),
-                                style_="padding-top: 6px;",
-                                class_="d-flex justify-content-start flex-shrink-0"
-                            ),
-
-                            # center button group with right alignment
                             ui.div(
                                 ui.div(
-                                    ui.input_action_button(id="btn_prev", label="", icon=icon_svg("chevron-left"), 
-                                                        class_="btn-narrow", style_="width: 42px;"),
-                                    ui.input_action_button(id="btn_play_pause", label="", icon=icon_svg("pause"), 
-                                                        class_="btn-narrow", style_="width: 42px;"),
-                                    ui.input_action_button(id="btn_next", label="", icon=icon_svg("chevron-right"), 
-                                                        class_="btn-narrow", style_="width: 42px;"),
-                                    style_="padding-left: 12px; padding-top: 6px;",
-                                    class_="d-flex gap-1"
+                                    ui.tooltip(
+                                        ui.input_action_button(
+                                            id="btn_delete_event",
+                                            label="",
+                                            icon=icon_svg("trash-can", margin_left="0", margin_right="0"),
+                                            class_="btn-icon-square btn-danger",
+                                        ),
+                                        _("Delete all pictures of this event"),
+                                        id="tooltip_delete_event",
+                                    ),
+                                    class_="event-modal-toolbar-left",
                                 ),
-                                class_="flex-grow-1 d-flex justify-content-end"
+                                ui.div(
+                                    ui.output_ui("event_nav_controls"),
+                                ),
+                                ui.div(
+                                    ui.input_action_button(
+                                        id="btn_modal_cancel",
+                                        label="",
+                                        icon=icon_svg("xmark", margin_left="0", margin_right="0"),
+                                        class_="btn-icon-square btn-outline-secondary btn-icon-close",
+                                    ),
+                                    class_="event-modal-toolbar-close",
+                                ),
+                                class_="event-modal-toolbar-row event-modal-toolbar-top",
                             ),
-
-                            # right button group
                             ui.div(
-                                ui.download_button(id="btn_download", label="", icon=icon_svg("download", margin_left="-0.1em"),
-                                                    class_="btn-vertical-margin btn-narrow", style_="width: 42px;"),
-                                ui.input_action_button(id="btn_toggle_overlay", label="", icon=overlay_icon, 
-                                                    class_="btn-vertical-margin btn-narrow", 
-                                                    style_=f"width: 42px; opacity: 0.5;" if fallback_mode[0] else "width: 42px;", 
-                                                    disabled=fallback_mode[0]),
-                                ui.input_action_button(id="btn_modal_cancel", label="", icon=icon_svg("xmark"), 
-                                                    class_="btn-vertical-margin btn-narrow", style_="width: 42px;"),
-                                style_="padding-left: 12px; padding-top: 6px;",
-                                class_="d-flex gap-1 justify-content-end flex-shrink-0 ms-auto"
+                                ui.output_ui("download_single_ui"),
+                                ui.tooltip(
+                                    ui.download_button(
+                                        id="btn_download",
+                                        label="",
+                                        icon=icon_svg("file-zipper", margin_left="0", margin_right="0"),
+                                        class_="btn-icon-square btn-outline-secondary",
+                                    ),
+                                    _("Download all pictures of this event (ZIP)"),
+                                    id="tooltip_download_zip",
+                                ),
+                                ui.tooltip(
+                                    ui.input_action_button(
+                                        id="btn_toggle_overlay",
+                                        label="",
+                                        icon=overlay_icon,
+                                        class_="btn-icon-square btn-outline-secondary",
+                                        style_=f"opacity: 0.5;" if fallback_mode[0] else "",
+                                        disabled=fallback_mode[0],
+                                    ),
+                                    _("Toggle overlay for detected objects"),
+                                    id="tooltip_toggle_overlay",
+                                ),
+                                class_="event-modal-toolbar-row event-modal-toolbar-bottom",
                             ),
-
-                            class_="d-flex flex-wrap align-items-center justify-content-center w-100 position-relative"
+                            class_="event-modal-toolbar",
                         ),
                     ),
                     full_screen=False,
@@ -955,7 +1035,7 @@ def show_event_server(input, output, session, block_id: int):
             img_html = '<div class="placeholder-image"><strong>' + _('An error occured while reading the image.') + '</strong></div>'
 
         # Advance the slideshow index only when playing
-        if slideshow_running[0] and len(pictures) > 0:
+        if slideshow_running.get() and len(pictures) > 0:
             frame_index[0] = (frame_index[0] + 1) % max(len(pictures), 1)
         return ui.HTML(img_html)
 
@@ -968,7 +1048,67 @@ def show_event_server(input, output, session, block_id: int):
         orig_pictures.clear()
         timestamps.clear()
         event_datas.clear()
+        photo_ids.clear()
+        photo_ids.clear()
         frame_index[0] = 0
+
+    def _single_image_filename():
+        vis_idx = getattr(show_event_picture, 'visible_index', None)
+        try:
+            picture_number = int(vis_idx) + 1 if vis_idx is not None else 0
+        except Exception:
+            picture_number = 0
+        return f"kittyhack_event_{block_id}_{picture_number}.jpg"
+
+    @render.download(filename=_single_image_filename)
+    def btn_download_single():
+        try:
+            if slideshow_running.get():
+                ui.notification_show(
+                    _("Pause playback before downloading the current picture."),
+                    duration=6,
+                    type="warning",
+                )
+                raise RuntimeError("Playback running")
+
+            vis_idx = getattr(show_event_picture, 'visible_index', None)
+            if vis_idx is None or vis_idx >= len(photo_ids):
+                raise RuntimeError("No visible image")
+
+            pid = photo_ids[int(vis_idx)]
+            if pid is None:
+                raise RuntimeError("Missing photo ID")
+
+            # Prefer original image from filesystem if present
+            img_bytes = None
+            try:
+                fp = os.path.join("/root/pictures/original_images", f"{int(pid)}.jpg")
+                if os.path.exists(fp):
+                    with open(fp, "rb") as f:
+                        img_bytes = f.read()
+            except Exception:
+                img_bytes = None
+
+            # Fallback to the DB blob loaded for the modal
+            if img_bytes is None and int(vis_idx) < len(orig_pictures):
+                ob = orig_pictures[int(vis_idx)]
+                if isinstance(ob, (bytes, bytearray)) and len(ob) > 0:
+                    img_bytes = bytes(ob)
+
+            if not isinstance(img_bytes, (bytes, bytearray)) or len(img_bytes) == 0:
+                raise RuntimeError("No image bytes")
+
+            out_path = os.path.join("/tmp", f"kittyhack_event_{block_id}_img_{int(pid)}.jpg")
+            with open(out_path, "wb") as f:
+                f.write(img_bytes)
+            return out_path
+        except Exception as e:
+            logging.warning(f"[DOWNLOAD] Single image download failed: {e}")
+            # Provide a tiny placeholder file rather than crashing the download handler
+            out_path = os.path.join("/tmp", f"kittyhack_event_{block_id}_download_failed.txt")
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write("Single image download failed.\n")
+            return out_path
     
     @reactive.effect
     @reactive.event(input.btn_delete_event)
@@ -1053,30 +1193,29 @@ def show_event_server(input, output, session, block_id: int):
     @reactive.event(input.btn_play_pause)
     def play_pause():
         # Toggle play/pause based on the click count
-        if slideshow_running[0] == False:
-            slideshow_running[0] = True
-            ui.update_action_button("btn_play_pause", label="", icon=icon_svg("pause", margin_right="auto"))
-        else:
-            slideshow_running[0] = False
-            ui.update_action_button("btn_play_pause", label="", icon=icon_svg("play", margin_right="auto"))
+        slideshow_running.set(not bool(slideshow_running.get()))
 
     @reactive.effect
     @reactive.event(input.btn_toggle_overlay)
     def toggle_overlay():
         # Toggle the overlay visibility based on the click count
         if input.btn_toggle_overlay() % 2 == int(CONFIG['SHOW_IMAGES_WITH_OVERLAY']):
-            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg_local('prey-frame-off', margin_left="-0.1em"))
+            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg('border-none', margin_left="0", margin_right="0"))
         else:
-            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg_local('prey-frame-on', margin_left="-0.1em"))
+            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg('border-all', margin_left="0", margin_right="0"))
 
     @reactive.effect
     @reactive.event(input.btn_prev)
     def prev_picture():
+        if slideshow_running.get():
+            return
         frame_index[0] = (frame_index[0] - 1) % max(len(pictures), 1)
 
     @reactive.effect
     @reactive.event(input.btn_next)
     def next_picture():
+        if slideshow_running.get():
+            return
         frame_index[0] = (frame_index[0] + 1) % max(len(pictures), 1)
 
 @module.server
@@ -1319,6 +1458,21 @@ def server(input, output, session):
     last_uploaded_db_path = reactive.Value(None)
     last_uploaded_cfg_path = reactive.Value(None)
 
+    # Live status for overlay in live view
+    live_status = reactive.Value(
+        {
+            "ok": False,
+            "ts": "",
+            "inside_lock": False,
+            "outside_lock": False,
+            "inside_motion": False,
+            "outside_motion": False,
+            "forced_lock_due_prey": False,
+            "time_until_release": 0.0,
+            "delta_to_last_prey_detection": 0.0,
+        }
+    )
+
     def show_user_notifications():
         user_notifications = UserNotifications.get_all()
         if len(user_notifications) > 0:
@@ -1456,9 +1610,10 @@ def server(input, output, session):
                 additional_text = ""
             ui.notification_show(_("Warning: RAM usage is at {:.1f}%!{}").format(ram_usage_percentage, additional_text), duration=20, type="warning")
 
-    @render.text
-    def live_view_header():
+    @reactive.effect
+    def update_live_status():
         reactive.invalidate_later(0.25)
+        ts = datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S')
         try:
             inside_lock_state = Magnets.instance.get_inside_state()
             outside_lock_state = Magnets.instance.get_outside_state()
@@ -1478,30 +1633,38 @@ def server(input, output, session):
                 time_until_release = 0
                 forced_lock_due_prey = False
 
-            if inside_lock_state:
-                ui.update_action_button("bManualOverride", label=_("Close inside now"), icon=icon_svg("lock"), disabled=False)
-            else:
-                ui.update_action_button("bManualOverride", label=_("Open inside now"), icon=icon_svg("lock-open"), disabled=False)
+            live_status.set(
+                {
+                    "ok": True,
+                    "ts": ts,
+                    "inside_lock": bool(inside_lock_state),
+                    "outside_lock": bool(outside_lock_state),
+                    "inside_motion": bool(inside_motion_state),
+                    "outside_motion": bool(outside_motion_state),
+                    "forced_lock_due_prey": bool(forced_lock_due_prey),
+                    "time_until_release": float(max(0, time_until_release)),
+                    "delta_to_last_prey_detection": float(max(0, delta_to_last_prey_detection)),
+                }
+            )
 
-            inside_lock_icon = icon_svg('lock-open') if inside_lock_state else icon_svg('lock')
-            outside_lock_icon = icon_svg('lock-open') if outside_lock_state else icon_svg('lock')
-            outside_pir_state_icon = "🟢" if outside_motion_state else "⚫"
-            inside_pir_state_icon = "🟢" if inside_motion_state else "⚫"
-            ui_html = ui.HTML(_("<b>Locks:</b> Inside {} | Outside {}<br><b>Motion:</b> Inside {} | Outside {}").format(inside_lock_icon, outside_lock_icon, inside_pir_state_icon, outside_pir_state_icon))
-            if forced_lock_due_prey:
-                ui.update_action_button("bResetPreyCooldown", disabled=False)
-                ui_html += ui.HTML(_("<br>Prey detected {0:.0f}s ago. Inside lock remains closed for {1:.0f}s.").format(delta_to_last_prey_detection, time_until_release))
-            else:
-                ui.update_action_button("bResetPreyCooldown", disabled=True)
-        except:
-            ui_html = ui.markdown(_("Failed to fetch the current status of the locks and motion sensors."))
+            try:
+                if inside_lock_state:
+                    ui.update_action_button("bManualOverride", label=_("Close inside now"), icon=icon_svg("lock"), disabled=False)
+                else:
+                    ui.update_action_button("bManualOverride", label=_("Open inside now"), icon=icon_svg("lock-open"), disabled=False)
+            except Exception:
+                pass
 
-        return ui.div(
-            ui.HTML(f"{datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S')}"),
-            ui.br(),
-            ui.br(),
-            ui_html
-        )
+            try:
+                if forced_lock_due_prey:
+                    ui.update_action_button("bResetPreyCooldown", disabled=False)
+                else:
+                    ui.update_action_button("bResetPreyCooldown", disabled=True)
+            except Exception:
+                pass
+        except Exception as e:
+            logging.exception("Failed to update live status: %s", e)
+            live_status.set({"ok": False, "ts": ts})
     
     @render.text
     def live_view_main():
@@ -1545,6 +1708,106 @@ def server(input, output, session):
                 logging.error(f"Failed to check IP camera resolution: {e}")
 
         try:
+            st = live_status.get() or {}
+            ts = st.get("ts", datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S'))
+
+            def _pill_html(inner_html: str, variant: str, *, aria_label: str, title: str) -> str:
+                return (
+                    f'<span class="live-view-pill live-view-pill--{variant}" '
+                    f'aria-label="{aria_label}" title="{title}">'
+                    f'{inner_html}'
+                    f'</span>'
+                )
+
+            def _icon_html(name: str) -> str:
+                try:
+                    return str(icon_svg(name, margin_left="0", margin_right="0"))
+                except Exception:
+                    # Fallback to a simple unicode symbol if the icon isn't available
+                    return {
+                        "lock": "🔒",
+                        "lock-open": "🔓",
+                        "eye": "👁",
+                        "eye-slash": "🚫",
+                    }.get(name, "•")
+
+            if st.get("ok"):
+                inside_lock_is_open = bool(st.get("inside_lock"))
+                outside_lock_is_open = bool(st.get("outside_lock"))
+                inside_motion = bool(st.get("inside_motion"))
+                outside_motion = bool(st.get("outside_motion"))
+
+                inside_lock_variant = "ok" if inside_lock_is_open else "muted"
+                outside_lock_variant = "ok" if outside_lock_is_open else "muted"
+                inside_motion_variant = "active" if inside_motion else "muted"
+                outside_motion_variant = "active" if outside_motion else "muted"
+
+                inside_lock_icon = _icon_html("lock-open" if inside_lock_is_open else "lock")
+                outside_lock_icon = _icon_html("lock-open" if outside_lock_is_open else "lock")
+                inside_motion_icon = _icon_html("eye" if inside_motion else "eye-slash")
+                outside_motion_icon = _icon_html("eye" if outside_motion else "eye-slash")
+
+                prey_banner_html = ""
+                if st.get("forced_lock_due_prey"):
+                    prey_banner_html = (
+                        '<div class="live-view-banner live-view-banner-warn live-view-overlay-banner" role="status">'
+                        + _(
+                            "Prey detected {0:.0f}s ago. Inside lock remains closed for {1:.0f}s."
+                        ).format(
+                            float(st.get("delta_to_last_prey_detection", 0.0)),
+                            float(st.get("time_until_release", 0.0)),
+                        )
+                        + "</div>"
+                    )
+
+                overlay_html = (
+                    f'<div class="live-view-overlay-clock" aria-label="{_("Clock")}" title="{_("Current time")}">{ts}</div>'
+                    '<div class="live-view-overlay-bottom">'
+                    '<div class="live-view-overlay-row">'
+                    '<div class="live-view-overlay-chip">'
+                    f'<span class="live-view-overlay-title">{_("Inside")}</span>'
+                    + _pill_html(
+                        inside_lock_icon,
+                        inside_lock_variant,
+                        aria_label=_("Inside lock: Open") if inside_lock_is_open else _("Inside lock: Closed"),
+                        title=_("Inside lock: Open") if inside_lock_is_open else _("Inside lock: Closed"),
+                    )
+                    + _pill_html(
+                        inside_motion_icon,
+                        inside_motion_variant,
+                        aria_label=_("Inside motion: Motion") if inside_motion else _("Inside motion: No motion"),
+                        title=_("Inside motion: Motion") if inside_motion else _("Inside motion: No motion"),
+                    )
+                    + '</div>'
+                    '<div class="live-view-overlay-chip">'
+                    f'<span class="live-view-overlay-title">{_("Outside")}</span>'
+                    + _pill_html(
+                        outside_lock_icon,
+                        outside_lock_variant,
+                        aria_label=_("Outside lock: Open") if outside_lock_is_open else _("Outside lock: Closed"),
+                        title=_("Outside lock: Open") if outside_lock_is_open else _("Outside lock: Closed"),
+                    )
+                    + _pill_html(
+                        outside_motion_icon,
+                        outside_motion_variant,
+                        aria_label=_("Outside motion: Motion") if outside_motion else _("Outside motion: No motion"),
+                        title=_("Outside motion: Motion") if outside_motion else _("Outside motion: No motion"),
+                    )
+                    + '</div>'
+                    '</div>'
+                    + prey_banner_html
+                    + '</div>'
+                )
+            else:
+                overlay_html = (
+                    f'<div class="live-view-overlay-clock" aria-label="{_("Clock")}" title="{_("Current time")}">{ts}</div>'
+                    '<div class="live-view-overlay-bottom">'
+                    '<div class="live-view-overlay-row">'
+                    f'<div class="live-view-overlay-chip live-view-overlay-chip--error">{_("Status unavailable")}</div>'
+                    '</div>'
+                    '</div>'
+                )
+
             # On each tick, promote the preloaded frame to visible (if available).
             # This ensures we display the previously loaded image while we
             # preload the next one in the background to avoid flicker.
@@ -1558,7 +1821,7 @@ def server(input, output, session):
             if frame is None:
                 if CONFIG.get("CAMERA_SOURCE") == "ip_camera":
                     # Reserve layout space using last known aspect ratio
-                    container_style = f'style="width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
+                    container_style = f'style="position:relative;width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
                     img_html = (
                         f'<div {container_style}><div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
                         '<div></div>' +
@@ -1567,10 +1830,10 @@ def server(input, output, session):
                         '<div class="spinner-container"><div class="spinner"></div></div>' +
                         '<div>' + _('If you have just changed the camera settings, please wait a few seconds for the camera to reconnect.') + '</div>' +
                         '<div>' + _('Current status: ') + (str(model_handler.get_camera_state()) if model_handler.get_camera_state() is not None else _('Unknown')) + '</div>' +                        '<div></div>' +
-                        '</div></div>'
+                        '</div>' + overlay_html + '</div>'
                     )
                 else:
-                    container_style = f'style="width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
+                    container_style = f'style="position:relative;width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
                     img_html = (
                         f'<div {container_style}><div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
                         '<div></div>' +
@@ -1579,7 +1842,7 @@ def server(input, output, session):
                         '<div class="spinner-container"><div class="spinner"></div></div>' +
                         '<div>' + _('If this message does not disappear within 30 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>' +
                         '<div></div>' +
-                        '</div></div>'
+                        '</div>' + overlay_html + '</div>'
                     )
             else:
                 frame_jpg = model_handler.encode_jpg_image(frame)
@@ -1609,7 +1872,7 @@ def server(input, output, session):
                         tm.time() - live_view_main.last_change_time > 5
                         and CONFIG.get("CAMERA_SOURCE") == "ip_camera"
                     ):
-                        container_style = f'style="width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
+                        container_style = f'style="position:relative;width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
                         img_html = (
                             f'<div {container_style}><div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
                             '<div></div>'
@@ -1617,7 +1880,7 @@ def server(input, output, session):
                             '<div>' + _("Please check your external IP camera connection or network settings.") + '</div>'
                             '<div class="spinner-container"><div class="spinner"></div></div>'
                             '<div></div>'
-                            '</div></div>'
+                            '</div>' + overlay_html + '</div>'
                         )
                     else:
                         # Double-buffering overlay: render current visible frame on top and
@@ -1644,10 +1907,10 @@ def server(input, output, session):
                             preload_b64 = base64.b64encode(live_view_main.preload_frame_jpg).decode('utf-8')
                             preload_html = f'<img src="data:image/jpeg;base64,{preload_b64}" {back_style} aria-hidden="true" />'
 
-                        img_html = f'<div {container_style}>{preload_html}{visible_html}</div>'
+                        img_html = f'<div {container_style}>{preload_html}{visible_html}{overlay_html}</div>'
                 else:
-                    container_style = f'style="width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
-                    img_html = f'<div {container_style}><div class="placeholder-image"><strong>' + _('Could not read the picture from the camera.') + '</strong></div></div>'
+                    container_style = f'style="position:relative;width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
+                    img_html = f'<div {container_style}><div class="placeholder-image"><strong>' + _('Could not read the picture from the camera.') + '</strong></div>{overlay_html}</div>'
         except Exception as e:
             logging.error(f"Failed to fetch the live view image: {e}")
             img_html = '<div class="placeholder-image"><strong>' + _('An error occured while fetching the live view image.') + '</strong></div>'
@@ -2025,9 +2288,6 @@ def server(input, output, session):
     @render.ui
     def ui_live_view():
         live_view = ui.card(
-            ui.card_header(
-                ui.output_ui("live_view_header"),
-            ),
             ui.output_ui("live_view_main"),
             full_screen=False,
             class_="image-container"
@@ -2299,8 +2559,7 @@ def server(input, output, session):
                 html += f'<td>{row["cat_name"]}</td>'
                 unique_id = hashlib.md5(os.urandom(16)).hexdigest()
                 btn_id = f"btn_show_event_{unique_id}"
-                html += f'<td><div>{btn_show_event(btn_id)}'
-                html += f'<i class="fa fa-search" style="margin-left: -1px; margin-right: auto;"></i></button></div></td>'
+                html += f'<td><div>{btn_show_event(btn_id)}</div></td>'
                 show_event_server(btn_id, row['block_id'])
                 html += '</tr>'
 
@@ -3143,7 +3402,7 @@ def server(input, output, session):
                         ui.column(
                             12,
                             # Inject an HTML button that links to the Label Studio web interface
-                            ui.HTML('<a href="http://{}:8080" target="_blank" class="btn btn-default">{}</a>'.format(get_current_ip(), _("Open Label Studio"))),
+                            ui.HTML('<a href="http://{}:8080" target="_blank" class="btn-default">{}</a>'.format(get_current_ip(), _("Open Label Studio"))),
                             style_="text-align: center;"
                         ),
                         ui.column(
@@ -3320,7 +3579,7 @@ def server(input, output, session):
                         _("Please read the instructions before creating your own model! Following these exact instructions is crucial for successful training:")
                     ),
                     ui.div(
-                        ui.HTML(f'<a href="{wiki_url}" target="_blank" class="btn btn-default">' +
+                        ui.HTML(f'<a href="{wiki_url}" target="_blank" class="btn-default">' +
                                '<i class="fa fa-clipboard-list" style="margin-right: 5px;"></i>' + 
                                _("Instructions for training your own model") + '</a>'),
                         style_="text-align: center;"
@@ -4147,7 +4406,7 @@ def server(input, output, session):
                                     # Precompute translations to avoid _() inside f-strings
                                     ui.HTML(('''
                                         <button id="btn_toggle_entry_logic"
-                                                class="btn btn-default"
+                                                class="btn-default"
                                                 style="margin-top:8px;"
                                                 data-show-label="{show}"
                                                 data-hide-label="{hide}">
@@ -4222,7 +4481,7 @@ def server(input, output, session):
                                     # Precompute translations to avoid _() inside f-strings
                                     ui.HTML(('''
                                         <button id="btn_toggle_exit_logic"
-                                                class="btn btn-default"
+                                                class="btn-default"
                                                 style="margin-top:8px;"
                                                 data-show-label="{show}"
                                                 data-hide-label="{hide}">
@@ -5606,7 +5865,7 @@ def server(input, output, session):
                                 id="pwa_install_button",
                                 label=_("Install as App"),
                                 icon=icon_svg("download"),
-                                class_="btn-primary"
+                                class_="btn-default"
                             ),
                             style_="text-align: center; margin-top: 10px;"
                         ),

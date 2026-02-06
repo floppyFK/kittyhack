@@ -107,6 +107,8 @@ def icon_svg_local(svg: str, margin_left: str | None = "auto", margin_right: str
         fill:currentColor;
         height:1em;
         width:1.0em;
+        object-fit: contain;
+        object-position: center;
         margin-left: {margin_left};
         margin-right: {margin_right};
         position:relative;

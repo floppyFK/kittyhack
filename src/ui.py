@@ -4,6 +4,12 @@ from pathlib import Path
 from src.baseconfig import CONFIG, set_language
 
 js_file = Path(__file__).parent / "js" / "app.js"
+css_file = Path(__file__).parent.parent / "www" / "styles.css"
+
+try:
+    _asset_version = str(int(css_file.stat().st_mtime))
+except Exception:
+    _asset_version = "0"
 
 # Prepare gettext for translations
 _ = set_language(CONFIG['LANGUAGE'])
@@ -11,7 +17,7 @@ _ = set_language(CONFIG['LANGUAGE'])
 # the main kittyhack ui
 app_ui = ui.page_fillable(
     ui.include_js(js_file),
-    ui.include_css("styles.css"),
+    ui.tags.link(rel="stylesheet", href=f"styles.css?v={_asset_version}"),
     ui.head_content(
         ui.tags.meta(name="theme-color", content="#FFFFFF"),
         ui.tags.link(rel="manifest", href="manifest.json"),

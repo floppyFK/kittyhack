@@ -1146,19 +1146,23 @@ def show_event_server(input, output, session, block_id: int):
                     if input.btn_toggle_overlay() % 2 == (1 - int(CONFIG['SHOW_IMAGES_WITH_OVERLAY'])):
                         for detected_object in detected_objects:
                             if detected_object.object_name != "false-accept":
+                                obj_label = (detected_object.object_name or "").strip()
+                                is_prey = obj_label.lower() in ("prey", "beute")
+                                stroke_rgb = "255, 0, 0" if is_prey else "0, 180, 0"
+                                stroke_hex = "#ff0000" if is_prey else "#00b400"
                                 img_html += f'''
                                 <div style="position: absolute; 
                                             left: {detected_object.x}%; 
                                             top: {detected_object.y}%; 
                                             width: {detected_object.width}%; 
                                             height: {detected_object.height}%; 
-                                            border: 2px solid #ff0000; 
-                                            background-color: rgba(255, 0, 0, 0.05);
+                                            border: 2px solid {stroke_hex}; 
+                                            background-color: rgba({stroke_rgb}, 0.05);
                                             pointer-events: none; z-index: 3;">
                                     <div style="position: absolute; 
                                                 {f'bottom: -26px' if detected_object.y < 16 else 'top: -26px'}; 
                                                 left: 0px; 
-                                                background-color: rgba(255, 0, 0, 0.7); 
+                                                background-color: rgba({stroke_rgb}, 0.7); 
                                                 color: white; 
                                                 padding: 2px 5px;
                                                 border-radius: 5px;

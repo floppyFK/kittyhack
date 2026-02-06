@@ -2252,7 +2252,7 @@ def server(input, output, session):
             ui.panel_absolute(
                 ui.panel_well(
                     ui.input_action_button(id="delete_selected_photos", label=_("Delete selected photos"), icon=icon_svg("trash")),
-                    style_="background: rgba(240, 240, 240, 0.9); text-align: center;"
+                    class_="sticky-action-well",
                 ),
                 draggable=False, width="100%", left="0px", right="0px", bottom="0px", fixed=True,
             ),
@@ -3584,7 +3584,7 @@ def server(input, output, session):
                         _("Please read the instructions before creating your own model! Following these exact instructions is crucial for successful training:")
                     ),
                     ui.div(
-                        ui.HTML(f'<a href="{wiki_url}" target="_blank" class="btn-default">' +
+                        ui.HTML(f'<a href="{wiki_url}" target="_blank" class="btn btn-default">' +
                                '<i class="fa fa-clipboard-list" style="margin-right: 5px;"></i>' + 
                                _("Instructions for training your own model") + '</a>'),
                         style_="text-align: center;"
@@ -5027,7 +5027,7 @@ def server(input, output, session):
                 ui.panel_absolute(
                     ui.panel_well(
                         ui.input_action_button(id="bSaveKittyhackConfig", label=_("Save all changes"), icon=icon_svg("floppy-disk")),
-                        style_="background: rgba(240, 240, 240, 0.9); text-align: center;"
+                        class_="sticky-action-well",
                     ),
                     draggable=False, width="100%", left="0px", right="0px", bottom="0px", fixed=True,
                 ),

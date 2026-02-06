@@ -330,8 +330,9 @@ html[data-bs-theme="dark"] .spinner {
 
 /* Ensure icons are centered and visually balanced */
 .btn-icon-square svg {
-    width: 1.3rem !important;
     height: 1.3rem !important;
+    width: auto !important;
+    max-width: 1.3rem;
     margin: 0 !important;
     display: block;
     flex: 0 0 auto;
@@ -339,8 +340,9 @@ html[data-bs-theme="dark"] .spinner {
 }
 
 .btn-icon-square img {
-    width: 1.3rem !important;
     height: 1.3rem !important;
+    width: auto !important;
+    max-width: 1.3rem;
     margin: 0 !important;
     display: block;
     flex: 0 0 auto;
@@ -349,8 +351,9 @@ html[data-bs-theme="dark"] .spinner {
 /* Close icon: slightly smaller so it doesn't look cramped on some browsers */
 .btn-icon-close svg,
 .btn-icon-close img {
-    width: 1.15rem !important;
     height: 1.15rem !important;
+    width: auto !important;
+    max-width: 1.15rem;
 }
 
 /* Event modal footer toolbar: 2-row layout, no horizontal scroll */
@@ -398,8 +401,9 @@ html[data-bs-theme="dark"] .spinner {
     }
     .btn-icon-square svg,
     .btn-icon-square img {
-        width: 1.2rem !important;
         height: 1.2rem !important;
+        width: auto !important;
+        max-width: 1.2rem;
     }
 }
 

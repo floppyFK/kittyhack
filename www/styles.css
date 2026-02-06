@@ -1085,21 +1085,22 @@ html[data-bs-theme="dark"] .sticky-action-well {
 
 /* Default buttons - light gray */
 .btn-default {
-    background-color: #d1d5db;
-    color: #374151;
-    border: 1px solid #9ca3af;
+    background-color: #eff0f3;
+    color: #111827;
+    border: 1px solid #94a3b8;
+    box-shadow: 0 1px 0 rgba(17, 24, 39, 0.08);
 }
 
 .btn-default:hover, .btn-default:focus {
-    background-color: #e5e7eb;
-    border-color: #6b7280;
+    background-color: #bfcad9;
+    border-color: #64748b;
     color: #111827;
-    box-shadow: 0 0 0 0.2rem rgba(209, 213, 219, 0.25);
+    box-shadow: 0 0 0 0.2rem rgba(100, 116, 139, 0.22);
 }
 
 .btn-default:active {
-    background-color: #cbd5e1;
-    border-color: #4b5563;
+    background-color: #b3bece;
+    border-color: #475569;
 }
 
 html[data-bs-theme="dark"] .btn-default {
@@ -1170,14 +1171,14 @@ html[data-bs-theme="dark"] .btn-default.btn-outline-danger:focus {
 }
 
 .btn-outline-secondary {
-    color: #8b949e;
+    color: #475569;
     background-color: transparent;
     background-image: none;
-    border: 1px solid #8b949e;
+    border: 1px solid #475569;
 }
 
 .btn-outline-secondary:hover, .btn-outline-secondary:focus {
-    background-color: #8b949e;
+    background-color: #475569;
     color: white;
 }
 

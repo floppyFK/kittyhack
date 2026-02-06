@@ -1015,12 +1015,26 @@ html[data-bs-theme="dark"] .sticky-action-well {
 .btn-default:hover, .btn-default:focus {
     background-color: #e5e7eb;
     border-color: #6b7280;
+    color: #111827;
     box-shadow: 0 0 0 0.2rem rgba(209, 213, 219, 0.25);
 }
 
 .btn-default:active {
     background-color: #cbd5e1;
     border-color: #4b5563;
+}
+
+html[data-bs-theme="dark"] .btn-default {
+    background-color: #374151;
+    color: #f9fafb;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+html[data-bs-theme="dark"] .btn-default:hover,
+html[data-bs-theme="dark"] .btn-default:focus {
+    background-color: #4b5563;
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.24);
 }
 
 /* Outline buttons */
@@ -1045,6 +1059,18 @@ html[data-bs-theme="dark"] .sticky-action-well {
 
 .btn-outline-secondary:hover, .btn-outline-secondary:focus {
     background-color: #8b949e;
+    color: white;
+}
+
+.btn-outline-danger {
+    color: #d44e57;
+    background-color: transparent;
+    background-image: none;
+    border: 1px solid #d44e57;
+}
+
+.btn-outline-danger:hover, .btn-outline-danger:focus {
+    background-color: #d44e57;
     color: white;
 }
 

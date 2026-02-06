@@ -560,6 +560,40 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
         bool: True if update succeeded, False otherwise.
     """
 
+    def _sha256_file(path: str) -> str | None:
+        try:
+            import hashlib
+            with open(path, "rb") as f:
+                return hashlib.sha256(f.read()).hexdigest()
+        except Exception:
+            return None
+
+    def _run_step(step_no: int, msg: str, cmd: list[str]):
+        if progress_callback:
+            progress_callback(step_no, msg, "")
+        logging.info(msg)
+
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        output_lines: list[str] = []
+        max_detail_length = 120
+
+        assert process.stdout is not None
+        for line in process.stdout:
+            line_stripped = (line or "").strip()
+            output_lines.append(line)
+            logging.info(f"[UPDATE] {line_stripped}")
+            if progress_callback:
+                if len(line_stripped) > max_detail_length:
+                    progress_callback(step_no, msg, line_stripped[:max_detail_length] + "...")
+                else:
+                    progress_callback(step_no, msg, line_stripped)
+
+        process.wait()
+        if process.returncode != 0:
+            output = "".join(output_lines)
+            logging.error(f"Command failed with return code {process.returncode}:\n{output}")
+            raise subprocess.CalledProcessError(process.returncode, cmd, output=output)
+
     # Step 0: Stop the backend process
     if progress_callback:
         progress_callback(0, "Stopping backend process", "")
@@ -571,52 +605,71 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
     except Exception as e:
         logging.error(f"Failed to stop backend process: {e}")
 
-    steps = [
-        ("Reverting local changes", ["/bin/git", "restore", "."]),
-        ("Cleaning untracked files", ["/bin/git", "clean", "-fd"]),
-        (f"Fetching latest version {latest_version}", ["/bin/git", "fetch", "--all", "--tags"]),
-        (f"Checking out {latest_version}", ["/bin/git", "checkout", latest_version]),
-        ("Updating python dependencies", ["/bin/bash", "-c", "source /root/kittyhack/.venv/bin/activate && pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt"]),
-        ("Updating systemd service file", ["/bin/cp", "/root/kittyhack/setup/kittyhack.service", "/etc/systemd/system/kittyhack.service"]),
-        ("Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"]),
+    requirements_path = "/root/kittyhack/requirements.txt"
+    pip_install_cmd = [
+        "/bin/bash",
+        "-c",
+        "source /root/kittyhack/.venv/bin/activate && pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt",
     ]
-    for i, (msg, cmd) in enumerate(steps, 1):
-        if progress_callback:
-            progress_callback(i, msg, "")
-        logging.info(msg)
-        try:
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            output_lines = []
-            # Limit the length of callback messages to avoid flooding the UI
-            max_detail_length = 120
-            for line in process.stdout:
-                line_stripped = line.strip()
-                output_lines.append(line)
-                logging.info(f"[UPDATE] {line_stripped}")
-                if progress_callback:
-                    # Send the latest line as detail, truncated if necessary
-                    if len(line_stripped) > max_detail_length:
-                        truncated_detail = line_stripped[:max_detail_length] + "..."
-                        progress_callback(i, msg, truncated_detail)
-                    else:
-                        progress_callback(i, msg, line_stripped)
-            process.wait()
-            if process.returncode != 0:
-                output = ''.join(output_lines)
-                logging.error(f"Command failed with return code {process.returncode}:\n{output}")
-                raise subprocess.CalledProcessError(process.returncode, cmd, output=output)
-        except Exception as e:
-            logging.error(f"Update step failed: {msg}: {e}")
-            # Rollback logic
-            if current_version:
-                try:
-                    subprocess.run(["/bin/git", "checkout", current_version], check=True)
-                    subprocess.run(["/bin/bash", "-c", "source /root/kittyhack/.venv/bin/activate && pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt"], check=True)
-                    subprocess.run(["/bin/cp", "/root/kittyhack/setup/kittyhack.service", "/etc/systemd/system/kittyhack.service"], check=True)
-                    subprocess.run(["/bin/systemctl", "daemon-reload"], check=True)
-                except Exception as rollback_e:
-                    logging.error(f"Rollback failed: {rollback_e}")
-            return False, str(e)
+
+    req_hash_before: str | None = None
+    req_hash_after: str | None = None
+    did_update_deps = False
+
+    try:
+        # 1
+        _run_step(1, "Reverting local changes", ["/bin/git", "restore", "."])
+        # 2
+        _run_step(2, "Cleaning untracked files", ["/bin/git", "clean", "-fd"])
+
+        # Hash current requirements after a clean tree, so the comparison is meaningful.
+        req_hash_before = _sha256_file(requirements_path)
+
+        # 3
+        _run_step(3, f"Fetching latest version {latest_version}", ["/bin/git", "fetch", "--all", "--tags"])
+        # 4
+        _run_step(4, f"Checking out {latest_version}", ["/bin/git", "checkout", latest_version])
+
+        req_hash_after = _sha256_file(requirements_path)
+        requirements_unchanged = (
+            req_hash_before is not None and req_hash_after is not None and req_hash_before == req_hash_after
+        )
+
+        # 5
+        if requirements_unchanged:
+            msg = "Python dependencies unchanged (requirements.txt); skipping reinstall"
+            if progress_callback:
+                progress_callback(5, msg, "")
+            logging.info(msg)
+        else:
+            _run_step(5, "Updating python dependencies", pip_install_cmd)
+            did_update_deps = True
+
+        # 6
+        _run_step(
+            6,
+            "Updating systemd service file",
+            ["/bin/cp", "/root/kittyhack/setup/kittyhack.service", "/etc/systemd/system/kittyhack.service"],
+        )
+        # 7
+        _run_step(7, "Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"])
+    except Exception as e:
+        logging.error(f"Update step failed: {e}")
+        # Rollback logic
+        if current_version:
+            try:
+                subprocess.run(["/bin/git", "checkout", current_version], check=True)
+                # Only reinstall deps on rollback if we actually modified them during the update.
+                if did_update_deps:
+                    subprocess.run(pip_install_cmd, check=True)
+                subprocess.run(
+                    ["/bin/cp", "/root/kittyhack/setup/kittyhack.service", "/etc/systemd/system/kittyhack.service"],
+                    check=True,
+                )
+                subprocess.run(["/bin/systemctl", "daemon-reload"], check=True)
+            except Exception as rollback_e:
+                logging.error(f"Rollback failed: {rollback_e}")
+        return False, str(e)
     return True, "Update completed"
 
 def upgrade_base_system_packages(packages: list[str] | None = None) -> tuple[bool, str]:

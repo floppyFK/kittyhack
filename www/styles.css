@@ -419,6 +419,12 @@ html[data-bs-theme="dark"] .spinner {
     opacity: 0;
     padding-left: 0;
     padding-right: 0;
+    padding-top: 0.15rem;
+    padding-bottom: 0.35rem;
+    height: 44px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
     overflow: hidden;
     pointer-events: none;
     transition:
@@ -438,6 +444,7 @@ html[data-bs-theme="dark"] .spinner {
 .event-modal-scrubber .shiny-input-container {
     margin-bottom: 0 !important;
     width: 100%;
+    line-height: 1;
 }
 
 .event-modal-scrubber input[type="range"] {
@@ -1294,7 +1301,7 @@ html[data-bs-theme="dark"] .live-view-overlay-chip {
 
 .live-view-overlay-clock {
     position: absolute;
-    top: 0.45rem;
+    top: 0.7rem;
     right: 0.45rem;
     z-index: 6;
     pointer-events: none;

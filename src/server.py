@@ -1007,11 +1007,18 @@ def show_event_server(input, output, session, block_id: int):
                                     ui.output_ui("event_nav_controls"),
                                 ),
                                 ui.div(
-                                    ui.input_action_button(
-                                        id="btn_modal_cancel",
-                                        label="",
-                                        icon=icon_svg("xmark", margin_left="0", margin_right="0"),
-                                        class_="btn-icon-square btn-outline-secondary btn-icon-close",
+                                    ui.tooltip(
+                                        ui.input_action_button(
+                                            id="btn_toggle_overlay",
+                                            label="",
+                                            icon=overlay_icon,
+                                            class_="btn-icon-square btn-outline-secondary",
+                                            style_=f"opacity: 0.5;" if fallback_mode[0] else "",
+                                            disabled=fallback_mode[0],
+                                        ),
+                                        _("Toggle overlay for detected objects"),
+                                        id="tooltip_toggle_overlay",
+                                        options={"trigger": "hover"},
                                     ),
                                     class_="event-modal-toolbar-close",
                                 ),
@@ -1038,18 +1045,11 @@ def show_event_server(input, output, session, block_id: int):
                                         id="tooltip_download_zip",
                                         options={"trigger": "hover"},
                                     ),
-                                    ui.tooltip(
-                                        ui.input_action_button(
-                                            id="btn_toggle_overlay",
-                                            label="",
-                                            icon=overlay_icon,
-                                            class_="btn-icon-square btn-outline-secondary",
-                                            style_=f"opacity: 0.5;" if fallback_mode[0] else "",
-                                            disabled=fallback_mode[0],
-                                        ),
-                                        _("Toggle overlay for detected objects"),
-                                        id="tooltip_toggle_overlay",
-                                        options={"trigger": "hover"},
+                                    ui.input_action_button(
+                                        id="btn_modal_cancel",
+                                        label="",
+                                        icon=icon_svg("xmark", margin_left="0", margin_right="0"),
+                                        class_="btn-icon-square btn-outline-secondary btn-icon-close",
                                     ),
                                     class_="event-modal-toolbar-bottom-right",
                                 ),

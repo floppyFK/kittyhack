@@ -666,7 +666,12 @@ def btn_show_event():
 
 @module.ui
 def btn_yolo_modify():
-    return ui.input_action_button(id=f"btn_yolo_modify" , label="", icon=icon_svg("pencil", margin_left="-0.1em", margin_right="auto"), class_="btn-narrow btn-vertical-margin", style_="width: 42px;")
+    return ui.input_action_button(
+        id=f"btn_yolo_modify",
+        label="",
+        icon=icon_svg("pencil", margin_left="0", margin_right="0"),
+        class_="btn-icon-square btn-vertical-margin",
+    )
 
 @module.server
 def show_event_server(input, output, session, block_id: int):
@@ -862,7 +867,7 @@ def show_event_server(input, output, session, block_id: int):
                                             id="btn_delete_event",
                                             label="",
                                             icon=icon_svg("trash-can", margin_left="0", margin_right="0"),
-                                            class_="btn-icon-square btn-danger",
+                                            class_="btn-icon-square btn-outline-danger",
                                         ),
                                         _("Delete all pictures of this event"),
                                         id="tooltip_delete_event",
@@ -1380,7 +1385,7 @@ def manage_yolo_model_server(input, output, session, unique_id: str):
                     id=f"btn_model_delete", 
                     label=_("Delete"), 
                     icon=icon_svg("trash"), 
-                    class_=f"btn-vertical-margin btn-narrow btn-danger {'disabled-wrapper' if model_in_use else ''}"
+                    class_=f"btn-vertical-margin btn-narrow btn-outline-danger {'disabled-wrapper' if model_in_use else ''}"
                 ),
             )
         )
@@ -5799,7 +5804,7 @@ def server(input, output, session):
                         ui.div(
                             uix.input_file("upload_kittyhack_db", _("Restore Kittyhack Database (.db)"), accept=[".db"], multiple=False, width="90%"),
                             ui.div(
-                                ui.input_task_button("restore_kittyhack_db", _("Restore Database"), icon=icon_svg("rotate"), class_="btn-warning"),
+                                ui.input_task_button("restore_kittyhack_db", _("Restore Database"), icon=icon_svg("rotate"), class_="btn-outline-danger"),
                                 style_="text-align: center; margin-top: 6px;"
                             ),
                             class_="generic-container",
@@ -5817,7 +5822,7 @@ def server(input, output, session):
                         ui.div(
                             uix.input_file("upload_config", _("Restore Configuration File (config.ini)"), accept=[".ini"], multiple=False, width="90%"),
                             ui.div(
-                                ui.input_task_button("restore_config", _("Restore Configuration"), icon=icon_svg("rotate"), class_="btn-warning"),
+                                ui.input_task_button("restore_config", _("Restore Configuration"), icon=icon_svg("rotate"), class_="btn-outline-danger"),
                                 style_="text-align: center; margin-top: 6px;"
                             ),
                             class_="generic-container",

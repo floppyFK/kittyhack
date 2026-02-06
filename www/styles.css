@@ -325,6 +325,8 @@ html[data-bs-theme="dark"] .spinner {
     opacity: 0.5;
     transform: none !important;
     box-shadow: none !important;
+    cursor: not-allowed;
+}
 
 /* Table icons (avoid emoji rendering differences across devices) */
 .table-icon {
@@ -339,8 +341,6 @@ html[data-bs-theme="dark"] .spinner {
     height: 1em;
     width: 1em;
     vertical-align: -0.125em;
-}
-    cursor: not-allowed;
 }
 
 /* Ensure icons are centered and visually balanced */
@@ -1050,6 +1050,47 @@ html[data-bs-theme="dark"] .btn-default:focus {
     background-color: #4b5563;
     color: #ffffff;
     border-color: rgba(255, 255, 255, 0.24);
+}
+
+/* Shiny action buttons often include .btn-default; ensure outline variants stay outlined in dark theme */
+html[data-bs-theme="dark"] .btn-default.btn-outline-primary,
+html[data-bs-theme="dark"] .btn-default.btn-outline-secondary,
+html[data-bs-theme="dark"] .btn-default.btn-outline-danger {
+    background-color: transparent;
+    background-image: none;
+}
+
+html[data-bs-theme="dark"] .btn-default.btn-outline-primary {
+    color: #5a9fd4;
+    border-color: #5a9fd4;
+}
+
+html[data-bs-theme="dark"] .btn-default.btn-outline-secondary {
+    color: #8b949e;
+    border-color: #8b949e;
+}
+
+html[data-bs-theme="dark"] .btn-default.btn-outline-danger {
+    color: #d44e57;
+    border-color: #d44e57;
+}
+
+html[data-bs-theme="dark"] .btn-default.btn-outline-primary:hover,
+html[data-bs-theme="dark"] .btn-default.btn-outline-primary:focus {
+    background-color: #5a9fd4;
+    color: #ffffff;
+}
+
+html[data-bs-theme="dark"] .btn-default.btn-outline-secondary:hover,
+html[data-bs-theme="dark"] .btn-default.btn-outline-secondary:focus {
+    background-color: #8b949e;
+    color: #ffffff;
+}
+
+html[data-bs-theme="dark"] .btn-default.btn-outline-danger:hover,
+html[data-bs-theme="dark"] .btn-default.btn-outline-danger:focus {
+    background-color: #d44e57;
+    color: #ffffff;
 }
 
 /* Outline buttons */

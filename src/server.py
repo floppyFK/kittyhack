@@ -745,15 +745,26 @@ def show_event_server(input, output, session, block_id: int):
             else _("Download current picture")
         )
 
-        return ui.tooltip(
-            ui.download_button(
+        if disabled:
+            button = ui.tags.button(
+                icon_svg("image", margin_left="0", margin_right="0"),
+                type="button",
+                class_="btn btn-icon-square btn-outline-secondary",
+                disabled=True,
+                tabindex="-1",
+                **{"aria-disabled": "true"},
+                style_="opacity: 0.5;",
+            )
+        else:
+            button = ui.download_button(
                 id="btn_download_single",
                 label="",
                 icon=icon_svg("image", margin_left="0", margin_right="0"),
                 class_="btn-icon-square btn-outline-secondary",
-                disabled=disabled,
-                style_="opacity: 0.5;" if disabled else "",
-            ),
+            )
+
+        return ui.tooltip(
+            button,
             help_text,
             id="tooltip_download_single",
             options={"trigger": "hover"},

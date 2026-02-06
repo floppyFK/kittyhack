@@ -94,6 +94,77 @@ def _strip_status_emoji_prefix(text: str) -> str:
             return text[len(p):].lstrip()
     return text
 
+
+def _filter_release_notes_for_language(markdown_text: str, language: str) -> str:
+    """If release notes contain both 'Deutsch' and 'English' sections, return only the configured one."""
+    if not isinstance(markdown_text, str):
+        return markdown_text
+    text = markdown_text.strip("\n")
+    if not text:
+        return markdown_text
+
+    if language not in ("de", "en"):
+        return markdown_text
+
+    wanted_label = "Deutsch" if language == "de" else "English"
+
+    # Expected style:
+    #   # vX.Y.Z - Deutsch
+    #   ...
+    #   --------
+    #   # vX.Y.Z - English
+    #   ...
+    header_re = re.compile(
+        r"^\s*#+\s*v?\d+(?:\.\d+)*\s*-\s*(Deutsch|English)\s*$",
+        flags=re.IGNORECASE,
+    )
+
+    lines = text.splitlines()
+    blocks: dict[str, tuple[int, int]] = {}
+
+    header_positions: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines):
+        m = header_re.match(line)
+        if m:
+            label = m.group(1)
+            # Normalize
+            label = "Deutsch" if label.lower().startswith("de") else "English"
+            header_positions.append((idx, label))
+
+    # Only do language filtering if both sections exist.
+    labels_present = {label for _, label in header_positions}
+    if not {"Deutsch", "English"}.issubset(labels_present):
+        return markdown_text
+
+    # Build ranges from each language header until the next language header.
+    for i, (start_idx, label) in enumerate(header_positions):
+        end_idx = header_positions[i + 1][0] if i + 1 < len(header_positions) else len(lines)
+        # Store first occurrence per label.
+        blocks.setdefault(label, (start_idx, end_idx))
+
+    if wanted_label not in blocks:
+        return markdown_text
+
+    start, end = blocks[wanted_label]
+    chosen = lines[start:end]
+
+    # Trim separator-only lines around the chosen block.
+    def is_separator(s: str) -> bool:
+        s2 = (s or "").strip()
+        # Markdown horizontal rules: a line containing 3+ of -, _, or * (optionally spaced)
+        if re.fullmatch(r"[-_]{3,}", s2):
+            return True
+        if re.fullmatch(r"\*{3,}", s2):
+            return True
+        return False
+
+    while chosen and is_separator(chosen[0]):
+        chosen.pop(0)
+    while chosen and is_separator(chosen[-1]):
+        chosen.pop()
+
+    return "\n".join(chosen).strip("\n") or markdown_text
+
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
 
 # Check and set the startup flag - this must be done before loading the model
@@ -1738,8 +1809,35 @@ def server(input, output, session):
         reactive.invalidate_later(0.25)
         ts = datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S')
         try:
-            inside_lock_state = Magnets.instance.get_inside_state()
-            outside_lock_state = Magnets.instance.get_outside_state()
+            magnets = getattr(Magnets, "instance", None)
+            if magnets is None:
+                # During boot the backend (and thus Magnets.init()) may not be ready yet.
+                live_status.set({"ok": False, "ts": ts})
+
+                now = tm.time()
+                last_log = getattr(update_live_status, "_last_hw_not_ready_log", 0.0)
+                if (now - float(last_log or 0.0)) > 10.0:
+                    logging.info("[LIVE_STATUS] Hardware not yet initialized; skipping live status update.")
+                    update_live_status._last_hw_not_ready_log = now
+
+                # Keep buttons disabled until we have a valid magnet instance.
+                try:
+                    ui.update_action_button(
+                        "bManualOverride",
+                        label=_("Manual unlock not yet initialized..."),
+                        icon=icon_svg("unlock"),
+                        disabled=True,
+                    )
+                except Exception:
+                    pass
+                try:
+                    ui.update_action_button("bResetPreyCooldown", disabled=True)
+                except Exception:
+                    pass
+                return
+
+            inside_lock_state = magnets.get_inside_state()
+            outside_lock_state = magnets.get_outside_state()
 
             from src.backend import motion_state, motion_state_lock
 
@@ -1786,7 +1884,12 @@ def server(input, output, session):
             except Exception:
                 pass
         except Exception as e:
-            logging.exception("Failed to update live status: %s", e)
+            # Throttle errors here; during boot transient None/IO errors can happen.
+            now = tm.time()
+            last_log = getattr(update_live_status, "_last_error_log", 0.0)
+            if (now - float(last_log or 0.0)) > 10.0:
+                logging.exception("Failed to update live status: %s", e)
+                update_live_status._last_error_log = now
             live_status.set({"ok": False, "ts": ts})
     
     @render.text
@@ -2499,7 +2602,12 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.bManualOverride)
     def on_action_let_kitty_in():
-        inside_state = Magnets.instance.get_inside_state()
+        magnets = getattr(Magnets, "instance", None)
+        if magnets is None:
+            logging.info("[SERVER] Manual override ignored: magnets not initialized yet.")
+            return
+
+        inside_state = magnets.get_inside_state()
         if inside_state == False:
             logging.info(f"[SERVER] Manual override from Live View - letting Kitty in now")
             manual_door_override['unlock_inside'] = True
@@ -5801,6 +5909,7 @@ def server(input, output, session):
             try:
                 # Fetch the release notes of the latest version
                 release_notes = fetch_github_release_notes(latest_version)
+                release_notes = _filter_release_notes_for_language(release_notes, CONFIG.get('LANGUAGE', 'en'))
                 ui_update_kittyhack = ui.div(
                     ui.markdown("**" + _("Release Notes for") + " " + latest_version + ":**"),
                     ui.div(

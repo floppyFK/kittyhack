@@ -470,9 +470,20 @@ class ModelHandler:
         self.jpeg_quality = jpeg_quality
         self.paused = False
         self.last_log_time = 0
+        self._videostream_not_ready_last_log: dict[str, float] = {}
         self.input_size = int(model_image_size)
         self.num_threads = num_threads
         self.cat_names = [cat_name.lower() for cat_name in get_cat_names_list(CONFIG['KITTYHACK_DATABASE_PATH'])]
+
+    def _log_videostream_not_ready(self, what: str, *, interval_s: float = 10.0):
+        try:
+            now = tm.time()
+        except Exception:
+            now = 0.0
+        last = float(self._videostream_not_ready_last_log.get(what, 0.0) or 0.0)
+        if (now - last) >= float(interval_s):
+            logging.warning(f"[CAMERA] '{what}' skipped. Video stream is not yet initialized.")
+            self._videostream_not_ready_last_log[what] = now
 
         # Load the label map
         with open(self.labelfile, 'r') as f:
@@ -1057,14 +1068,14 @@ class ModelHandler:
         if videostream is not None:
             return videostream.read()
         else:
-            logging.error("[CAMERA] 'Get Frame' failed. Video stream is not yet initialized.")
+            self._log_videostream_not_ready("Get Frame")
             return None
         
     def get_camera_state(self):
         if videostream is not None:
             return videostream.get_camera_state()
         else:
-            logging.error("[CAMERA] 'Get Camera State' failed. Video stream is not yet initialized.")
+            self._log_videostream_not_ready("Get Camera State")
             return None
         
     def get_camera_resolution(self):
@@ -1075,7 +1086,7 @@ class ModelHandler:
         if videostream is not None:
             return videostream.get_resolution()
         else:
-            logging.error("[CAMERA] 'Get Camera Resolution' failed. Video stream is not yet initialized.")
+            self._log_videostream_not_ready("Get Camera Resolution")
             return None
         
     def check_videostream_status(self):

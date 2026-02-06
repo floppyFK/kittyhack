@@ -386,6 +386,64 @@ html[data-bs-theme="dark"] .spinner {
     width: 100%;
 }
 
+.event-modal-toolbar-bottom-left,
+.event-modal-toolbar-bottom-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex: 0 0 auto;
+}
+
+.event-modal-toolbar-bottom-middle {
+    display: flex;
+    align-items: center;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.event-modal-toolbar-bottom-middle > .shiny-html-output {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+}
+
+.event-modal-toolbar-bottom-right {
+    margin-left: auto;
+}
+
+/* Event modal scrubber (only shown while paused) */
+.event-modal-scrubber {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 0;
+    opacity: 0;
+    padding-left: 0;
+    padding-right: 0;
+    overflow: hidden;
+    pointer-events: none;
+    transition:
+        max-width 180ms ease,
+        opacity 120ms ease,
+        padding 180ms ease;
+}
+
+.event-modal-scrubber.is-open {
+    max-width: 9999px;
+    opacity: 1;
+    padding-left: 0.2rem;
+    padding-right: 0.2rem;
+    pointer-events: auto;
+}
+
+.event-modal-scrubber .shiny-input-container {
+    margin-bottom: 0 !important;
+    width: 100%;
+}
+
+.event-modal-scrubber input[type="range"] {
+    width: 100%;
+}
+
 .event-modal-toolbar-top {
     justify-content: space-between;
 }

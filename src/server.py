@@ -736,6 +736,38 @@ def show_event_server(input, output, session, block_id: int):
             class_="event-modal-toolbar-nav",
         )
 
+    @output
+    @render.ui
+    def event_scrubber_ui():
+        is_playing = bool(slideshow_running.get())
+        if not pictures or len(pictures) <= 1:
+            return ui.HTML("")
+
+        try:
+            vis_idx = int(getattr(show_event_picture, 'visible_index', 0) or 0)
+        except Exception:
+            vis_idx = 0
+
+        # Use 1-based values in the UI
+        value = max(1, min(len(pictures), vis_idx + 1))
+
+        cls = "event-modal-scrubber" + (" is-open" if not is_playing else "")
+
+        return ui.div(
+            ui.input_slider(
+                id="event_scrubber",
+                label="",
+                min=1,
+                max=len(pictures),
+                value=value,
+                step=1,
+                width="100%",
+            ),
+            id="event_scrubber_wrap",
+            class_=cls,
+            **{"data-playing": "1" if is_playing else "0"},
+        )
+
     @render.ui
     def download_single_ui():
         disabled = bool(slideshow_running.get())
@@ -915,30 +947,40 @@ def show_event_server(input, output, session, block_id: int):
                                 class_="event-modal-toolbar-row event-modal-toolbar-top",
                             ),
                             ui.div(
-                                ui.output_ui("download_single_ui"),
-                                ui.tooltip(
-                                    ui.download_button(
-                                        id="btn_download",
-                                        label="",
-                                        icon=icon_svg("file-zipper", margin_left="0", margin_right="0"),
-                                        class_="btn-icon-square btn-outline-secondary",
-                                    ),
-                                    _("Download all pictures of this event (ZIP)"),
-                                    id="tooltip_download_zip",
-                                    options={"trigger": "hover"},
+                                ui.div(
+                                    ui.output_ui("download_single_ui"),
+                                    class_="event-modal-toolbar-bottom-left",
                                 ),
-                                ui.tooltip(
-                                    ui.input_action_button(
-                                        id="btn_toggle_overlay",
-                                        label="",
-                                        icon=overlay_icon,
-                                        class_="btn-icon-square btn-outline-secondary",
-                                        style_=f"opacity: 0.5;" if fallback_mode[0] else "",
-                                        disabled=fallback_mode[0],
+                                ui.div(
+                                    ui.output_ui("event_scrubber_ui"),
+                                    class_="event-modal-toolbar-bottom-middle",
+                                ),
+                                ui.div(
+                                    ui.tooltip(
+                                        ui.download_button(
+                                            id="btn_download",
+                                            label="",
+                                            icon=icon_svg("file-zipper", margin_left="0", margin_right="0"),
+                                            class_="btn-icon-square btn-outline-secondary",
+                                        ),
+                                        _("Download all pictures of this event (ZIP)"),
+                                        id="tooltip_download_zip",
+                                        options={"trigger": "hover"},
                                     ),
-                                    _("Toggle overlay for detected objects"),
-                                    id="tooltip_toggle_overlay",
-                                    options={"trigger": "hover"},
+                                    ui.tooltip(
+                                        ui.input_action_button(
+                                            id="btn_toggle_overlay",
+                                            label="",
+                                            icon=overlay_icon,
+                                            class_="btn-icon-square btn-outline-secondary",
+                                            style_=f"opacity: 0.5;" if fallback_mode[0] else "",
+                                            disabled=fallback_mode[0],
+                                        ),
+                                        _("Toggle overlay for detected objects"),
+                                        id="tooltip_toggle_overlay",
+                                        options={"trigger": "hover"},
+                                    ),
+                                    class_="event-modal-toolbar-bottom-right",
                                 ),
                                 class_="event-modal-toolbar-row event-modal-toolbar-bottom",
                             ),
@@ -986,6 +1028,12 @@ def show_event_server(input, output, session, block_id: int):
                 class_="transparent-modal-content"
             )
         )
+
+        # Initialize scrubber to the current visible frame (if paused later)
+        try:
+            ui.update_slider("event_scrubber", value=1, min=1, max=max(1, len(pictures)))
+        except Exception:
+            pass
     
     @render.text
     def show_event_picture():
@@ -1245,12 +1293,52 @@ def show_event_server(input, output, session, block_id: int):
             return
         frame_index[0] = (frame_index[0] - 1) % max(len(pictures), 1)
 
+        try:
+            ui.update_slider("event_scrubber", value=int(frame_index[0]) + 1)
+        except Exception:
+            pass
+
     @reactive.effect
     @reactive.event(input.btn_next)
     def next_picture():
         if slideshow_running.get():
             return
         frame_index[0] = (frame_index[0] + 1) % max(len(pictures), 1)
+
+        try:
+            ui.update_slider("event_scrubber", value=int(frame_index[0]) + 1)
+        except Exception:
+            pass
+
+    @reactive.effect
+    @reactive.event(input.event_scrubber)
+    def on_scrub_event():
+        # Only respond when paused
+        if slideshow_running.get():
+            return
+
+        if not pictures or len(pictures) == 0:
+            return
+
+        try:
+            # Slider is 1-based
+            target_idx = int(input.event_scrubber()) - 1
+        except Exception:
+            return
+
+        target_idx = max(0, min(len(pictures) - 1, target_idx))
+        frame_index[0] = target_idx
+
+        # Force the visible image to jump immediately
+        try:
+            show_event_picture.visible_index = target_idx
+            show_event_picture.visible_b64 = pictures[target_idx]
+            # Prime preload to the next frame for smooth subsequent steps
+            next_idx = (target_idx + 1) % len(pictures)
+            show_event_picture.preload_index = next_idx
+            show_event_picture.preload_b64 = pictures[next_idx]
+        except Exception:
+            pass
 
 @module.server
 def wlan_connect_server(input, output, session, ssid: str):

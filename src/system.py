@@ -14,6 +14,10 @@ GPIO_BASE_PATH = "/sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/"
 LABELSTUDIO_PATH = "/root/labelstudio/"
 LABELSTUDIO_VENV = "venv/"
 
+# Cache for latest Label Studio version fetched from PyPI.
+# Avoid repeated network calls when the UI is re-rendered (e.g. tab switches).
+_labelstudio_latest_cache: dict | None = None
+
 _ = set_language(CONFIG['LANGUAGE'])
 
 def systemctl(mode: str, service: str, simulate_operations=False):
@@ -492,25 +496,38 @@ def get_labelstudio_installed_version():
         return None
     
 def get_labelstudio_latest_version():
-    """
-    Get the latest available version of Label Studio from PyPI.
+    global _labelstudio_latest_cache
+    ttl_seconds = 60 * 60 * 24
 
-    Returns:
-        str | None: The latest version of Label Studio, or None if not found.
-    """
     try:
-        response = requests.get("https://pypi.org/pypi/label-studio/json")
+        now = tm.time()
+    except Exception:
+        now = 0
+
+    if _labelstudio_latest_cache is not None:
+        ts = float(_labelstudio_latest_cache.get("ts", 0) or 0)
+        if (now - ts) < ttl_seconds:
+            return _labelstudio_latest_cache.get("version")
+
+    version_str: str | None = None
+    try:
+        response = requests.get(
+            "https://pypi.org/pypi/label-studio/json",
+            timeout=4,
+        )
         response.raise_for_status()
         data = response.json()
-        version = data.get("info", {}).get("version", None)
+        version = data.get("info", {}).get("version")
         if version:
-            return version
+            version_str = str(version)
         else:
             logging.info("[SYSTEM] Latest Label Studio version not found in PyPI response.")
-            return None
     except Exception as e:
         logging.error(f"[SYSTEM] Error fetching latest Label Studio version: {e}")
-        return None
+
+    # Cache the result (including failures) to avoid repeated network calls on tab switches.
+    _labelstudio_latest_cache = {"ts": now, "version": version_str}
+    return version_str
     
 def get_labelstudio_status():
     """

@@ -80,6 +80,20 @@ from src.system import (
 # Prepare gettext for translations based on the configured language
 _ = set_language(CONFIG['LANGUAGE'])
 
+def _strip_status_emoji_prefix(text: str) -> str:
+    if not isinstance(text, str):
+        return text
+    # Keep gettext keys stable (some strings include emojis), but avoid rendering emojis.
+    prefixes = (
+        "⚠️ ", "✅ ", "❌ ",
+        "🟢 ", "🟡 ", "🔴 ", "⚫ ",
+        "⚠️", "✅", "❌", "🟢", "🟡", "🔴", "⚫",
+    )
+    for p in prefixes:
+        if text.startswith(p):
+            return text[len(p):].lstrip()
+    return text
+
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
 
 # Check and set the startup flag - this must be done before loading the model
@@ -101,7 +115,7 @@ if CONFIG['NOT_GRACEFUL_SHUTDOWNS'] >= 3:
 
     # Add a entry to the user notifications, which will be shown at the next login in the frontend
     UserNotifications.add(
-        header=_("⚠️ Several crashes detected!"),
+        header=_strip_status_emoji_prefix(_("⚠️ Several crashes detected!")),
         message=_("The kittyflap was not shut down gracefully several times in a row. Please do not power off the device without shutting it down first, otherwise the database may be corrupted!") + "\n\n" +
                 _("If you have shut it down gracefully and see this message, please report it in the") + " " +
                 "[GitHub issue tracker](https://github.com/floppyFK/kittyhack/issues), " + 
@@ -1531,7 +1545,8 @@ def server(input, output, session):
                 ui.modal(
                     ui.div(
                         ui.markdown(
-                            _("✅ Update to version `{}` was successful!").format(git_version)
+                            f"{icon_svg('circle-check', margin_left='-0.1em')} "
+                            + _strip_status_emoji_prefix(_("✅ Update to version `{}` was successful!").format(git_version))
                             + "\n\n---------\n\n"
                             + _("**NOTE**: You can find the changelogs in the `INFO` section.")
                             ),
@@ -1706,7 +1721,8 @@ def server(input, output, session):
                     if width * height > 1280 * 720:
                         warning_html = ui.div(
                             ui.div(
-                                "⚠️ " + _("Warning") + ": " +
+                                icon_svg("triangle-exclamation", margin_left="0", margin_right="0.2em"),
+                                _("Warning") + ": " +
                                 _("Your IP camera resolution is higher than recommended (max. 1280x720).") + " " +
                                 _("Current: {width}x{height}. This may have negative effects on performance.").format(width=width, height=height),
                                 class_="generic-container warning-container",
@@ -1732,13 +1748,8 @@ def server(input, output, session):
                 try:
                     return str(icon_svg(name, margin_left="0", margin_right="0"))
                 except Exception:
-                    # Fallback to a simple unicode symbol if the icon isn't available
-                    return {
-                        "lock": "🔒",
-                        "lock-open": "🔓",
-                        "eye": "👁",
-                        "eye-slash": "🚫",
-                    }.get(name, "•")
+                    # Fallback to a simple text glyph to avoid emoji rendering differences.
+                    return "•"
 
             if st.get("ok"):
                 inside_lock_is_open = bool(st.get("inside_lock"))
@@ -2953,7 +2964,8 @@ def server(input, output, session):
                             ui.column(
                                 12,
                                 ui.markdown(
-                                    _("⚠️ This cat has no RFID configured. The individual exit per cat works only for cats with a RFID chip!")
+                                    f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
+                                    + _strip_status_emoji_prefix(_("⚠️ This cat has no RFID configured. The individual exit per cat works only for cats with a RFID chip!"))
                                 ),
                                 style_="color:#b94a48;"
                             ),
@@ -4955,7 +4967,8 @@ def server(input, output, session):
                             ui.column(
                                 12,
                                 ui.markdown(
-                                    _("⚠️ **WARNING**: It is NOT recommended to enable this feature! Several users have reported that this option causes reboots or system freezes.") +
+                                    f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
+                                    + _strip_status_emoji_prefix(_("⚠️ **WARNING**: It is NOT recommended to enable this feature! Several users have reported that this option causes reboots or system freezes.")) +
                                     _("If you encounter the same issue, it's strongly recommended to disable this setting.")
                                 ), style_="color: #e74a3b; padding: 10px; border: 1px solid #e74a3b; border-radius: 5px; margin: 20px; width: 90%;"
                             ),
@@ -5310,14 +5323,21 @@ def server(input, output, session):
     def configured_wlans_table():
         # Properly handle SSIDs with special characters
         try:
+            def _table_status_icon(icon_name: str, color_class: str, title: str):
+                try:
+                    icon = icon_svg(icon_name, margin_left="0", margin_right="0")
+                except Exception:
+                    return ui.span("•", class_=f"table-icon {color_class}", title=title)
+                return ui.span(icon, class_=f"table-icon {color_class}", title=title)
+
             configured_wlans = get_wlan_connections()
             i = 0
             for wlan in configured_wlans:
                 unique_id = hashlib.md5(os.urandom(16)).hexdigest()
                 if wlan['connected']:
-                    wlan['connected_icon'] = "🟢"
+                    wlan['connected_icon'] = _table_status_icon("circle-check", "text-success", _("Connected"))
                 else:
-                    wlan['connected_icon'] = "⚫"
+                    wlan['connected_icon'] = _table_status_icon("circle", "text-muted", _("Not connected"))
                 wlan['actions'] = ui.div(
                     ui.tooltip(
                         btn_wlan_connect(f"btn_wlan_connect_{unique_id}"),
@@ -5413,18 +5433,34 @@ def server(input, output, session):
         # Get the available WLANs
         reactive.invalidate_later(30.0)
         try:
+            def _table_signal_icon(color_class: str, title: str):
+                try:
+                    icon = icon_svg("wifi", margin_left="0", margin_right="0")
+                except Exception:
+                    return ui.span("•", class_=f"table-icon {color_class}", title=title)
+                return ui.span(icon, class_=f"table-icon {color_class}", title=title)
+
             available_wlans = scan_wlan_networks()
             for wlan in available_wlans:
                 signal_strength = wlan['bars']
-                wlan['signal_icon'] = f"{wlan['signal']}% "
+                signal_percent = int(wlan.get('signal') or 0)
                 if signal_strength == 0:
-                    wlan['signal_icon'] += "⚫"
+                    color_class = "text-muted"
+                    title = _("No signal")
                 elif signal_strength == 1:
-                    wlan['signal_icon'] += "🔴"
+                    color_class = "text-danger"
+                    title = _("Weak signal")
                 elif 2 <= signal_strength <= 3:
-                    wlan['signal_icon'] += "🟡"
+                    color_class = "text-warning"
+                    title = _("Medium signal")
                 else:
-                    wlan['signal_icon'] += "🟢"
+                    color_class = "text-success"
+                    title = _("Strong signal")
+
+                wlan['signal_icon'] = ui.span(
+                    f"{signal_percent}% ",
+                    _table_signal_icon(color_class, title),
+                )
                 
 
             # Create a pandas DataFrame from the available WLANs
@@ -5693,7 +5729,8 @@ def server(input, output, session):
                     ui_update_kittyhack = ui_update_kittyhack, ui.div(
                         ui.hr(),
                         ui.markdown(
-                            _("⚠️ WARNING: Local changes detected in the git repository in `/root/kittyhack`.") + "\n\n" +
+                            f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
+                            + _strip_status_emoji_prefix(_("⚠️ WARNING: Local changes detected in the git repository in `/root/kittyhack`.")) + "\n\n" +
                             _("If you proceed with the update, these changes will be lost (the database and configuration will not be affected).") + "\n\n" +
                             _("Please commit or stash your changes manually before updating, if you want to keep them.")
                         ),
@@ -5853,7 +5890,7 @@ def server(input, output, session):
                         # HTTPS Warning message
                         ui.div(
                             ui.markdown(
-                                "⚠️ " + _("**HTTPS Required**") + "\n\n" +
+                                f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} " + _("**HTTPS Required**") + "\n\n" +
                                 _("PWA installation requires a secure connection (HTTPS). You are currently accessing Kittyhack via HTTP.") + "  \n\n" +
                                 _("You'll need to set up a reverse proxy with HTTPS.") + " " +
                                 _("If you want to setup a reverse proxy in your home network, you can watch") +" [" + _("this guide") + "](https://schroederdennis.de/allgemein/nginx-proxy-manager-nginx-reverse-proxy-vorgestellt/)."
@@ -5863,13 +5900,13 @@ def server(input, output, session):
                         ),
                         # Already installed message
                         ui.div(
-                            ui.markdown("✅ " + _("**App is already installed on this device!**")),
+                            ui.markdown(f"{icon_svg('circle-check', margin_left='-0.1em')} " + _("**App is already installed on this device!**")),
                             id="pwa_already_installed", 
                             style_="display: none; color: #1cc88a; padding: 10px; text-align: center;"
                         ),
                         # Success message
                         ui.div(
-                            ui.markdown("✅ " + _("**Installation successful!**")),
+                            ui.markdown(f"{icon_svg('circle-check', margin_left='-0.1em')} " + _("**Installation successful!**")),
                             id="pwa_installed_success", 
                             style_="display: none; color: #1cc88a; padding: 10px; text-align: center;"
                         ),
@@ -5921,25 +5958,39 @@ def server(input, output, session):
         total_ram_space = get_total_ram_space()
         ram_usage_percentage = (used_ram_space / total_ram_space) * 100
 
+        def _wlan_status_icon(color_class: str, title: str):
+            try:
+                icon = icon_svg("wifi", margin_left="0", margin_right="0")
+            except Exception:
+                return ui.span("•", class_=f"table-icon {color_class}", title=title)
+            return ui.span(icon, class_=f"table-icon {color_class}", title=title)
+
         # Get WLAN status information
         try:
             wlan = subprocess.run(["/sbin/iwconfig", "wlan0"], capture_output=True, text=True, check=True)
-            if "Link Quality=" in wlan.stdout:
+            if "Link Quality=" in wlan.stdout and "Signal level=" in wlan.stdout:
                 quality = wlan.stdout.split("Link Quality=")[1].split(" ")[0]
                 signal = wlan.stdout.split("Signal level=")[1].split(" ")[0]
                 quality_value = float(quality.split('/')[0]) / float(quality.split('/')[1])
-                
-                # Choose appropriate icon based on signal quality
+
                 if quality_value >= 0.8:
-                    wlan_icon = "🟢"
+                    color_class = "text-success"
+                    title = _("Strong signal")
                 elif quality_value >= 0.4:
-                    wlan_icon = "🟡"
+                    color_class = "text-warning"
+                    title = _("Medium signal")
                 else:
-                    wlan_icon = "🔴"
-                wlan_info = f"{wlan_icon} " + _("Quality: {}, Signal: {} dBm").format(quality, signal)
+                    color_class = "text-danger"
+                    title = _("Weak signal")
+
+                wlan_info = ui.span(
+                    _wlan_status_icon(color_class, title),
+                    " ",
+                    _("Quality: {}, Signal: {} dBm").format(quality, signal),
+                )
             else:
                 wlan_info = _("Not connected")
-        except:
+        except Exception:
             wlan_info = _("Unable to determine")
 
         # Create a DataFrame with the system information

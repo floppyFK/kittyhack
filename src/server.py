@@ -737,6 +737,7 @@ def show_event_server(input, output, session, block_id: int):
             ),
             help_text,
             id="tooltip_download_single",
+            options={"trigger": "hover"},
         )
 
     @render.ui
@@ -865,6 +866,7 @@ def show_event_server(input, output, session, block_id: int):
                                         ),
                                         _("Delete all pictures of this event"),
                                         id="tooltip_delete_event",
+                                        options={"trigger": "hover"},
                                     ),
                                     class_="event-modal-toolbar-left",
                                 ),
@@ -893,6 +895,7 @@ def show_event_server(input, output, session, block_id: int):
                                     ),
                                     _("Download all pictures of this event (ZIP)"),
                                     id="tooltip_download_zip",
+                                    options={"trigger": "hover"},
                                 ),
                                 ui.tooltip(
                                     ui.input_action_button(
@@ -905,6 +908,7 @@ def show_event_server(input, output, session, block_id: int):
                                     ),
                                     _("Toggle overlay for detected objects"),
                                     id="tooltip_toggle_overlay",
+                                    options={"trigger": "hover"},
                                 ),
                                 class_="event-modal-toolbar-row event-modal-toolbar-bottom",
                             ),
@@ -2233,7 +2237,7 @@ def server(input, output, session):
                     ui.HTML(img_html),
                     ui.card_footer(
                         ui.div(
-                            ui.tooltip(ui.HTML(card_footer_mouse), _("Mouse probability")),
+                            ui.tooltip(ui.HTML(card_footer_mouse), _("Mouse probability"), options={"trigger": "hover"}),
                             ui.HTML(card_footer_cat),
                         )
                     ),
@@ -2338,7 +2342,8 @@ def server(input, output, session):
                     ui.tooltip(
                         icon_svg("circle-info", margin_left="-0.1em", margin_right="auto"),
                         _("The individual configuration per cat can be set in the CATS section. Note that this is a beta feature and may not work completely reliably."),
-                        id="tooltip_configure_per_cat_quick"
+                        id="tooltip_configure_per_cat_quick",
+                        options={"trigger": "hover"},
                     ),
                     style_="position: absolute; top: 6px; right: 10px;"
                 ),
@@ -3655,7 +3660,8 @@ def server(input, output, session):
                     ui.tooltip(
                         btn_yolo_modify(f"btn_yolo_modify_{unique_btn_id}"),
                         _("Modify or delete this model"),
-                        id=f"tooltip_yolo_modify_{unique_btn_id}"
+                        id=f"tooltip_yolo_modify_{unique_btn_id}",
+                        options={"trigger": "hover"},
                     ),
                 )
                 # Add new event listeners for the buttons
@@ -5310,12 +5316,14 @@ def server(input, output, session):
                     ui.tooltip(
                         btn_wlan_connect(f"btn_wlan_connect_{unique_id}"),
                         _("Enforce connection to this WLAN"),
-                        id=f"tooltip_wlan_connect_{unique_id}"
+                        id=f"tooltip_wlan_connect_{unique_id}",
+                        options={"trigger": "hover"},
                     ),
                     ui.tooltip(
                         btn_wlan_modify(f"btn_wlan_modify_{unique_id}"),
                         _("Modify this WLAN"),
-                        id=f"tooltip_wlan_modify_{unique_id}"
+                        id=f"tooltip_wlan_modify_{unique_id}",
+                        options={"trigger": "hover"},
                     ),
                 )
                 # Add new event listeners for the buttons

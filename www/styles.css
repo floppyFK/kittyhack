@@ -325,6 +325,21 @@ html[data-bs-theme="dark"] .spinner {
     opacity: 0.5;
     transform: none !important;
     box-shadow: none !important;
+
+/* Table icons (avoid emoji rendering differences across devices) */
+.table-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.table-icon svg,
+.table-icon img {
+    height: 1em;
+    width: 1em;
+    vertical-align: -0.125em;
+}
     cursor: not-allowed;
 }
 

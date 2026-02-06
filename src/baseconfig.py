@@ -323,14 +323,14 @@ def load_config():
                 + "\n".join(lines)
                 + "\n\nBitte prüfe deine Einstellungen im Abschnitt KONFIGURATION."
             )
-            header = "⚠️ Ungültige Konfiguration erkannt"
+            header = "Ungültige Konfiguration erkannt"
         else:
             msg = (
                 "The following configuration keys contained invalid values and have been reset to their default values:\n"
                 + "\n".join(lines)
                 + "\n\nPlease check your settings in the CONFIGURATION section."
             )
-            header = "⚠️ Invalid configuration detected"
+            header = "Invalid configuration detected"
         try:
             UserNotifications.add(
                 header=header,

@@ -121,14 +121,46 @@ def icon_svg_local(svg: str, margin_left: str | None = "auto", margin_right: str
     )
 
 class GracefulKiller:
-    stop_now = False
-
     def __init__(self):
         signal.signal(signal.SIGINT, self.exit_gracefully)
         signal.signal(signal.SIGTERM, self.exit_gracefully)
+        self.stop_now = False
         self.tasks_done = threading.Event()
         self.tasks_count = 0
         self.lock = threading.Lock()
+        self._shutdown_started = False
+
+    def _get_tasks_count(self) -> int:
+        with self.lock:
+            return int(self.tasks_count)
+
+    def _wait_for_tasks(self, timeout_s: float | None) -> bool:
+        """Wait until all registered tasks are done.
+
+        Returns True if all tasks finished before the timeout, else False.
+        """
+        deadline = None
+        if timeout_s is not None:
+            try:
+                deadline = tm.monotonic() + float(timeout_s)
+            except Exception:
+                deadline = None
+
+        while True:
+            count = self._get_tasks_count()
+            if count <= 0:
+                return True
+
+            if deadline is not None:
+                try:
+                    if tm.monotonic() >= deadline:
+                        return False
+                except Exception:
+                    # If monotonic fails for some reason, fall back to best-effort waiting.
+                    deadline = None
+
+            # Wait a bit, then re-check.
+            self.tasks_done.wait(timeout=0.5)
 
     def exit_gracefully(self, signum, frame):
         """
@@ -139,21 +171,44 @@ class GracefulKiller:
         intention to wait for all tasks to finish, and waits for the tasks to complete
         before forcefully killing the process.
         """
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
+
         self.stop_now = True
         logging.info("Waiting for all tasks to finish...")
+
         with self.lock:
-            if self.tasks_count == 0:
+            if self.tasks_count <= 0:
                 self.tasks_done.set()
             else:
                 self.tasks_done.clear()
-        while self.tasks_count > 0:
-            self.tasks_done.wait(timeout=1)  # Wait until all tasks signal they are done
-        
-        # Set the shutdown flag
-        CONFIG['STARTUP_SHUTDOWN_FLAG'] = False
-        update_single_config_parameter("STARTUP_SHUTDOWN_FLAG")
-        logging.info("All tasks finished. Exiting now.")
-        subprocess.run(["/usr/bin/pkill", "-9", "-f", "shiny"])  # Send SIGKILL to "shiny" process
+
+        # Keep this comfortably below systemd's TimeoutStopSec=30.
+        all_tasks_done = self._wait_for_tasks(timeout_s=20.0)
+        if not all_tasks_done:
+            pending = self._get_tasks_count()
+            logging.warning(f"Graceful shutdown timeout reached with {pending} pending task(s). Proceeding with forced shutdown to avoid systemd timeout.")
+
+        # Set the shutdown flag (even if tasks were stuck) to avoid false NOT_GRACEFUL_SHUTDOWN increments.
+        try:
+            CONFIG['STARTUP_SHUTDOWN_FLAG'] = False
+            update_single_config_parameter("STARTUP_SHUTDOWN_FLAG")
+            logging.info("Updated STARTUP_SHUTDOWN_FLAG in the configfile to: False")
+        except Exception as e:
+            logging.error(f"Failed to update STARTUP_SHUTDOWN_FLAG during shutdown: {e}")
+
+        # Best-effort: terminate child processes quickly (e.g., libcamera-vid).
+        try:
+            subprocess.run(["/usr/bin/pkill", "-TERM", "-P", str(os.getpid())], check=False)
+        except Exception:
+            pass
+
+        logging.info("All tasks finished. Exiting now." if all_tasks_done else "Exiting now (forced).")
+        try:
+            subprocess.run(["/usr/bin/pkill", "-9", "-f", "shiny"], check=False)  # Ensure shiny exits
+        finally:
+            os._exit(0)
 
     def halt_backend(self):
         """
@@ -161,12 +216,11 @@ class GracefulKiller:
         """
         self.stop_now = True
         with self.lock:
-            if self.tasks_count == 0:
+            if self.tasks_count <= 0:
                 self.tasks_done.set()
             else:
                 self.tasks_done.clear()
-        while self.tasks_count > 0:
-            self.tasks_done.wait(timeout=1)  # Wait until all tasks signal they are done
+        self._wait_for_tasks(timeout_s=10.0)
         
 
     def signal_task_done(self):
@@ -178,7 +232,7 @@ class GracefulKiller:
         """
         with self.lock:
             self.tasks_count -= 1
-            if self.tasks_count == 0:
+            if self.tasks_count <= 0:
                 self.tasks_done.set()
 
     def register_task(self):
@@ -187,6 +241,8 @@ class GracefulKiller:
         """
         with self.lock:
             self.tasks_count += 1
+            if self.tasks_count > 0:
+                self.tasks_done.clear()
 
 sigterm_monitor = GracefulKiller()
 

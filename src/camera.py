@@ -306,10 +306,24 @@ class VideoStream:
         # Stop the video stream
         self.stopped = True
         self.stop_journal_monitor()
+        if self.source == "internal" and self.process:
+            try:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=2)
+                except Exception:
+                    try:
+                        self.process.kill()
+                    except Exception:
+                        pass
+            finally:
+                self.process = None
+
         if self.thread is not None:
             self.thread.join(timeout=5)  # Wait for the thread to finish
-        if self.source == "internal" and self.process:
-            self.process.terminate()
+            self.thread = None
+
+        if self.source == "internal":
             logging.info("[CAMERA] Video stream stopped.")
         elif self.source == "ip_camera" and self.cap:
             self.cap.release()

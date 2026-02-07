@@ -475,6 +475,23 @@ class ModelHandler:
         self.num_threads = num_threads
         self.cat_names = [cat_name.lower() for cat_name in get_cat_names_list(CONFIG['KITTYHACK_DATABASE_PATH'])]
 
+        # Load labels early so the model loop cannot crash depending on whether a UI client
+        # accessed the camera API during startup.
+        self.labels: list[str] = []
+        self._load_labels()
+
+    def _load_labels(self) -> None:
+        try:
+            with open(self.labelfile, 'r') as f:
+                self.labels = [line.strip() for line in f.readlines() if line.strip()]
+            if self.labels:
+                logging.info(f"[MODEL] Labels loaded: {self.labels}")
+            else:
+                logging.warning(f"[MODEL] Label file '{self.labelfile}' is empty.")
+        except Exception as e:
+            self.labels = []
+            logging.error(f"[MODEL] Failed to load labels from '{self.labelfile}': {e}")
+
     def _log_videostream_not_ready(self, what: str, *, interval_s: float = 10.0):
         try:
             now = tm.time()
@@ -484,11 +501,6 @@ class ModelHandler:
         if (now - last) >= float(interval_s):
             logging.warning(f"[CAMERA] '{what}' skipped. Video stream is not yet initialized.")
             self._videostream_not_ready_last_log[what] = now
-
-        # Load the label map
-        with open(self.labelfile, 'r') as f:
-            self.labels = [line.strip() for line in f.readlines()]
-            logging.info(f"[MODEL] Labels loaded: {self.labels}")
 
     def load_model(self):
         if self.model == "tflite":
@@ -533,7 +545,8 @@ class ModelHandler:
                     for r in results:
                         for i, (box, conf, cls) in enumerate(zip(r.boxes.xyxy, r.boxes.conf, r.boxes.cls)):
                             xmin, ymin, xmax, ymax = box
-                            object_name = self.labels[int(cls)]
+                            cls_idx = int(cls)
+                            object_name = self.labels[cls_idx] if 0 <= cls_idx < len(self.labels) else str(cls_idx)
                             probability = float(conf * 100)
                             detected_info.append(f"{object_name} ({probability:.1f}%)")
                             if probability >= min_threshold:
@@ -616,7 +629,8 @@ class ModelHandler:
                                 probability_threshold_exceeded = False
                                 for i, (box, conf, cls) in enumerate(zip(r.boxes.xyxy, r.boxes.conf, r.boxes.cls)):
                                     xmin, ymin, xmax, ymax = box
-                                    object_name = labels[int(cls)]
+                                    cls_idx = int(cls)
+                                    object_name = labels[cls_idx] if 0 <= cls_idx < len(labels) else str(cls_idx)
                                     probability = float(conf * 100)
                                     detected_info.append(f"{object_name} ({probability:.1f}%)")
                                     if probability >= min_threshold:
@@ -776,68 +790,70 @@ class ModelHandler:
         
         # Register task in the sigterm_monitor object
         sigterm_monitor.register_task()
+        task_done_signaled = False
 
-        # Initialize frame rate calculation
-        frame_rate_calc = 1
-        freq = cv2.getTickFrequency()
+        try:
+            # Initialize frame rate calculation
+            frame_rate_calc = 1
+            freq = cv2.getTickFrequency()
 
-        # Initialize video stream
-        videostream = VideoStream(source=CONFIG['CAMERA_SOURCE'], ip_camera_url=CONFIG['IP_CAMERA_URL']).start()
-        logging.info(f"[CAMERA] Starting video stream...")
+            # Initialize video stream
+            videostream = VideoStream(source=CONFIG['CAMERA_SOURCE'], ip_camera_url=CONFIG['IP_CAMERA_URL']).start()
+            logging.info(f"[CAMERA] Starting video stream...")
 
-        # Wait for the camera to warm up
-        detected_objects = []
-        frame = None
-        stream_start_time = tm.time()
-        while frame is None:
-            frame = videostream.read_oldest()
-            if tm.time() - stream_start_time > 10:
-                logging.error("[CAMERA] Camera stream failed to start within 10 seconds!")
-                break
-            else:
-                tm.sleep(0.1)
+            # Wait for the camera to warm up
+            detected_objects = []
+            frame = None
+            stream_start_time = tm.time()
+            while frame is None and not sigterm_monitor.stop_now:
+                frame = videostream.read_oldest()
+                if tm.time() - stream_start_time > 10:
+                    logging.error("[CAMERA] Camera stream failed to start within 10 seconds!")
+                    break
+                else:
+                    tm.sleep(0.1)
 
-        if frame is not None:
-            logging.info("[CAMERA] Camera stream started successfully.")
+            if frame is not None:
+                logging.info("[CAMERA] Camera stream started successfully.")
 
         # Calculate padding for letterbox resizing
         #scale = int(self.input_size) / max(imW, imH)
         #pad_x = (self.input_size - imW * scale) / 2  # Horizontal padding
         #pad_y = (self.input_size - imH * scale) / 2  # Vertical padding
 
-        # Flag to ensure we run at least one inference to initialize the model
-        first_run = True
-        
-        while not sigterm_monitor.stop_now:
-            # --- Detect camera config changes and re-init videostream if needed ---
-            current_camera_source = CONFIG['CAMERA_SOURCE']
-            current_ip_camera_url = CONFIG['IP_CAMERA_URL']
-            if (current_camera_source != last_camera_source) or (current_ip_camera_url != last_ip_camera_url):
-                tm.sleep(0.2)
-                logging.info(f"[MODEL] Detected change in CAMERA_SOURCE or IP_CAMERA_URL. Reinitializing videostream...")
-                self.reinit_videostream()
-                last_camera_source = current_camera_source
-                last_ip_camera_url = current_ip_camera_url
-                # Wait for the new stream to warm up
-                frame = None
-                stream_start_time = tm.time()
-                while frame is None:
+            # Flag to ensure we run at least one inference to initialize the model
+            first_run = True
+            
+            while not sigterm_monitor.stop_now:
+                # --- Detect camera config changes and re-init videostream if needed ---
+                current_camera_source = CONFIG['CAMERA_SOURCE']
+                current_ip_camera_url = CONFIG['IP_CAMERA_URL']
+                if (current_camera_source != last_camera_source) or (current_ip_camera_url != last_ip_camera_url):
+                    tm.sleep(0.2)
+                    logging.info(f"[MODEL] Detected change in CAMERA_SOURCE or IP_CAMERA_URL. Reinitializing videostream...")
+                    self.reinit_videostream()
+                    last_camera_source = current_camera_source
+                    last_ip_camera_url = current_ip_camera_url
+                    # Wait for the new stream to warm up
+                    frame = None
+                    stream_start_time = tm.time()
+                    while frame is None and not sigterm_monitor.stop_now:
+                        frame = videostream.read_oldest()
+                        if tm.time() - stream_start_time > 10:
+                            logging.error("[CAMERA] Camera stream failed to start within 10 seconds after reinit!")
+                            break
+                        else:
+                            tm.sleep(0.1)
+                    if frame is not None:
+                        logging.info("[CAMERA] Camera stream re-initialized successfully.")
+
+                # Start timer (for calculating frame rate)
+                t1 = cv2.getTickCount()
+
+                # Run at least one inference to initialize the model, even if paused
+                if first_run or not self.paused:
+                    # Grab frame from video stream
                     frame = videostream.read_oldest()
-                    if tm.time() - stream_start_time > 10:
-                        logging.error("[CAMERA] Camera stream failed to start within 10 seconds after reinit!")
-                        break
-                    else:
-                        tm.sleep(0.1)
-                if frame is not None:
-                    logging.info("[CAMERA] Camera stream re-initialized successfully.")
-
-            # Start timer (for calculating frame rate)
-            t1 = cv2.getTickCount()
-
-            # Run at least one inference to initialize the model, even if paused
-            if first_run or not self.paused:
-                # Grab frame from video stream
-                frame = videostream.read_oldest()
 
                 if frame is not None:
                     # Run the CPU intensive model inference only if not paused
@@ -918,15 +934,33 @@ class ModelHandler:
                         logging.warning("[CAMERA] No frame received!")
                         self.last_log_time = current_time
             
-            # To avoid intensive CPU load, wait here until we reached the desired framerate
-            elapsed_time = (cv2.getTickCount() - t1) / freq
-            sleep_time = max(0, (1.0 / self.framerate) - elapsed_time)
-            tm.sleep(sleep_time)
-            
-        # Stop the video stream
-        videostream.stop()
+                # To avoid intensive CPU load, wait here until we reached the desired framerate
+                elapsed_time = (cv2.getTickCount() - t1) / freq
+                sleep_time = max(0, (1.0 / self.framerate) - elapsed_time)
+                tm.sleep(sleep_time)
+        except Exception as e:
+            logging.error(f"[MODEL] Unhandled error in model loop: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+        finally:
+            # Stop the video stream
+            try:
+                if videostream is not None:
+                    videostream.stop()
+            except Exception as e:
+                logging.error(f"[MODEL] Error stopping videostream during shutdown: {e}")
 
-        sigterm_monitor.signal_task_done()
+            # Stop the worker process (if any)
+            try:
+                if hasattr(self, '_model_worker') and self._model_worker and self._model_worker.is_alive():
+                    self._input_queue.put(None)
+                    self._model_worker.join(timeout=2)
+            except Exception:
+                pass
+
+            if not task_done_signaled:
+                sigterm_monitor.signal_task_done()
+                task_done_signaled = True
 
     def pause(self):
         logging.info("[MODEL] Pausing model processing.")

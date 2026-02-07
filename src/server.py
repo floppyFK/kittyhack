@@ -768,9 +768,28 @@ def show_event_server(input, output, session, block_id: int):
     photo_ids = []
     # Store lists of DetectedObjects, one list per event
     event_datas: List[List[DetectedObject]] = []
-    frame_index = [0]  # Use list to allow modification in nested functions
+    frame_index = [0]  # 0-based index into pictures (kept non-reactive to avoid feedback loops)
+    frame_tick = reactive.Value(0)  # bump to force re-render when paused
     fallback_mode = [False]
     slideshow_running = reactive.Value(True)
+    scrubber_suppress = reactive.Value(0)  # suppress server-side reactions to programmatic scrubber updates
+
+    def _suppress_next_scrubber_events(count: int = 1) -> None:
+        try:
+            current = int(scrubber_suppress.get() or 0)
+        except Exception:
+            current = 0
+        try:
+            scrubber_suppress.set(max(0, current + int(count)))
+        except Exception:
+            scrubber_suppress.set(max(0, int(count)))
+
+    def _bump_frame_tick():
+        try:
+            frame_tick.set(int(frame_tick.get()) + 1)
+        except Exception:
+            # last-resort fallback
+            frame_tick.set(tm.time())
 
     @render.ui
     def event_nav_controls():
@@ -815,7 +834,7 @@ def show_event_server(input, output, session, block_id: int):
             return ui.HTML("")
 
         try:
-            vis_idx = int(getattr(show_event_picture, 'visible_index', 0) or 0)
+            vis_idx = int(frame_index[0] or 0)
         except Exception:
             vis_idx = 0
 
@@ -956,26 +975,8 @@ def show_event_server(input, output, session, block_id: int):
         timestamps[:], pictures[:], event_datas[:], orig_pictures[:] = zip(*sorted_data)
 
         # Initialize double-buffer state for the slideshow: visible + preload
-        try:
-            if len(pictures) > 0:
-                show_event_picture.visible_index = 0
-                show_event_picture.visible_b64 = pictures[0]
-                if len(pictures) > 1:
-                    show_event_picture.preload_index = 1
-                    show_event_picture.preload_b64 = pictures[1]
-                    frame_index[0] = 1
-                else:
-                    show_event_picture.preload_index = None
-                    show_event_picture.preload_b64 = None
-                    frame_index[0] = 0
-            else:
-                show_event_picture.visible_index = None
-                show_event_picture.visible_b64 = None
-                show_event_picture.preload_index = None
-                show_event_picture.preload_b64 = None
-                frame_index[0] = 0
-        except Exception:
-            pass
+        frame_index[0] = 0
+        _bump_frame_tick()
 
         if int(CONFIG['SHOW_IMAGES_WITH_OVERLAY']):
             overlay_icon = icon_svg('border-all', margin_left="0", margin_right="0")
@@ -985,7 +986,11 @@ def show_event_server(input, output, session, block_id: int):
         ui.modal_show(
             ui.modal(
                 ui.card(
-                    ui.output_ui("show_event_picture"),
+                    ui.div(
+                        ui.output_ui("show_event_picture"),
+                        id="event_modal_root",
+                        **{"data-block-id": str(block_id)},
+                    ),
                     ui.card_footer(
                         ui.div(
                             ui.div(
@@ -1102,27 +1107,30 @@ def show_event_server(input, output, session, block_id: int):
 
         # Initialize scrubber to the current visible frame (if paused later)
         try:
+            # Avoid triggering on_scrub_event from a programmatic update.
+            _suppress_next_scrubber_events(1)
             ui.update_slider("event_scrubber", value=1, min=1, max=max(1, len(pictures)))
         except Exception:
             pass
     
     @render.text
     def show_event_picture():
-        reactive.invalidate_later(0.2)
+        # When playing we re-render periodically; when paused we only re-render on explicit events.
+        if slideshow_running.get():
+            reactive.invalidate_later(0.2)
+
+        # Dependency hook for manual navigation while paused
+        try:
+            frame_tick.get()
+        except Exception:
+            pass
+
         try:
             if len(pictures) > 0:
-                # Promote preloaded frame to visible if available
-                if getattr(show_event_picture, 'preload_b64', None) is not None and getattr(show_event_picture, 'preload_index', None) is not None:
-                    show_event_picture.visible_b64 = show_event_picture.preload_b64
-                    show_event_picture.visible_index = show_event_picture.preload_index
-                    show_event_picture.preload_b64 = None
-                    show_event_picture.preload_index = None
-
-                # Preload the next intended frame
-                if frame_index[0] is not None and len(pictures) > 0:
-                    next_idx = int(frame_index[0]) % len(pictures)
-                    show_event_picture.preload_b64 = pictures[next_idx]
-                    show_event_picture.preload_index = next_idx
+                vis_idx = int(frame_index[0] or 0) % len(pictures)
+                next_idx = (vis_idx + 1) % len(pictures)
+                visible_b64 = pictures[vis_idx]
+                preload_b64 = pictures[next_idx] if len(pictures) > 1 else None
 
                 # Build layered image HTML
                 container_style = 'position: relative; display: inline-block; width: 100%; max-width: 800px;'
@@ -1131,19 +1139,25 @@ def show_event_server(input, output, session, block_id: int):
 
                 img_html = f'<div style="{container_style}">'
                 # Bottom (preloaded)
-                if getattr(show_event_picture, 'preload_b64', None):
-                    img_html += f'<img src="data:image/jpeg;base64,{show_event_picture.preload_b64}" style="{back_style}" aria-hidden="true" />'
+                if preload_b64:
+                    img_html += f'<img src="data:image/jpeg;base64,{preload_b64}" style="{back_style}" aria-hidden="true" />'
                 # Top (visible)
-                if getattr(show_event_picture, 'visible_b64', None):
-                    img_html += f'<img src="data:image/jpeg;base64,{show_event_picture.visible_b64}" style="{front_style}" />'
+                if visible_b64:
+                    img_html += f'<img src="data:image/jpeg;base64,{visible_b64}" style="{front_style}" />'
                 else:
                     img_html += '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
 
                 # Overlays for detections (use visible index)
-                if getattr(show_event_picture, 'visible_index', None) is not None:
-                    vis_idx = show_event_picture.visible_index
+                if vis_idx is not None:
                     detected_objects = event_datas[vis_idx] if vis_idx < len(event_datas) else []
-                    if input.btn_toggle_overlay() % 2 == (1 - int(CONFIG['SHOW_IMAGES_WITH_OVERLAY'])):
+                    overlay_on = (input.btn_toggle_overlay() % 2 == (1 - int(CONFIG['SHOW_IMAGES_WITH_OVERLAY'])))
+                    # Expose state for optional client-side caching/optimistic UI
+                    img_html = img_html.replace(
+                        '<div style="' + container_style + '">',
+                        f'<div id="event_modal_picture" data-vis-idx="{vis_idx}" data-total="{len(pictures)}" data-overlay="{1 if overlay_on else 0}" style="{container_style}">' 
+                    )
+
+                    if overlay_on:
                         for detected_object in detected_objects:
                             if detected_object.object_name != "false-accept":
                                 obj_label = (detected_object.object_name or "").strip()
@@ -1175,10 +1189,10 @@ def show_event_server(input, output, session, block_id: int):
                     # Timestamp and frame counter overlays (use visible index)
                     ts_display = timestamps[vis_idx][11:-4] if vis_idx < len(timestamps) else ""
                     img_html += f'''
-                        <div style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px; z-index: 3;">
+                        <div id="event_modal_timestamp" style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px; z-index: 3;">
                             {ts_display}
                         </div>
-                        <div style="position: absolute; bottom: 12px; right: 8px; background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px; z-index: 3;">
+                        <div id="event_modal_counter" style="position: absolute; bottom: 12px; right: 8px; background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px; z-index: 3;">
                             {vis_idx + 1}/{len(pictures)}
                         </div>
                     </div>
@@ -1193,7 +1207,7 @@ def show_event_server(input, output, session, block_id: int):
 
         # Advance the slideshow index only when playing
         if slideshow_running.get() and len(pictures) > 0:
-            frame_index[0] = (frame_index[0] + 1) % max(len(pictures), 1)
+            frame_index[0] = (int(frame_index[0]) + 1) % max(len(pictures), 1)
         return ui.HTML(img_html)
 
     @reactive.effect
@@ -1210,9 +1224,10 @@ def show_event_server(input, output, session, block_id: int):
         frame_index[0] = 0
 
     def _single_image_filename():
-        vis_idx = getattr(show_event_picture, 'visible_index', None)
         try:
-            picture_number = int(vis_idx) + 1 if vis_idx is not None else 0
+            # Keep in sync with current frame
+            frame_tick.get()
+            picture_number = int(frame_index[0]) + 1 if frame_index[0] is not None else 0
         except Exception:
             picture_number = 0
         return f"kittyhack_event_{block_id}_{picture_number}.jpg"
@@ -1228,7 +1243,7 @@ def show_event_server(input, output, session, block_id: int):
                 )
                 raise RuntimeError("Playback running")
 
-            vis_idx = getattr(show_event_picture, 'visible_index', None)
+            vis_idx = int(frame_index[0] or 0)
             if vis_idx is None or vis_idx >= len(photo_ids):
                 raise RuntimeError("No visible image")
 
@@ -1350,7 +1365,22 @@ def show_event_server(input, output, session, block_id: int):
     @reactive.event(input.btn_play_pause)
     def play_pause():
         # Toggle play/pause based on the click count
-        slideshow_running.set(not bool(slideshow_running.get()))
+        new_state = not bool(slideshow_running.get())
+        slideshow_running.set(new_state)
+
+        # When switching into paused mode, align the scrubber to the current frame.
+        if not new_state:
+            try:
+                if pictures and len(pictures) > 1:
+                    _suppress_next_scrubber_events(1)
+                    ui.update_slider(
+                        "event_scrubber",
+                        value=int(frame_index[0] or 0) + 1,
+                        min=1,
+                        max=len(pictures),
+                    )
+            except Exception:
+                pass
 
     @reactive.effect
     @reactive.event(input.btn_toggle_overlay)
@@ -1366,10 +1396,16 @@ def show_event_server(input, output, session, block_id: int):
     def prev_picture():
         if slideshow_running.get():
             return
-        frame_index[0] = (frame_index[0] - 1) % max(len(pictures), 1)
+        if not pictures:
+            return
+        frame_index[0] = (int(frame_index[0]) - 1) % max(len(pictures), 1)
+        _bump_frame_tick()
 
+        # Keep scrubber aligned without triggering on_scrub_event.
         try:
-            ui.update_slider("event_scrubber", value=int(frame_index[0]) + 1)
+            if len(pictures) > 1:
+                _suppress_next_scrubber_events(1)
+                ui.update_slider("event_scrubber", value=int(frame_index[0]) + 1)
         except Exception:
             pass
 
@@ -1378,10 +1414,16 @@ def show_event_server(input, output, session, block_id: int):
     def next_picture():
         if slideshow_running.get():
             return
-        frame_index[0] = (frame_index[0] + 1) % max(len(pictures), 1)
+        if not pictures:
+            return
+        frame_index[0] = (int(frame_index[0]) + 1) % max(len(pictures), 1)
+        _bump_frame_tick()
 
+        # Keep scrubber aligned without triggering on_scrub_event.
         try:
-            ui.update_slider("event_scrubber", value=int(frame_index[0]) + 1)
+            if len(pictures) > 1:
+                _suppress_next_scrubber_events(1)
+                ui.update_slider("event_scrubber", value=int(frame_index[0]) + 1)
         except Exception:
             pass
 
@@ -1390,6 +1432,18 @@ def show_event_server(input, output, session, block_id: int):
     def on_scrub_event():
         # Only respond when paused
         if slideshow_running.get():
+            return
+
+        # Ignore scrubber changes that are caused by server-side updates/re-renders.
+        try:
+            pending = int(scrubber_suppress.get() or 0)
+        except Exception:
+            pending = 0
+        if pending > 0:
+            try:
+                scrubber_suppress.set(max(0, pending - 1))
+            except Exception:
+                pass
             return
 
         if not pictures or len(pictures) == 0:
@@ -1402,18 +1456,17 @@ def show_event_server(input, output, session, block_id: int):
             return
 
         target_idx = max(0, min(len(pictures) - 1, target_idx))
-        frame_index[0] = target_idx
 
-        # Force the visible image to jump immediately
+        # Prevent feedback loops / redundant re-renders.
         try:
-            show_event_picture.visible_index = target_idx
-            show_event_picture.visible_b64 = pictures[target_idx]
-            # Prime preload to the next frame for smooth subsequent steps
-            next_idx = (target_idx + 1) % len(pictures)
-            show_event_picture.preload_index = next_idx
-            show_event_picture.preload_b64 = pictures[next_idx]
+            current_idx = int(frame_index[0] or 0)
         except Exception:
-            pass
+            current_idx = 0
+        if target_idx == current_idx:
+            return
+
+        frame_index[0] = target_idx
+        _bump_frame_tick()
 
 @module.server
 def wlan_connect_server(input, output, session, ssid: str):

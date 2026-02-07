@@ -2140,7 +2140,11 @@ def server(input, output, session):
     
     @render.text
     def live_view_main():
-        reactive.invalidate_later(CONFIG['LIVE_VIEW_REFRESH_INTERVAL'])
+        refresh_s = float(CONFIG.get('LIVE_VIEW_REFRESH_INTERVAL', 2.0) or 2.0)
+        # Avoid accidental busy-loops from misconfiguration.
+        refresh_s = max(0.1, refresh_s)
+        logging.debug(f"New live view render ({refresh_s:.3g}s refresh interval)")
+        reactive.invalidate_later(refresh_s)
         # Static variables to track last frame and time
         if not hasattr(live_view_main, "last_frame_hash"):
             live_view_main.last_frame_hash = None
@@ -2181,7 +2185,12 @@ def server(input, output, session):
                 logging.error(f"Failed to check IP camera resolution: {e}")
 
         try:
-            st = live_status.get() or {}
+            # IMPORTANT: live_status is updated at a much higher frequency (see update_live_status).
+            # If we read it reactively here, it would invalidate this renderer on every update and
+            # effectively ignore LIVE_VIEW_REFRESH_INTERVAL. We still want the latest values, just
+            # only sampled on our own timer.
+            with reactive.isolate():
+                st = live_status.get() or {}
             ts = st.get("ts", datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S'))
 
             def _pill_html(inner_html: str, variant: str, *, aria_label: str, title: str) -> str:

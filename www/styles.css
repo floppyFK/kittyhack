@@ -144,6 +144,34 @@ html[data-bs-theme="dark"] .spinner {
     outline-offset: -2px;
 }
 
+/* Event modal: picture loading spinner overlay */
+.event-modal-picture-wrap {
+    position: relative;
+}
+
+.event-modal-picture-spinner {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.55);
+    backdrop-filter: blur(2px);
+    border-radius: .5rem;
+    opacity: 1;
+    transition: opacity 160ms ease;
+    pointer-events: none;
+}
+
+html[data-bs-theme="dark"] .event-modal-picture-spinner {
+    background: rgba(17, 24, 39, 0.45);
+}
+
+/* Hidden when JS marks that an image exists */
+.event-modal-picture-wrap.has-image .event-modal-picture-spinner {
+    opacity: 0;
+}
+
 .generic-container table {
     width: 100% !important;
     margin: 0 auto;
@@ -453,6 +481,7 @@ html[data-bs-theme="dark"] .spinner {
     --kh-scrubber-thumb-border: #ffffff;
     --kh-scrubber-thumb-shadow: 0 1px 2px rgba(0, 0, 0, 0.20), 0 4px 10px rgba(0, 0, 0, 0.10);
     --kh-scrubber-marker-prey: #ef4444; /* red-500 */
+    --kh-scrubber-marker-prey-soft: #fca5a5; /* red-300 */
     --kh-scrubber-marker-other: #22c55e; /* green-500 */
 }
 
@@ -520,14 +549,33 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
 /* Align marker segments with the track (match the .irs-line top/height) */
 #event_scrubber_wrap .event-scrubber-seg {
     position: absolute;
-    top: 14px;
-    height: 4px;
+    height: 2px;
     border-radius: 9999px;
     opacity: 0.85;
 }
 
-#event_scrubber_wrap .event-scrubber-seg.is-prey {
+/* Single-frame detections can be too tiny; make them easier to spot */
+#event_scrubber_wrap .event-scrubber-seg.is-single {
+    min-width: 10px;
+    height: 2px;
+    opacity: 0.85;
+}
+
+/* Two-lane layout: prey lane above, other lane below */
+#event_scrubber_wrap .event-scrubber-seg.lane-prey {
+    top: 13px;
+}
+
+#event_scrubber_wrap .event-scrubber-seg.lane-other {
+    top: 16px;
+}
+
+#event_scrubber_wrap .event-scrubber-seg.is-prey-strong {
     background: var(--kh-scrubber-marker-prey);
+}
+
+#event_scrubber_wrap .event-scrubber-seg.is-prey-soft {
+    background: var(--kh-scrubber-marker-prey-soft);
 }
 
 #event_scrubber_wrap .event-scrubber-seg.is-other {

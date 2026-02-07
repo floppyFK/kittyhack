@@ -234,6 +234,34 @@ document.addEventListener("DOMContentLoaded", function() {
     });
     tooltipInitObserver.observe(document.body, { childList: true, subtree: true });
 
+    // --- Event modal: show spinner until first image is rendered ---
+    function syncEventModalSpinner(root) {
+        const scope = root && root.querySelector ? root : document;
+        const wrap = scope.querySelector ? scope.querySelector('#event_modal_picture_wrap') : null;
+        if (!wrap || !wrap.classList) return;
+
+        // Consider the picture "ready" once there's at least one <img> inside the output.
+        const hasImg = !!(wrap.querySelector && wrap.querySelector('img'));
+        wrap.classList.toggle('has-image', hasImg);
+    }
+
+    syncEventModalSpinner(document);
+    const modalSpinnerObserver = new MutationObserver(function(mutations) {
+        // Any change under the modal picture wrap may indicate the image output arrived.
+        for (let i = 0; i < mutations.length; i++) {
+            const m = mutations[i];
+            if (!m) continue;
+            const target = m.target;
+            if (target && target.closest && target.closest('#event_modal_picture_wrap')) {
+                syncEventModalSpinner(document);
+                return;
+            }
+        }
+        // Fallback: cheap rescan when nodes get added
+        syncEventModalSpinner(document);
+    });
+    modalSpinnerObserver.observe(document.body, { childList: true, subtree: true });
+
     // --- Event modal: scrubber ---
     // Scrubber is always visible; server updates its value continuously.
 

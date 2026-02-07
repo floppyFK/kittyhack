@@ -98,6 +98,29 @@ document.addEventListener("DOMContentLoaded", function() {
         return (window.bootstrap && window.bootstrap.Tooltip);
     }
 
+    function ensureBootstrapTooltips(root) {
+        if (!canUseBootstrapTooltips()) return;
+        const scope = root && root.querySelectorAll ? root : document;
+        try {
+            // Initialize triggers inside scope
+            const triggers = scope.querySelectorAll('[data-bs-toggle="tooltip"]');
+            triggers.forEach(function(el) {
+                try {
+                    // Avoid double-initialization; Bootstrap will reuse if present.
+                    window.bootstrap.Tooltip.getOrCreateInstance(el);
+                } catch (e) {
+                    // ignore per-element failures
+                }
+            });
+            // Also handle the root itself if it is a trigger
+            if (root && root.getAttribute && root.getAttribute('data-bs-toggle') === 'tooltip') {
+                try { window.bootstrap.Tooltip.getOrCreateInstance(root); } catch (e) {}
+            }
+        } catch (e) {
+            // ignore
+        }
+    }
+
     function hideTooltip(el) {
         if (!el || !canUseBootstrapTooltips()) return;
         try {
@@ -106,11 +129,29 @@ document.addEventListener("DOMContentLoaded", function() {
         } catch (e) {
             // ignore
         }
+    }
+
+    function getTooltipTriggerSpec(el) {
+        if (!el) return '';
         try {
-            if (typeof el.blur === 'function') el.blur();
+            const inst = canUseBootstrapTooltips() ? window.bootstrap.Tooltip.getInstance(el) : null;
+            const cfg = inst && inst._config ? inst._config : null;
+            if (cfg && typeof cfg.trigger === 'string') return cfg.trigger;
         } catch (e) {
             // ignore
         }
+        try {
+            const attr = el.getAttribute ? el.getAttribute('data-bs-trigger') : '';
+            return (typeof attr === 'string') ? attr : '';
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function tooltipAllowsClick(el) {
+        const spec = (getTooltipTriggerSpec(el) || '').trim();
+        if (!spec) return false; // Bootstrap default is 'hover focus'
+        return spec.split(/\s+/).includes('click');
     }
 
     function hideTooltipSoon(el) {
@@ -118,17 +159,80 @@ document.addEventListener("DOMContentLoaded", function() {
         setTimeout(() => hideTooltip(el), 0);
     }
 
+    function isCoarsePointerDevice() {
+        try {
+            if (window.matchMedia) {
+                // Most phones/tablets
+                if (window.matchMedia('(pointer: coarse)').matches) return true;
+                // Some browsers report no hover capability instead
+                if (window.matchMedia('(hover: none)').matches) return true;
+            }
+        } catch (e) {
+            // ignore
+        }
+        return false;
+    }
+
+    // Track pointer interactions so we can distinguish keyboard focus from click/tap focus.
+    let lastPointerDownAt = 0;
+    document.addEventListener('pointerdown', function() {
+        lastPointerDownAt = Date.now();
+    }, true);
+
     // Hide tooltip immediately when clicking its trigger
     document.addEventListener('click', function(ev) {
         const trigger = ev.target && ev.target.closest ? ev.target.closest('[data-bs-toggle="tooltip"]') : null;
-        if (trigger) hideTooltipSoon(trigger);
+        if (!trigger) return;
+        // On mobile/touch devices, Bootstrap tooltips are often click/tap driven.
+        // Our desktop-focused auto-hide would immediately dismiss them.
+        if (isCoarsePointerDevice()) return;
+        // If the tooltip is configured to open on click (common on touch devices), don't auto-hide it.
+        if (tooltipAllowsClick(trigger)) return;
+        hideTooltipSoon(trigger);
+        try {
+            if (typeof trigger.blur === 'function') trigger.blur();
+        } catch (e) {}
     }, true);
 
     // Prevent focus from keeping tooltips visible
     document.addEventListener('focusin', function(ev) {
         const trigger = ev.target && ev.target.closest ? ev.target.closest('[data-bs-toggle="tooltip"]') : null;
-        if (trigger) hideTooltipSoon(trigger);
+        if (!trigger) return;
+        if (isCoarsePointerDevice()) return;
+        // Only auto-hide focus-based tooltips if focus likely came from a pointer interaction.
+        if ((Date.now() - lastPointerDownAt) > 700) return;
+        if (tooltipAllowsClick(trigger)) return;
+        hideTooltipSoon(trigger);
+        try {
+            if (typeof trigger.blur === 'function') trigger.blur();
+        } catch (e) {}
     }, true);
+
+    // Tooltips are not auto-enabled by Bootstrap from data attributes.
+    // Shiny often re-renders UI outputs; ensure new tooltip triggers are initialized.
+    ensureBootstrapTooltips(document);
+    let tooltipInitScheduled = false;
+    const tooltipInitObserver = new MutationObserver(function(mutations) {
+        if (tooltipInitScheduled) return;
+        // Schedule a single re-scan in the next tick.
+        tooltipInitScheduled = true;
+        setTimeout(function() {
+            tooltipInitScheduled = false;
+            // Only scan if there is at least one added node.
+            try {
+                for (let i = 0; i < mutations.length; i++) {
+                    const m = mutations[i];
+                    if (m && m.addedNodes && m.addedNodes.length) {
+                        ensureBootstrapTooltips(document);
+                        break;
+                    }
+                }
+            } catch (e) {
+                ensureBootstrapTooltips(document);
+            }
+        }, 0);
+    });
+    tooltipInitObserver.observe(document.body, { childList: true, subtree: true });
 
     // --- Event modal: scrubber expand/collapse animation ---
     // The server sets data-playing and may re-render the scrubber; we also animate immediately

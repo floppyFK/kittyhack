@@ -428,9 +428,12 @@ html[data-bs-theme="dark"] .spinner {
     overflow: hidden;
     pointer-events: none;
     transition:
-        max-width 180ms ease,
-        opacity 120ms ease,
-        padding 180ms ease;
+        max-width 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        opacity 200ms ease,
+        padding 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    transform: translateY(6px);
+    will-change: max-width, opacity, padding, transform;
 }
 
 .event-modal-scrubber.is-open {
@@ -439,6 +442,7 @@ html[data-bs-theme="dark"] .spinner {
     padding-left: 0.2rem;
     padding-right: 0.2rem;
     pointer-events: auto;
+    transform: translateY(0);
 }
 
 .event-modal-scrubber .shiny-input-container {
@@ -449,6 +453,89 @@ html[data-bs-theme="dark"] .spinner {
 
 .event-modal-scrubber input[type="range"] {
     width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .event-modal-scrubber {
+        transition: none !important;
+        transform: none !important;
+    }
+}
+
+/* Event modal scrubber: modern video-like playhead style (ionRangeSlider) */
+#event_scrubber_wrap {
+    --kh-scrubber-track: rgba(0, 0, 0, 0.18);
+    --kh-scrubber-fill: var(--bs-primary);
+    --kh-scrubber-thumb-border: #ffffff;
+    --kh-scrubber-thumb-shadow: 0 1px 2px rgba(0, 0, 0, 0.20), 0 4px 10px rgba(0, 0, 0, 0.10);
+}
+
+html[data-bs-theme="dark"] #event_scrubber_wrap {
+    --kh-scrubber-track: rgba(255, 255, 255, 0.22);
+    --kh-scrubber-thumb-border: rgba(17, 24, 39, 0.90);
+    --kh-scrubber-thumb-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 6px 16px rgba(0, 0, 0, 0.40);
+}
+
+/* Hide min/max and value labels (min/max/current) */
+#event_scrubber_wrap .irs-min,
+#event_scrubber_wrap .irs-max,
+#event_scrubber_wrap .irs-from,
+#event_scrubber_wrap .irs-to,
+#event_scrubber_wrap .irs-single {
+    display: none !important;
+}
+
+/* Compress slider chrome a bit */
+#event_scrubber_wrap .irs--shiny {
+    height: 30px;
+}
+
+/* Thin track */
+#event_scrubber_wrap .irs--shiny .irs-line {
+    top: 14px;
+    height: 4px;
+    background: var(--kh-scrubber-track);
+    border: none;
+    border-radius: 9999px;
+}
+
+/* Filled progress */
+#event_scrubber_wrap .irs--shiny .irs-bar {
+    top: 14px;
+    height: 4px;
+    background: var(--kh-scrubber-fill);
+    border: none;
+    border-radius: 9999px;
+}
+
+/* Playhead */
+#event_scrubber_wrap .irs--shiny .irs-handle {
+    top: 8px;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--kh-scrubber-thumb-border);
+    background: var(--kh-scrubber-fill);
+    border-radius: 9999px;
+    box-shadow: var(--kh-scrubber-thumb-shadow);
+}
+
+/* Remove the 3 "grip" lines inside the handle */
+#event_scrubber_wrap .irs--shiny .irs-handle i {
+    display: none !important;
+}
+
+/* Make focus/hover feel modern */
+#event_scrubber_wrap .irs--shiny .irs-handle.state_hover,
+#event_scrubber_wrap .irs--shiny .irs-handle:hover {
+    filter: brightness(1.05);
+    transform: scale(1.08);
+    transition: transform 120ms ease, filter 120ms ease;
+}
+
+#event_scrubber_wrap .irs--shiny .irs-line:focus-visible,
+#event_scrubber_wrap .irs--shiny .irs-handle:focus-visible {
+    outline: 2px solid rgba(13, 110, 253, 0.55);
+    outline-offset: 2px;
 }
 
 .event-modal-toolbar-top {

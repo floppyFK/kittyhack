@@ -844,14 +844,21 @@ def show_event_server(input, output, session, block_id: int):
         # Always show the scrubber (video-player style). Keep data-playing for client logic.
         cls = "event-modal-scrubber"
 
-        def _marker_kind_for_frame(frame_i: int) -> str:
-            """Return 'prey', 'other', or '' for a given frame index."""
+        def _mouse_threshold() -> float:
+            try:
+                return float(CONFIG.get("MOUSE_THRESHOLD"))
+            except Exception:
+                return 0.0
+
+        def _frame_marker_state(frame_i: int) -> tuple[bool, bool, bool]:
+            """Return (has_prey, prey_is_strong, has_other) for a given frame index."""
             try:
                 objs = event_datas[frame_i] if frame_i < len(event_datas) else []
             except Exception:
                 objs = []
 
             has_other = False
+            prey_max_prob = None
             for obj in (objs or []):
                 try:
                     name = (obj.object_name or "").strip()
@@ -859,55 +866,110 @@ def show_event_server(input, output, session, block_id: int):
                     name = ""
                 if not name:
                     continue
-                if name.lower() == "false-accept":
-                    continue
-                if name.lower() in ("prey", "beute"):
-                    return "prey"
-                has_other = True
-            return "other" if has_other else ""
 
-        def _build_marker_segments(n_frames: int):
-            """Group consecutive marked frames into segments to reduce DOM nodes."""
-            if n_frames <= 1:
-                return []
-            segments: list[tuple[int, int, str]] = []
-            seg_kind = ""
-            seg_start = -1
-            seg_end = -1
-            for i in range(n_frames):
-                kind = _marker_kind_for_frame(i)
-                if not kind:
-                    if seg_kind:
-                        segments.append((seg_start, seg_end, seg_kind))
-                        seg_kind, seg_start, seg_end = "", -1, -1
+                name_l = name.lower()
+                if name_l == "false-accept":
                     continue
-                if kind == seg_kind and i == seg_end + 1:
-                    seg_end = i
+
+                if name_l in ("prey", "beute"):
+                    try:
+                        p = float(getattr(obj, "probability", 0.0))
+                    except Exception:
+                        p = 0.0
+                    prey_max_prob = p if prey_max_prob is None else max(prey_max_prob, p)
+                    continue
+
+                has_other = True
+
+            has_prey = prey_max_prob is not None
+            prey_is_strong = bool(has_prey and float(prey_max_prob or 0.0) >= _mouse_threshold())
+            return has_prey, prey_is_strong, has_other
+
+        def _build_lane_segments(n_frames: int):
+            """Build grouped segments per lane: prey (soft/hard) and other."""
+            if n_frames <= 1:
+                return ([], [])
+
+            prey_lane: list[tuple[int, int, str]] = []
+            other_lane: list[tuple[int, int, str]] = []
+
+            prey_kind = ""
+            prey_start = -1
+            prey_end = -1
+
+            other_on = False
+            other_start = -1
+            other_end = -1
+
+            for i in range(n_frames):
+                has_prey, prey_strong, has_other = _frame_marker_state(i)
+
+                # Prey lane: kind is prey-strong or prey-soft
+                this_prey_kind = "prey-strong" if (has_prey and prey_strong) else ("prey-soft" if has_prey else "")
+                if not this_prey_kind:
+                    if prey_kind:
+                        prey_lane.append((prey_start, prey_end, prey_kind))
+                        prey_kind, prey_start, prey_end = "", -1, -1
                 else:
-                    if seg_kind:
-                        segments.append((seg_start, seg_end, seg_kind))
-                    seg_kind, seg_start, seg_end = kind, i, i
-            if seg_kind:
-                segments.append((seg_start, seg_end, seg_kind))
-            return segments
+                    if this_prey_kind == prey_kind and i == prey_end + 1:
+                        prey_end = i
+                    else:
+                        if prey_kind:
+                            prey_lane.append((prey_start, prey_end, prey_kind))
+                        prey_kind, prey_start, prey_end = this_prey_kind, i, i
+
+                # Other lane: boolean segment
+                if not has_other:
+                    if other_on:
+                        other_lane.append((other_start, other_end, "other"))
+                        other_on, other_start, other_end = False, -1, -1
+                else:
+                    if other_on and i == other_end + 1:
+                        other_end = i
+                    else:
+                        if other_on:
+                            other_lane.append((other_start, other_end, "other"))
+                        other_on, other_start, other_end = True, i, i
+
+            if prey_kind:
+                prey_lane.append((prey_start, prey_end, prey_kind))
+            if other_on:
+                other_lane.append((other_start, other_end, "other"))
+
+            return (prey_lane, other_lane)
 
         def _pct(i: int, n_frames: int) -> float:
             denom = max(1, n_frames - 1)
             return (float(i) / float(denom)) * 100.0
 
         n_frames = len(pictures)
-        segments = _build_marker_segments(n_frames)
+        prey_segments, other_segments = _build_lane_segments(n_frames)
 
         marker_children = []
-        for start_i, end_i, kind in segments:
+        for start_i, end_i, kind in prey_segments:
             left = _pct(start_i, n_frames)
             right = _pct(end_i, n_frames)
             width = max(0.0, right - left)
+            single_cls = " is-single" if start_i == end_i else ""
             marker_children.append(
                 ui.tags.div(
                     {
-                        "class": f"event-scrubber-seg is-{kind}",
+                        "class": f"event-scrubber-seg lane-prey is-{kind}{single_cls}",
                         # Add a couple pixels so single-frame segments are still visible.
+                        "style": f"left: calc({left:.4f}% - 1px); width: calc({width:.4f}% + 2px);",
+                    }
+                )
+            )
+
+        for start_i, end_i, kind in other_segments:
+            left = _pct(start_i, n_frames)
+            right = _pct(end_i, n_frames)
+            width = max(0.0, right - left)
+            single_cls = " is-single" if start_i == end_i else ""
+            marker_children.append(
+                ui.tags.div(
+                    {
+                        "class": f"event-scrubber-seg lane-other is-{kind}{single_cls}",
                         "style": f"left: calc({left:.4f}% - 1px); width: calc({width:.4f}% + 2px);",
                     }
                 )
@@ -1058,7 +1120,24 @@ def show_event_server(input, output, session, block_id: int):
             ui.modal(
                 ui.card(
                     ui.div(
-                        ui.output_ui("show_event_picture"),
+                        ui.div(
+                            ui.output_ui("show_event_picture"),
+                            ui.tags.div(
+                                {
+                                    "class": "event-modal-picture-spinner",
+                                    "aria-hidden": "true",
+                                },
+                                ui.tags.div(
+                                    {
+                                        "class": "spinner-border text-primary",
+                                        "role": "status",
+                                    },
+                                    ui.tags.span({"class": "visually-hidden"}, _("Loading...")),
+                                ),
+                            ),
+                            id="event_modal_picture_wrap",
+                            class_="event-modal-picture-wrap",
+                        ),
                         id="event_modal_root",
                         **{"data-block-id": str(block_id)},
                     ),
@@ -1247,9 +1326,28 @@ def show_event_server(input, output, session, block_id: int):
                         for detected_object in detected_objects:
                             if detected_object.object_name != "false-accept":
                                 obj_label = (detected_object.object_name or "").strip()
-                                is_prey = obj_label.lower() in ("prey", "beute")
-                                stroke_rgb = "255, 0, 0" if is_prey else "0, 180, 0"
-                                stroke_hex = "#ff0000" if is_prey else "#00b400"
+                                obj_label_l = obj_label.lower()
+                                is_prey = obj_label_l in ("prey", "beute")
+
+                                # Match scrubber marker logic: prey below threshold is light red.
+                                prey_strong = False
+                                if is_prey:
+                                    try:
+                                        p = float(getattr(detected_object, "probability", 0.0))
+                                    except Exception:
+                                        p = 0.0
+                                    try:
+                                        thr = float(CONFIG.get("MOUSE_THRESHOLD"))
+                                    except Exception:
+                                        thr = 0.0
+                                    prey_strong = bool(p >= thr)
+
+                                if is_prey and not prey_strong:
+                                    stroke_rgb = "252, 165, 165"  # light red (tailwind red-300)
+                                    stroke_hex = "#fca5a5"
+                                else:
+                                    stroke_rgb = "255, 0, 0" if is_prey else "0, 180, 0"
+                                    stroke_hex = "#ff0000" if is_prey else "#00b400"
                                 img_html += f'''
                                 <div style="position: absolute; 
                                             left: {detected_object.x}%; 

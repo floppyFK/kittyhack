@@ -234,40 +234,8 @@ document.addEventListener("DOMContentLoaded", function() {
     });
     tooltipInitObserver.observe(document.body, { childList: true, subtree: true });
 
-    // --- Event modal: scrubber expand/collapse animation ---
-    // The server sets data-playing and may re-render the scrubber; we also animate immediately
-    // on play/pause clicks to get a smooth closing transition.
-    function findEventScrubberWrap(fromEl) {
-        const root = fromEl && fromEl.closest ? (fromEl.closest('.modal') || document) : document;
-        return root.querySelector ? root.querySelector('#event_scrubber_wrap') : null;
-    }
-
-    function syncEventScrubberState(el) {
-        if (!el) return;
-        const playing = (el.getAttribute('data-playing') === '1');
-        if (playing) {
-            el.classList.remove('is-open');
-        } else {
-            el.classList.add('is-open');
-        }
-    }
-
-    // Animate on play/pause click (capture phase so it runs before Shiny updates the DOM)
-    document.addEventListener('click', function(ev) {
-        const btn = ev.target && ev.target.closest ? ev.target.closest('button[id$="btn_play_pause"]') : null;
-        if (!btn) return;
-        const scrubber = findEventScrubberWrap(btn);
-        if (!scrubber) return;
-        // Toggle immediately for animation; server will later set the authoritative state.
-        scrubber.classList.toggle('is-open');
-    }, true);
-
-    // Keep in sync after server re-renders
-    const scrubberObserver = new MutationObserver(function() {
-        const el = document.getElementById('event_scrubber_wrap');
-        if (el) syncEventScrubberState(el);
-    });
-    scrubberObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-playing'] });
+    // --- Event modal: scrubber ---
+    // Scrubber is always visible; server updates its value continuously.
 
     // --- Event modal: fast prev/next with local frame cache ---
     // Problem: the modal image is a Shiny output that can feel laggy when clicking prev/next.

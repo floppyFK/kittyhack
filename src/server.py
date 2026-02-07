@@ -841,7 +841,77 @@ def show_event_server(input, output, session, block_id: int):
         # Use 1-based values in the UI
         value = max(1, min(len(pictures), vis_idx + 1))
 
-        cls = "event-modal-scrubber" + (" is-open" if not is_playing else "")
+        # Always show the scrubber (video-player style). Keep data-playing for client logic.
+        cls = "event-modal-scrubber"
+
+        def _marker_kind_for_frame(frame_i: int) -> str:
+            """Return 'prey', 'other', or '' for a given frame index."""
+            try:
+                objs = event_datas[frame_i] if frame_i < len(event_datas) else []
+            except Exception:
+                objs = []
+
+            has_other = False
+            for obj in (objs or []):
+                try:
+                    name = (obj.object_name or "").strip()
+                except Exception:
+                    name = ""
+                if not name:
+                    continue
+                if name.lower() == "false-accept":
+                    continue
+                if name.lower() in ("prey", "beute"):
+                    return "prey"
+                has_other = True
+            return "other" if has_other else ""
+
+        def _build_marker_segments(n_frames: int):
+            """Group consecutive marked frames into segments to reduce DOM nodes."""
+            if n_frames <= 1:
+                return []
+            segments: list[tuple[int, int, str]] = []
+            seg_kind = ""
+            seg_start = -1
+            seg_end = -1
+            for i in range(n_frames):
+                kind = _marker_kind_for_frame(i)
+                if not kind:
+                    if seg_kind:
+                        segments.append((seg_start, seg_end, seg_kind))
+                        seg_kind, seg_start, seg_end = "", -1, -1
+                    continue
+                if kind == seg_kind and i == seg_end + 1:
+                    seg_end = i
+                else:
+                    if seg_kind:
+                        segments.append((seg_start, seg_end, seg_kind))
+                    seg_kind, seg_start, seg_end = kind, i, i
+            if seg_kind:
+                segments.append((seg_start, seg_end, seg_kind))
+            return segments
+
+        def _pct(i: int, n_frames: int) -> float:
+            denom = max(1, n_frames - 1)
+            return (float(i) / float(denom)) * 100.0
+
+        n_frames = len(pictures)
+        segments = _build_marker_segments(n_frames)
+
+        marker_children = []
+        for start_i, end_i, kind in segments:
+            left = _pct(start_i, n_frames)
+            right = _pct(end_i, n_frames)
+            width = max(0.0, right - left)
+            marker_children.append(
+                ui.tags.div(
+                    {
+                        "class": f"event-scrubber-seg is-{kind}",
+                        # Add a couple pixels so single-frame segments are still visible.
+                        "style": f"left: calc({left:.4f}% - 1px); width: calc({width:.4f}% + 2px);",
+                    }
+                )
+            )
 
         return ui.div(
             ui.input_slider(
@@ -853,6 +923,7 @@ def show_event_server(input, output, session, block_id: int):
                 step=1,
                 width="100%",
             ),
+            ui.tags.div({"class": "event-scrubber-markers", "aria-hidden": "true"}, *marker_children),
             id="event_scrubber_wrap",
             class_=cls,
             **{"data-playing": "1" if is_playing else "0"},
@@ -1131,6 +1202,21 @@ def show_event_server(input, output, session, block_id: int):
                 next_idx = (vis_idx + 1) % len(pictures)
                 visible_b64 = pictures[vis_idx]
                 preload_b64 = pictures[next_idx] if len(pictures) > 1 else None
+
+                # Keep the scrubber synced to the currently visible frame while playing.
+                # Do not use scrubber_suppress here: periodic updates may not always
+                # generate input events, which could otherwise accumulate the counter.
+                if slideshow_running.get():
+                    try:
+                        if len(pictures) > 1:
+                            ui.update_slider(
+                                "event_scrubber",
+                                value=int(vis_idx) + 1,
+                                min=1,
+                                max=len(pictures),
+                            )
+                    except Exception:
+                        pass
 
                 # Build layered image HTML
                 container_style = 'position: relative; display: inline-block; width: 100%; max-width: 800px;'
@@ -1430,10 +1516,6 @@ def show_event_server(input, output, session, block_id: int):
     @reactive.effect
     @reactive.event(input.event_scrubber)
     def on_scrub_event():
-        # Only respond when paused
-        if slideshow_running.get():
-            return
-
         # Ignore scrubber changes that are caused by server-side updates/re-renders.
         try:
             pending = int(scrubber_suppress.get() or 0)
@@ -1444,6 +1526,10 @@ def show_event_server(input, output, session, block_id: int):
                 scrubber_suppress.set(max(0, pending - 1))
             except Exception:
                 pass
+            return
+
+        # Only respond to user scrubs when paused
+        if slideshow_running.get():
             return
 
         if not pictures or len(pictures) == 0:

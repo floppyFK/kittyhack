@@ -415,10 +415,10 @@ html[data-bs-theme="dark"] .spinner {
 .event-modal-scrubber {
     flex: 1 1 auto;
     min-width: 0;
-    max-width: 0;
-    opacity: 0;
-    padding-left: 0;
-    padding-right: 0;
+    max-width: 9999px;
+    opacity: 1;
+    padding-left: 0.2rem;
+    padding-right: 0.2rem;
     padding-top: 0.15rem;
     padding-bottom: 0.35rem;
     height: 44px;
@@ -426,23 +426,7 @@ html[data-bs-theme="dark"] .spinner {
     display: flex;
     align-items: center;
     overflow: hidden;
-    pointer-events: none;
-    transition:
-        max-width 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
-        opacity 200ms ease,
-        padding 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
-        transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
-    transform: translateY(6px);
-    will-change: max-width, opacity, padding, transform;
-}
-
-.event-modal-scrubber.is-open {
-    max-width: 9999px;
-    opacity: 1;
-    padding-left: 0.2rem;
-    padding-right: 0.2rem;
     pointer-events: auto;
-    transform: translateY(0);
 }
 
 .event-modal-scrubber .shiny-input-container {
@@ -458,16 +442,18 @@ html[data-bs-theme="dark"] .spinner {
 @media (prefers-reduced-motion: reduce) {
     .event-modal-scrubber {
         transition: none !important;
-        transform: none !important;
     }
 }
 
 /* Event modal scrubber: modern video-like playhead style (ionRangeSlider) */
 #event_scrubber_wrap {
+    position: relative;
     --kh-scrubber-track: rgba(0, 0, 0, 0.18);
     --kh-scrubber-fill: var(--bs-primary);
     --kh-scrubber-thumb-border: #ffffff;
     --kh-scrubber-thumb-shadow: 0 1px 2px rgba(0, 0, 0, 0.20), 0 4px 10px rgba(0, 0, 0, 0.10);
+    --kh-scrubber-marker-prey: #ef4444; /* red-500 */
+    --kh-scrubber-marker-other: #22c55e; /* green-500 */
 }
 
 html[data-bs-theme="dark"] #event_scrubber_wrap {
@@ -517,6 +503,35 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
     background: var(--kh-scrubber-fill);
     border-radius: 9999px;
     box-shadow: var(--kh-scrubber-thumb-shadow);
+    z-index: 4;
+}
+
+/* Marker overlay for labeled frames */
+#event_scrubber_wrap .event-scrubber-markers {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 3;
+}
+
+/* Align marker segments with the track (match the .irs-line top/height) */
+#event_scrubber_wrap .event-scrubber-seg {
+    position: absolute;
+    top: 14px;
+    height: 4px;
+    border-radius: 9999px;
+    opacity: 0.85;
+}
+
+#event_scrubber_wrap .event-scrubber-seg.is-prey {
+    background: var(--kh-scrubber-marker-prey);
+}
+
+#event_scrubber_wrap .event-scrubber-seg.is-other {
+    background: var(--kh-scrubber-marker-other);
 }
 
 /* Remove the 3 "grip" lines inside the handle */

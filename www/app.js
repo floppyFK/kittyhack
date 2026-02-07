@@ -165,6 +165,175 @@ document.addEventListener("DOMContentLoaded", function() {
     });
     scrubberObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-playing'] });
 
+    // --- Event modal: fast prev/next with local frame cache ---
+    // Problem: the modal image is a Shiny output that can feel laggy when clicking prev/next.
+    // Solution: keep a tiny in-memory cache of frames (by index) and swap the <img> src
+    // immediately on click while still letting Shiny process the click for authoritative state.
+    (function() {
+        const CACHE_MAX_PER_EVENT = 64;
+        const THROTTLE_MS = 80;
+
+        // Cache keyed by block_id (string) => { srcByIdx: Map<number,string>, tsByIdx: Map<number,string>, lastUsed: number }
+        const eventCache = new Map();
+        let lastNavAt = 0;
+
+        function nowMs() { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(); }
+
+        function findModalFromEl(fromEl) {
+            if (!fromEl || !fromEl.closest) return document.querySelector('.modal');
+            return fromEl.closest('.modal') || document.querySelector('.modal');
+        }
+
+        function findPictureRoot(modal) {
+            if (!modal || !modal.querySelector) return null;
+            return modal.querySelector('#event_modal_picture');
+        }
+
+        function findPlayingState(modal) {
+            // Prefer server authoritative state set on scrubber wrap
+            const wrap = modal && modal.querySelector ? modal.querySelector('#event_scrubber_wrap') : null;
+            if (wrap && wrap.getAttribute) {
+                return wrap.getAttribute('data-playing') === '1';
+            }
+            // Fallback: treat disabled prev button as playing
+            const prevBtn = modal && modal.querySelector ? modal.querySelector('button[id$="btn_prev"]') : null;
+            return !!(prevBtn && prevBtn.disabled);
+        }
+
+        function getOrCreateCache(blockId) {
+            const key = String(blockId || '');
+            let entry = eventCache.get(key);
+            if (!entry) {
+                entry = { srcByIdx: new Map(), tsByIdx: new Map(), lastUsed: Date.now() };
+                eventCache.set(key, entry);
+            }
+            entry.lastUsed = Date.now();
+            return entry;
+        }
+
+        function pruneCache(entry) {
+            if (!entry || !entry.srcByIdx) return;
+            // If larger than cap, delete oldest inserted keys (Map preserves insertion order)
+            while (entry.srcByIdx.size > CACHE_MAX_PER_EVENT) {
+                const firstKey = entry.srcByIdx.keys().next().value;
+                entry.srcByIdx.delete(firstKey);
+                entry.tsByIdx.delete(firstKey);
+            }
+        }
+
+        function parseIntSafe(v, fallback) {
+            const n = parseInt(v, 10);
+            return Number.isFinite(n) ? n : fallback;
+        }
+
+        function captureCurrentFrame(modal) {
+            const root = findPictureRoot(modal);
+            if (!root) return;
+
+            const blockId = (root.closest && root.closest('[data-block-id]')) ? root.closest('[data-block-id]').getAttribute('data-block-id') : null;
+            const cache = getOrCreateCache(blockId);
+
+            const visIdx = parseIntSafe(root.getAttribute('data-vis-idx'), 0);
+            const total = parseIntSafe(root.getAttribute('data-total'), 0);
+            const nextIdx = total > 0 ? ((visIdx + 1) % total) : null;
+
+            const imgs = root.querySelectorAll('img');
+            if (imgs && imgs.length > 0) {
+                const preloadImg = root.querySelector('img[aria-hidden="true"]');
+                // Visible is the non-aria-hidden image (or last one as fallback)
+                const visibleImg = root.querySelector('img:not([aria-hidden="true"])') || imgs[imgs.length - 1];
+
+                if (visibleImg && visibleImg.getAttribute) {
+                    const src = visibleImg.getAttribute('src');
+                    if (src && typeof src === 'string' && src.startsWith('data:image')) {
+                        cache.srcByIdx.set(visIdx, src);
+                    }
+                }
+                if (preloadImg && preloadImg.getAttribute && nextIdx !== null) {
+                    const src2 = preloadImg.getAttribute('src');
+                    if (src2 && typeof src2 === 'string' && src2.startsWith('data:image')) {
+                        cache.srcByIdx.set(nextIdx, src2);
+                    }
+                }
+            }
+
+            const tsEl = modal.querySelector('#event_modal_timestamp');
+            if (tsEl && typeof tsEl.textContent === 'string') {
+                const ts = tsEl.textContent.trim();
+                if (ts) cache.tsByIdx.set(visIdx, ts);
+            }
+
+            pruneCache(cache);
+        }
+
+        function optimisticRender(modal, targetIdx) {
+            const root = findPictureRoot(modal);
+            if (!root) return false;
+
+            const total = parseIntSafe(root.getAttribute('data-total'), 0);
+            if (!Number.isFinite(targetIdx) || total <= 0) return false;
+
+            const blockId = (root.closest && root.closest('[data-block-id]')) ? root.closest('[data-block-id]').getAttribute('data-block-id') : null;
+            const cache = getOrCreateCache(blockId);
+            const src = cache.srcByIdx.get(targetIdx);
+            if (!src) return false;
+
+            // Swap visible image src immediately
+            const visibleImg = root.querySelector('img:not([aria-hidden="true"])');
+            if (visibleImg && visibleImg.setAttribute) {
+                visibleImg.setAttribute('src', src);
+            }
+
+            // Update data-vis-idx and overlays so the user sees instant feedback.
+            root.setAttribute('data-vis-idx', String(targetIdx));
+
+            const counterEl = modal.querySelector('#event_modal_counter');
+            if (counterEl) counterEl.textContent = String(targetIdx + 1) + '/' + String(total);
+
+            const tsEl = modal.querySelector('#event_modal_timestamp');
+            const ts = cache.tsByIdx.get(targetIdx);
+            if (tsEl && ts) tsEl.textContent = ts;
+
+            return true;
+        }
+
+        // Capture frames whenever the output re-renders
+        const pictureObserver = new MutationObserver(function() {
+            const modal = document.querySelector('.modal');
+            if (modal) captureCurrentFrame(modal);
+        });
+        pictureObserver.observe(document.body, { childList: true, subtree: true });
+
+        // Optimistic prev/next handlers (capture phase to run ASAP)
+        document.addEventListener('click', function(ev) {
+            const btnPrev = ev.target && ev.target.closest ? ev.target.closest('button[id$="btn_prev"]') : null;
+            const btnNext = ev.target && ev.target.closest ? ev.target.closest('button[id$="btn_next"]') : null;
+            const btn = btnPrev || btnNext;
+            if (!btn) return;
+            if (btn.disabled) return;
+
+            const modal = findModalFromEl(btn);
+            if (!modal) return;
+            if (findPlayingState(modal)) return;
+
+            const t = nowMs();
+            if ((t - lastNavAt) < THROTTLE_MS) return;
+            lastNavAt = t;
+
+            // Ensure cache is up-to-date before computing target
+            captureCurrentFrame(modal);
+
+            const root = findPictureRoot(modal);
+            if (!root) return;
+            const visIdx = parseIntSafe(root.getAttribute('data-vis-idx'), 0);
+            const total = parseIntSafe(root.getAttribute('data-total'), 0);
+            if (total <= 0) return;
+
+            const targetIdx = btnPrev ? ((visIdx - 1 + total) % total) : ((visIdx + 1) % total);
+            optimisticRender(modal, targetIdx);
+        }, true);
+    })();
+
     // --- Reload debug helpers ---
     // Stores recent reload attempts in sessionStorage so mobile debugging is possible even after a reload.
     const RELOAD_DEBUG_KEY = 'kittyhack_reload_debug_v1';

@@ -2618,7 +2618,7 @@ def server(input, output, session):
                         icon_svg("circle-info", margin_left="-0.1em", margin_right="auto"),
                         _("The individual configuration per cat can be set in the CATS section. Note that this is a beta feature and may not work completely reliably."),
                         id="tooltip_configure_per_cat_quick",
-                        options={"trigger": "hover"},
+                        options={"trigger": "hover click"},
                     ),
                     style_="position: absolute; top: 6px; right: 10px;"
                 ),

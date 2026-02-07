@@ -761,11 +761,11 @@ def btn_yolo_modify():
 @module.server
 def show_event_server(input, output, session, block_id: int):
 
-    # Use standard Python list to store pictures and current frame index
-    pictures = []
-    orig_pictures = []
+    # Use standard Python list to store frame IDs (int) and current frame index
+    # Images are served directly from disk via /thumb/<id>.jpg (see app.py mounts).
+    pictures: list[int] = []
     timestamps = []
-    photo_ids = []
+    photo_ids: list[int | None] = []
     # Store lists of DetectedObjects, one list per event
     event_datas: List[List[DetectedObject]] = []
     frame_index = [0]  # 0-based index into pictures (kept non-reactive to avoid feedback loops)
@@ -1044,9 +1044,8 @@ def show_event_server(input, output, session, block_id: int):
 
         event = db_get_photos_by_block_id(CONFIG['KITTYHACK_DATABASE_PATH'], block_id, picture_type)
         
-        # Clear the pictures list
+        # Clear modal state
         pictures.clear()
-        orig_pictures.clear()
         timestamps.clear()
         event_datas.clear()
         photo_ids.clear()
@@ -1055,57 +1054,56 @@ def show_event_server(input, output, session, block_id: int):
         async def process_event_row(row):
             try:
                 event_text = row['event_text']
-                
-                # Handle thumbnail data correctly
-                if row['thumbnail'] is not None:
-                    # If thumbnail already exists in the row, use it directly
-                    thumbnail_bytes = row['thumbnail']
-                else:
-                    # Generate thumbnail and store it in the database
-                    thumbnail_bytes = get_thubmnail_by_id(database=CONFIG['KITTYHACK_DATABASE_PATH'], photo_id=row['id'])
-                
-                if thumbnail_bytes:
-                    # Ensure we're encoding bytes, not a string
-                    if isinstance(thumbnail_bytes, str):
-                        try:
-                            # Convert string to bytes if needed (in case it's a base64 string)
-                            thumbnail_bytes = base64.b64decode(thumbnail_bytes)
-                        except:
-                            logging.error(f"Failed to decode thumbnail string for photo ID {row['id']}")
-                            thumbnail_bytes = None
-                    
-                    if thumbnail_bytes:
-                        # Encode the bytes to base64 and then to string for HTML
-                        pictures.append(base64.b64encode(thumbnail_bytes).decode('utf-8'))
-                    orig_pictures.append(row[blob_picture])
-                    try:
-                        photo_ids.append(int(row['id']))
-                    except Exception:
-                        photo_ids.append(None)
-                    # Convert the timestamp to the local timezone and format it
-                    try:
-                        timestamp = pd.to_datetime(row["created_at"])
-                        timestamps.append(timestamp.tz_convert(CONFIG['TIMEZONE']).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
-                    except Exception as e:
-                        logging.error(f"Failed to process timestamp: {e}")
-                        timestamps.append("")
-                    try:
-                        if event_text:
-                            event_datas.append(read_event_from_json(event_text))
-                        else:
-                            event_datas.append([])
-                    except Exception as e:
-                        logging.error(f"Failed to parse event data: {e}")
+
+                try:
+                    pid = int(row['id'])
+                except Exception:
+                    return
+
+                # Ensure a thumbnail file exists on disk (generate if missing).
+                # Avoid reading/encoding image bytes here.
+                try:
+                    thumb_path = os.path.join(THUMBNAIL_DIR, f"{pid}.jpg")
+                    if not os.path.exists(thumb_path):
+                        # Will generate and persist to THUMBNAIL_DIR if needed.
+                        get_thubmnail_by_id(database=CONFIG['KITTYHACK_DATABASE_PATH'], photo_id=pid)
+                except Exception:
+                    pass
+
+                pictures.append(pid)
+                photo_ids.append(pid)
+
+                # Convert the timestamp to the local timezone and format it
+                try:
+                    timestamp = pd.to_datetime(row["created_at"])
+                    timestamps.append(timestamp.tz_convert(CONFIG['TIMEZONE']).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+                except Exception as e:
+                    logging.error(f"Failed to process timestamp: {e}")
+                    timestamps.append("")
+
+                try:
+                    if event_text:
+                        event_datas.append(read_event_from_json(event_text))
+                    else:
                         event_datas.append([])
+                except Exception as e:
+                    logging.error(f"Failed to parse event data: {e}")
+                    event_datas.append([])
             except Exception as e:
                 logging.error(f"Failed to encode picture: {e}")
 
         # Process the event rows asynchronously
         await asyncio.gather(*(process_event_row(row) for x, row in event.iterrows()))
 
-        # Sort the pictures, timestamps, event_datas, and orig_pictures lists by the timestamps
-        sorted_data = sorted(zip(timestamps, pictures, event_datas, orig_pictures), key=lambda x: x[0])
-        timestamps[:], pictures[:], event_datas[:], orig_pictures[:] = zip(*sorted_data)
+        # Sort the timestamps, picture IDs, and event_datas lists by timestamps
+        if len(timestamps) > 0:
+            sorted_data = sorted(zip(timestamps, pictures, event_datas, photo_ids), key=lambda x: x[0])
+            timestamps[:], pictures[:], event_datas[:], photo_ids[:] = zip(*sorted_data)
+            # zip() returns tuples
+            pictures[:] = list(pictures)
+            photo_ids[:] = list(photo_ids)
+            event_datas[:] = list(event_datas)
+            timestamps[:] = list(timestamps)
 
         # Initialize double-buffer state for the slideshow: visible + preload
         frame_index[0] = 0
@@ -1279,8 +1277,12 @@ def show_event_server(input, output, session, block_id: int):
             if len(pictures) > 0:
                 vis_idx = int(frame_index[0] or 0) % len(pictures)
                 next_idx = (vis_idx + 1) % len(pictures)
-                visible_b64 = pictures[vis_idx]
-                preload_b64 = pictures[next_idx] if len(pictures) > 1 else None
+
+                visible_pid = int(pictures[vis_idx])
+                preload_pid = int(pictures[next_idx]) if len(pictures) > 1 else None
+
+                visible_src = f"/thumb/{visible_pid}.jpg"
+                preload_src = f"/thumb/{preload_pid}.jpg" if preload_pid is not None else None
 
                 # Keep the scrubber synced to the currently visible frame while playing.
                 # Do not use scrubber_suppress here: periodic updates may not always
@@ -1304,13 +1306,10 @@ def show_event_server(input, output, session, block_id: int):
 
                 img_html = f'<div style="{container_style}">'
                 # Bottom (preloaded)
-                if preload_b64:
-                    img_html += f'<img src="data:image/jpeg;base64,{preload_b64}" style="{back_style}" aria-hidden="true" />'
+                if preload_src:
+                    img_html += f'<img src="{preload_src}" style="{back_style}" aria-hidden="true" />'
                 # Top (visible)
-                if visible_b64:
-                    img_html += f'<img src="data:image/jpeg;base64,{visible_b64}" style="{front_style}" />'
-                else:
-                    img_html += '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
+                img_html += f'<img src="{visible_src}" style="{front_style}" />'
 
                 # Overlays for detections (use visible index)
                 if vis_idx is not None:
@@ -1400,7 +1399,6 @@ def show_event_server(input, output, session, block_id: int):
         ui.modal_remove()
         # Clear pictures and timestamps lists and reset frame index
         pictures.clear()
-        orig_pictures.clear()
         timestamps.clear()
         event_datas.clear()
         photo_ids.clear()
@@ -1445,11 +1443,19 @@ def show_event_server(input, output, session, block_id: int):
             except Exception:
                 img_bytes = None
 
-            # Fallback to the DB blob loaded for the modal
-            if img_bytes is None and int(vis_idx) < len(orig_pictures):
-                ob = orig_pictures[int(vis_idx)]
-                if isinstance(ob, (bytes, bytearray)) and len(ob) > 0:
-                    img_bytes = bytes(ob)
+            # Fallback: legacy DB BLOB for older rows (if file not present)
+            if img_bytes is None:
+                try:
+                    df = read_df_from_database(
+                        CONFIG['KITTYHACK_DATABASE_PATH'],
+                        f"SELECT original_image FROM events WHERE id = {int(pid)}",
+                    )
+                    if not df.empty:
+                        ob = df.iloc[0].get('original_image')
+                        if isinstance(ob, (bytes, bytearray)) and len(ob) > 0:
+                            img_bytes = bytes(ob)
+                except Exception:
+                    pass
 
             if not isinstance(img_bytes, (bytes, bytearray)) or len(img_bytes) == 0:
                 raise RuntimeError("No image bytes")
@@ -1475,7 +1481,6 @@ def show_event_server(input, output, session, block_id: int):
         ui.modal_remove()
         # Clear pictures and timestamps lists and reset frame index
         pictures.clear()
-        orig_pictures.clear()
         timestamps.clear()
         frame_index[0] = 0
 

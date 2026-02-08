@@ -351,13 +351,13 @@ document.addEventListener("DOMContentLoaded", function() {
 
                 if (visibleImg && visibleImg.getAttribute) {
                     const src = visibleImg.getAttribute('src');
-                    if (src && typeof src === 'string' && src.startsWith('data:image')) {
+                    if (src && typeof src === 'string' && (src.startsWith('data:image') || src.startsWith('blob:'))) {
                         cache.srcByIdx.set(visIdx, src);
                     }
                 }
                 if (preloadImg && preloadImg.getAttribute && nextIdx !== null) {
                     const src2 = preloadImg.getAttribute('src');
-                    if (src2 && typeof src2 === 'string' && src2.startsWith('data:image')) {
+                    if (src2 && typeof src2 === 'string' && (src2.startsWith('data:image') || src2.startsWith('blob:'))) {
                         cache.srcByIdx.set(nextIdx, src2);
                     }
                 }

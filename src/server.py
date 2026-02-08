@@ -14,6 +14,7 @@ import subprocess
 import re
 import hashlib
 import asyncio
+import tarfile
 from io import BytesIO
 import zipfile
 import uuid
@@ -704,6 +705,87 @@ def show_event_server(input, output, session, block_id: int):
     fallback_mode = [False]
     slideshow_running = reactive.Value(True)
     scrubber_suppress = reactive.Value(0)  # suppress server-side reactions to programmatic scrubber updates
+    bundle_url = [None]  # optional: /thumb/... tar.gz that contains all thumbnails for this event
+
+    def _event_bundle_rel_url(block_id: int) -> str:
+        # Served via static_assets mapping in app.py: "/thumb" -> THUMBNAIL_DIR.
+        # We store bundles in a subfolder to avoid collisions with <id>.jpg.
+        # Use a plain .tar
+        return f"/thumb/bundles/event_{int(block_id)}.tar"
+
+    def _event_bundle_fs_path(block_id: int) -> str:
+        bundles_dir = os.path.join(THUMBNAIL_DIR, "bundles")
+        os.makedirs(bundles_dir, exist_ok=True)
+        return os.path.join(bundles_dir, f"event_{int(block_id)}.tar")
+
+    def _ensure_event_bundle_file(block_id: int, pids: list[int]) -> str | None:
+        """Create/update a tar containing all thumbnail JPGs for an event.
+
+        Returns the URL path (under /thumb) or None if creation fails.
+        """
+        try:
+            pids_int = [int(x) for x in (pids or [])]
+        except Exception:
+            pids_int = []
+
+        if not pids_int or len(pids_int) < 2:
+            return None
+
+        bundle_path = _event_bundle_fs_path(block_id)
+
+        # Rebuild bundle only if missing or older than any contained thumbnail.
+        newest_thumb_mtime = 0.0
+        thumb_paths: list[tuple[int, str]] = []
+        for pid in pids_int:
+            try:
+                thumb_path = os.path.join(THUMBNAIL_DIR, f"{pid}.jpg")
+                if not os.path.exists(thumb_path):
+                    # Generate if missing (legacy rows).
+                    get_thubmnail_by_id(database=CONFIG['KITTYHACK_DATABASE_PATH'], photo_id=pid)
+                if os.path.exists(thumb_path):
+                    thumb_paths.append((pid, thumb_path))
+                    newest_thumb_mtime = max(newest_thumb_mtime, float(os.path.getmtime(thumb_path)))
+            except Exception:
+                continue
+
+        if not thumb_paths:
+            return None
+
+        try:
+            if os.path.exists(bundle_path):
+                try:
+                    if float(os.path.getmtime(bundle_path)) >= newest_thumb_mtime and os.path.getsize(bundle_path) > 0:
+                        return _event_bundle_rel_url(block_id)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        tmp_path = bundle_path + ".tmp"
+        try:
+            # Build tar: entries are <pid>.jpg. Keep it simple for the JS tar parser.
+            with tarfile.open(tmp_path, mode="w") as tf:
+                for pid, thumb_path in thumb_paths:
+                    try:
+                        tf.add(thumb_path, arcname=f"{pid}.jpg", recursive=False)
+                    except Exception:
+                        continue
+
+            # Atomic-ish replace
+            try:
+                os.replace(tmp_path, bundle_path)
+            except Exception:
+                shutil.move(tmp_path, bundle_path)
+
+            return _event_bundle_rel_url(block_id)
+        except Exception as e:
+            logging.debug(f"Failed creating event bundle for block_id={block_id}: {e}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+            return None
 
     def _suppress_next_scrubber_events(count: int = 1) -> None:
         try:
@@ -1040,6 +1122,13 @@ def show_event_server(input, output, session, block_id: int):
         frame_index[0] = 0
         _bump_frame_tick()
 
+        # Optional optimization: build a single tar.gz containing all thumbnails.
+        # The browser can fetch & unpack once and then swap <img> sources to blob: URLs.
+        try:
+            bundle_url[0] = await asyncio.to_thread(_ensure_event_bundle_file, block_id, list(pictures))
+        except Exception:
+            bundle_url[0] = None
+
         if int(CONFIG['SHOW_IMAGES_WITH_OVERLAY']):
             overlay_icon = icon_svg('border-all', margin_left="0", margin_right="0")
         else:
@@ -1068,7 +1157,10 @@ def show_event_server(input, output, session, block_id: int):
                             class_="event-modal-picture-wrap",
                         ),
                         id="event_modal_root",
-                        **{"data-block-id": str(block_id)},
+                        **{
+                            "data-block-id": str(block_id),
+                            "data-bundle-url": str(bundle_url[0] or ""),
+                        },
                     ),
                     ui.card_footer(
                         ui.div(
@@ -1206,9 +1298,9 @@ def show_event_server(input, output, session, block_id: int):
                 img_html = f'<div style="{container_style}">'
                 # Bottom (preloaded)
                 if preload_src:
-                    img_html += f'<img src="{preload_src}" style="{back_style}" aria-hidden="true" />'
+                    img_html += f'<img data-src="{preload_src}" data-pid="{preload_pid}" style="{back_style}" aria-hidden="true" />'
                 # Top (visible)
-                img_html += f'<img src="{visible_src}" data-role="visible" style="{front_style}" />'
+                img_html += f'<img data-src="{visible_src}" data-role="visible" data-pid="{visible_pid}" style="{front_style}" />'
 
                 # Overlays for detections (use visible index)
                 if vis_idx is not None:

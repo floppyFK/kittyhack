@@ -39,6 +39,31 @@ THUMBNAIL_DIR = "/root/pictures/thumbnails"
 os.makedirs(ORIGINAL_IMAGE_DIR, exist_ok=True)
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
+# Event frame bundles (generated on-demand for the event modal)
+EVENT_BUNDLE_DIR = os.path.join(THUMBNAIL_DIR, "bundles")
+os.makedirs(EVENT_BUNDLE_DIR, exist_ok=True)
+
+def _event_bundle_paths(block_id: int) -> List[str]:
+    """Return possible bundle paths for a block (supports legacy .tar.gz and current .tar)."""
+    bid = int(block_id)
+    return [
+        os.path.join(EVENT_BUNDLE_DIR, f"event_{bid}.tar"),
+        os.path.join(EVENT_BUNDLE_DIR, f"event_{bid}.tar.gz"),
+    ]
+
+def _remove_event_bundle_files(block_ids: Iterable[int]) -> int:
+    removed = 0
+    for bid in set(int(b) for b in block_ids if b is not None):
+        for p in _event_bundle_paths(bid):
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+                    removed += 1
+                    logging.debug(f"[DATABASE] Removed event bundle file '{p}'.")
+            except Exception as e:
+                logging.warning(f"[DATABASE] Failed removing event bundle for block_id {bid} ('{p}'): {e}")
+    return removed
+
 def _original_image_path(image_id: int) -> str:
     return os.path.join(ORIGINAL_IMAGE_DIR, f"{image_id}.jpg")
 
@@ -830,11 +855,26 @@ def delete_photo_by_id(database: str, photo_id: int) -> Result:
     This function deletes a specific dataframe based on the ID from the source database
     and removes the corresponding image files from the filesystem.
     """
+    # Fetch block_id first so we can invalidate its bundle.
+    block_id: int | None = None
+    try:
+        df_block = read_df_from_database(database, f"SELECT block_id FROM events WHERE id = {photo_id}")
+        if not df_block.empty and 'block_id' in df_block.columns:
+            block_id = int(df_block.iloc[0]['block_id'])
+    except Exception as e:
+        logging.debug(f"[DATABASE] Failed reading block_id for photo ID {photo_id}: {e}")
+
     stmt = f"UPDATE events SET original_image = NULL, modified_image = NULL, thumbnail = NULL, deleted = 1 WHERE id = {photo_id}"
     result = write_stmt_to_database(database, stmt)
     if result.success is True:
         removed_orig, removed_thumb = _remove_event_image_files([photo_id])
-        logging.info(f"[DATABASE] Photo with ID '{photo_id}' deleted (filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}).")
+        removed_bundles = 0
+        if block_id is not None:
+            removed_bundles = _remove_event_bundle_files([block_id])
+        logging.info(
+            f"[DATABASE] Photo with ID '{photo_id}' deleted "
+            f"(filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}, bundles={removed_bundles})."
+        )
     return result
 
 def delete_photos_by_block_id(database: str, block_id: int) -> Result:
@@ -850,7 +890,11 @@ def delete_photos_by_block_id(database: str, block_id: int) -> Result:
     result = write_stmt_to_database(database, stmt)
     if result.success is True:
         removed_orig, removed_thumb = _remove_event_image_files(ids)
-        logging.info(f"[DATABASE] Photos with block ID '{block_id}' deleted (filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}).")
+        removed_bundles = _remove_event_bundle_files([block_id])
+        logging.info(
+            f"[DATABASE] Photos with block ID '{block_id}' deleted "
+            f"(filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}, bundles={removed_bundles})."
+        )
     return result
 
 def create_json_from_event(detected_objects: List[DetectedObject]) -> str:
@@ -984,19 +1028,28 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
         if 'MAX_PHOTOS_COUNT' in CONFIG and total_photos > CONFIG['MAX_PHOTOS_COUNT']:
             excess_photos = total_photos - CONFIG['MAX_PHOTOS_COUNT']
             logging.info(f"[DATABASE] Number of photos exceeds limit. Deleting {excess_photos} oldest photos.")
-            cursor.execute(f"SELECT id, created_at FROM events WHERE deleted != 1 ORDER BY created_at ASC LIMIT {excess_photos}")
+            cursor.execute(f"SELECT id, created_at, block_id FROM events WHERE deleted != 1 ORDER BY created_at ASC LIMIT {excess_photos}")
             photos_to_delete = cursor.fetchall()
             ids_to_purge: List[int] = []
+            blocks_to_invalidate: List[int] = []
             for photo in photos_to_delete:
                 photo_id = photo[0]
                 logging.debug(f"[DATABASE] Deleting photo ID: {photo_id}, created_at: {photo[1]}")
+                try:
+                    blocks_to_invalidate.append(int(photo[2]))
+                except Exception:
+                    pass
                 cursor.execute("UPDATE events SET deleted = 1, original_image = NULL, modified_image = NULL, thumbnail = NULL WHERE id = ?", (photo_id,))
                 ids_to_purge.append(photo_id)
 
             # Remove filesystem-stored original image and thumbnail for purged IDs
             if ids_to_purge:
                 removed_orig, removed_thumb = _remove_event_image_files(ids_to_purge)
-                logging.info(f"[DATABASE] Purged oldest photos (filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}).")
+                removed_bundles = _remove_event_bundle_files(blocks_to_invalidate)
+                logging.info(
+                    f"[DATABASE] Purged oldest photos "
+                    f"(filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}, bundles={removed_bundles})."
+                )
 
         conn.commit()
         conn.close()
@@ -1034,6 +1087,8 @@ def cleanup_orphan_image_files(database: str) -> Result:
             cursor = conn.cursor()
             cursor.execute("SELECT id FROM events WHERE deleted != 1")
             valid_ids = set(int(r[0]) for r in cursor.fetchall())
+            cursor.execute("SELECT DISTINCT block_id FROM events WHERE deleted != 1")
+            valid_block_ids = set(int(r[0]) for r in cursor.fetchall() if r and r[0] is not None)
             conn.close()
         except Exception as e:
             logging.error(f"[ORPHAN_CLEANUP] Failed to read event IDs: {e}")
@@ -1071,8 +1126,36 @@ def cleanup_orphan_image_files(database: str) -> Result:
             except Exception as e:
                 logging.warning(f"[ORPHAN_CLEANUP] Failed removing '{path}': {e}")
 
-        logging.info(f"[ORPHAN_CLEANUP] Removed {removed} orphan image files "
-                     f"(originals: {len(orphan_originals)}, thumbnails: {len(orphan_thumbs)}).")
+        # Also remove orphan event bundles for blocks that no longer exist.
+        removed_bundles = 0
+        try:
+            for name in os.listdir(EVENT_BUNDLE_DIR):
+                if not (name.endswith('.tar') or name.endswith('.tar.gz')):
+                    continue
+                m = None
+                try:
+                    import re
+                    m = re.match(r"^event_(\d+)\.tar(?:\.gz)?$", name)
+                except Exception:
+                    m = None
+                if not m:
+                    continue
+                bid = int(m.group(1))
+                if bid in valid_block_ids:
+                    continue
+                try:
+                    os.remove(os.path.join(EVENT_BUNDLE_DIR, name))
+                    removed_bundles += 1
+                except Exception as e:
+                    logging.warning(f"[ORPHAN_CLEANUP] Failed removing bundle '{name}': {e}")
+        except Exception as e:
+            logging.warning(f"[ORPHAN_CLEANUP] Failed bundle cleanup in '{EVENT_BUNDLE_DIR}': {e}")
+
+        logging.info(
+            f"[ORPHAN_CLEANUP] Removed {removed} orphan image files "
+            f"(originals: {len(orphan_originals)}, thumbnails: {len(orphan_thumbs)}) "
+            f"and {removed_bundles} orphan bundle files."
+        )
         return Result(True, "")
     except Exception as e:
         logging.error(f"[ORPHAN_CLEANUP] Unexpected error: {e}")

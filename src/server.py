@@ -53,6 +53,7 @@ from src.helper import (
     get_used_ram_space,
     get_total_ram_space,
     fetch_github_release_notes,
+    filter_release_notes_for_language,
     sigterm_monitor
 )
 from src.database import *
@@ -94,76 +95,6 @@ def _strip_status_emoji_prefix(text: str) -> str:
             return text[len(p):].lstrip()
     return text
 
-
-def _filter_release_notes_for_language(markdown_text: str, language: str) -> str:
-    """If release notes contain both 'Deutsch' and 'English' sections, return only the configured one."""
-    if not isinstance(markdown_text, str):
-        return markdown_text
-    text = markdown_text.strip("\n")
-    if not text:
-        return markdown_text
-
-    if language not in ("de", "en"):
-        return markdown_text
-
-    wanted_label = "Deutsch" if language == "de" else "English"
-
-    # Expected style:
-    #   # vX.Y.Z - Deutsch
-    #   ...
-    #   --------
-    #   # vX.Y.Z - English
-    #   ...
-    header_re = re.compile(
-        r"^\s*#+\s*v?\d+(?:\.\d+)*\s*-\s*(Deutsch|English)\s*$",
-        flags=re.IGNORECASE,
-    )
-
-    lines = text.splitlines()
-    blocks: dict[str, tuple[int, int]] = {}
-
-    header_positions: list[tuple[int, str]] = []
-    for idx, line in enumerate(lines):
-        m = header_re.match(line)
-        if m:
-            label = m.group(1)
-            # Normalize
-            label = "Deutsch" if label.lower().startswith("de") else "English"
-            header_positions.append((idx, label))
-
-    # Only do language filtering if both sections exist.
-    labels_present = {label for _, label in header_positions}
-    if not {"Deutsch", "English"}.issubset(labels_present):
-        return markdown_text
-
-    # Build ranges from each language header until the next language header.
-    for i, (start_idx, label) in enumerate(header_positions):
-        end_idx = header_positions[i + 1][0] if i + 1 < len(header_positions) else len(lines)
-        # Store first occurrence per label.
-        blocks.setdefault(label, (start_idx, end_idx))
-
-    if wanted_label not in blocks:
-        return markdown_text
-
-    start, end = blocks[wanted_label]
-    chosen = lines[start:end]
-
-    # Trim separator-only lines around the chosen block.
-    def is_separator(s: str) -> bool:
-        s2 = (s or "").strip()
-        # Markdown horizontal rules: a line containing 3+ of -, _, or * (optionally spaced)
-        if re.fullmatch(r"[-_]{3,}", s2):
-            return True
-        if re.fullmatch(r"\*{3,}", s2):
-            return True
-        return False
-
-    while chosen and is_separator(chosen[0]):
-        chosen.pop(0)
-    while chosen and is_separator(chosen[-1]):
-        chosen.pop()
-
-    return "\n".join(chosen).strip("\n") or markdown_text
 
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
 
@@ -3501,7 +3432,8 @@ def server(input, output, session):
                             label=_("Save all changes"),
                             icon=icon_svg("floppy-disk")
                         ),
-                        style_="background: rgba(240, 240, 240, 0.9); text-align: center;"
+                        class_="sticky-action-well",
+                        style_="text-align: center;"
                     ),
                     draggable=False, width="100%", left="0px", right="0px", bottom="0px", fixed=True,
                 ),
@@ -4316,7 +4248,7 @@ def server(input, output, session):
                 ui.HTML(f"""
                     <button class="collapsible-header-btn btn" type="button" data-bs-toggle="collapse" data-bs-target="#{section_id}_body" aria-expanded="false" aria-controls="{section_id}_body">
                         <span class="collapsible-chevron">&#9654;</span>
-                        {title}
+                        <span class="collapsible-title">{title}</span>
                     </button>
                     <div class="collapsible-section-intro">{intro}</div>
                 """),
@@ -4349,7 +4281,7 @@ def server(input, output, session):
                 {button_label}
             </button>
             <div id="toggle_{id_suffix}_body" class="collapse info-toggle-body" style="margin-top:6px;">
-                <div class="kh-info-box" style="color: grey; font-size:0.9rem; line-height:1.35;">
+                <div class="kh-info-box">
                 {ui.markdown(body_md)}
                 </div>
             </div>
@@ -5901,7 +5833,7 @@ def server(input, output, session):
             try:
                 # Fetch the release notes of the latest version
                 release_notes = fetch_github_release_notes(latest_version)
-                release_notes = _filter_release_notes_for_language(release_notes, CONFIG.get('LANGUAGE', 'en'))
+                release_notes = filter_release_notes_for_language(release_notes, CONFIG.get('LANGUAGE', 'en'))
                 ui_update_kittyhack = ui.div(
                     ui.markdown("**" + _("Release Notes for") + " " + latest_version + ":**"),
                     ui.div(

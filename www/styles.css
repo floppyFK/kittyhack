@@ -185,10 +185,25 @@ html[data-bs-theme="dark"] .spinner {
 }
 
 .kh-info-box {
-    border-left: 4px solid #ddd;
+    border-left: 4px solid rgba(108, 117, 125, 0.35);
     padding: 8px 12px;
-    background: #f9f9f9;
-    border-radius: 4px;
+    background: rgba(248, 249, 250, 0.95);
+    border-radius: 6px;
+    color: var(--bs-body-color);
+    font-size: 0.9rem;
+    line-height: 1.35;
+}
+
+html[data-bs-theme="dark"] .kh-info-box {
+    border-left-color: rgba(255, 255, 255, 0.16);
+    background: rgba(33, 37, 41, 0.92);
+    color: rgba(248, 249, 250, 0.92);
+}
+
+/* Allow info toggle button labels to wrap on mobile */
+.info-toggle-btn {
+    white-space: normal !important;
+    text-align: left;
 }
 
 .info-toggle-btn[aria-expanded="true"] .toggle-chevron {
@@ -529,6 +544,8 @@ html[data-bs-theme="dark"] .event-modal-picture-spinner {
     --kh-scrubber-marker-prey: #ef4444; /* red-500 */
     --kh-scrubber-marker-prey-soft: #fca5a5; /* red-300 */
     --kh-scrubber-marker-other: #22c55e; /* green-500 */
+    /* Inset marker overlay slightly to match the slider's real track width */
+    --kh-scrubber-inset: 6px;
 }
 
 html[data-bs-theme="dark"] #event_scrubber_wrap {
@@ -584,12 +601,14 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
 /* Marker overlay for labeled frames */
 #event_scrubber_wrap .event-scrubber-markers {
     position: absolute;
-    left: 0;
-    right: 0;
+    left: var(--kh-scrubber-inset);
+    right: var(--kh-scrubber-inset);
     top: 0;
     bottom: 0;
     pointer-events: none;
     z-index: 3;
+    overflow: hidden;
+    border-radius: 9999px;
 }
 
 /* Align marker segments with the track (match the .irs-line top/height) */
@@ -605,6 +624,8 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
     min-width: 10px;
     height: 2px;
     opacity: 0.85;
+    /* Center the min-width segment on its position */
+    transform: translateX(-50%);
 }
 
 /* Two-lane layout: prey lane above, other lane below */
@@ -868,11 +889,18 @@ html[data-bs-theme="dark"] .date-separator-row td {
     font-weight: 400;
     color: #212529;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     transition: background 0.2s;
     border-radius: 0.5rem 0.5rem 0 0;
     border-bottom: none;
     margin-bottom: 0;
+    white-space: normal !important;
+}
+
+.collapsible-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: normal;
 }
 .collapsible-header-btn:hover, .collapsible-header-btn:focus {
     background: #e9ecef;
@@ -883,6 +911,8 @@ html[data-bs-theme="dark"] .date-separator-row td {
     margin-right: 0.7em;
     transition: transform 0.3s;
     font-size: 1.2em;
+    flex: 0 0 auto;
+    margin-top: 0.1em;
 }
 .collapsible-header-btn[aria-expanded="true"] .collapsible-chevron {
     transform: rotate(90deg);

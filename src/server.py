@@ -1216,6 +1216,7 @@ def show_event_server(input, output, session, block_id: int):
                 ),
                 footer=ui.div(
                     ui.input_action_button("modal_pulse", "", style_="visibility:hidden; width:1px; height:1px;"),
+                    ui.input_action_button("img_loaded_pulse", "", style_="visibility:hidden; width:1px; height:1px;"),
                     ui.HTML("""
                         <script>
                         (function() {
@@ -1243,6 +1244,118 @@ def show_event_server(input, output, session, block_id: int):
                                 observer.observe(modal, { attributes: true, attributeOldValue: true });
                             }
                             setupPulseObserver();
+
+                            // Event modal image loading observer:
+                            // - keeps modal height stable (CSS aspect-ratio on wrapper)
+                            // - keeps previous image visible as wrapper background while the next loads
+                            // - only advances the slideshow when the current frame is confirmed loaded
+                            (function setupEventImageObserver() {
+                                var stopped = false;
+
+                                function getEl(sel) {
+                                    try { return document.querySelector(sel); } catch (e) { return null; }
+                                }
+
+                                function attachOnce() {
+                                    if (stopped) return;
+
+                                    var wrap = document.getElementById('event_modal_picture_wrap');
+                                    var pic = document.getElementById('event_modal_picture');
+                                    var img = getEl('#event_modal_picture img[data-role="visible"]');
+                                    var pulseBtn = getEl('button[id$="img_loaded_pulse"]');
+
+                                    // Stop polling when modal is gone
+                                    if (!document.querySelector('.modal')) {
+                                        stopped = true;
+                                        return;
+                                    }
+
+                                    if (!wrap || !pic || !img || !pulseBtn) {
+                                        return;
+                                    }
+
+                                    var playing = (pic.getAttribute('data-playing') === '1');
+                                    var src = img.getAttribute('src') || '';
+                                    if (!src) return;
+
+                                    // Detect src changes across server re-renders (DOM replacement)
+                                    var currentSrc = wrap.getAttribute('data-current-src') || '';
+                                    var shownSrc = wrap.getAttribute('data-shown-src') || '';
+
+                                    if (currentSrc !== src) {
+                                        wrap.setAttribute('data-current-src', src);
+                                        // Keep old visible as background until new is loaded
+                                        if (shownSrc) {
+                                            try {
+                                                wrap.style.backgroundImage = 'url(' + shownSrc + ')';
+                                            } catch (e) {}
+                                        }
+                                        wrap.classList.remove('has-image');
+                                    }
+
+                                    function maybePulseLoaded() {
+                                        if (!playing) return;
+                                        var lastAck = wrap.getAttribute('data-last-ack-src') || '';
+                                        if (lastAck === src) return;
+                                        wrap.setAttribute('data-last-ack-src', src);
+                                        try { pulseBtn.click(); } catch (e) {}
+                                    }
+
+                                    function maybeSetAspectRatio() {
+                                        // Set aspect ratio once per modal/event based on the first image.
+                                        try {
+                                            if (wrap.getAttribute('data-aspect-set') === '1') return;
+                                            var w = img.naturalWidth || 0;
+                                            var h = img.naturalHeight || 0;
+                                            if (w > 0 && h > 0) {
+                                                // CSS aspect-ratio syntax: "W / H"
+                                                wrap.style.aspectRatio = String(w) + ' / ' + String(h);
+                                                wrap.setAttribute('data-aspect-set', '1');
+                                            }
+                                        } catch (e) {}
+                                    }
+
+                                    // (Re)attach handlers for this img element
+                                    if (!img.__kittyhackBound) {
+                                        img.__kittyhackBound = true;
+                                        img.addEventListener('load', function() {
+                                            try {
+                                                maybeSetAspectRatio();
+                                                wrap.classList.add('has-image');
+                                                wrap.setAttribute('data-shown-src', src);
+                                                wrap.style.backgroundImage = '';
+                                            } catch (e) {}
+                                            maybePulseLoaded();
+                                        });
+                                        img.addEventListener('error', function() {
+                                            // Don't stall the slideshow forever on a failed request.
+                                            try {
+                                                wrap.classList.add('has-image');
+                                                // Keep background (previous shownSrc) if any
+                                            } catch (e) {}
+                                            maybePulseLoaded();
+                                        });
+                                    }
+
+                                    // If already loaded (from cache), ensure state is updated and pulse once if playing
+                                    try {
+                                        if (img.complete && img.naturalWidth > 0) {
+                                            maybeSetAspectRatio();
+                                            wrap.classList.add('has-image');
+                                            wrap.setAttribute('data-shown-src', src);
+                                            wrap.style.backgroundImage = '';
+                                            maybePulseLoaded();
+                                        }
+                                    } catch (e) {}
+                                }
+
+                                function poll() {
+                                    if (stopped) return;
+                                    try { attachOnce(); } catch (e) {}
+                                    setTimeout(poll, 250);
+                                }
+                                poll();
+                            })();
                         })();
                         </script>
                     """)
@@ -1263,11 +1376,7 @@ def show_event_server(input, output, session, block_id: int):
     
     @render.text
     def show_event_picture():
-        # When playing we re-render periodically; when paused we only re-render on explicit events.
-        if slideshow_running.get():
-            reactive.invalidate_later(0.2)
-
-        # Dependency hook for manual navigation while paused
+        # Dependency hook for explicit navigation / slideshow advances
         try:
             frame_tick.get()
         except Exception:
@@ -1299,17 +1408,18 @@ def show_event_server(input, output, session, block_id: int):
                     except Exception:
                         pass
 
-                # Build layered image HTML
-                container_style = 'position: relative; display: inline-block; width: 100%; max-width: 800px;'
-                front_style = 'position: relative; display: block; width: 100%; height: auto; min-width: 250px; z-index: 2;'
-                back_style = 'position: absolute; top: 0; left: 0; width: 100%; height: auto; z-index: 1; pointer-events: none;'
+                # Build layered image HTML.
+                # The wrapper (#event_modal_picture_wrap) defines stable dimensions (CSS aspect-ratio).
+                container_style = 'position: relative; display: block; width: 100%; height: 100%;'
+                front_style = 'position: relative; display: block; width: 100%; height: 100%; object-fit: contain; z-index: 2;'
+                back_style = 'position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 1; pointer-events: none;'
 
                 img_html = f'<div style="{container_style}">'
                 # Bottom (preloaded)
                 if preload_src:
                     img_html += f'<img src="{preload_src}" style="{back_style}" aria-hidden="true" />'
                 # Top (visible)
-                img_html += f'<img src="{visible_src}" style="{front_style}" />'
+                img_html += f'<img src="{visible_src}" data-role="visible" style="{front_style}" />'
 
                 # Overlays for detections (use visible index)
                 if vis_idx is not None:
@@ -1318,7 +1428,7 @@ def show_event_server(input, output, session, block_id: int):
                     # Expose state for optional client-side caching/optimistic UI
                     img_html = img_html.replace(
                         '<div style="' + container_style + '">',
-                        f'<div id="event_modal_picture" data-vis-idx="{vis_idx}" data-total="{len(pictures)}" data-overlay="{1 if overlay_on else 0}" style="{container_style}">' 
+                        f'<div id="event_modal_picture" data-vis-idx="{vis_idx}" data-total="{len(pictures)}" data-overlay="{1 if overlay_on else 0}" data-playing="{1 if bool(slideshow_running.get()) else 0}" style="{container_style}">' 
                     )
 
                     if overlay_on:
@@ -1388,10 +1498,39 @@ def show_event_server(input, output, session, block_id: int):
             logging.error(f"Failed to show the picture for event: {e}")
             img_html = '<div class="placeholder-image"><strong>' + _('An error occured while reading the image.') + '</strong></div>'
 
-        # Advance the slideshow index only when playing
-        if slideshow_running.get() and len(pictures) > 0:
-            frame_index[0] = (int(frame_index[0]) + 1) % max(len(pictures), 1)
         return ui.HTML(img_html)
+
+    @reactive.effect
+    @reactive.event(input.img_loaded_pulse)
+    def _advance_slideshow_when_loaded():
+        # Only advance while playing, and only once per loaded frame.
+        if not bool(slideshow_running.get()):
+            return
+
+        if not pictures or len(pictures) <= 1:
+            return
+
+        try:
+            vis_idx = int(frame_index[0] or 0) % len(pictures)
+            pid = int(pictures[vis_idx])
+        except Exception:
+            return
+
+        # Debounce duplicate pulses for the same PID (can happen on cache hits or rebinds)
+        try:
+            last_pid = int(getattr(_advance_slideshow_when_loaded, "_last_pid", -1))
+        except Exception:
+            last_pid = -1
+        if pid == last_pid:
+            return
+
+        try:
+            setattr(_advance_slideshow_when_loaded, "_last_pid", pid)
+        except Exception:
+            pass
+
+        frame_index[0] = (vis_idx + 1) % max(len(pictures), 1)
+        _bump_frame_tick()
 
     @reactive.effect
     @reactive.event(input.btn_modal_cancel, input.modal_pulse)

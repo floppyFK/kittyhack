@@ -147,6 +147,36 @@ html[data-bs-theme="dark"] .spinner {
 /* Event modal: picture loading spinner overlay */
 .event-modal-picture-wrap {
     position: relative;
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+    border-radius: .5rem;
+    overflow: hidden;
+    /* Prevent modal height collapse while the next image is still downloading */
+    aspect-ratio: 4 / 3;
+    min-height: 220px;
+    background-color: #000;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: contain;
+}
+
+/* Ensure the picture output fills the stable wrapper box */
+.event-modal-picture-wrap img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
+}
+
+/* New frame: keep it hidden until JS confirms it's loaded */
+.event-modal-picture-wrap img[data-role="visible"] {
+    opacity: 0;
+    transition: opacity 140ms ease;
+}
+
+.event-modal-picture-wrap.has-image img[data-role="visible"] {
+    opacity: 1;
 }
 
 .event-modal-picture-spinner {

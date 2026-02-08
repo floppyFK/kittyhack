@@ -120,6 +120,89 @@ def icon_svg_local(svg: str, margin_left: str | None = "auto", margin_right: str
         """
     )
 
+
+def filter_release_notes_for_language(markdown_text: str, language: str) -> str:
+    """If release notes contain both 'Deutsch' and 'English' sections, return only the configured one."""
+    if not isinstance(markdown_text, str):
+        return markdown_text
+    text = markdown_text.strip("\n")
+    if not text:
+        return markdown_text
+
+    if language not in ("de", "en"):
+        return markdown_text
+
+    wanted_label = "Deutsch" if language == "de" else "English"
+
+    # Expected style:
+    #   # vX.Y.Z - Deutsch
+    #   ...
+    #   --------
+    #   # vX.Y.Z - English
+    #   ...
+    header_re = re.compile(
+        r"^\s*#+\s*v?\d+(?:\.\d+)*\s*-\s*(Deutsch|English)\s*$",
+        flags=re.IGNORECASE,
+    )
+
+    lines = text.splitlines()
+    blocks: dict[str, tuple[int, int]] = {}
+
+    header_positions: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines):
+        m = header_re.match(line)
+        if m:
+            label = m.group(1)
+            label = "Deutsch" if label.lower().startswith("de") else "English"
+            header_positions.append((idx, label))
+
+    labels_present = {label for _, label in header_positions}
+    if not {"Deutsch", "English"}.issubset(labels_present):
+        return markdown_text
+
+    for i, (start_idx, label) in enumerate(header_positions):
+        end_idx = header_positions[i + 1][0] if i + 1 < len(header_positions) else len(lines)
+        blocks.setdefault(label, (start_idx, end_idx))
+
+    if wanted_label not in blocks:
+        return markdown_text
+
+    start, end = blocks[wanted_label]
+    chosen = lines[start:end]
+
+    def is_separator(s: str) -> bool:
+        s2 = (s or "").strip()
+        if re.fullmatch(r"[-_]{3,}", s2):
+            return True
+        if re.fullmatch(r"(?:-\s*){3,}", s2):
+            return True
+        if re.fullmatch(r"(?:_\s*){3,}", s2):
+            return True
+        if re.fullmatch(r"\*{3,}", s2):
+            return True
+        return False
+
+    def is_blank(s: str) -> bool:
+        return not (s or "").strip()
+
+    changed = True
+    while chosen and changed:
+        changed = False
+        while chosen and is_blank(chosen[0]):
+            chosen.pop(0)
+            changed = True
+        while chosen and is_blank(chosen[-1]):
+            chosen.pop()
+            changed = True
+        while chosen and is_separator(chosen[0]):
+            chosen.pop(0)
+            changed = True
+        while chosen and is_separator(chosen[-1]):
+            chosen.pop()
+            changed = True
+
+    return "\n".join(chosen).strip("\n") or markdown_text
+
 class GracefulKiller:
     def __init__(self):
         signal.signal(signal.SIGINT, self.exit_gracefully)

@@ -100,15 +100,19 @@ def icon_svg_local(svg: str, margin_left: str | None = "auto", margin_right: str
     Returns:
         htmltools.TagChild: HTML img tag with the SVG file as source
     """
-    return htmltools.img(
-        src=f"icons/{svg}.svg",
-        alt=svg,
+    # NOTE: <img src="...svg"> does not inherit `currentColor` from the page,
+    # so it won't follow light/dark theme colors. Using an SVG as a CSS mask
+    # makes it reliably tintable via `background-color: currentColor`.
+    return htmltools.span(
+        role="img",
+        aria_label=svg,
         style=f"""
-        fill:currentColor;
+        display:inline-block;
+        background-color: currentColor;
         height:1em;
-        width:1.0em;
-        object-fit: contain;
-        object-position: center;
+        width:1em;
+        -webkit-mask: url('icons/{svg}.svg') no-repeat center / contain;
+        mask: url('icons/{svg}.svg') no-repeat center / contain;
         margin-left: {margin_left};
         margin-right: {margin_right};
         position:relative;
@@ -117,7 +121,7 @@ def icon_svg_local(svg: str, margin_left: str | None = "auto", margin_right: str
         outline-width: 0px;
         margin-top: 0;
         margin-bottom: 0;
-        """
+        """,
     )
 
 

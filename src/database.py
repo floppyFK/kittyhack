@@ -361,7 +361,12 @@ def db_get_photos(database: str,
 
     return df
 
-def db_get_photos_by_block_id(database: str, block_id: int, return_data: ReturnDataPhotosDB = ReturnDataPhotosDB.all):
+def db_get_photos_by_block_id(
+    database: str,
+    block_id: int,
+    return_data: ReturnDataPhotosDB = ReturnDataPhotosDB.all,
+    ignore_deleted: bool = True,
+):
     """
     this function returns all dataframes from the 'events' table, based on the
     specified block_id.
@@ -382,7 +387,13 @@ def db_get_photos_by_block_id(database: str, block_id: int, return_data: ReturnD
     elif return_data == ReturnDataPhotosDB.only_ids:
         columns = "id"
         
-    stmt = f"SELECT {columns} FROM events WHERE block_id = {block_id}"
+    # Check if 'deleted' column exists (this column exists only in the kittyhack database)
+    columns_info = read_column_info_from_database(database, "events")
+    column_names = [info[1] for info in columns_info]
+    if 'deleted' in column_names and ignore_deleted is True:
+        stmt = f"SELECT {columns} FROM events WHERE block_id = {block_id} AND deleted != 1"
+    else:
+        stmt = f"SELECT {columns} FROM events WHERE block_id = {block_id}"
     df = read_df_from_database(database, stmt)
 
     if not df.empty and 'original_image' in df.columns:

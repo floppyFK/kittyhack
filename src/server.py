@@ -713,6 +713,19 @@ def show_event_server(input, output, session, block_id: int):
         # Use a plain .tar
         return f"/thumb/bundles/event_{int(block_id)}.tar"
 
+    def _event_bundle_versioned_url(block_id: int, bundle_path: str) -> str:
+        """Return a cache-busting bundle URL based on the file mtime.
+
+        Important: Browsers may reuse cached responses for the same URL even if the
+        underlying file was deleted/recreated. Adding a version query parameter ensures
+        a rebuilt bundle is fetched again.
+        """
+        try:
+            v = int(float(os.path.getmtime(bundle_path)) * 1000)
+        except Exception:
+            v = int(tm.time() * 1000)
+        return f"{_event_bundle_rel_url(block_id)}?v={v}"
+
     def _event_bundle_fs_path(block_id: int) -> str:
         bundles_dir = os.path.join(THUMBNAIL_DIR, "bundles")
         os.makedirs(bundles_dir, exist_ok=True)
@@ -755,7 +768,7 @@ def show_event_server(input, output, session, block_id: int):
             if os.path.exists(bundle_path):
                 try:
                     if float(os.path.getmtime(bundle_path)) >= newest_thumb_mtime and os.path.getsize(bundle_path) > 0:
-                        return _event_bundle_rel_url(block_id)
+                        return _event_bundle_versioned_url(block_id, bundle_path)
                 except Exception:
                     pass
         except Exception:
@@ -777,7 +790,7 @@ def show_event_server(input, output, session, block_id: int):
             except Exception:
                 shutil.move(tmp_path, bundle_path)
 
-            return _event_bundle_rel_url(block_id)
+            return _event_bundle_versioned_url(block_id, bundle_path)
         except Exception as e:
             logging.debug(f"Failed creating event bundle for block_id={block_id}: {e}")
             try:
@@ -1048,6 +1061,15 @@ def show_event_server(input, output, session, block_id: int):
 
         # FALLBACK: The event_text column was added in version 1.4.0. If it is not present, show the "modified_image" with baked-in event data
         event = db_get_photos_by_block_id(CONFIG['KITTYHACK_DATABASE_PATH'], block_id, ReturnDataPhotosDB.all_except_photos)
+        if event.empty:
+            # All frames may have been deleted; keep state empty and avoid index errors.
+            pictures.clear()
+            timestamps.clear()
+            event_datas.clear()
+            photo_ids.clear()
+            bundle_url[0] = None
+            return
+
         if not event.iloc[0]["event_text"]:
             fallback_mode[0] = True
             if CONFIG['SHOW_IMAGES_WITH_OVERLAY']:

@@ -1217,148 +1217,6 @@ def show_event_server(input, output, session, block_id: int):
                 footer=ui.div(
                     ui.input_action_button("modal_pulse", "", style_="visibility:hidden; width:1px; height:1px;"),
                     ui.input_action_button("img_loaded_pulse", "", style_="visibility:hidden; width:1px; height:1px;"),
-                    ui.HTML("""
-                        <script>
-                        (function() {
-                            function setupPulseObserver() {
-                                var modal = document.querySelector('.modal');
-                                var btn = document.querySelector('button[id$="modal_pulse"]');
-                                if (!modal || !btn) {
-                                    // Try again in 100ms
-                                    setTimeout(setupPulseObserver, 100);
-                                    return;
-                                }
-                                var observer = new MutationObserver(function(mutations) {
-                                    mutations.forEach(function(mutation) {
-                                        if (
-                                            mutation.type === "attributes" &&
-                                            mutation.attributeName === "class" &&
-                                            mutation.target.classList.contains("modal-static") &&
-                                            (!mutation.oldValue || !mutation.oldValue.includes("modal-static"))
-                                        ) {
-                                            btn.click();
-                                            console.log('Shiny modal_pulse button clicked');
-                                        }
-                                    });
-                                });
-                                observer.observe(modal, { attributes: true, attributeOldValue: true });
-                            }
-                            setupPulseObserver();
-
-                            // Event modal image loading observer:
-                            // - keeps modal height stable (CSS aspect-ratio on wrapper)
-                            // - keeps previous image visible as wrapper background while the next loads
-                            // - only advances the slideshow when the current frame is confirmed loaded
-                            (function setupEventImageObserver() {
-                                var stopped = false;
-
-                                function getEl(sel) {
-                                    try { return document.querySelector(sel); } catch (e) { return null; }
-                                }
-
-                                function attachOnce() {
-                                    if (stopped) return;
-
-                                    var wrap = document.getElementById('event_modal_picture_wrap');
-                                    var pic = document.getElementById('event_modal_picture');
-                                    var img = getEl('#event_modal_picture img[data-role="visible"]');
-                                    var pulseBtn = getEl('button[id$="img_loaded_pulse"]');
-
-                                    // Stop polling when modal is gone
-                                    if (!document.querySelector('.modal')) {
-                                        stopped = true;
-                                        return;
-                                    }
-
-                                    if (!wrap || !pic || !img || !pulseBtn) {
-                                        return;
-                                    }
-
-                                    var playing = (pic.getAttribute('data-playing') === '1');
-                                    var src = img.getAttribute('src') || '';
-                                    if (!src) return;
-
-                                    // Detect src changes across server re-renders (DOM replacement)
-                                    var currentSrc = wrap.getAttribute('data-current-src') || '';
-                                    var shownSrc = wrap.getAttribute('data-shown-src') || '';
-
-                                    if (currentSrc !== src) {
-                                        wrap.setAttribute('data-current-src', src);
-                                        // Keep old visible as background until new is loaded
-                                        if (shownSrc) {
-                                            try {
-                                                wrap.style.backgroundImage = 'url(' + shownSrc + ')';
-                                            } catch (e) {}
-                                        }
-                                        wrap.classList.remove('has-image');
-                                    }
-
-                                    function maybePulseLoaded() {
-                                        if (!playing) return;
-                                        var lastAck = wrap.getAttribute('data-last-ack-src') || '';
-                                        if (lastAck === src) return;
-                                        wrap.setAttribute('data-last-ack-src', src);
-                                        try { pulseBtn.click(); } catch (e) {}
-                                    }
-
-                                    function maybeSetAspectRatio() {
-                                        // Set aspect ratio once per modal/event based on the first image.
-                                        try {
-                                            if (wrap.getAttribute('data-aspect-set') === '1') return;
-                                            var w = img.naturalWidth || 0;
-                                            var h = img.naturalHeight || 0;
-                                            if (w > 0 && h > 0) {
-                                                // CSS aspect-ratio syntax: "W / H"
-                                                wrap.style.aspectRatio = String(w) + ' / ' + String(h);
-                                                wrap.setAttribute('data-aspect-set', '1');
-                                            }
-                                        } catch (e) {}
-                                    }
-
-                                    // (Re)attach handlers for this img element
-                                    if (!img.__kittyhackBound) {
-                                        img.__kittyhackBound = true;
-                                        img.addEventListener('load', function() {
-                                            try {
-                                                maybeSetAspectRatio();
-                                                wrap.classList.add('has-image');
-                                                wrap.setAttribute('data-shown-src', src);
-                                                wrap.style.backgroundImage = '';
-                                            } catch (e) {}
-                                            maybePulseLoaded();
-                                        });
-                                        img.addEventListener('error', function() {
-                                            // Don't stall the slideshow forever on a failed request.
-                                            try {
-                                                wrap.classList.add('has-image');
-                                                // Keep background (previous shownSrc) if any
-                                            } catch (e) {}
-                                            maybePulseLoaded();
-                                        });
-                                    }
-
-                                    // If already loaded (from cache), ensure state is updated and pulse once if playing
-                                    try {
-                                        if (img.complete && img.naturalWidth > 0) {
-                                            maybeSetAspectRatio();
-                                            wrap.classList.add('has-image');
-                                            wrap.setAttribute('data-shown-src', src);
-                                            wrap.style.backgroundImage = '';
-                                            maybePulseLoaded();
-                                        }
-                                    } catch (e) {}
-                                }
-
-                                function poll() {
-                                    if (stopped) return;
-                                    try { attachOnce(); } catch (e) {}
-                                    setTimeout(poll, 250);
-                                }
-                                poll();
-                            })();
-                        })();
-                        </script>
-                    """)
                 ),
                 size='l',
                 easy_close=False,
@@ -3186,13 +3044,6 @@ def server(input, output, session):
                 html += '</tr>'
 
             html += '</tbody></table>'
-            html += '''
-            <script>
-            $(document).ready(function() {
-            $('.tooltip-wrapper').tooltip();
-            });
-            </script>
-            '''
             return ui.HTML(html)
         except Exception as e:
             logging.error(f"Failed to read events from the database: {e}")
@@ -3415,36 +3266,8 @@ def server(input, output, session):
     @render.ui
     @reactive.event(reload_trigger_cats, reload_trigger_config, ignore_none=True)
     def ui_manage_cats():
-        # Add JavaScript/CSS to highlight unsaved changes in Manage Cats section
-        manage_cats_unsaved_js = ui.HTML("""
-        <script>
-        $(document).ready(function() {
-          let hasUnsavedCats = false;
-          let isInitializingCats = true;
-          $('#mng_cat_save_changes').removeClass('save-button-highlight');
-          $('#manage_cats_container .unsaved-input').removeClass('unsaved-input');
-          function highlightCatInput(el) {
-            if (!isInitializingCats) {
-              $(el).addClass('unsaved-input');
-              $('#mng_cat_save_changes').addClass('save-button-highlight');
-              hasUnsavedCats = true;
-            }
-          }
-          setTimeout(function() { isInitializingCats = false; }, 800);
-          $('#manage_cats_container').on('change input', 'input, select, textarea', function() {
-            highlightCatInput(this);
-          });
-          $(document).on('click', '#mng_cat_save_changes', function() {
-            $('#manage_cats_container .unsaved-input').removeClass('unsaved-input');
-            $('#mng_cat_save_changes').removeClass('save-button-highlight');
-            hasUnsavedCats = false;
-          });
-        });
-        </script>
-        """)
         ui_cards = []
         df_cats = db_get_cats(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataCatDB.all)
-        rfid_ids = []  # collect IDs for JS validator
         if not df_cats.empty:
             for __, data_row in df_cats.iterrows():
                 # --- Picture ---
@@ -3656,56 +3479,16 @@ def server(input, output, session):
                         class_="image-container"
                     )
                 )
-
-                rfid_ids.append(str(data_row['id']))
-
-            # Build validator JS AFTER loop
-            validator_js = ui.HTML(f"""
-            <script>
-              (function() {{
-                const ids = {rfid_ids};
-                function validate(id) {{
-                  const inp = document.getElementById('mng_cat_rfid_' + id);
-                  const box = document.getElementById('mng_cat_rfid_status_' + id);
-                  if(!inp || !box) return;
-                  const raw = (inp.value || "");
-                  const val = raw.trim();
-                  const hex = val.toUpperCase();
-                  // Debug
-                  console.log('RFID validate id=' + id + ', val=' + val + ', len=' + hex.length);
-                  if(hex === "") {{
-                    box.textContent = '{_("No RFID entered. Cat identification only via camera (if enabled). See CONFIGURATION section for details.")}';
-                    box.className = 'rfid-status rfid-empty';
-                    return;
-                  }}
-                  if (hex.length === 16 && /^[0-9A-F]{{16}}$/.test(hex)) {{
-                    box.textContent = '{_("Valid RFID")}';
-                    box.className = 'rfid-status rfid-valid';
-                  }} else {{
-                    box.textContent = '{_("Invalid RFID. Must be exactly 16 hex characters (0-9, A-F).")}';
-                    box.className = 'rfid-status rfid-invalid';
-                  }}
-                }}
-                function init() {{
-                  ids.forEach(id => {{
-                    validate(id);
-                    const inp = document.getElementById('mng_cat_rfid_' + id);
-                    if(inp) {{
-                      inp.addEventListener('input', () => validate(id));
-                      inp.addEventListener('change', () => validate(id));
-                      inp.addEventListener('blur', () => validate(id));
-                    }}
-                  }});
-                }}
-                document.addEventListener('DOMContentLoaded', init);
-                setTimeout(init, 800);
-              }})();
-            </script>
-            """)
-
             return ui.div(
-                manage_cats_unsaved_js,
-                validator_js,
+                                ui.tags.div(
+                                        {
+                                                "id": "kh_manage_cats_i18n",
+                                                "style": "display:none;",
+                                                "data-msg-empty": _("No RFID entered. Cat identification only via camera (if enabled). See CONFIGURATION section for details."),
+                                                "data-msg-valid": _("Valid RFID"),
+                                                "data-msg-invalid": _("Invalid RFID. Must be exactly 16 hex characters (0-9, A-F)."),
+                                        }
+                                ),
                 ui.div(
                     *ui_cards,
                     id="manage_cats_container",
@@ -4529,16 +4312,6 @@ def server(input, output, session):
 
     def collapsible_section(section_id, title, intro, content):
         return ui.div(
-            # Custom CSS for the collapsible section
-            ui.HTML("""
-            <script>
-            $(document).on('shown.bs.collapse hidden.bs.collapse', function(e) {
-                // Update aria-expanded attribute for accessibility and chevron rotation
-                var btn = $("[data-bs-target='#" + e.target.id + "']");
-                btn.attr("aria-expanded", $("#" + e.target.id).hasClass("show"));
-            });
-            </script>
-            """),
             ui.div(
                 ui.HTML(f"""
                     <button class="collapsible-header-btn btn" type="button" data-bs-toggle="collapse" data-bs-target="#{section_id}_body" aria-expanded="false" aria-controls="{section_id}_body">
@@ -4583,25 +4356,6 @@ def server(input, output, session):
             </div>
             """)
 
-        # Global CSS/JS for chevron rotation (added once)
-        collapsible_support = ui.HTML("""
-        <style>
-          .kh-info-toggle + .kh-info-toggle { margin-top: 8px; }
-          .kh-info-box { border-left: 4px solid #ddd; padding: 8px 12px; background:#f9f9f9; border-radius:4px; }
-          .info-toggle-btn[aria-expanded="true"] .toggle-chevron { transform:rotate(90deg); }
-        </style>
-        <script>
-          document.addEventListener('shown.bs.collapse', function(e){
-             var btn = document.querySelector('[data-bs-target="#'+e.target.id+'"]');
-             if(btn) btn.setAttribute('aria-expanded','true');
-          });
-          document.addEventListener('hidden.bs.collapse', function(e){
-             var btn = document.querySelector('[data-bs-target="#'+e.target.id+'"]');
-             if(btn) btn.setAttribute('aria-expanded','false');
-          });
-        </script>
-        """)
-
         # Build a dictionary with TFLite model versions from the tflite folder
         tflite_models = {}
         try:
@@ -4633,104 +4387,7 @@ def server(input, output, session):
         def logic_svg(name: str) -> str:
             return f"logic/{name}_{lang}.svg"
 
-        # Add JavaScript for tracking unsaved changes
-        unsaved_changes_js = ui.HTML("""
-        <script>
-        $(document).ready(function() {
-          let hasUnsavedChanges = false;
-          let isInitializing = true;
-
-          // Remove highlights on page load
-          $('#bSaveKittyhackConfig').removeClass('save-button-highlight');
-          $('#config_tab_container .unsaved-input').removeClass('unsaved-input');
-
-          // Function to highlight the changed input and save button
-          function highlightInput(element) {
-            if (!isInitializing) {
-              $(element).addClass('unsaved-input');
-              $('#bSaveKittyhackConfig').addClass('save-button-highlight');
-              hasUnsavedChanges = true;
-            }
-          }
-
-          // Function to highlight slider specifically
-          function highlightSlider(sliderId) {
-            if (!isInitializing) {
-              const sliderContainer = $(`#${sliderId}`).closest('.form-group');
-              sliderContainer.find('.irs-single').addClass('unsaved-input');
-              sliderContainer.find('.irs-bar').addClass('unsaved-input');
-              sliderContainer.find('.irs-handle').addClass('unsaved-input');
-              $('#bSaveKittyhackConfig').addClass('save-button-highlight');
-              hasUnsavedChanges = true;
-            }
-          }
-
-          // Initialization period: ignore changes for 1 second
-          setTimeout(function() {
-            isInitializing = false;
-          }, 1000);
-
-          // Only monitor inputs inside the configuration tab
-          $('#config_tab_container').on('change', 'input, select', function() {
-            highlightInput(this);
-          });
-
-          // Special handling for range sliders with direct observation of the hidden input
-          $('#config_tab_container').on('change input', 'input.js-range-slider', function() {
-            const sliderId = $(this).attr('id');
-            highlightSlider(sliderId);
-          });
-
-          // Also observe the slider handle being dragged using mousedown/mouseup events
-          $('#config_tab_container').on('mousedown touchstart', '.irs-handle', function() {
-            const slider = $(this).closest('.form-group').find('input.js-range-slider');
-            const sliderId = slider.attr('id');
-            $(this).data('dragging', true);
-            $(document).one('mouseup touchend', function() {
-              if ($(this).data('dragging')) {
-                highlightSlider(sliderId);
-                $(this).data('dragging', false);
-              }
-            });
-          });
-
-          // Monitor text inputs and textareas as they're typed in
-          $('#config_tab_container').on('input', 'input[type="text"], input[type="password"], textarea', function() {
-            highlightInput(this);
-          });
-
-          // Reset when save button is clicked
-          $(document).on('click', '#bSaveKittyhackConfig', function() {
-            $('#config_tab_container .unsaved-input').removeClass('unsaved-input');
-            $('#bSaveKittyhackConfig').removeClass('save-button-highlight');
-            hasUnsavedChanges = false;
-          });
-        });
-        </script>
-        """)
-
-        hide_unhide_ip_camera_url = ui.HTML("""
-        <script>
-        $(document).ready(function() {
-            function toggleIpCameraUrlField() {
-                if ($('#camera_source').val() === 'ip_camera') {
-                    $('#ip_camera_url_container').show();
-                    $('#ip_camera_warning').show();
-                } else {
-                    $('#ip_camera_url_container').hide();
-                    $('#ip_camera_warning').hide();
-                }
-            }
-            toggleIpCameraUrlField();
-            $('#camera_source').on('change', toggleIpCameraUrlField);
-        });
-        </script>
-        """)
-
         ui_config =  ui.div(
-            collapsible_support,
-            unsaved_changes_js,
-            hide_unhide_ip_camera_url,
             ui.div(
                 # --- General settings ---
                 ui.br(),
@@ -5145,65 +4802,6 @@ def server(input, output, session):
                                 ),
                             ),
                         ),
-                        # Shared JS/CSS for logic toggles
-                        ui.HTML(f"""
-                        <script>
-                        (function() {{
-                            function toggleSection(btnId, sectionId, hintId) {{
-                                var btn = document.getElementById(btnId);
-                                var section = document.getElementById(sectionId);
-                                var hint = document.getElementById(hintId);
-                                if (!btn || !section) return;
-                                var span = btn.querySelector('span');
-                                var showLbl = btn.getAttribute('data-show-label');
-                                var hideLbl = btn.getAttribute('data-hide-label');
-                                if (section.style.display === 'none' || section.style.display === '') {{
-                                    section.style.display = 'block';
-                                    if (hint) hint.style.display = 'block';
-                                    if (span) span.textContent = hideLbl;
-                                }} else {{
-                                    section.style.display = 'none';
-                                    if (hint) hint.style.display = 'none';
-                                    if (span) span.textContent = showLbl;
-                                }}
-                            }}
-                            function showEntryLogic(mode) {{
-                                var container = document.getElementById('entry_logic_images');
-                                if (!container) return;
-                                container.querySelectorAll('.logic-img-wrapper').forEach(function(el){{
-                                    el.style.display = (el.getAttribute('data-mode') === mode) ? 'block' : 'none';
-                                }});
-                            }}
-                            function showExitLogic(mode) {{
-                                var container = document.getElementById('exit_logic_images');
-                                if (!container) return;
-                                container.querySelectorAll('.logic-img-wrapper').forEach(function(el){{
-                                    el.style.display = (el.getAttribute('data-mode') === mode) ? 'block' : 'none';
-                                }});
-                            }}
-                            document.addEventListener('click', function(e){{
-                                if (e.target.id === 'btn_toggle_entry_logic' || e.target.closest('#btn_toggle_entry_logic')) {{
-                                    toggleSection('btn_toggle_entry_logic','entry_logic_expand','entry_logic_hint');
-                                    var sel = document.getElementById('txtAllowedToEnter');
-                                    if (sel) showEntryLogic(sel.value);
-                                }}
-                                if (e.target.id === 'btn_toggle_exit_logic' || e.target.closest('#btn_toggle_exit_logic')) {{
-                                    toggleSection('btn_toggle_exit_logic','exit_logic_expand','exit_logic_hint');
-                                    var sel2 = document.getElementById('btnAllowedToExit');
-                                    if (sel2) showExitLogic(sel2.value);
-                                }}
-                            }});
-                            document.addEventListener('change', function(e){{
-                                if (e.target.id === 'txtAllowedToEnter') {{
-                                    showEntryLogic(e.target.value);
-                                }}
-                                if (e.target.id === 'btnAllowedToExit') {{
-                                    showExitLogic(e.target.value);
-                                }}
-                            }});
-                        }})();
-                        </script>
-                        """),
                         ui.br(),
                         ui.br(),
                         ui.div(
@@ -6893,36 +6491,6 @@ def server(input, output, session):
                                 100% { transform: rotate(360deg);}
                             }
                             </style>
-                            <script>
-                            (function() {
-                                var percentTextEl = document.getElementById('progress_percent_text');
-                                var barEl = document.getElementById('progress_bar');
-                                function updateBar() {
-                                    if (percentTextEl && barEl) {
-                                        var percent = percentTextEl.textContent.trim();
-                                        if(percent.endsWith('%')) percent = percent.slice(0, -1);
-                                        var val = parseInt(percent);
-                                        if (!isNaN(val)) {
-                                            barEl.style.width = val + '%';
-                                        }
-                                    }
-                                }
-                                if (window.MutationObserver && percentTextEl) {
-                                    var observer = new MutationObserver(updateBar);
-                                    observer.observe(percentTextEl, { childList: true, subtree: true });
-                                    updateBar();
-                                }
-                                // Animate dots
-                                var msgEl = document.getElementById('in_progress_dots');
-                                var dots = 0;
-                                setInterval(function() {
-                                    if (msgEl) {
-                                        dots = (dots + 1) % 4;
-                                        msgEl.textContent = '.'.repeat(dots);
-                                    }
-                                }, 700);
-                            })();
-                            </script>
                         </div>
                         <br>
                     """),

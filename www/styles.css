@@ -179,6 +179,22 @@ html[data-bs-theme="dark"] .spinner {
     opacity: 1;
 }
 
+/* Configuration: collapsible info toggles */
+.kh-info-toggle + .kh-info-toggle {
+    margin-top: 8px;
+}
+
+.kh-info-box {
+    border-left: 4px solid #ddd;
+    padding: 8px 12px;
+    background: #f9f9f9;
+    border-radius: 4px;
+}
+
+.info-toggle-btn[aria-expanded="true"] .toggle-chevron {
+    transform: rotate(90deg);
+}
+
 .event-modal-picture-spinner {
     position: absolute;
     inset: 0;

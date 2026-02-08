@@ -156,9 +156,12 @@ html[data-bs-theme="dark"] .spinner {
     aspect-ratio: 4 / 3;
     min-height: 220px;
     background-color: #000;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-size: contain;
+}
+
+/* Backdrop image (set by JS) that stays visible while the next frame decodes */
+.event-modal-picture-wrap img.event-modal-picture-bg {
+    z-index: 0;
+    pointer-events: none;
 }
 
 /* Ensure the picture output fills the stable wrapper box */
@@ -167,6 +170,20 @@ html[data-bs-theme="dark"] .spinner {
     height: 100%;
     display: block;
     object-fit: contain;
+    /* Override generic .image-container img styling (margins/outline) */
+    margin: 0 !important;
+    outline: none !important;
+    outline-offset: 0 !important;
+    border-radius: 0 !important;
+    max-width: none !important;
+
+    /* Slight overscan to avoid 1px seams (crop-in) */
+    position: absolute !important;
+    top: -2px !important;
+    left: -2px !important;
+    width: calc(100% + 4px) !important;
+    height: calc(100% + 4px) !important;
+    will-change: transform;
 }
 
 /* New frame: keep it hidden until JS confirms it's loaded */
@@ -177,6 +194,12 @@ html[data-bs-theme="dark"] .spinner {
 
 .event-modal-picture-wrap.has-image img[data-role="visible"] {
     opacity: 1;
+}
+
+/* Firefox mobile: avoid rare black compositing flashes during opacity transitions */
+html.kh-firefox-mobile .event-modal-picture-wrap img[data-role="visible"] {
+    opacity: 1;
+    transition: none;
 }
 
 /* Configuration: collapsible info toggles */

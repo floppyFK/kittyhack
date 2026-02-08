@@ -4,6 +4,8 @@ from pathlib import Path
 from src.baseconfig import CONFIG, set_language
 
 js_file = Path(__file__).parent.parent / "www" / "app.js"
+server_ui_js_file = Path(__file__).parent.parent / "www" / "server-ui.js"
+event_modal_js_file = Path(__file__).parent.parent / "www" / "event-modal.js"
 css_file = Path(__file__).parent.parent / "www" / "styles.css"
 
 try:
@@ -16,12 +18,24 @@ try:
 except Exception:
     _js_version = "0"
 
+try:
+    _server_ui_js_version = str(int(server_ui_js_file.stat().st_mtime))
+except Exception:
+    _server_ui_js_version = "0"
+
+try:
+    _event_modal_js_version = str(int(event_modal_js_file.stat().st_mtime))
+except Exception:
+    _event_modal_js_version = "0"
+
 # Prepare gettext for translations
 _ = set_language(CONFIG['LANGUAGE'])
 
 # the main kittyhack ui
 app_ui = ui.page_fillable(
     ui.tags.script(src=f"app.js?v={_js_version}", defer=True),
+    ui.tags.script(src=f"server-ui.js?v={_server_ui_js_version}", defer=True),
+    ui.tags.script(src=f"event-modal.js?v={_event_modal_js_version}", defer=True),
     ui.tags.link(rel="stylesheet", href=f"styles.css?v={_asset_version}"),
     ui.head_content(
         ui.tags.meta(name="theme-color", content="#FFFFFF"),

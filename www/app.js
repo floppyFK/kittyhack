@@ -240,6 +240,12 @@ document.addEventListener("DOMContentLoaded", function() {
         const wrap = scope.querySelector ? scope.querySelector('#event_modal_picture_wrap') : null;
         if (!wrap || !wrap.classList) return;
 
+        // A dedicated observer in /event-modal.js manages loading state precisely.
+        // If it's active, don't interfere by toggling .has-image based on DOM presence.
+        try {
+            if (wrap.getAttribute && wrap.getAttribute('data-event-modal-observer') === '1') return;
+        } catch (e) {}
+
         // Consider the picture "ready" once there's at least one <img> inside the output.
         const hasImg = !!(wrap.querySelector && wrap.querySelector('img'));
         wrap.classList.toggle('has-image', hasImg);

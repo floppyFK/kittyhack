@@ -473,17 +473,80 @@
             }
 
             // Backdrop is managed by setWrapBg (uses this layer).
-            var visible = null;
-            try { visible = layer.querySelector('img[data-role="visible"]'); } catch (e) { visible = null; }
-            if (!visible) {
-                visible = document.createElement('img');
-                visible.setAttribute('data-role', 'visible');
+            // Use a double-buffered visible image pair to avoid rare Chrome mobile
+            // black flashes during rapid src swaps (old frame stays visible until
+            // the new frame has painted).
+            var a = null;
+            var b = null;
+            try { a = layer.querySelector('img[data-role="visible"][data-slot="a"]'); } catch (e) { a = null; }
+            try { b = layer.querySelector('img[data-role="visible"][data-slot="b"]'); } catch (e) { b = null; }
+
+            function mk(slot) {
+                var el = document.createElement('img');
+                el.setAttribute('data-role', 'visible');
+                el.setAttribute('data-slot', slot);
+                // Start hidden; we unhide the active one.
+                el.setAttribute('aria-hidden', 'true');
                 // Help mobile browsers prioritize decode.
-                try { visible.decoding = 'async'; } catch (e) {}
-                try { visible.loading = 'eager'; } catch (e) {}
-                layer.appendChild(visible);
+                try { el.decoding = 'async'; } catch (e) {}
+                try { el.loading = 'eager'; } catch (e) {}
+                // Ensure deterministic stacking when both are temporarily visible.
+                try { el.style.zIndex = (slot === 'a') ? '2' : '1'; } catch (e) {}
+                layer.appendChild(el);
+                return el;
             }
-            return { layer: layer, visible: visible };
+
+            if (!a) a = mk('a');
+            if (!b) b = mk('b');
+
+            // Default active slot.
+            var activeSlot = '';
+            try { activeSlot = wrap.getAttribute('data-active-slot') || ''; } catch (e) { activeSlot = ''; }
+            if (activeSlot !== 'a' && activeSlot !== 'b') {
+                activeSlot = 'a';
+                try { wrap.setAttribute('data-active-slot', activeSlot); } catch (e) {}
+            }
+
+            // IMPORTANT: attachOnce() can run many times per second (MutationObserver + poll).
+            // If we force visibility while a swap is mid-flight, we can momentarily show the old
+            // frame again (jitter). During a buffered swap, leave the DOM as-is.
+            var swapInProgress = '';
+            try { swapInProgress = wrap.getAttribute('data-swap-in-progress') || ''; } catch (e) { swapInProgress = ''; }
+            if (!swapInProgress) {
+                // Ensure only the active one is visible.
+                try {
+                    if (activeSlot === 'a') {
+                        a.removeAttribute('aria-hidden');
+                        b.setAttribute('aria-hidden', 'true');
+                        a.style.zIndex = '2';
+                        b.style.zIndex = '1';
+                    } else {
+                        b.removeAttribute('aria-hidden');
+                        a.setAttribute('aria-hidden', 'true');
+                        b.style.zIndex = '2';
+                        a.style.zIndex = '1';
+                    }
+                } catch (e) {}
+            }
+
+            function getActive() {
+                var slot = '';
+                try { slot = wrap.getAttribute('data-active-slot') || 'a'; } catch (e) { slot = 'a'; }
+                return (slot === 'b') ? b : a;
+            }
+
+            function getInactive() {
+                var slot = '';
+                try { slot = wrap.getAttribute('data-active-slot') || 'a'; } catch (e) { slot = 'a'; }
+                return (slot === 'b') ? a : b;
+            }
+
+            function setActiveSlot(slot) {
+                if (slot !== 'a' && slot !== 'b') return;
+                try { wrap.setAttribute('data-active-slot', slot); } catch (e) {}
+            }
+
+            return { layer: layer, getActive: getActive, getInactive: getInactive, setActiveSlot: setActiveSlot, a: a, b: b };
         } catch (e) {
             return null;
         }
@@ -603,8 +666,10 @@
             if (!wrap || !pulseBtn) return;
 
             var layerInfo = ensureJsImageLayer(wrap);
-            if (!layerInfo || !layerInfo.visible) return;
-            var img = layerInfo.visible;
+            if (!layerInfo || !layerInfo.getActive || !layerInfo.getInactive) return;
+            var img = layerInfo.getActive();
+            var imgAlt = layerInfo.getInactive();
+            if (!img || !imgAlt) return;
 
             // Read Shiny-rendered indicator (no <img> tags in reactive output).
             var ind = document.getElementById('event_modal_indicator');
@@ -662,13 +727,139 @@
                 shownSrc = window.__khEventModalLastShownByBlock.get(blockIdKey) || '';
             }
 
-            function syncShownState(finalSrc) {
+            function syncShownMeta(finalSrc) {
                 try {
                     if (!finalSrc) return;
                     wrap.classList.add('has-image');
                     wrap.setAttribute('data-shown-src', finalSrc);
-                    setWrapBg(wrap, finalSrc);
                     if (blockIdKey) window.__khEventModalLastShownByBlock.set(blockIdKey, finalSrc);
+                } catch (e) {}
+            }
+
+            function scheduleBgUpdate(finalSrc) {
+                // Chrome mobile can briefly flash black if we switch the backdrop to the new
+                // frame before the visible <img> has actually painted. Keep the old backdrop
+                // for a couple frames, then update.
+                try {
+                    if (!finalSrc) return;
+                    var token = String(Date.now()) + ':' + String(Math.random());
+                    wrap.setAttribute('data-bg-pending', token);
+
+                    var raf = (window.requestAnimationFrame || function (cb) { return setTimeout(cb, 16); });
+                    raf(function () {
+                        raf(function () {
+                            try {
+                                if (wrap.getAttribute('data-bg-pending') !== token) return;
+                                var activeImg = null;
+                                try { activeImg = layerInfo.getActive ? layerInfo.getActive() : img; } catch (e) { activeImg = img; }
+                                var visNow = (activeImg && activeImg.getAttribute && activeImg.getAttribute('src')) ? (activeImg.getAttribute('src') || '') : '';
+                                if (visNow === finalSrc) setWrapBg(wrap, finalSrc);
+                                wrap.removeAttribute('data-bg-pending');
+                            } catch (e) {}
+                        });
+                    });
+                } catch (e) {}
+            }
+
+            function decodePromiseFor(el) {
+                try {
+                    if (!el) return Promise.resolve();
+                    if (typeof el.decode === 'function') {
+                        return el.decode().catch(function () { return null; });
+                    }
+                } catch (e) {}
+                return Promise.resolve();
+            }
+
+            function swapBufferedTo(finalSrc) {
+                // Swap using the inactive <img> as a buffer.
+                // Steps:
+                // 1) Put finalSrc into inactive img.
+                // 2) Wait for decode() best-effort.
+                // 3) Unhide inactive (new frame) on a frame boundary.
+                // 4) Hide old active on the next frame boundary.
+                try {
+                    if (!finalSrc) return;
+
+                    // Resolve current active/inactive at the moment of calling.
+                    var active = null;
+                    var inactive = null;
+                    try { active = layerInfo.getActive(); } catch (e) { active = img; }
+                    try { inactive = layerInfo.getInactive(); } catch (e) { inactive = imgAlt; }
+                    if (!active || !inactive) return;
+
+                    var activeSrc = (active.getAttribute && active.getAttribute('src')) ? (active.getAttribute('src') || '') : '';
+                    if (activeSrc === finalSrc) {
+                        syncShownMeta(finalSrc);
+                        scheduleBgUpdate(finalSrc);
+                        maybePulseLoadedFor(finalSrc);
+                        return;
+                    }
+
+                    // Cancel any prior pending buffer swap.
+                    var token = String(Date.now()) + ':' + String(Math.random());
+                    wrap.setAttribute('data-swap-token', token);
+                    // Mark swap-in-progress so ensureJsImageLayer doesn't fight us.
+                    wrap.setAttribute('data-swap-in-progress', token);
+
+                    // Prepare inactive.
+                    try { inactive.setAttribute('aria-hidden', 'true'); } catch (e) {}
+                    try { inactive.setAttribute('src', finalSrc); } catch (e) {}
+
+                    decodePromiseFor(inactive).then(function () {
+                        try {
+                            if (wrap.getAttribute('data-swap-token') !== token) return;
+                            var wantNow = wrap.getAttribute('data-current-src') || '';
+                            if (wantNow && wantNow !== finalSrc) {
+                                try {
+                                    if (wrap.getAttribute('data-swap-in-progress') === token) {
+                                        wrap.removeAttribute('data-swap-in-progress');
+                                    }
+                                } catch (e) {}
+                                return;
+                            }
+
+                            var raf = (window.requestAnimationFrame || function (cb) { return setTimeout(cb, 16); });
+
+                            // Show new frame first.
+                            raf(function () {
+                                try {
+                                    if (wrap.getAttribute('data-swap-token') !== token) return;
+                                    // Put new frame on top.
+                                    try { inactive.style.zIndex = '2'; } catch (e) {}
+                                    try { active.style.zIndex = '1'; } catch (e) {}
+                                    try { inactive.removeAttribute('aria-hidden'); } catch (e) {}
+
+                                    // Then hide the old frame on the next tick.
+                                    raf(function () {
+                                        try {
+                                            if (wrap.getAttribute('data-swap-token') !== token) return;
+                                            try { active.setAttribute('aria-hidden', 'true'); } catch (e) {}
+                                            // Flip active slot marker.
+                                            try {
+                                                var newSlot = inactive.getAttribute ? (inactive.getAttribute('data-slot') || '') : '';
+                                                if (layerInfo.setActiveSlot && (newSlot === 'a' || newSlot === 'b')) {
+                                                    layerInfo.setActiveSlot(newSlot);
+                                                }
+                                            } catch (e) {}
+
+                                            // Swap finished.
+                                            try {
+                                                if (wrap.getAttribute('data-swap-in-progress') === token) {
+                                                    wrap.removeAttribute('data-swap-in-progress');
+                                                }
+                                            } catch (e) {}
+
+                                            // Sync state + backdrop after the new frame is actually visible.
+                                            syncShownMeta(finalSrc);
+                                            scheduleBgUpdate(finalSrc);
+                                            maybePulseLoadedFor(finalSrc);
+                                        } catch (e) {}
+                                    });
+                                } catch (e) {}
+                            });
+                        } catch (e) {}
+                    });
                 } catch (e) {}
             }
 
@@ -710,18 +901,9 @@
             }
 
             function swapTo(finalSrc) {
+                // Keep old frame visible until the new one has painted.
                 try {
-                    if (!finalSrc) return;
-                    var vis = (img.getAttribute && img.getAttribute('src')) ? (img.getAttribute('src') || '') : '';
-                    if (vis === finalSrc) {
-                        syncShownState(finalSrc);
-                        maybePulseLoadedFor(finalSrc);
-                        return;
-                    }
-                    img.setAttribute('src', finalSrc);
-                    syncShownState(finalSrc);
-                    // Preloader already confirmed decode; safe to pulse immediately.
-                    maybePulseLoadedFor(finalSrc);
+                    swapBufferedTo(finalSrc);
                 } catch (e) {}
             }
 
@@ -732,7 +914,9 @@
                 } catch (e) {}
 
                 // Ensure we always have something behind the visible layer.
-                var fallbackBg = shownSrc || (img.getAttribute ? (img.getAttribute('src') || '') : '') || '';
+                var activeNow = null;
+                try { activeNow = layerInfo.getActive ? layerInfo.getActive() : img; } catch (e) { activeNow = img; }
+                var fallbackBg = shownSrc || (activeNow && activeNow.getAttribute ? (activeNow.getAttribute('src') || '') : '') || '';
                 if (fallbackBg) setWrapBg(wrap, fallbackBg);
 
                 // Preload using persistent Image() to avoid any Shiny DOM races.

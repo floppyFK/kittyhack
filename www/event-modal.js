@@ -678,8 +678,8 @@
                     if (lastAck === finalSrc) return;
                     wrap.setAttribute('data-last-ack-src', finalSrc);
 
-                    // Pace autoplay to ~3fps (333ms). When paused we pulse immediately so overlays stay in sync.
-                    var fpsIntervalMs = 333;
+                    // Pace autoplay to ~4fps (250ms). When paused we pulse immediately so overlays stay in sync.
+                    var fpsIntervalMs = 250;
                     if (!playingNow) {
                         safeClick(pulseBtn);
                         return;

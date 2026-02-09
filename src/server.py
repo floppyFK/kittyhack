@@ -714,6 +714,7 @@ def show_event_server(input, output, session, block_id: int):
     fallback_mode = [False]
     slideshow_running = reactive.Value(True)
     scrubber_suppress = reactive.Value(0)  # suppress server-side reactions to programmatic scrubber updates
+    last_scrubber_seen = [None]  # 1-based last observed scrubber value (for robustness)
     bundle_url = [None]  # optional: /thumb/... tar.gz that contains all thumbnails for this event
     aspect_style = [""]  # CSS var: --kh-event-aspect: w / h
 
@@ -819,6 +820,34 @@ def show_event_server(input, output, session, block_id: int):
             scrubber_suppress.set(max(0, current + int(count)))
         except Exception:
             scrubber_suppress.set(max(0, int(count)))
+
+    def _handle_scrub_to(target_idx: int, source: str = "event") -> None:
+        """Seek to target_idx (0-based) and pause if needed.
+
+        This is used by both the explicit event handler and a fallback watcher.
+        """
+        if not pictures:
+            return
+
+        target_idx = max(0, min(len(pictures) - 1, int(target_idx)))
+
+        # If a scrub happens while playing (race / fast click), pause playback and seek.
+        if bool(slideshow_running.get()):
+            try:
+                slideshow_running.set(False)
+                setattr(_advance_slideshow_when_loaded, "_last_pid", -1)
+            except Exception:
+                pass
+
+        try:
+            current_idx = int(frame_index[0] or 0)
+        except Exception:
+            current_idx = 0
+        if target_idx == current_idx:
+            return
+
+        frame_index[0] = target_idx
+        _bump_frame_tick()
 
     def _bump_frame_tick():
         try:
@@ -1353,6 +1382,7 @@ def show_event_server(input, output, session, block_id: int):
             # Avoid triggering on_scrub_event from a programmatic update.
             _suppress_next_scrubber_events(1)
             ui.update_slider("event_scrubber", value=1, min=1, max=max(1, len(pictures)))
+            last_scrubber_seen[0] = 1
         except Exception:
             pass
     
@@ -1553,6 +1583,11 @@ def show_event_server(input, output, session, block_id: int):
         photo_ids.clear()
         frame_index[0] = 0
         shown_index[0] = 0
+        last_scrubber_seen[0] = None
+        try:
+            scrubber_suppress.set(0)
+        except Exception:
+            pass
 
     def _single_image_filename():
         try:
@@ -1786,11 +1821,17 @@ def show_event_server(input, output, session, block_id: int):
                 scrubber_suppress.set(max(0, pending - 1))
             except Exception:
                 pass
-            return
 
-        # Only respond to user scrubs when paused
-        if slideshow_running.get():
-            return
+            # If we're playing, this is almost certainly a programmatic update.
+            # If we're paused, a stale suppress counter can happen when the server calls
+            # ui.update_slider() but the browser doesn't emit an input event (same value).
+            # In paused mode we continue and rely on the target==current guard.
+            if bool(slideshow_running.get()):
+                return
+
+        # If we're playing, the server may be updating the slider programmatically each frame.
+        # Those updates can still trigger an input event; do not treat them as user scrubs.
+        # We allow large jumps (delta > 1) to act as user-initiated seeks (auto-pausing).
 
         if not pictures or len(pictures) == 0:
             return
@@ -1801,18 +1842,83 @@ def show_event_server(input, output, session, block_id: int):
         except Exception:
             return
 
-        target_idx = max(0, min(len(pictures) - 1, target_idx))
-
-        # Prevent feedback loops / redundant re-renders.
+        # Compute current index for delta heuristics.
         try:
             current_idx = int(frame_index[0] or 0)
         except Exception:
             current_idx = 0
-        if target_idx == current_idx:
+
+        is_playing_now = bool(slideshow_running.get())
+        delta = abs(int(target_idx) - int(current_idx))
+
+        # Track last seen (1-based) for the fallback watcher.
+        try:
+            last_scrubber_seen[0] = int(target_idx) + 1
+        except Exception:
+            pass
+
+        if is_playing_now and delta <= 1:
             return
 
-        frame_index[0] = target_idx
-        _bump_frame_tick()
+        target_idx = max(0, min(len(pictures) - 1, target_idx))
+
+        try:
+            logging.debug(
+                f"Scrubber clicked to frame {int(target_idx) + 1}/{len(pictures)} (block_id={block_id}, playing={1 if is_playing_now else 0}, suppress={pending}, delta={delta})"
+            )
+        except Exception:
+            pass
+
+        _handle_scrub_to(target_idx, source="event")
+
+    @reactive.effect
+    def _scrubber_value_fallback_watch():
+        """Fallback: ensure seeking works even if the explicit input event is flaky.
+
+        If the input value changes while paused, seek to it.
+        """
+        if bool(slideshow_running.get()):
+            return
+        if not pictures:
+            return
+
+        try:
+            v1 = int(input.event_scrubber() or 0)
+        except Exception:
+            return
+        if v1 <= 0:
+            return
+
+        # Ignore programmatic updates
+        try:
+            pending = int(scrubber_suppress.get() or 0)
+        except Exception:
+            pending = 0
+        if pending > 0:
+            try:
+                scrubber_suppress.set(max(0, pending - 1))
+            except Exception:
+                pass
+            last_scrubber_seen[0] = v1
+            return
+
+        if last_scrubber_seen[0] is None:
+            last_scrubber_seen[0] = v1
+            return
+        if int(last_scrubber_seen[0]) == v1:
+            return
+
+        last_scrubber_seen[0] = v1
+        target_idx = v1 - 1
+
+        try:
+            logging.info(
+                f"DEBUG: Scrubber value changed to frame {int(target_idx) + 1}/{len(pictures)} (fallback watcher, block_id={block_id})"
+            )
+        except Exception:
+            pass
+
+        _handle_scrub_to(target_idx, source="watch")
 
 @module.server
 def wlan_connect_server(input, output, session, ssid: str):
@@ -2793,7 +2899,7 @@ def server(input, output, session):
         return ui.div(
             ui.div(
                 ui.input_action_button("photos_prev_page", "", icon=icon_svg("angle-left"), class_="btn-page-control"),
-                ui.input_numeric("photos_page", _("Page"), value=current_page, min=1, max=total_pages, step=1, width="7rem"),
+                ui.input_numeric("photos_page", _("Page"), value=current_page, min=1, max=total_pages, step=1, width="4rem"),
                 ui.tags.span(f"/ {total_pages}", class_="photos-page-total"),
                 ui.input_action_button("photos_next_page", "", icon=icon_svg("angle-right"), class_="btn-page-control"),
                 ui.tags.span(

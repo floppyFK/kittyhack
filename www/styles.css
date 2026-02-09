@@ -749,7 +749,6 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
     background: var(--kh-scrubber-track);
     border: none;
     border-radius: 9999px;
-    cursor: pointer !important;
 }
 
 /* Filled progress */
@@ -759,7 +758,6 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
     background: var(--kh-scrubber-fill);
     border: none;
     border-radius: 9999px;
-    cursor: pointer !important;
 }
 
 /* Playhead */
@@ -774,18 +772,6 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
     box-shadow: var(--kh-scrubber-thumb-shadow);
     z-index: 4;
     box-sizing: border-box;
-    cursor: pointer !important;
-}
-
-/* ionRangeSlider sometimes sets n-resize/ew-resize cursors; normalize to pointer */
-#event_scrubber_wrap,
-#event_scrubber_wrap .irs,
-#event_scrubber_wrap .irs *,
-#event_scrubber_wrap .irs-line,
-#event_scrubber_wrap .irs-bar,
-#event_scrubber_wrap .irs-handle,
-#event_scrubber_wrap .irs-handle * {
-    cursor: pointer !important;
 }
 
 /* Disabled while playing: keep cursor consistent */

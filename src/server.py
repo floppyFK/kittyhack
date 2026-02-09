@@ -649,6 +649,11 @@ reload_trigger_photos = reactive.Value(0)
 reload_trigger_ai = reactive.Value(0)
 reload_trigger_config = reactive.Value(0)
 
+# Live view helpers: force immediate refresh on camera config changes
+# and keep the stage aspect-ratio in sync without waiting for the next image tick.
+live_view_refresh_nonce = reactive.Value(0)
+live_view_aspect = reactive.Value((4, 3))
+
 # Global update progress state
 update_progress_state = {
     "in_progress": False,
@@ -2401,269 +2406,331 @@ def server(input, output, session):
                 update_live_status._last_error_log = now
             live_status.set({"ok": False, "ts": ts})
     
-    @render.text
-    def live_view_main():
-        refresh_s = float(CONFIG.get('LIVE_VIEW_REFRESH_INTERVAL', 2.0) or 2.0)
-        # Avoid accidental busy-loops from misconfiguration.
-        refresh_s = max(0.1, refresh_s)
-        logging.debug(f"New live view render ({refresh_s:.3g}s refresh interval)")
-        reactive.invalidate_later(refresh_s)
-        # Static variables to track last frame and time
-        if not hasattr(live_view_main, "last_frame_hash"):
-            live_view_main.last_frame_hash = None
-            live_view_main.last_change_time = tm.time()
-            live_view_main.last_frame_jpg = None
-            # Track last known aspect ratio (defaults to 4:3)
-            live_view_main.last_ar_w = 4
-            live_view_main.last_ar_h = 3
-            # Double-buffering: keep a visible and a preloaded frame
-            live_view_main.visible_frame_jpg = None
-            live_view_main.visible_frame_hash = None
-            live_view_main.preload_frame_jpg = None
-            live_view_main.preload_frame_hash = None
+    @render.ui
+    def live_view_aspect_style():
+        # Updated whenever the image renderer learns a new aspect ratio.
+        w, h = (live_view_aspect.get() or (4, 3))
+        w = int(w or 4)
+        h = int(h or 3)
+        w = max(1, w)
+        h = max(1, h)
+        return ui.HTML(f'<style>#live_view_stage{{--kh-live-aspect:{w} / {h};}}</style>')
 
+    @render.ui
+    def live_view_warning():
+        # Warning is tied to camera resolution; update it on the image cadence.
+        __ = live_view_refresh_nonce.get()
+        refresh_s = float(CONFIG.get('LIVE_VIEW_REFRESH_INTERVAL', 2.0) or 2.0)
+        refresh_s = max(0.1, refresh_s)
+
+        result = ui.HTML(getattr(live_view_image, '_last_warning_html', '') or '')
+        reactive.invalidate_later(refresh_s)
+        return result
+
+    @render.ui
+    def live_view_image():
+        # Allows other code paths (e.g., config save) to force an immediate refresh.
+        __ = live_view_refresh_nonce.get()
+
+        refresh_s = float(CONFIG.get('LIVE_VIEW_REFRESH_INTERVAL', 2.0) or 2.0)
+        refresh_s = max(0.1, refresh_s)
+
+        # Mark running to avoid concurrent forced refresh triggers.
+        live_view_image._is_running = True
+
+        if not hasattr(live_view_image, "last_frame_hash"):
+            live_view_image.last_frame_hash = None
+            live_view_image.last_change_time = tm.time()
+            live_view_image.last_ar_w = 4
+            live_view_image.last_ar_h = 3
+            live_view_image.visible_frame_jpg = None
+            live_view_image.visible_frame_hash = None
+            live_view_image.preload_frame_jpg = None
+            live_view_image.preload_frame_hash = None
+            live_view_image._last_warning_html = ""
+            live_view_image.last_camera_key = None
+            live_view_image._last_aspect_set = (4, 3)
+
+        def _set_aspect(w: int, h: int) -> None:
+            try:
+                w = int(w)
+                h = int(h)
+                if w <= 0 or h <= 0:
+                    return
+                prev = getattr(live_view_image, "_last_aspect_set", None)
+                if tuple(prev or ()) != (w, h):
+                    live_view_image._last_aspect_set = (w, h)
+                    live_view_aspect.set((w, h))
+            except Exception:
+                return
+
+        camera_key = (CONFIG.get("CAMERA_SOURCE"), CONFIG.get("IP_CAMERA_URL"))
+        if live_view_image.last_camera_key is None:
+            live_view_image.last_camera_key = camera_key
+        elif camera_key != live_view_image.last_camera_key:
+            # Camera config changed: never show an old buffered frame.
+            live_view_image.last_camera_key = camera_key
+            live_view_image.last_frame_hash = None
+            live_view_image.last_change_time = tm.time()
+            live_view_image.visible_frame_jpg = None
+            live_view_image.visible_frame_hash = None
+            live_view_image.preload_frame_jpg = None
+            live_view_image.preload_frame_hash = None
+            live_view_image._last_warning_html = ""
+            live_view_image.last_ar_w = 4
+            live_view_image.last_ar_h = 3
+            _set_aspect(4, 3)
+
+        # Check for IP camera resolution warning (a bit expensive; keep it on image cadence).
         warning_html = ""
-        # Check for IP camera resolution warning (moved here)
         if CONFIG.get("CAMERA_SOURCE") == "ip_camera":
             try:
                 res = model_handler.get_camera_resolution()
                 if res and isinstance(res, (tuple, list)) and len(res) == 2:
                     width, height = res
-                    # Update last known aspect ratio based on camera resolution
                     if width > 0 and height > 0:
-                        live_view_main.last_ar_w = int(width)
-                        live_view_main.last_ar_h = int(height)
+                        live_view_image.last_ar_w = int(width)
+                        live_view_image.last_ar_h = int(height)
+                        _set_aspect(live_view_image.last_ar_w, live_view_image.last_ar_h)
                     if width * height > 1280 * 720:
-                        warning_html = ui.div(
+                        warning_html = str(
                             ui.div(
-                                icon_svg("triangle-exclamation", margin_left="0", margin_right="0.2em"),
-                                _("Warning") + ": " +
-                                _("Your IP camera resolution is higher than recommended (max. 1280x720).") + " " +
-                                _("Current: {width}x{height}. This may have negative effects on performance.").format(width=width, height=height),
-                                class_="generic-container warning-container",
-                            ),
-                            style_="text-align: center;"
+                                ui.div(
+                                    icon_svg("triangle-exclamation", margin_left="0", margin_right="0.2em"),
+                                    _("Warning") + ": "
+                                    + _("Your IP camera resolution is higher than recommended (max. 1280x720).")
+                                    + " "
+                                    + _(
+                                        "Current: {width}x{height}. This may have negative effects on performance."
+                                    ).format(width=width, height=height),
+                                    class_="generic-container warning-container",
+                                ),
+                                style_="text-align: center;",
+                            )
                         )
             except Exception as e:
                 logging.error(f"Failed to check IP camera resolution: {e}")
+        live_view_image._last_warning_html = warning_html
 
         try:
-            # IMPORTANT: live_status is updated at a much higher frequency (see update_live_status).
-            # If we read it reactively here, it would invalidate this renderer on every update and
-            # effectively ignore LIVE_VIEW_REFRESH_INTERVAL. We still want the latest values, just
-            # only sampled on our own timer.
-            with reactive.isolate():
-                st = live_status.get() or {}
-            ts = st.get("ts", datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S'))
-
-            def _pill_html(inner_html: str, variant: str, *, aria_label: str, title: str) -> str:
-                return (
-                    f'<span class="live-view-pill live-view-pill--{variant}" '
-                    f'aria-label="{aria_label}" title="{title}">'
-                    f'{inner_html}'
-                    f'</span>'
-                )
-
-            def _icon_html(name: str) -> str:
-                try:
-                    return str(icon_svg(name, margin_left="0", margin_right="0"))
-                except Exception:
-                    # Fallback to a simple text glyph to avoid emoji rendering differences.
-                    return "•"
-
-            if st.get("ok"):
-                inside_lock_is_open = bool(st.get("inside_lock"))
-                outside_lock_is_open = bool(st.get("outside_lock"))
-                inside_motion = bool(st.get("inside_motion"))
-                outside_motion = bool(st.get("outside_motion"))
-
-                inside_lock_variant = "ok" if inside_lock_is_open else "muted"
-                outside_lock_variant = "ok" if outside_lock_is_open else "muted"
-                inside_motion_variant = "active" if inside_motion else "muted"
-                outside_motion_variant = "active" if outside_motion else "muted"
-
-                inside_lock_icon = _icon_html("lock-open" if inside_lock_is_open else "lock")
-                outside_lock_icon = _icon_html("lock-open" if outside_lock_is_open else "lock")
-                inside_motion_icon = _icon_html("eye" if inside_motion else "eye-slash")
-                outside_motion_icon = _icon_html("eye" if outside_motion else "eye-slash")
-
-                prey_banner_html = ""
-                if st.get("forced_lock_due_prey"):
-                    prey_banner_html = (
-                        '<div class="live-view-banner live-view-banner-warn live-view-overlay-banner" role="status">'
-                        + _(
-                            "Prey detected {0:.0f}s ago. Inside lock remains closed for {1:.0f}s."
-                        ).format(
-                            float(st.get("delta_to_last_prey_detection", 0.0)),
-                            float(st.get("time_until_release", 0.0)),
-                        )
-                        + "</div>"
-                    )
-
-                overlay_html = (
-                    f'<div class="live-view-overlay-clock" aria-label="{_("Clock")}" title="{_("Current time")}">{ts}</div>'
-                    '<div class="live-view-overlay-bottom">'
-                    '<div class="live-view-overlay-row">'
-                    '<div class="live-view-overlay-chip">'
-                    f'<span class="live-view-overlay-title">{_("Inside")}</span>'
-                    + _pill_html(
-                        inside_lock_icon,
-                        inside_lock_variant,
-                        aria_label=_("Inside lock: Open") if inside_lock_is_open else _("Inside lock: Closed"),
-                        title=_("Inside lock: Open") if inside_lock_is_open else _("Inside lock: Closed"),
-                    )
-                    + _pill_html(
-                        inside_motion_icon,
-                        inside_motion_variant,
-                        aria_label=_("Inside motion: Motion") if inside_motion else _("Inside motion: No motion"),
-                        title=_("Inside motion: Motion") if inside_motion else _("Inside motion: No motion"),
-                    )
-                    + '</div>'
-                    '<div class="live-view-overlay-chip">'
-                    f'<span class="live-view-overlay-title">{_("Outside")}</span>'
-                    + _pill_html(
-                        outside_lock_icon,
-                        outside_lock_variant,
-                        aria_label=_("Outside lock: Open") if outside_lock_is_open else _("Outside lock: Closed"),
-                        title=_("Outside lock: Open") if outside_lock_is_open else _("Outside lock: Closed"),
-                    )
-                    + _pill_html(
-                        outside_motion_icon,
-                        outside_motion_variant,
-                        aria_label=_("Outside motion: Motion") if outside_motion else _("Outside motion: No motion"),
-                        title=_("Outside motion: Motion") if outside_motion else _("Outside motion: No motion"),
-                    )
-                    + '</div>'
-                    '</div>'
-                    + prey_banner_html
-                    + '</div>'
-                )
-            else:
-                overlay_html = (
-                    f'<div class="live-view-overlay-clock" aria-label="{_("Clock")}" title="{_("Current time")}">{ts}</div>'
-                    '<div class="live-view-overlay-bottom">'
-                    '<div class="live-view-overlay-row">'
-                    f'<div class="live-view-overlay-chip live-view-overlay-chip--error">{_("Status unavailable")}</div>'
-                    '</div>'
-                    '</div>'
-                )
-
-            # On each tick, promote the preloaded frame to visible (if available).
-            # This ensures we display the previously loaded image while we
-            # preload the next one in the background to avoid flicker.
-            if getattr(live_view_main, 'preload_frame_jpg', None) is not None:
-                live_view_main.visible_frame_jpg = live_view_main.preload_frame_jpg
-                live_view_main.visible_frame_hash = live_view_main.preload_frame_hash
-                live_view_main.preload_frame_jpg = None
-                live_view_main.preload_frame_hash = None
+            if getattr(live_view_image, 'preload_frame_jpg', None) is not None:
+                live_view_image.visible_frame_jpg = live_view_image.preload_frame_jpg
+                live_view_image.visible_frame_hash = live_view_image.preload_frame_hash
+                live_view_image.preload_frame_jpg = None
+                live_view_image.preload_frame_hash = None
 
             frame = model_handler.get_camera_frame()
             if frame is None:
                 if CONFIG.get("CAMERA_SOURCE") == "ip_camera":
-                    # Reserve layout space using last known aspect ratio
-                    container_style = f'style="position:relative;width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
                     img_html = (
-                        f'<div {container_style}><div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
-                        '<div></div>' +
-                        '<div><strong>' + _('Connection to the IP camera failed.') + '</strong></div>' +
-                        '<div>' + _("Please check the stream URL and the network connection of your IP camera.") + '</div>' +
-                        '<div class="spinner-container"><div class="spinner"></div></div>' +
-                        '<div>' + _('If you have just changed the camera settings, please wait a few seconds for the camera to reconnect.') + '</div>' +
-                        '<div>' + _('Current status: ') + (str(model_handler.get_camera_state()) if model_handler.get_camera_state() is not None else _('Unknown')) + '</div>' +                        '<div></div>' +
-                        '</div>' + overlay_html + '</div>'
+                        '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
+                        '<div></div>'
+                        '<div><strong>' + _('Connection to the IP camera failed.') + '</strong></div>'
+                        '<div>' + _("Please check the stream URL and the network connection of your IP camera.") + '</div>'
+                        '<div class="spinner-container"><div class="spinner"></div></div>'
+                        '<div>' + _('If you have just changed the camera settings, please wait a few seconds for the camera to reconnect.') + '</div>'
+                        '<div>' + _('Current status: ') + (str(model_handler.get_camera_state()) if model_handler.get_camera_state() is not None else _('Unknown')) + '</div>'
+                        '<div></div>'
+                        '</div>'
                     )
                 else:
-                    container_style = f'style="position:relative;width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
                     img_html = (
-                        f'<div {container_style}><div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">' +
-                        '<div></div>' +
-                        '<div><strong>' + _('Connection to the camera failed.') + '</strong></div>' +
-                        '<div>' + _("Please wait...") + '</div>' +
-                        '<div class="spinner-container"><div class="spinner"></div></div>' +
-                        '<div>' + _('If this message does not disappear within 30 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>' +
-                        '<div></div>' +
-                        '</div>' + overlay_html + '</div>'
+                        '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
+                        '<div></div>'
+                        '<div><strong>' + _('Connection to the camera failed.') + '</strong></div>'
+                        '<div>' + _("Please wait...") + '</div>'
+                        '<div class="spinner-container"><div class="spinner"></div></div>'
+                        '<div>' + _('If this message does not disappear within 30 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>'
+                        '<div></div>'
+                        '</div>'
                     )
             else:
                 frame_jpg = model_handler.encode_jpg_image(frame)
-                # Compute a hash of the frame to detect changes
                 frame_hash = hashlib.md5(frame_jpg).hexdigest() if frame_jpg else None
 
                 if frame_jpg:
-                    # Update aspect ratio from actual frame
                     try:
                         h, w = frame.shape[:2]
                         if w > 0 and h > 0:
-                            live_view_main.last_ar_w = int(w)
-                            live_view_main.last_ar_h = int(h)
+                            live_view_image.last_ar_w = int(w)
+                            live_view_image.last_ar_h = int(h)
+                            _set_aspect(live_view_image.last_ar_w, live_view_image.last_ar_h)
                     except Exception:
                         pass
 
-                    # If frame changed, update last_change_time and remember as PRELOAD only.
-                    if frame_hash != live_view_main.last_frame_hash:
-                        live_view_main.last_change_time = tm.time()
-                        live_view_main.last_frame_hash = frame_hash
-                        # Stage the next frame for the next tick; keep current visible unchanged.
-                        live_view_main.preload_frame_jpg = frame_jpg
-                        live_view_main.preload_frame_hash = frame_hash
+                    if frame_hash != live_view_image.last_frame_hash:
+                        live_view_image.last_change_time = tm.time()
+                        live_view_image.last_frame_hash = frame_hash
+                        live_view_image.preload_frame_jpg = frame_jpg
+                        live_view_image.preload_frame_hash = frame_hash
 
-                    # If frame hasn't changed for >5s and using external IP camera, show spinner and warning
                     if (
-                        tm.time() - live_view_main.last_change_time > 5
+                        tm.time() - live_view_image.last_change_time > 5
                         and CONFIG.get("CAMERA_SOURCE") == "ip_camera"
                     ):
-                        container_style = f'style="position:relative;width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
                         img_html = (
-                            f'<div {container_style}><div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
+                            '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
                             '<div></div>'
                             '<div><strong>' + _('Camera stream appears to be frozen.') + '</strong></div>'
                             '<div>' + _("Please check your external IP camera connection or network settings.") + '</div>'
                             '<div class="spinner-container"><div class="spinner"></div></div>'
                             '<div></div>'
-                            '</div>' + overlay_html + '</div>'
+                            '</div>'
                         )
                     else:
-                        # Double-buffering overlay: render current visible frame on top and
-                        # preloaded next frame underneath at the exact same position.
-                        # Keeps a painted image while the top one decodes, mitigating flicker.
-                        container_style = f'style="position:relative;width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
                         front_style = 'style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:2;"'
                         back_style = 'style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:1;"'
                         visible_html = ''
                         preload_html = ''
-                        if getattr(live_view_main, 'visible_frame_jpg', None):
-                            visible_b64 = base64.b64encode(live_view_main.visible_frame_jpg).decode('utf-8')
+
+                        if getattr(live_view_image, 'visible_frame_jpg', None):
+                            visible_b64 = base64.b64encode(live_view_image.visible_frame_jpg).decode('utf-8')
                             visible_html = f'<img src="data:image/jpeg;base64,{visible_b64}" {front_style} />'
                         else:
-                            # First frame: show current immediately as visible
                             now_b64 = base64.b64encode(frame_jpg).decode('utf-8')
                             visible_html = f'<img src="data:image/jpeg;base64,{now_b64}" {front_style} />'
-                            live_view_main.visible_frame_jpg = frame_jpg
-                            live_view_main.visible_frame_hash = frame_hash
-                            live_view_main.preload_frame_jpg = None
-                            live_view_main.preload_frame_hash = None
+                            live_view_image.visible_frame_jpg = frame_jpg
+                            live_view_image.visible_frame_hash = frame_hash
+                            live_view_image.preload_frame_jpg = None
+                            live_view_image.preload_frame_hash = None
 
-                        if getattr(live_view_main, 'preload_frame_jpg', None):
-                            preload_b64 = base64.b64encode(live_view_main.preload_frame_jpg).decode('utf-8')
+                        if getattr(live_view_image, 'preload_frame_jpg', None):
+                            preload_b64 = base64.b64encode(live_view_image.preload_frame_jpg).decode('utf-8')
                             preload_html = f'<img src="data:image/jpeg;base64,{preload_b64}" {back_style} aria-hidden="true" />'
 
-                        img_html = f'<div {container_style}>{preload_html}{visible_html}{overlay_html}</div>'
+                        img_html = f'{preload_html}{visible_html}'
                 else:
-                    container_style = f'style="position:relative;width:100%;max-width:800px;aspect-ratio:{live_view_main.last_ar_w}/{live_view_main.last_ar_h};margin:0 auto;"'
-                    img_html = f'<div {container_style}><div class="placeholder-image"><strong>' + _('Could not read the picture from the camera.') + '</strong></div>{overlay_html}</div>'
+                    img_html = f'<div class="placeholder-image"><strong>' + _('Could not read the picture from the camera.') + '</strong></div>'
+
+            result = ui.HTML(img_html)
         except Exception as e:
             logging.error(f"Failed to fetch the live view image: {e}")
-            img_html = '<div class="placeholder-image"><strong>' + _('An error occured while fetching the live view image.') + '</strong></div>'
-        
-        if warning_html:
-            return ui.HTML(f'''
-                <div style="display: inline-block; text-align: center;">
-                    {img_html}
-                    {warning_html}
-                </div>
-            ''')
+            result = ui.HTML('<div class="placeholder-image"><strong>' + _('An error occured while fetching the live view image.') + '</strong></div>')
+
+        finally:
+            live_view_image._is_running = False
+            if getattr(live_view_image, "_refresh_after_run", False):
+                live_view_image._refresh_after_run = False
+                try:
+                    live_view_refresh_nonce.set(live_view_refresh_nonce.get() + 1)
+                except Exception:
+                    pass
+
+        # Schedule the next refresh only after this render completed.
+        reactive.invalidate_later(refresh_s)
+        return result
+
+    @render.ui
+    def live_view_overlay_clock():
+        # Clock stays on top of the picture.
+        st = live_status.get() or {}
+        ts = st.get("ts", datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S'))
+
+        clock_label = _("Clock")
+        clock_title = _("Current time")
+        return ui.HTML(
+            f'<div class="live-view-overlay-clock" aria-label="{clock_label}" title="{clock_title}">{ts}</div>'
+        )
+
+    @render.ui
+    def live_view_overlay_status():
+        # Status chips (inside/outside lock + motion) are rendered below the picture.
+        st = live_status.get() or {}
+
+        def _pill_html(inner_html: str, variant: str, *, aria_label: str, title: str) -> str:
+            return (
+                f'<span class="live-view-pill live-view-pill--{variant}" '
+                f'aria-label="{aria_label}" title="{title}">'
+                f'{inner_html}'
+                f'</span>'
+            )
+
+        def _icon_html(name: str) -> str:
+            try:
+                return str(icon_svg(name, margin_left="0", margin_right="0"))
+            except Exception:
+                return "•"
+
+        inside_label = _("Inside")
+        outside_label = _("Outside")
+        status_unavailable_label = _("Status unavailable")
+
+        if st.get("ok"):
+            inside_lock_is_open = bool(st.get("inside_lock"))
+            outside_lock_is_open = bool(st.get("outside_lock"))
+            inside_motion = bool(st.get("inside_motion"))
+            outside_motion = bool(st.get("outside_motion"))
+
+            inside_lock_variant = "ok" if inside_lock_is_open else "muted"
+            outside_lock_variant = "ok" if outside_lock_is_open else "muted"
+            inside_motion_variant = "active" if inside_motion else "muted"
+            outside_motion_variant = "active" if outside_motion else "muted"
+
+            inside_lock_icon = _icon_html("lock-open" if inside_lock_is_open else "lock")
+            outside_lock_icon = _icon_html("lock-open" if outside_lock_is_open else "lock")
+            inside_motion_icon = _icon_html("eye" if inside_motion else "eye-slash")
+            outside_motion_icon = _icon_html("eye" if outside_motion else "eye-slash")
+
+            prey_banner_html = ""
+            if st.get("forced_lock_due_prey"):
+                prey_banner_html = (
+                    '<div class="live-view-banner live-view-banner-warn live-view-overlay-banner" role="status">'
+                    + _(
+                        "Prey detected {0:.0f}s ago. Inside lock remains closed for {1:.0f}s."
+                    ).format(
+                        float(st.get("delta_to_last_prey_detection", 0.0)),
+                        float(st.get("time_until_release", 0.0)),
+                    )
+                    + "</div>"
+                )
+
+            status_html = (
+                '<div class="live-view-statusbar">'
+                '<div class="live-view-overlay-row">'
+                '<div class="live-view-overlay-chip">'
+                f'<span class="live-view-overlay-title">{inside_label}</span>'
+                + _pill_html(
+                    inside_lock_icon,
+                    inside_lock_variant,
+                    aria_label=_("Inside lock: Open") if inside_lock_is_open else _("Inside lock: Closed"),
+                    title=_("Inside lock: Open") if inside_lock_is_open else _("Inside lock: Closed"),
+                )
+                + _pill_html(
+                    inside_motion_icon,
+                    inside_motion_variant,
+                    aria_label=_("Inside motion: Motion") if inside_motion else _("Inside motion: No motion"),
+                    title=_("Inside motion: Motion") if inside_motion else _("Inside motion: No motion"),
+                )
+                + '</div>'
+                '<div class="live-view-overlay-chip">'
+                f'<span class="live-view-overlay-title">{outside_label}</span>'
+                + _pill_html(
+                    outside_lock_icon,
+                    outside_lock_variant,
+                    aria_label=_("Outside lock: Open") if outside_lock_is_open else _("Outside lock: Closed"),
+                    title=_("Outside lock: Open") if outside_lock_is_open else _("Outside lock: Closed"),
+                )
+                + _pill_html(
+                    outside_motion_icon,
+                    outside_motion_variant,
+                    aria_label=_("Outside motion: Motion") if outside_motion else _("Outside motion: No motion"),
+                    title=_("Outside motion: Motion") if outside_motion else _("Outside motion: No motion"),
+                )
+                + '</div>'
+                '</div>'
+                + prey_banner_html
+                + '</div>'
+            )
         else:
-            return ui.HTML(img_html)
+            status_html = (
+                '<div class="live-view-statusbar">'
+                '<div class="live-view-overlay-row">'
+                f'<div class="live-view-overlay-chip live-view-overlay-chip--error">{status_unavailable_label}</div>'
+                '</div>'
+                '</div>'
+            )
+
+        return ui.HTML(status_html)
 
     @reactive.Effect
     def immediate_bg_task_site_load():
@@ -3119,9 +3186,17 @@ def server(input, output, session):
     @render.ui
     def ui_live_view():
         live_view = ui.card(
-            ui.output_ui("live_view_main"),
+            ui.output_ui("live_view_aspect_style"),
+            ui.div(
+                ui.output_ui("live_view_image"),
+                ui.output_ui("live_view_overlay_clock"),
+                id="live_view_stage",
+                class_="live-view-stage",
+            ),
+            ui.output_ui("live_view_overlay_status"),
+            ui.output_ui("live_view_warning"),
             full_screen=False,
-            class_="image-container"
+            class_="image-container live-view-card"
         )
         return ui.div(
             live_view,
@@ -5636,6 +5711,11 @@ def server(input, output, session):
     def on_save_kittyhack_config():
         global _
 
+        camera_settings_changed = (
+            CONFIG.get('CAMERA_SOURCE') != input.camera_source() or
+            CONFIG.get('IP_CAMERA_URL') != input.ip_camera_url()
+        )
+
         # Check the time ranges for allowed to exit
         def validate_time_format(field_id):
             # Get the value from the input field
@@ -5776,6 +5856,20 @@ def server(input, output, session):
         CONFIG['ALLOWED_TO_EXIT_RANGE3_TO'] = input.txtAllowedToExitRange3To()
         CONFIG['CAMERA_SOURCE'] = input.camera_source()
         CONFIG['IP_CAMERA_URL'] = input.ip_camera_url()
+
+        if camera_settings_changed:
+            # Ensure live view reacts immediately (do not keep showing an old frame).
+            try:
+                live_view_aspect.set((4, 3))
+            except Exception:
+                pass
+
+            if getattr(live_view_image, "_is_running", False):
+                # Defer forced refresh until the current render is done to avoid
+                # overlapping recalculations (client progress-state errors).
+                live_view_image._refresh_after_run = True
+            else:
+                live_view_refresh_nonce.set(live_view_refresh_nonce.get() + 1)
         CONFIG['MQTT_ENABLED'] = input.btnMqttEnabled()
         CONFIG['MQTT_BROKER_ADDRESS'] = input.txtMqttBrokerAddress()
         CONFIG['MQTT_BROKER_PORT'] = int(input.numMqttBrokerPort())

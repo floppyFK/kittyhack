@@ -1668,6 +1668,88 @@ html[data-bs-theme="dark"] .btn-default.btn-outline-danger:focus {
 
 /* Live view status overlay (rendered on top of the live view picture) */
 
+/* Live view: stable stage with separate image + overlay layers */
+.live-view-stage {
+    position: relative;
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+    border-radius: .5rem;
+    overflow: hidden;
+    aspect-ratio: var(--kh-live-aspect, 4 / 3);
+    min-height: 220px;
+}
+
+/* Make Shiny output wrappers fill the stage */
+.live-view-stage > #live_view_image,
+.live-view-stage > #live_view_overlay_clock {
+    position: absolute;
+    inset: 0;
+}
+
+.live-view-stage > #live_view_image {
+    z-index: 1;
+}
+
+.live-view-stage > #live_view_overlay_clock {
+    z-index: 5;
+    pointer-events: none;
+}
+
+/* Live view status chips below the picture */
+.live-view-statusbar {
+    margin-top: 0.15rem;
+    margin-bottom: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.live-view-statusbar .live-view-overlay-row {
+    justify-content: center;
+}
+
+.live-view-statusbar .live-view-overlay-banner {
+    align-self: center;
+}
+
+/* Live view: bslib adds fairly large default gaps; tighten spacing for this card */
+.live-view-card .card-body.bslib-gap-spacing {
+    gap: 0.15rem !important;
+}
+
+/* When no warning is shown, remove the element to avoid extra gap */
+#live_view_warning:empty {
+    display: none !important;
+}
+
+/* Override generic .image-container img styling (margins/outline) for live view */
+.live-view-stage img {
+    margin: 0 !important;
+    outline: none !important;
+    outline-offset: 0 !important;
+    border-radius: 0 !important;
+    max-width: none !important;
+}
+
+.live-view-stage .placeholder-image {
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+}
+
+/* Live view: when the placeholder content overflows on small screens,
+   shrink typography slightly (only when JS detects overflow) */
+.live-view-stage .placeholder-image.kh-placeholder-overflow {
+    /* override inline padding used by server-side placeholder HTML */
+    padding-top: 10px !important;
+    padding-bottom: 10px !important;
+    font-size: clamp(0.82rem, 3.2vw, 0.95rem);
+    line-height: 1.2;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
 .live-view-overlay-bottom {
     position: absolute;
     left: 0.45rem;

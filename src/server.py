@@ -1377,7 +1377,7 @@ def show_event_server(input, output, session, block_id: int):
                     ui.input_action_button("img_loaded_pulse", "", style_="visibility:hidden; width:1px; height:1px;"),
                 ),
                 size='l',
-                easy_close=False,
+                easy_close=True,
                 class_="transparent-modal-content"
             )
         )

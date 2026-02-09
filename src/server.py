@@ -82,20 +82,6 @@ from src.system import (
 # Prepare gettext for translations based on the configured language
 _ = set_language(CONFIG['LANGUAGE'])
 
-def _strip_status_emoji_prefix(text: str) -> str:
-    if not isinstance(text, str):
-        return text
-    # Keep gettext keys stable (some strings include emojis), but avoid rendering emojis.
-    prefixes = (
-        "⚠️ ", "✅ ", "❌ ",
-        "🟢 ", "🟡 ", "🔴 ", "⚫ ",
-        "⚠️", "✅", "❌", "🟢", "🟡", "🔴", "⚫",
-    )
-    for p in prefixes:
-        if text.startswith(p):
-            return text[len(p):].lstrip()
-    return text
-
 
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
 
@@ -118,7 +104,7 @@ if CONFIG['NOT_GRACEFUL_SHUTDOWNS'] >= 3:
 
     # Add a entry to the user notifications, which will be shown at the next login in the frontend
     UserNotifications.add(
-        header=_strip_status_emoji_prefix(_("⚠️ Several crashes detected!")),
+        header=_("Several crashes detected!"),
         message=_("The kittyflap was not shut down gracefully several times in a row. Please do not power off the device without shutting it down first, otherwise the database may be corrupted!") + "\n\n" +
                 _("If you have shut it down gracefully and see this message, please report it in the") + " " +
                 "[GitHub issue tracker](https://github.com/floppyFK/kittyhack/issues), " + 
@@ -2230,7 +2216,7 @@ def server(input, output, session):
                     ui.div(
                         ui.markdown(
                             f"{icon_svg('circle-check', margin_left='-0.1em')} "
-                            + _strip_status_emoji_prefix(_("✅ Update to version `{}` was successful!").format(git_version))
+                            + _("Update to version `{}` was successful!").format(git_version)
                             + "\n\n---------\n\n"
                             + _("**NOTE**: You can find the changelogs in the `INFO` section.")
                             ),
@@ -3821,7 +3807,7 @@ def server(input, output, session):
                                 12,
                                 ui.markdown(
                                     f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
-                                    + _strip_status_emoji_prefix(_("⚠️ This cat has no RFID configured. The individual exit per cat works only for cats with a RFID chip!"))
+                                    + _("This cat has no RFID configured. The individual exit per cat works only for cats with a RFID chip!")
                                 ),
                                 style_="color:#b94a48;"
                             ),
@@ -5600,7 +5586,7 @@ def server(input, output, session):
                                 12,
                                 ui.markdown(
                                     f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
-                                    + _strip_status_emoji_prefix(_("⚠️ **WARNING**: It is NOT recommended to enable this feature! Several users have reported that this option causes reboots or system freezes.")) +
+                                    + _("**WARNING**: It is NOT recommended to enable this feature! Several users have reported that this option causes reboots or system freezes.") +
                                     _("If you encounter the same issue, it's strongly recommended to disable this setting.")
                                 ), style_="color: #e74a3b; padding: 10px; border: 1px solid #e74a3b; border-radius: 5px; margin: 20px; width: 90%;"
                             ),
@@ -6382,7 +6368,7 @@ def server(input, output, session):
                         ui.hr(),
                         ui.markdown(
                             f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
-                            + _strip_status_emoji_prefix(_("⚠️ WARNING: Local changes detected in the git repository in `/root/kittyhack`.")) + "\n\n" +
+                            + _("WARNING: Local changes detected in the git repository in `/root/kittyhack`.") + "\n\n" +
                             _("If you proceed with the update, these changes will be lost (the database and configuration will not be affected).") + "\n\n" +
                             _("Please commit or stash your changes manually before updating, if you want to keep them.")
                         ),

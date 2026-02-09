@@ -234,6 +234,61 @@ document.addEventListener("DOMContentLoaded", function() {
     });
     tooltipInitObserver.observe(document.body, { childList: true, subtree: true });
 
+    // --- Live view placeholder: shrink text only when it overflows on mobile ---
+    // When the camera returns an empty frame, the placeholder text can be clipped
+    // inside the fixed-aspect live view stage on small screens.
+    function isSmallMobileViewport() {
+        try {
+            if (window.matchMedia && window.matchMedia('(max-width: 576px)').matches) return true;
+            if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
+        } catch (e) {}
+        return false;
+    }
+
+    function applyLiveViewPlaceholderFit() {
+        const stage = document.getElementById('live_view_stage');
+        if (!stage) return;
+
+        // Placeholder HTML is rendered inside the live_view_image output wrapper.
+        const ph = stage.querySelector('.placeholder-image');
+        if (!ph) return;
+
+        try { ph.classList.remove('kh-placeholder-overflow'); } catch (e) {}
+        if (!isSmallMobileViewport()) return;
+
+        // Defer measurement so layout is settled.
+        requestAnimationFrame(function () {
+            try {
+                const over = (ph.scrollHeight - ph.clientHeight) > 2;
+                if (over) ph.classList.add('kh-placeholder-overflow');
+            } catch (e) {}
+        });
+    }
+
+    function initLiveViewPlaceholderAutoFit() {
+        applyLiveViewPlaceholderFit();
+
+        window.addEventListener('resize', function () {
+            applyLiveViewPlaceholderFit();
+        }, { passive: true });
+
+        window.addEventListener('orientationchange', function () {
+            applyLiveViewPlaceholderFit();
+        }, { passive: true });
+
+        const stage = document.getElementById('live_view_stage');
+        if (!stage || !window.MutationObserver) return;
+
+        const obs = new MutationObserver(function () {
+            applyLiveViewPlaceholderFit();
+        });
+        try {
+            obs.observe(stage, { childList: true, subtree: true });
+        } catch (e) {}
+    }
+
+    initLiveViewPlaceholderAutoFit();
+
     // --- Event modal: show spinner until first image is rendered ---
     function syncEventModalSpinner(root) {
         const scope = root && root.querySelector ? root : document;

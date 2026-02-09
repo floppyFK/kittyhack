@@ -709,6 +709,7 @@ def show_event_server(input, output, session, block_id: int):
     # Store lists of DetectedObjects, one list per event
     event_datas: List[List[DetectedObject]] = []
     frame_index = [0]  # 0-based index into pictures (kept non-reactive to avoid feedback loops)
+    shown_index = [0]  # 0-based index that matches the actually displayed frame (confirmed by JS)
     frame_tick = reactive.Value(0)  # bump to force re-render when paused
     fallback_mode = [False]
     slideshow_running = reactive.Value(True)
@@ -1210,6 +1211,7 @@ def show_event_server(input, output, session, block_id: int):
 
         # Initialize double-buffer state for the slideshow: visible + preload
         frame_index[0] = 0
+        shown_index[0] = 0
         _bump_frame_tick()
 
         # Optional optimization: build a single tar.gz containing all thumbnails.
@@ -1229,7 +1231,15 @@ def show_event_server(input, output, session, block_id: int):
                 ui.card(
                     ui.div(
                         ui.div(
-                            ui.output_ui("show_event_picture"),
+                            ui.tags.div(
+                                id="event_modal_js_layer",
+                                class_="event-modal-js-layer",
+                            ),
+                            ui.tags.div(
+                                ui.output_ui("show_event_picture"),
+                                id="event_modal_overlay_container",
+                                class_="event-modal-overlay-container",
+                            ),
                             ui.tags.div(
                                 {
                                     "class": "event-modal-picture-spinner",
@@ -1357,13 +1367,20 @@ def show_event_server(input, output, session, block_id: int):
         try:
             if len(pictures) > 0:
                 vis_idx = int(frame_index[0] or 0) % len(pictures)
+                try:
+                    shown_idx = int(shown_index[0] or 0) % len(pictures)
+                except Exception:
+                    shown_idx = vis_idx
+                prev_idx = (vis_idx - 1) % len(pictures)
                 next_idx = (vis_idx + 1) % len(pictures)
 
                 visible_pid = int(pictures[vis_idx])
-                preload_pid = int(pictures[next_idx]) if len(pictures) > 1 else None
+                prev_pid = int(pictures[prev_idx]) if len(pictures) > 1 else None
+                next_pid = int(pictures[next_idx]) if len(pictures) > 1 else None
 
                 visible_src = f"/thumb/{visible_pid}.jpg"
-                preload_src = f"/thumb/{preload_pid}.jpg" if preload_pid is not None else None
+                prev_src = f"/thumb/{prev_pid}.jpg" if prev_pid is not None else ""
+                next_src = f"/thumb/{next_pid}.jpg" if next_pid is not None else ""
 
                 # Keep the scrubber synced to the currently visible frame while playing.
                 # Do not use scrubber_suppress here: periodic updates may not always
@@ -1380,97 +1397,95 @@ def show_event_server(input, output, session, block_id: int):
                     except Exception:
                         pass
 
-                # Build layered image HTML.
-                # The wrapper (#event_modal_picture_wrap) defines stable dimensions (CSS aspect-ratio).
-                container_style = 'position: relative; display: block; width: 100%; height: 100%;'
-                front_style = 'position: relative; display: block; width: 100%; height: 100%; object-fit: contain; z-index: 2;'
-                back_style = 'position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 1; pointer-events: none;'
+                overlay_on = (input.btn_toggle_overlay() % 2 == (1 - int(CONFIG['SHOW_IMAGES_WITH_OVERLAY'])))
+                playing = 1 if bool(slideshow_running.get()) else 0
 
-                img_html = f'<div style="{container_style}">'
-                # Bottom (preloaded)
-                if preload_src:
-                    img_html += f'<img data-src="{preload_src}" data-pid="{preload_pid}" style="{back_style}" aria-hidden="true" />'
-                # Top (visible)
-                img_html += f'<img data-src="{visible_src}" data-role="visible" data-pid="{visible_pid}" style="{front_style}" />'
+                # Indicator only (JS fully controls <img> rendering).
+                indicator_html = (
+                    f'<div id="event_modal_indicator" '
+                    f'data-vis-idx="{vis_idx}" '
+                    f'data-total="{len(pictures)}" '
+                    f'data-overlay="{1 if overlay_on else 0}" '
+                    f'data-playing="{playing}" '
+                    f'data-visible-pid="{visible_pid}" '
+                    f'data-visible-src="{visible_src}" '
+                    f'data-prev-pid="{prev_pid if prev_pid is not None else ""}" '
+                    f'data-prev-src="{prev_src}" '
+                    f'data-next-pid="{next_pid if next_pid is not None else ""}" '
+                    f'data-next-src="{next_src}" '
+                    f'style="display:none"></div>'
+                )
 
-                # Overlays for detections (use visible index)
-                if vis_idx is not None:
-                    detected_objects = event_datas[vis_idx] if vis_idx < len(event_datas) else []
-                    overlay_on = (input.btn_toggle_overlay() % 2 == (1 - int(CONFIG['SHOW_IMAGES_WITH_OVERLAY'])))
-                    # Expose state for optional client-side caching/optimistic UI
-                    img_html = img_html.replace(
-                        '<div style="' + container_style + '">',
-                        f'<div id="event_modal_picture" data-vis-idx="{vis_idx}" data-total="{len(pictures)}" data-overlay="{1 if overlay_on else 0}" data-playing="{1 if bool(slideshow_running.get()) else 0}" style="{container_style}">' 
-                    )
+                # Overlay layer (kept separate from the JS image layer).
+                overlay_html = '<div id="event_modal_overlay" style="position:absolute; inset:0; pointer-events:none;">'
 
-                    if overlay_on:
-                        for detected_object in detected_objects:
-                            if detected_object.object_name != "false-accept":
-                                obj_label = (detected_object.object_name or "").strip()
-                                obj_label_l = obj_label.lower()
-                                is_prey = obj_label_l in ("prey", "beute")
+                detected_objects = event_datas[shown_idx] if shown_idx < len(event_datas) else []
+                if overlay_on:
+                    for detected_object in detected_objects:
+                        if detected_object.object_name != "false-accept":
+                            obj_label = (detected_object.object_name or "").strip()
+                            obj_label_l = obj_label.lower()
+                            is_prey = obj_label_l in ("prey", "beute")
 
-                                # Match scrubber marker logic: prey below threshold is light red.
-                                prey_strong = False
-                                if is_prey:
-                                    try:
-                                        p = float(getattr(detected_object, "probability", 0.0))
-                                    except Exception:
-                                        p = 0.0
-                                    try:
-                                        thr = float(CONFIG.get("MOUSE_THRESHOLD"))
-                                    except Exception:
-                                        thr = 0.0
-                                    prey_strong = bool(p >= thr)
+                            # Match scrubber marker logic: prey below threshold is light red.
+                            prey_strong = False
+                            if is_prey:
+                                try:
+                                    p = float(getattr(detected_object, "probability", 0.0))
+                                except Exception:
+                                    p = 0.0
+                                try:
+                                    thr = float(CONFIG.get("MOUSE_THRESHOLD"))
+                                except Exception:
+                                    thr = 0.0
+                                prey_strong = bool(p >= thr)
 
-                                if is_prey and not prey_strong:
-                                    stroke_rgb = "252, 165, 165"  # light red (tailwind red-300)
-                                    stroke_hex = "#fca5a5"
-                                else:
-                                    stroke_rgb = "255, 0, 0" if is_prey else "0, 180, 0"
-                                    stroke_hex = "#ff0000" if is_prey else "#00b400"
-                                img_html += f'''
+                            if is_prey and not prey_strong:
+                                stroke_rgb = "252, 165, 165"  # light red (tailwind red-300)
+                                stroke_hex = "#fca5a5"
+                            else:
+                                stroke_rgb = "255, 0, 0" if is_prey else "0, 180, 0"
+                                stroke_hex = "#ff0000" if is_prey else "#00b400"
+
+                            overlay_html += f'''
+                            <div style="position: absolute; 
+                                        left: {detected_object.x}%; 
+                                        top: {detected_object.y}%; 
+                                        width: {detected_object.width}%; 
+                                        height: {detected_object.height}%; 
+                                        border: 2px solid {stroke_hex}; 
+                                        background-color: rgba({stroke_rgb}, 0.05);
+                                        pointer-events: none; z-index: 3;">
                                 <div style="position: absolute; 
-                                            left: {detected_object.x}%; 
-                                            top: {detected_object.y}%; 
-                                            width: {detected_object.width}%; 
-                                            height: {detected_object.height}%; 
-                                            border: 2px solid {stroke_hex}; 
-                                            background-color: rgba({stroke_rgb}, 0.05);
-                                            pointer-events: none; z-index: 3;">
-                                    <div style="position: absolute; 
-                                                {f'bottom: -26px' if detected_object.y < 16 else 'top: -26px'}; 
-                                                left: 0px; 
-                                                background-color: rgba({stroke_rgb}, 0.7); 
-                                                color: white; 
-                                                padding: 2px 5px;
-                                                border-radius: 5px;
-                                                text-wrap-mode: nowrap;
-                                                font-size: 12px;">
-                                        {detected_object.object_name} ({detected_object.probability:.0f}%)
-                                    </div>
-                                </div>'''
+                                            {f'bottom: -26px' if detected_object.y < 16 else 'top: -26px'}; 
+                                            left: 0px; 
+                                            background-color: rgba({stroke_rgb}, 0.7); 
+                                            color: white; 
+                                            padding: 2px 5px;
+                                            border-radius: 5px;
+                                            text-wrap-mode: nowrap;
+                                            font-size: 12px;">
+                                    {detected_object.object_name} ({detected_object.probability:.0f}%)
+                                </div>
+                            </div>'''
 
-                    # Timestamp and frame counter overlays (use visible index)
-                    ts_display = timestamps[vis_idx][11:-4] if vis_idx < len(timestamps) else ""
-                    img_html += f'''
-                        <div id="event_modal_timestamp" style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px; z-index: 3;">
-                            {ts_display}
-                        </div>
-                        <div id="event_modal_counter" style="position: absolute; bottom: 12px; right: 8px; background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px; z-index: 3;">
-                            {vis_idx + 1}/{len(pictures)}
-                        </div>
+                ts_display = timestamps[shown_idx][11:-4] if shown_idx < len(timestamps) else ""
+                overlay_html += f'''
+                    <div id="event_modal_timestamp" style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px; z-index: 3;">
+                        {ts_display}
                     </div>
-                    '''
-                else:
-                    img_html += '</div>'
-            else:
-                img_html = '<div class="placeholder-image"><strong>' + _('No pictures found for this event.') + '</strong></div>'
+                    <div id="event_modal_counter" style="position: absolute; bottom: 12px; right: 8px; background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px; z-index: 3;">
+                        {shown_idx + 1}/{len(pictures)}
+                    </div>
+                </div>
+                '''
+
+                return ui.HTML(indicator_html + overlay_html)
+
+            return ui.HTML('<div class="placeholder-image"><strong>' + _('No pictures found for this event.') + '</strong></div>')
         except Exception as e:
             logging.error(f"Failed to show the picture for event: {e}")
-            img_html = '<div class="placeholder-image"><strong>' + _('An error occured while reading the image.') + '</strong></div>'
-
-        return ui.HTML(img_html)
+            return ui.HTML('<div class="placeholder-image"><strong>' + _('An error occured while reading the image.') + '</strong></div>')
 
     @reactive.effect
     @reactive.event(input.img_loaded_pulse)
@@ -1501,7 +1516,29 @@ def show_event_server(input, output, session, block_id: int):
         except Exception:
             pass
 
+        # Confirm that this frame is now actually visible.
+        shown_index[0] = vis_idx
+
         frame_index[0] = (vis_idx + 1) % max(len(pictures), 1)
+        _bump_frame_tick()
+
+    @reactive.effect
+    @reactive.event(input.img_loaded_pulse)
+    def _confirm_frame_when_paused():
+        # When paused, JS still pulses after it has swapped the visible <img>.
+        # Use this to update overlays/timestamp/counter only after the image is really shown.
+        if bool(slideshow_running.get()):
+            return
+
+        if not pictures:
+            return
+
+        try:
+            idx = int(frame_index[0] or 0) % len(pictures)
+        except Exception:
+            return
+
+        shown_index[0] = idx
         _bump_frame_tick()
 
     @reactive.effect
@@ -1515,6 +1552,7 @@ def show_event_server(input, output, session, block_id: int):
         photo_ids.clear()
         photo_ids.clear()
         frame_index[0] = 0
+        shown_index[0] = 0
 
     def _single_image_filename():
         try:
@@ -1667,6 +1705,14 @@ def show_event_server(input, output, session, block_id: int):
         # Toggle play/pause based on the click count
         new_state = not bool(slideshow_running.get())
         slideshow_running.set(new_state)
+
+        # When resuming playback, allow the next img_loaded_pulse for the current frame
+        # to advance the slideshow (avoid getting stuck due to last_pid debounce).
+        if new_state:
+            try:
+                setattr(_advance_slideshow_when_loaded, "_last_pid", -1)
+            except Exception:
+                pass
 
         # When switching into paused mode, align the scrubber to the current frame.
         if not new_state:

@@ -378,7 +378,10 @@
             if (!src) return;
             // Prefer a real <img> backdrop (more reliable than CSS background-image on Firefox mobile).
             var bg = null;
-            try { bg = wrap.querySelector('img[data-role="bg"]'); } catch (e) { bg = null; }
+            // Prefer placing the backdrop inside the persistent JS layer if present.
+            var host = null;
+            try { host = wrap.querySelector('#event_modal_js_layer') || wrap; } catch (e) { host = wrap; }
+            try { bg = host.querySelector('img[data-role="bg"]'); } catch (e) { bg = null; }
             if (!bg) {
                 try {
                     bg = document.createElement('img');
@@ -388,7 +391,7 @@
                     // Help mobile browsers prioritize decode.
                     try { bg.decoding = 'async'; } catch (e) {}
                     try { bg.loading = 'eager'; } catch (e) {}
-                    wrap.insertBefore(bg, wrap.firstChild);
+                    host.insertBefore(bg, host.firstChild);
                 } catch (e) {
                     bg = null;
                 }
@@ -400,6 +403,122 @@
             // Keep CSS var as a fallback (older CSS versions).
             wrap.style.setProperty('--kh-event-bg', 'url("' + src + '")');
         } catch (e) {}
+    }
+
+    function getPersistentPreloader() {
+        // Persistent Image() preloader for clean, controlled swaps.
+        try {
+            if (!window.__khEventModalPreloader) {
+                var im = new Image();
+                try { im.decoding = 'async'; } catch (e) {}
+                window.__khEventModalPreloader = { img: im, target: '', pid: null };
+            }
+            return window.__khEventModalPreloader;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function getPrefetchPool() {
+        try {
+            if (!window.__khEventModalPrefetchPool) {
+                var im1 = new Image();
+                var im2 = new Image();
+                try { im1.decoding = 'async'; } catch (e) {}
+                try { im2.decoding = 'async'; } catch (e) {}
+                window.__khEventModalPrefetchPool = {
+                    imgs: [im1, im2],
+                    idx: 0,
+                    seenAtMsBySrc: new Map(),
+                };
+            }
+            return window.__khEventModalPrefetchPool;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function prefetchSrc(src) {
+        try {
+            if (!src) return;
+            var pool = getPrefetchPool();
+            if (!pool || !pool.imgs || pool.imgs.length === 0) return;
+
+            var now = Date.now();
+            var last = pool.seenAtMsBySrc.get(src) || 0;
+            // Avoid hammering the same URL on rapid button repeats.
+            if (now - last < 2500) return;
+            pool.seenAtMsBySrc.set(src, now);
+
+            // Prevent unbounded growth.
+            if (pool.seenAtMsBySrc.size > 200) {
+                pool.seenAtMsBySrc.clear();
+            }
+
+            var im = pool.imgs[pool.idx % pool.imgs.length];
+            pool.idx = (pool.idx + 1) % pool.imgs.length;
+            try { im.src = src; } catch (e) {}
+        } catch (e) {}
+    }
+
+    function ensureJsImageLayer(wrap) {
+        try {
+            if (!wrap) return null;
+            var layer = document.getElementById('event_modal_js_layer');
+            if (!layer) {
+                layer = document.createElement('div');
+                layer.id = 'event_modal_js_layer';
+                layer.className = 'event-modal-js-layer';
+                wrap.insertBefore(layer, wrap.firstChild);
+            }
+
+            // Backdrop is managed by setWrapBg (uses this layer).
+            var visible = null;
+            try { visible = layer.querySelector('img[data-role="visible"]'); } catch (e) { visible = null; }
+            if (!visible) {
+                visible = document.createElement('img');
+                visible.setAttribute('data-role', 'visible');
+                // Help mobile browsers prioritize decode.
+                try { visible.decoding = 'async'; } catch (e) {}
+                try { visible.loading = 'eager'; } catch (e) {}
+                layer.appendChild(visible);
+            }
+            return { layer: layer, visible: visible };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function lookupBlobUrlByPid(modal, pid) {
+        try {
+            if (!modal) return '';
+            var root = modal.querySelector ? modal.querySelector('#event_modal_root') : null;
+            var bundleUrl = root && root.getAttribute ? (root.getAttribute('data-bundle-url') || '') : '';
+            var key = bundleUrl ? String(bundleUrl) : '';
+            if (!key) {
+                var blockId = root && root.getAttribute ? root.getAttribute('data-block-id') : null;
+                if (!blockId) return '';
+                key = String(blockId);
+            }
+
+            var entry = window.__khEventBundles.get(String(key));
+            if (!entry || !entry.urlsByPid) return '';
+            return entry.urlsByPid.get(pid) || '';
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function desiredSrcForPid(modal, pid, fallbackUrl) {
+        try {
+            if (!pid) return '';
+
+            var blob = lookupBlobUrlByPid(modal, pid);
+            if (blob) return blob;
+            return fallbackUrl || '';
+        } catch (e) {
+            return '';
+        }
     }
 
     function safeClick(el) {
@@ -460,8 +579,6 @@
             // Do NOT stop polling permanently if it's not present yet.
 
             var wrap = document.getElementById('event_modal_picture_wrap');
-            var pic = document.getElementById('event_modal_picture');
-            var img = q('#event_modal_picture img[data-role="visible"]');
             var pulseBtn = q('button[id$="img_loaded_pulse"]');
             var modal = document.querySelector('.modal');
 
@@ -483,22 +600,60 @@
                 }
             } catch (e) {}
 
-            if (!wrap || !pic || !img || !pulseBtn) return;
+            if (!wrap || !pulseBtn) return;
+
+            var layerInfo = ensureJsImageLayer(wrap);
+            if (!layerInfo || !layerInfo.visible) return;
+            var img = layerInfo.visible;
+
+            // Read Shiny-rendered indicator (no <img> tags in reactive output).
+            var ind = document.getElementById('event_modal_indicator');
+            if (!ind || !ind.getAttribute) return;
+
+            var pid = parseIntSafe(ind.getAttribute('data-visible-pid'), null);
+            var fallbackUrl = ind.getAttribute('data-visible-src') || '';
+            var prevPid = parseIntSafe(ind.getAttribute('data-prev-pid'), null);
+            var prevFallbackUrl = ind.getAttribute('data-prev-src') || '';
+            var nextPid = parseIntSafe(ind.getAttribute('data-next-pid'), null);
+            var nextFallbackUrl = ind.getAttribute('data-next-src') || '';
+            var playingNow = (ind.getAttribute('data-playing') === '1');
+            if (pid === null) return;
+
+            // If playback just resumed, kick it once so the server advances to the next frame.
+            try {
+                var lastPlayAttr = wrap.getAttribute('data-playing-last') || '';
+                var nowPlayAttr = playingNow ? '1' : '0';
+                if (lastPlayAttr !== nowPlayAttr) {
+                    wrap.setAttribute('data-playing-last', nowPlayAttr);
+                    if (playingNow) {
+                        // Clear any pending pulse-throttle state.
+                        try { wrap.removeAttribute('data-pulse-timeout'); } catch (e) {}
+                        try { wrap.setAttribute('data-last-pulse-ms', String(Date.now())); } catch (e) {}
+                        safeClick(pulseBtn);
+                    }
+                }
+            } catch (e) {}
 
             // Mark that the dedicated event-modal observer is active (so global app.js doesn't interfere).
             try {
                 wrap.setAttribute('data-event-modal-observer', '1');
             } catch (e) {}
 
-            // Preload-then-swap strategy (simpler, avoids flicker/jitter):
-            // - Keep the currently visible frame on screen
-            // - Load the next frame into the hidden preload <img>
-            // - Swap the visible <img>.src only after preload completes
-
-            var preload = q('#event_modal_picture img[aria-hidden="true"]:not([data-role="bg"])');
-
-            var src = desiredImgSrc(modal, img) || '';
+            // Determine desired src (blob if ready, else /thumb/<id>.jpg if allowed).
+            var src = desiredSrcForPid(modal, pid, fallbackUrl) || '';
             if (!src) return;
+
+            // Prefetch adjacent frames so rapid prev/next feels instant.
+            try {
+                if (prevPid !== null) {
+                    var psrc = desiredSrcForPid(modal, prevPid, prevFallbackUrl) || '';
+                    if (psrc && psrc !== src) prefetchSrc(psrc);
+                }
+                if (nextPid !== null) {
+                    var nsrc = desiredSrcForPid(modal, nextPid, nextFallbackUrl) || '';
+                    if (nsrc && nsrc !== src) prefetchSrc(nsrc);
+                }
+            } catch (e) {}
 
             var currentSrc = wrap.getAttribute('data-current-src') || '';
             var shownSrc = wrap.getAttribute('data-shown-src') || '';
@@ -510,7 +665,6 @@
             function syncShownState(finalSrc) {
                 try {
                     if (!finalSrc) return;
-                    maybeSetAspectRatio();
                     wrap.classList.add('has-image');
                     wrap.setAttribute('data-shown-src', finalSrc);
                     setWrapBg(wrap, finalSrc);
@@ -518,47 +672,93 @@
                 } catch (e) {}
             }
 
+            function maybePulseLoadedFor(finalSrc) {
+                try {
+                    var lastAck = wrap.getAttribute('data-last-ack-src') || '';
+                    if (lastAck === finalSrc) return;
+                    wrap.setAttribute('data-last-ack-src', finalSrc);
+
+                    // Pace autoplay to ~3fps (333ms). When paused we pulse immediately so overlays stay in sync.
+                    var fpsIntervalMs = 333;
+                    if (!playingNow) {
+                        safeClick(pulseBtn);
+                        return;
+                    }
+
+                    var now = Date.now();
+                    var lastMs = parseIntSafe(wrap.getAttribute('data-last-pulse-ms'), 0) || 0;
+                    var dueIn = (lastMs + fpsIntervalMs) - now;
+                    if (dueIn <= 0) {
+                        wrap.setAttribute('data-last-pulse-ms', String(now));
+                        safeClick(pulseBtn);
+                        return;
+                    }
+
+                    // Avoid stacking timeouts during fast cache hits.
+                    var tok = wrap.getAttribute('data-pulse-timeout') || '';
+                    if (tok) return;
+                    wrap.setAttribute('data-pulse-timeout', '1');
+                    setTimeout(function () {
+                        try {
+                            wrap.removeAttribute('data-pulse-timeout');
+                            var now2 = Date.now();
+                            wrap.setAttribute('data-last-pulse-ms', String(now2));
+                            safeClick(pulseBtn);
+                        } catch (e) {}
+                    }, Math.min(2000, Math.max(0, dueIn)));
+                } catch (e) {}
+            }
+
             function swapTo(finalSrc) {
                 try {
                     if (!finalSrc) return;
                     var vis = (img.getAttribute && img.getAttribute('src')) ? (img.getAttribute('src') || '') : '';
-                    if (vis !== finalSrc) img.setAttribute('src', finalSrc);
-                    // If it is already decoded from cache, update state immediately.
-                    try {
-                        if (img.complete && img.naturalWidth > 0) {
-                            syncShownState(finalSrc);
-                            maybePulseLoaded();
-                        }
-                    } catch (e) {}
+                    if (vis === finalSrc) {
+                        syncShownState(finalSrc);
+                        maybePulseLoadedFor(finalSrc);
+                        return;
+                    }
+                    img.setAttribute('src', finalSrc);
+                    syncShownState(finalSrc);
+                    // Preloader already confirmed decode; safe to pulse immediately.
+                    maybePulseLoadedFor(finalSrc);
                 } catch (e) {}
             }
 
             if (currentSrc !== src) {
                 wrap.setAttribute('data-current-src', src);
+                try {
+                    wrap.setAttribute('data-current-at-ms', String(Date.now()));
+                } catch (e) {}
 
                 // Ensure we always have something behind the visible layer.
                 var fallbackBg = shownSrc || (img.getAttribute ? (img.getAttribute('src') || '') : '') || '';
                 if (fallbackBg) setWrapBg(wrap, fallbackBg);
 
-                // If Shiny replaced the <img> node (src empty), restore last frame immediately.
-                try {
-                    var visNow = (img.getAttribute && img.getAttribute('src')) ? (img.getAttribute('src') || '') : '';
-                    if (!visNow && fallbackBg) img.setAttribute('src', fallbackBg);
-                } catch (e) {}
-
-                // Initial render: if we have nothing yet, load directly.
-                if (!fallbackBg) {
+                // Preload using persistent Image() to avoid any Shiny DOM races.
+                var pre = getPersistentPreloader();
+                if (!pre || !pre.img) {
                     swapTo(src);
-                } else if (preload && preload.setAttribute) {
+                } else {
+                    pre.target = src;
+                    pre.pid = pid;
                     try {
-                        preload.__khPreloadFor = src;
-                        var ps = preload.getAttribute('src') || '';
-                        if (ps !== src) preload.setAttribute('src', src);
+                        pre.img.src = src;
+                        // If it's already in cache, swap without waiting for the async load event.
+                        try {
+                            if (pre.img.complete && pre.img.naturalWidth > 0) {
+                                // Defer a tick so pre.img.src has settled.
+                                setTimeout(function () {
+                                    try {
+                                        var wantNow = wrap.getAttribute('data-current-src') || '';
+                                        if (wantNow && wantNow === src) swapTo(src);
+                                    } catch (e) {}
+                                }, 0);
+                            }
+                        } catch (e) {}
                     } catch (e) {
                         swapTo(src);
                     }
-                } else {
-                    swapTo(src);
                 }
             } else {
                 // If server re-render replaced the <img> node, ensure it has the current src.
@@ -566,87 +766,62 @@
                 if (!existing) swapTo(src);
             }
 
-            function maybePulseLoaded() {
-                // Re-read on demand so play/pause changes are respected.
-                var playingNow = (pic.getAttribute('data-playing') === '1');
-                if (!playingNow) return;
-                var want = wrap.getAttribute('data-current-src') || '';
-                if (!want) return;
-                var lastAck = wrap.getAttribute('data-last-ack-src') || '';
-                if (lastAck === want) return;
-                wrap.setAttribute('data-last-ack-src', want);
-                safeClick(pulseBtn);
-            }
-
-            function maybeSetAspectRatio() {
-                // Set aspect ratio once per modal/event based on the first image.
-                try {
-                    if (wrap.getAttribute('data-aspect-set') === '1') return;
-                    var w = img.naturalWidth || 0;
-                    var h = img.naturalHeight || 0;
-                    if (w > 0 && h > 0) {
-                        wrap.style.aspectRatio = String(w) + ' / ' + String(h);
-                        wrap.setAttribute('data-aspect-set', '1');
-                    }
-                } catch (e) {}
-            }
-
-            // (Re)attach handlers for this img element
-            if (!img.__kittyhackBound) {
-                img.__kittyhackBound = true;
-                img.addEventListener('load', function () {
-                    try { syncShownState(wrap.getAttribute('data-current-src') || (img.getAttribute('src') || '')); } catch (e) {}
-                    maybePulseLoaded();
-                });
-                img.addEventListener('error', function () {
-                    // Don't stall the slideshow forever on a failed request.
+            // Bind persistent preloader handlers once.
+            var pre2 = getPersistentPreloader();
+            if (pre2 && pre2.img && !pre2.__bound) {
+                pre2.__bound = true;
+                pre2.img.addEventListener('load', function () {
                     try {
-                        wrap.classList.add('has-image');
-                        // Keep background (previous shownSrc) if any
-                    } catch (e) {}
-                    maybePulseLoaded();
-                });
-            }
-
-            // Bind preload handlers (swap visible only after preload completes)
-            if (preload && !preload.__kittyhackBound) {
-                preload.__kittyhackBound = true;
-                preload.addEventListener('load', function () {
-                    try {
-                        var target = preload.__khPreloadFor || '';
+                        var target = pre2.target || '';
                         var want = wrap.getAttribute('data-current-src') || '';
-                        if (target && want && target === want) {
-                            swapTo(target);
-                        }
+                        if (target && want && target === want) swapTo(target);
                     } catch (e) {}
                 });
-                preload.addEventListener('error', function () {
-                    // If preload fails, fall back to direct swap so we don't get stuck.
+                pre2.img.addEventListener('error', function () {
                     try {
                         var want = wrap.getAttribute('data-current-src') || '';
                         if (want) swapTo(want);
                     } catch (e) {}
                 });
             }
+        }
 
-            // If already loaded (from cache), ensure state is updated and pulse once if playing
+
+        function setupObserverLoop() {
             try {
-                if (img.complete && img.naturalWidth > 0) {
-                    syncShownState(wrap.getAttribute('data-current-src') || (img.getAttribute('src') || ''));
-                    maybePulseLoaded();
+                attachOnce();
+            } catch (e) {}
+
+            // Observe the Shiny output container so updates are instant.
+            try {
+                // NOTE: Shiny module output IDs are namespaced, so don't rely on a fixed "show_event_picture" id.
+                // Observe our own stable container instead.
+                var out = document.getElementById('event_modal_overlay_container') || document.getElementById('event_modal_picture_wrap');
+                if (out) {
+                    var prevTarget = window.__khEventModalIndicatorObserverTarget || null;
+                    if (prevTarget !== out) {
+                        try {
+                            if (window.__khEventModalIndicatorObserver && window.__khEventModalIndicatorObserver.disconnect) {
+                                window.__khEventModalIndicatorObserver.disconnect();
+                            }
+                        } catch (e) {}
+                        try {
+                            var obs = new MutationObserver(function () {
+                                try { attachOnce(); } catch (e) {}
+                            });
+                            obs.observe(out, { childList: true, subtree: true, attributes: true });
+                            window.__khEventModalIndicatorObserver = obs;
+                            window.__khEventModalIndicatorObserverTarget = out;
+                        } catch (e) {}
+                    }
                 }
             } catch (e) {}
+
+            // Still keep a lightweight poll as a fallback (covers modal open/close).
+            setTimeout(setupObserverLoop, document.querySelector('.modal') ? 250 : 800);
         }
 
-
-        function poll() {
-            try { attachOnce(); } catch (e) {}
-            // Slightly slower when modal isn't present yet.
-            var delay = document.querySelector('.modal') ? 250 : 500;
-            setTimeout(poll, delay);
-        }
-
-        poll();
+        setupObserverLoop();
     }
 
     // Expose a single init entrypoint so server-rendered HTML can call it.

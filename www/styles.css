@@ -275,6 +275,22 @@ html[data-bs-theme="dark"] .spinner {
     background-color: #000;
 }
 
+/* JS-managed image layer that persists across Shiny re-renders */
+.event-modal-picture-wrap .event-modal-js-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+}
+
+/* Overlay container (Shiny-rendered) sits above the image layer */
+.event-modal-picture-wrap .event-modal-overlay-container {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    pointer-events: none;
+}
+
 /* Backdrop image (set by JS) that stays visible while the next frame decodes */
 .event-modal-picture-wrap img.event-modal-picture-bg {
     z-index: 0;
@@ -365,6 +381,7 @@ html[data-bs-theme="dark"] .kh-info-box {
     opacity: 1;
     transition: opacity 160ms ease;
     pointer-events: none;
+    z-index: 10;
 }
 
 html[data-bs-theme="dark"] .event-modal-picture-spinner {

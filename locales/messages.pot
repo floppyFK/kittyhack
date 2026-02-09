@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-12-11 19:53+0000\n"
+"POT-Creation-Date: 2026-02-09 19:40+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,484 +17,564 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/server.py:104
-msgid "⚠️ Several crashes detected!"
+#: src/server.py:107
+msgid "Several crashes detected!"
 msgstr ""
 
-#: src/server.py:105
+#: src/server.py:108
 msgid ""
 "The kittyflap was not shut down gracefully several times in a row. Please do "
 "not power off the device without shutting it down first, otherwise the "
 "database may be corrupted!"
 msgstr ""
 
-#: src/server.py:106
+#: src/server.py:109
 msgid ""
 "If you have shut it down gracefully and see this message, please report it "
 "in the"
 msgstr ""
 
-#: src/server.py:108
+#: src/server.py:111
 msgid "thanks!"
 msgstr ""
 
-#: src/server.py:109
+#: src/server.py:112
 msgid ""
 "> **NOTE:** The option `Use all CPU cores for image processing` has been "
 "disabled now automatically, since this could cause the issue on some devices."
 msgstr ""
 
-#: src/server.py:110
+#: src/server.py:113
 msgid "Please check the settings and enable it again, if you want to use it."
 msgstr ""
 
-#: src/server.py:238
+#: src/server.py:241
 msgid "Database restored"
 msgstr ""
 
-#: src/server.py:239
+#: src/server.py:242
+#, python-brace-format
 msgid ""
 "The kittyhack database was corrupted at startup and has been restored from "
 "backup: {}. The corrupted file was archived as: {}"
 msgstr ""
 
-#: src/server.py:773
+#: src/server.py:1054
+msgid "Pause playback to download the current picture"
+msgstr ""
+
+#: src/server.py:1056
+msgid "Download current picture"
+msgstr ""
+
+#: src/server.py:1273
+msgid "Loading..."
+msgstr ""
+
+#: src/server.py:1297
 msgid "Delete all pictures of this event"
 msgstr ""
 
-#: src/server.py:907 src/server.py:1856 src/server.py:2478
-msgid "No picture found!"
+#: src/server.py:1316
+msgid "Toggle overlay for detected objects"
 msgstr ""
 
-#: src/server.py:909
+#: src/server.py:1341
+msgid "Download all pictures of this event (ZIP)"
+msgstr ""
+
+#: src/server.py:1506
 msgid "No pictures found for this event."
 msgstr ""
 
-#: src/server.py:912
+#: src/server.py:1509
 msgid "An error occured while reading the image."
 msgstr ""
 
-#: src/server.py:1048 src/server.py:1121 src/server.py:5000
+#: src/server.py:1597
+msgid "Pause playback before downloading the current picture."
+msgstr ""
+
+#: src/server.py:1923 src/server.py:1996 src/server.py:6033
 msgid "The WLAN connection will be interrupted now!"
 msgstr ""
 
-#: src/server.py:1050 src/server.py:1123 src/server.py:5002
+#: src/server.py:1925 src/server.py:1998 src/server.py:6035
 msgid ""
 "Please wait a few seconds. If the page does not reload automatically within "
 "30 seconds, please reload it manually."
 msgstr ""
 
-#: src/server.py:1051 src/server.py:1124 src/server.py:5003
+#: src/server.py:1926 src/server.py:1999 src/server.py:6036
 msgid "Updating WLAN configuration..."
 msgstr ""
 
-#: src/server.py:1074
+#: src/server.py:1949
 msgid ""
 "This WLAN is currently connected. You can not delete it or change the "
 "password."
 msgstr ""
 
-#: src/server.py:1082 src/server.py:1347
+#: src/server.py:1957 src/server.py:2238
 msgid "SSID"
 msgstr ""
 
-#: src/server.py:1083 src/server.py:1348
+#: src/server.py:1958 src/server.py:2239
 msgid "Password"
 msgstr ""
 
-#: src/server.py:1083
+#: src/server.py:1958
 msgid "Leave empty to keep the current password"
 msgstr ""
 
-#: src/server.py:1084 src/server.py:1349 src/server.py:4967
+#: src/server.py:1959 src/server.py:2240 src/server.py:6000
 msgid "Priority"
 msgstr ""
 
-#: src/server.py:1085 src/server.py:1350
+#: src/server.py:1960 src/server.py:2241
 msgid ""
 "The priority determines the order in which the WLANs are tried to connect. "
 "Higher numbers are tried first."
 msgstr ""
 
-#: src/server.py:1087
+#: src/server.py:1962
 msgid "Change WLAN configuration"
 msgstr ""
 
-#: src/server.py:1092 src/server.py:1185 src/server.py:1356 src/server.py:2954
+#: src/server.py:1967 src/server.py:2060 src/server.py:2247 src/server.py:4141
 msgid "Save"
 msgstr ""
 
-#: src/server.py:1097 src/server.py:1190 src/server.py:1240 src/server.py:1361
-#: src/server.py:2269 src/server.py:2371 src/server.py:2404 src/server.py:2425
-#: src/server.py:3341 src/server.py:3464 src/server.py:4889
+#: src/server.py:1972 src/server.py:2065 src/server.py:2115 src/server.py:2252
+#: src/server.py:3522 src/server.py:3624 src/server.py:3657 src/server.py:3678
+#: src/server.py:4530 src/server.py:4653 src/server.py:5913
 msgid "Cancel"
 msgstr ""
 
-#: src/server.py:1102 src/server.py:1195
+#: src/server.py:1977 src/server.py:2070
 msgid "Delete"
 msgstr ""
 
-#: src/server.py:1130 src/server.py:5010
+#: src/server.py:2005 src/server.py:6043
+#, python-brace-format
 msgid "WLAN configuration for {} updated successfully."
 msgstr ""
 
-#: src/server.py:1133 src/server.py:5013
+#: src/server.py:2008 src/server.py:6046
+#, python-brace-format
 msgid "Failed to update WLAN configuration for {}"
 msgstr ""
 
-#: src/server.py:1147
+#: src/server.py:2022
+#, python-brace-format
 msgid "WLAN connection {} deleted successfully."
 msgstr ""
 
-#: src/server.py:1151
+#: src/server.py:2026
+#, python-brace-format
 msgid "Failed to delete WLAN connection {}"
 msgstr ""
 
-#: src/server.py:1167
+#: src/server.py:2042
 msgid "This model is currently in use. You can not delete it."
 msgstr ""
 
-#: src/server.py:1175 src/server.py:2621 src/server.py:2942 src/server.py:3305
+#: src/server.py:2050 src/server.py:3847 src/server.py:4129 src/server.py:4494
 msgid "Name"
 msgstr ""
 
-#: src/server.py:1176
+#: src/server.py:2051
 msgid "Unique ID"
 msgstr ""
 
-#: src/server.py:1178
+#: src/server.py:2053
+#, python-brace-format
 msgid "Model created at: {}"
 msgstr ""
 
-#: src/server.py:1180
+#: src/server.py:2055
 msgid "Change model configuration"
 msgstr ""
 
-#: src/server.py:1212
+#: src/server.py:2087
+#, python-brace-format
 msgid "Model configuration {} updated successfully."
 msgstr ""
 
-#: src/server.py:1216
+#: src/server.py:2091
+#, python-brace-format
 msgid "Failed to update model configuration {}"
 msgstr ""
 
-#: src/server.py:1234
+#: src/server.py:2109
 msgid "Do you really want to delete this model?"
 msgstr ""
 
-#: src/server.py:1235
+#: src/server.py:2110
 msgid "Delete Model"
 msgstr ""
 
-#: src/server.py:1239 src/server.py:2268 src/server.py:2370 src/server.py:2403
-#: src/server.py:2424 src/server.py:3340 src/server.py:3463
+#: src/server.py:2114 src/server.py:3521 src/server.py:3623 src/server.py:3656
+#: src/server.py:3677 src/server.py:4529 src/server.py:4652
 msgid "OK"
 msgstr ""
 
-#: src/server.py:1258
+#: src/server.py:2133
+#, python-brace-format
 msgid "Model {} deleted successfully."
 msgstr ""
 
-#: src/server.py:1263
+#: src/server.py:2138
+#, python-brace-format
 msgid "Failed to delete Model {}"
 msgstr ""
 
-#: src/server.py:1297
+#: src/server.py:2187
 msgid "Notifications"
 msgstr ""
 
-#: src/server.py:1301 src/server.py:1337 src/server.py:5595
+#: src/server.py:2191 src/server.py:2228 src/server.py:6662
 msgid "Close"
 msgstr ""
 
-#: src/server.py:1308
+#: src/server.py:2198
+#, python-brace-format
 msgid ""
 "A new version of Kittyhack is available: {}. Go to the [INFO] section for "
 "update instructions."
 msgstr ""
 
-#: src/server.py:1314
+#: src/server.py:2204
 msgid ""
 " or consider deleting pictures from the original kittyflap database file. "
 "For more details, see the [INFO] section."
 msgstr ""
 
-#: src/server.py:1317
+#: src/server.py:2207
+#, python-brace-format
 msgid ""
 "Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. "
 "reduce the max amount of pictures in the database{})."
 msgstr ""
 
-#: src/server.py:1328
-msgid "✅ Update to version `{}` was successful!"
+#: src/server.py:2219
+#, python-brace-format
+msgid "Update to version `{}` was successful!"
 msgstr ""
 
-#: src/server.py:1330
+#: src/server.py:2221
 msgid "**NOTE**: You can find the changelogs in the `INFO` section."
 msgstr ""
 
-#: src/server.py:1333
+#: src/server.py:2224
 msgid "Update"
 msgstr ""
 
-#: src/server.py:1351
+#: src/server.py:2242
 msgid "Add new WLAN configuration"
 msgstr ""
 
-#: src/server.py:1388
+#: src/server.py:2279
+#, python-brace-format
 msgid ""
 "Database migration in progress. Performance may be a bit slower until "
 "finished ({} pictures remaining, ~{} min)."
 msgstr ""
 
-#: src/server.py:1411
+#: src/server.py:2302
 msgid ""
 "LabelStudio is running. If you do not need it anymore to label images, "
 "please stop it in the [AI TRAINING] section."
 msgstr ""
 
-#: src/server.py:1414
+#: src/server.py:2305
+#, python-brace-format
 msgid "Warning: RAM usage is at {:.1f}%!{}"
 msgstr ""
 
-#: src/server.py:1439
+#: src/server.py:2327 src/server.py:3242
+msgid "Manual unlock not yet initialized..."
+msgstr ""
+
+#: src/server.py:2373
 msgid "Close inside now"
 msgstr ""
 
-#: src/server.py:1441
+#: src/server.py:2375
 msgid "Open inside now"
 msgstr ""
 
-#: src/server.py:1447
-msgid ""
-"<b>Locks:</b> Inside {} | Outside {}<br><b>Motion:</b> Inside {} | Outside {}"
-msgstr ""
-
-#: src/server.py:1450
-#, python-brace-format
-msgid ""
-"<br>Prey detected {0:.0f}s ago. Inside lock remains closed for {1:.0f}s."
-msgstr ""
-
-#: src/server.py:1454
-msgid "Failed to fetch the current status of the locks and motion sensors."
-msgstr ""
-
-#: src/server.py:1482
+#: src/server.py:2486
 msgid "Warning"
 msgstr ""
 
-#: src/server.py:1483
+#: src/server.py:2487
 msgid "Your IP camera resolution is higher than recommended (max. 1280x720)."
 msgstr ""
 
-#: src/server.py:1484
+#: src/server.py:2490
 #, python-brace-format
 msgid ""
 "Current: {width}x{height}. This may have negative effects on performance."
 msgstr ""
 
-#: src/server.py:1499
+#: src/server.py:2514
 msgid "Connection to the IP camera failed."
 msgstr ""
 
-#: src/server.py:1500
+#: src/server.py:2515
 msgid ""
 "Please check the stream URL and the network connection of your IP camera."
 msgstr ""
 
-#: src/server.py:1502
+#: src/server.py:2517
 msgid ""
 "If you have just changed the camera settings, please wait a few seconds for "
 "the camera to reconnect."
 msgstr ""
 
-#: src/server.py:1503
+#: src/server.py:2518
 msgid "Current status: "
 msgstr ""
 
-#: src/server.py:1503
+#: src/server.py:2518
 msgid "Unknown"
 msgstr ""
 
-#: src/server.py:1510
+#: src/server.py:2526
 msgid "Connection to the camera failed."
 msgstr ""
 
-#: src/server.py:1511 src/server.py:3473 src/server.py:3496 src/server.py:3524
+#: src/server.py:2527 src/server.py:4662 src/server.py:4685 src/server.py:4713
 msgid "Please wait..."
 msgstr ""
 
-#: src/server.py:1513
+#: src/server.py:2529
 msgid ""
 "If this message does not disappear within 30 seconds, please (re-)install "
 "the required camera drivers with the \"Reinstall Camera Driver\" button in "
 "the \"System\" section."
 msgstr ""
 
-#: src/server.py:1537
+#: src/server.py:2560
 msgid "Camera stream appears to be frozen."
 msgstr ""
 
-#: src/server.py:1538
+#: src/server.py:2561
 msgid "Please check your external IP camera connection or network settings."
 msgstr ""
 
-#: src/server.py:1547
+#: src/server.py:2589
 msgid "Could not read the picture from the camera."
 msgstr ""
 
-#: src/server.py:1550
+#: src/server.py:2594
 msgid "An error occured while fetching the live view image."
 msgstr ""
 
-#: src/server.py:1610 src/server.py:2129
+#: src/server.py:2615
+msgid "Clock"
+msgstr ""
+
+#: src/server.py:2616
+msgid "Current time"
+msgstr ""
+
+#: src/server.py:2640 src/server.py:5506
+msgid "Inside"
+msgstr ""
+
+#: src/server.py:2641 src/server.py:5510
+msgid "Outside"
+msgstr ""
+
+#: src/server.py:2642
+msgid "Status unavailable"
+msgstr ""
+
+#: src/server.py:2665
+#, python-brace-format
+msgid "Prey detected {0:.0f}s ago. Inside lock remains closed for {1:.0f}s."
+msgstr ""
+
+#: src/server.py:2681 src/server.py:2682
+msgid "Inside lock: Open"
+msgstr ""
+
+#: src/server.py:2681 src/server.py:2682
+msgid "Inside lock: Closed"
+msgstr ""
+
+#: src/server.py:2687 src/server.py:2688
+msgid "Inside motion: Motion"
+msgstr ""
+
+#: src/server.py:2687 src/server.py:2688
+msgid "Inside motion: No motion"
+msgstr ""
+
+#: src/server.py:2696 src/server.py:2697
+msgid "Outside lock: Open"
+msgstr ""
+
+#: src/server.py:2696 src/server.py:2697
+msgid "Outside lock: Closed"
+msgstr ""
+
+#: src/server.py:2702 src/server.py:2703
+msgid "Outside motion: Motion"
+msgstr ""
+
+#: src/server.py:2702 src/server.py:2703
+msgid "Outside motion: No motion"
+msgstr ""
+
+#: src/server.py:2769 src/server.py:3390
 msgid "Today"
 msgstr ""
 
-#: src/server.py:1616
+#: src/server.py:2775
 msgid "Show detected cats only"
 msgstr ""
 
-#: src/server.py:1617
+#: src/server.py:2776
 msgid "Show detected mice only"
 msgstr ""
 
-#: src/server.py:1618
+#: src/server.py:2777
 msgid "Show detection overlay"
 msgstr ""
 
-#: src/server.py:1619
+#: src/server.py:2778
 msgid "Group pictures to events"
 msgstr ""
 
-#: src/server.py:1757
-msgid "No tab selected. Please choose a page."
+#: src/server.py:2955
+msgid "Page"
 msgstr ""
 
-#: src/server.py:1760
+#: src/server.py:2959
+msgid "pictures"
+msgstr ""
+
+#: src/server.py:3027
 msgid "No pictures for the selected filter criteria found."
 msgstr ""
 
-#: src/server.py:1772
-msgid "Failed to parse page selection."
-msgstr ""
-
-#: src/server.py:1815
+#: src/server.py:3047
+#, python-brace-format
 msgid "Unknown RFID: {}"
 msgstr ""
 
-#: src/server.py:1817 src/server.py:2145 src/backend.py:342
+#: src/server.py:3049 src/server.py:3406 src/backend.py:342
 msgid "No RFID found"
 msgstr ""
 
-#: src/server.py:1870
+#: src/server.py:3089
 msgid "Mouse probability"
 msgstr ""
 
-#: src/server.py:1884
+#: src/server.py:3103
 msgid "Delete selected photos"
 msgstr ""
 
-#: src/server.py:1911
+#: src/server.py:3161
+#, python-brace-format
 msgid "Photo {} deleted successfully."
 msgstr ""
 
-#: src/server.py:1913
+#: src/server.py:3163
+#, python-brace-format
 msgid "An error occurred while deleting the photo: {}"
 msgstr ""
 
-#: src/server.py:1919
+#: src/server.py:3169
 msgid "No photos selected for deletion."
 msgstr ""
 
-#: src/server.py:1947
+#: src/server.py:3202
 msgid "Inside direction:"
 msgstr ""
 
-#: src/server.py:1949 src/server.py:4021
+#: src/server.py:3204 src/server.py:5084
 msgid "All cats (unlock on every detected motion)"
 msgstr ""
 
-#: src/server.py:1950 src/server.py:4022
+#: src/server.py:3205 src/server.py:5085
 msgid "All cats with a RFID chip"
 msgstr ""
 
-#: src/server.py:1951 src/server.py:4023
+#: src/server.py:3206 src/server.py:5086
 msgid "Only registered cats"
 msgstr ""
 
-#: src/server.py:1952 src/server.py:4024
+#: src/server.py:3207 src/server.py:5087
 msgid "No cats"
 msgstr ""
 
-#: src/server.py:1953 src/server.py:1967 src/server.py:4025 src/server.py:4101
+#: src/server.py:3208 src/server.py:3222 src/server.py:5088 src/server.py:5164
 msgid "Individual configuration per cat (Beta)"
 msgstr ""
 
-#: src/server.py:1963 src/server.py:4097
+#: src/server.py:3218 src/server.py:5160
 msgid "Outside direction:"
 msgstr ""
 
-#: src/server.py:1965 src/server.py:2569 src/server.py:2891 src/server.py:4099
+#: src/server.py:3220 src/server.py:3794 src/server.py:4078 src/server.py:5162
 msgid "Allow exit"
 msgstr ""
 
-#: src/server.py:1966 src/server.py:4100
+#: src/server.py:3221 src/server.py:5163
 msgid "Do not allow exit"
 msgstr ""
 
-#: src/server.py:1977
+#: src/server.py:3232
 msgid ""
 "The individual configuration per cat can be set in the CATS section. Note "
 "that this is a beta feature and may not work completely reliably."
 msgstr ""
 
-#: src/server.py:1986
-msgid "Manual unlock not yet initialized..."
-msgstr ""
-
-#: src/server.py:1991
+#: src/server.py:3247
 msgid "Reset prey cooldown now"
 msgstr ""
 
-#: src/server.py:2057
+#: src/server.py:3318
 msgid "Last events"
 msgstr ""
 
-#: src/server.py:2114
+#: src/server.py:3375
 msgid "No events found."
 msgstr ""
 
-#: src/server.py:2129
+#: src/server.py:3390
 msgid "Yesterday"
 msgstr ""
 
-#: src/server.py:2145
+#: src/server.py:3406 src/backend.py:340
 msgid "Unknown RFID"
 msgstr ""
 
-#: src/server.py:2217
+#: src/server.py:3470
 msgid "Failed to read events from the database."
 msgstr ""
 
-#: src/server.py:2228
+#: src/server.py:3481
 msgid "Kittyflap System Actions"
 msgstr ""
 
-#: src/server.py:2231
+#: src/server.py:3484
 msgid "Start tasks/actions on the Kittyflap"
 msgstr ""
 
-#: src/server.py:2234 src/server.py:2392 src/server.py:2400
+#: src/server.py:3487 src/server.py:3645 src/server.py:3653
 msgid "Restart Kittyflap"
 msgstr ""
 
-#: src/server.py:2239 src/server.py:2413 src/server.py:2421
+#: src/server.py:3492 src/server.py:3666 src/server.py:3674
 msgid "Shutdown Kittyflap"
 msgstr ""
 
-#: src/server.py:2242
+#: src/server.py:3495
 msgid ""
 "To avoid data loss, always shut down the Kittyflap properly before "
 "unplugging the power cable. After a shutdown, wait 30 seconds before "
@@ -502,302 +582,317 @@ msgid ""
 "power again."
 msgstr ""
 
-#: src/server.py:2245 src/server.py:2265
+#: src/server.py:3498 src/server.py:3518
 msgid "Reinstall Camera Driver"
 msgstr ""
 
-#: src/server.py:2248
+#: src/server.py:3501
 msgid "Reinstall the camera driver if the live view does not work properly."
 msgstr ""
 
-#: src/server.py:2264
+#: src/server.py:3517
 msgid ""
 "Do you really want to reinstall the camera driver? This operation can take "
 "several minutes."
 msgstr ""
 
-#: src/server.py:2287
+#: src/server.py:3540
 msgid "Reinstall Camera Driver in progress."
 msgstr ""
 
-#: src/server.py:2287
+#: src/server.py:3540
 msgid "This may take a while..."
 msgstr ""
 
-#: src/server.py:2293
+#: src/server.py:3546
 msgid "Stopping the camera"
 msgstr ""
 
-#: src/server.py:2302
+#: src/server.py:3555
 msgid "Downloading all dependencies"
 msgstr ""
 
-#: src/server.py:2316
+#: src/server.py:3569
 msgid "Download"
 msgstr ""
 
-#: src/server.py:2325
+#: src/server.py:3578
 msgid "Uninstalling libcamera packages above version 0.3"
 msgstr ""
 
-#: src/server.py:2348
+#: src/server.py:3601
 msgid "Installing all dependencies"
 msgstr ""
 
-#: src/server.py:2359
+#: src/server.py:3612
 msgid ""
 "An error occurred during the installation process. Please check the logs for "
 "details."
 msgstr ""
 
-#: src/server.py:2366
+#: src/server.py:3619
 msgid ""
 "A restart is required to apply the update. Do you want to restart the "
 "Kittyflap now?"
 msgstr ""
 
-#: src/server.py:2367 src/server.py:4885 src/server.py:5943 src/server.py:5968
+#: src/server.py:3620 src/server.py:5909 src/server.py:6980 src/server.py:7005
 msgid "Restart required"
 msgstr ""
 
-#: src/server.py:2392
+#: src/server.py:3645
 msgid ""
 "Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reload "
 "the page after the restart."
 msgstr ""
 
-#: src/server.py:2399
+#: src/server.py:3652
 msgid "Do you really want to restart the Kittyflap?"
 msgstr ""
 
-#: src/server.py:2413
+#: src/server.py:3666
 msgid ""
 "Kittyflap is shutting down now... Please wait 30 seconds before unplugging "
 "the power."
 msgstr ""
 
-#: src/server.py:2420
+#: src/server.py:3673
 msgid "Do you really want to shut down the Kittyflap?"
 msgstr ""
 
-#: src/server.py:2495 src/server.py:2835
+#: src/server.py:3703
+msgid "No picture found!"
+msgstr ""
+
+#: src/server.py:3720 src/server.py:4022
 msgid "##### Cat-specific settings"
 msgstr ""
 
-#: src/server.py:2511 src/server.py:2845
+#: src/server.py:3736 src/server.py:4032
 msgid "Enable Prey detection"
 msgstr ""
 
-#: src/server.py:2525 src/server.py:2857
+#: src/server.py:3750 src/server.py:4044
 msgid ""
 "**Disabled:** Global prey detection is turned off in the `CONFIGURATION` "
 "section. Enable `Detect prey` to use per-cat settings."
 msgstr ""
 
-#: src/server.py:2540 src/server.py:2868
+#: src/server.py:3765 src/server.py:4055
 msgid "Allow entry"
 msgstr ""
 
-#: src/server.py:2554 src/server.py:2880
+#: src/server.py:3779 src/server.py:4067
 msgid ""
 "**Disabled:** This feature is only available in `Individual configuration "
 "per cat` mode for entry."
 msgstr ""
 
-#: src/server.py:2584
+#: src/server.py:3810
 msgid ""
-"⚠️ This cat has no RFID configured. The individual exit per cat works only "
-"for cats with a RFID chip!"
+"This cat has no RFID configured. The individual exit per cat works only for "
+"cats with a RFID chip!"
 msgstr ""
 
-#: src/server.py:2597 src/server.py:2903
+#: src/server.py:3823 src/server.py:4090
 msgid ""
 "**Disabled:** This feature is only available in `Individual configuration "
 "per cat` mode for exit."
 msgstr ""
 
-#: src/server.py:2631 src/server.py:2944
+#: src/server.py:3857 src/server.py:4131
 msgid "RFID"
 msgstr ""
 
-#: src/server.py:2643 src/server.py:2948
+#: src/server.py:3869 src/server.py:4135
 msgid ""
 "NOTE: This is NOT the number which stands in the booklet of your vet! You "
 "must use the the ID, which is read by the Kittyflap. It is 16 characters "
 "long and consists of numbers (0-9) and letters (A-F)."
 msgstr ""
 
-#: src/server.py:2644
+#: src/server.py:3870
 msgid ""
 "If you have entered the RFID correctly here, the name of the cat will be "
 "displayed in the [PICTURES] section."
 msgstr ""
 
-#: src/server.py:2652
+#: src/server.py:3878
 msgid "Change Picture"
 msgstr ""
 
-#: src/server.py:2664
+#: src/server.py:3890
+#, python-brace-format
 msgid "Delete {} from the database"
 msgstr ""
 
-#: src/server.py:2733 src/server.py:4661
+#: src/server.py:3905 src/server.py:4156
+msgid ""
+"No RFID entered. Cat identification only via camera (if enabled). See "
+"CONFIGURATION section for details."
+msgstr ""
+
+#: src/server.py:3906 src/server.py:4161
+msgid "Valid RFID"
+msgstr ""
+
+#: src/server.py:3907 src/server.py:4165
+msgid "Invalid RFID. Must be exactly 16 hex characters (0-9, A-F)."
+msgstr ""
+
+#: src/server.py:3919 src/server.py:5666
 msgid "Save all changes"
 msgstr ""
 
-#: src/server.py:2743
+#: src/server.py:3930
 msgid ""
 "No cats found in the database. Please go to the [ADD NEW CAT] section to add "
 "a new cat."
 msgstr ""
 
-#: src/server.py:2789
+#: src/server.py:3976
+#, python-brace-format
 msgid "{} deleted successfully from the database."
 msgstr ""
 
-#: src/server.py:2791
+#: src/server.py:3978
+#, python-brace-format
 msgid "Failed to delete {} from the database: {}"
 msgstr ""
 
-#: src/server.py:2807
+#: src/server.py:3994
+#, python-brace-format
 msgid "Data for {} updated successfully."
 msgstr ""
 
-#: src/server.py:2809
+#: src/server.py:3996
+#, python-brace-format
 msgid "Failed to update cat details: {}"
 msgstr ""
 
-#: src/server.py:2812
+#: src/server.py:3999
 msgid "No changes detected. Nothing to save."
 msgstr ""
 
-#: src/server.py:2918
+#: src/server.py:4105
 msgid ""
 "**Important:** Please read the notes about the prerequisites for the "
 "individual entry/exit configuration in the `MANAGE CATS` section if you want "
 "to use these features."
 msgstr ""
 
-#: src/server.py:2941 src/ui.py:40
+#: src/server.py:4128 src/ui.py:69
 msgid "Add new cat"
 msgstr ""
 
-#: src/server.py:2947
+#: src/server.py:4134
 msgid ""
 "You can find the RFID in the [PICTURES] section, if the chip of your cat was "
 "recognized by the Kittyflap. To read the RFID, just set the entrance mode to "
 "'All Cats' and let pass your cat through the Kittyflap."
 msgstr ""
 
-#: src/server.py:2952
+#: src/server.py:4139
 msgid "Upload Picture"
 msgstr ""
 
-#: src/server.py:2969
-msgid ""
-"No RFID entered. Cat identification only via camera (if enabled). See "
-"CONFIGURATION section for details."
-msgstr ""
-
-#: src/server.py:2974
-msgid "Valid RFID"
-msgstr ""
-
-#: src/server.py:2978
-msgid "Invalid RFID. Must be exactly 16 hex characters (0-9, A-F)."
-msgstr ""
-
-#: src/server.py:3006
+#: src/server.py:4193
+#, python-brace-format
 msgid "New cat {} added successfully."
 msgstr ""
 
-#: src/server.py:3014
+#: src/server.py:4201
+#, python-brace-format
 msgid "An error occurred while adding the new cat: {}"
 msgstr ""
 
-#: src/server.py:3031
+#: src/server.py:4211
+msgid "unknown"
+msgstr ""
+
+#: src/server.py:4219
 msgid "Stop Label Studio"
 msgstr ""
 
-#: src/server.py:3033
+#: src/server.py:4221
 msgid "Label Studio is running. Click the button to stop it."
 msgstr ""
 
-#: src/server.py:3035
+#: src/server.py:4223
 msgid ""
 "Remember to stop Label Studio after you are done with the labeling process, "
 "to free up resources for KittyHack."
 msgstr ""
 
-#: src/server.py:3043
+#: src/server.py:4231
 msgid "Open Label Studio"
 msgstr ""
 
-#: src/server.py:3048
+#: src/server.py:4236
 msgid "Installed Version: "
 msgstr ""
 
-#: src/server.py:3053
+#: src/server.py:4241
 msgid "Latest version: "
 msgstr ""
 
-#: src/server.py:3063
+#: src/server.py:4251
 msgid "Start Label Studio"
 msgstr ""
 
-#: src/server.py:3065
+#: src/server.py:4253
 msgid "Label Studio is not running. Click the button to start it."
 msgstr ""
 
-#: src/server.py:3074
+#: src/server.py:4262
 msgid "Update Label Studio"
 msgstr ""
 
-#: src/server.py:3076
+#: src/server.py:4264
 msgid "Click the button to update Label Studio to the latest version."
 msgstr ""
 
-#: src/server.py:3078 src/server.py:5404
+#: src/server.py:4266 src/server.py:6455
 msgid "Current Version"
 msgstr ""
 
-#: src/server.py:3080 src/server.py:5405
+#: src/server.py:4268 src/server.py:6456
 msgid "Latest Version"
 msgstr ""
 
-#: src/server.py:3089 src/server.py:3460
+#: src/server.py:4277 src/server.py:4649
 msgid "Remove Label Studio"
 msgstr ""
 
-#: src/server.py:3091
+#: src/server.py:4279
 msgid "Click the button to remove Label Studio."
 msgstr ""
 
-#: src/server.py:3093
+#: src/server.py:4281
 msgid ""
 "(Your project data will not be deleted. You can re-install Label Studio "
 "later.)"
 msgstr ""
 
-#: src/server.py:3104
+#: src/server.py:4292
 msgid "#### You have two choices:"
 msgstr ""
 
-#: src/server.py:3105
+#: src/server.py:4293
 msgid "1. `EASY` **Install Label Studio automatically on the Kittyflap**:"
 msgstr ""
 
-#: src/server.py:3106
+#: src/server.py:4294
 msgid ""
 "Easy, but you may be limited in the number of images you can label. The "
 "performance may vary, depending on the wlan connection to the Kittyflap."
 msgstr ""
 
-#: src/server.py:3107
+#: src/server.py:4295
 msgid "2. `EXPERT` **Install Label Studio on your own computer**:"
 msgstr ""
 
-#: src/server.py:3108
+#: src/server.py:4296
 msgid ""
 "This is a bit harder, but you are more flexible and the performance while "
 "labeling the images may be better. Also, you don't need to worry about the "
@@ -805,371 +900,374 @@ msgid ""
 "labelstud.io/) website for instructions."
 msgstr ""
 
-#: src/server.py:3109
+#: src/server.py:4297
 msgid ""
 "> **Please note, if you want to install Label Studio on the Kittyflap:**"
 msgstr ""
 
-#: src/server.py:3110
+#: src/server.py:4298
 msgid ""
 "Some Kittyflaps have only 1GB of RAM. In this case, it is strongly "
 "recommended to always stop the Label Studio server after you are done with "
 "the labeling process, otherwise the Kittyflap may run out of memory."
 msgstr ""
 
-#: src/server.py:3111
+#: src/server.py:4299
 msgid ""
 "You can check the available disk space and the RAM configuration in the "
 "`INFO` section."
 msgstr ""
 
-#: src/server.py:3116
+#: src/server.py:4304
 msgid "Install Label Studio on the Kittyflap"
 msgstr ""
 
-#: src/server.py:3118
+#: src/server.py:4306
 msgid "Click the button to install Label Studio."
 msgstr ""
 
-#: src/server.py:3120
+#: src/server.py:4308
 msgid "This will take 5-10 minutes, so please be patient."
 msgstr ""
 
-#: src/server.py:3122
+#: src/server.py:4310
 msgid ""
 "The Kittyflap may not be reachable during the installation. This is normal."
 msgstr ""
 
-#: src/server.py:3149
+#: src/server.py:4337
 msgid "A model training is currently in progress."
 msgstr ""
 
-#: src/server.py:3149
+#: src/server.py:4337
 msgid "You will be notified by email when the training is finished."
 msgstr ""
 
-#: src/server.py:3150
+#: src/server.py:4338
+#, python-brace-format
 msgid "Current status: {}"
 msgstr ""
 
-#: src/server.py:3153
+#: src/server.py:4341
 msgid "Reload Model Training Status"
 msgstr ""
 
-#: src/server.py:3155
+#: src/server.py:4343
 msgid "Your individual Training ID:"
 msgstr ""
 
-#: src/server.py:3156
+#: src/server.py:4344
 msgid "(use this ID for support requests)"
 msgstr ""
 
-#: src/server.py:3159 src/server.py:3337
+#: src/server.py:4347 src/server.py:4526
 msgid "Cancel Model Training"
 msgstr ""
 
-#: src/server.py:3171
+#: src/server.py:4359
 msgid ""
 "Unable to reach the model training server right now. Please check your "
 "network or try again later."
 msgstr ""
 
-#: src/server.py:3173
+#: src/server.py:4361
 msgid "If the issue persists, the server may be temporarily unavailable."
 msgstr ""
 
-#: src/server.py:3178
+#: src/server.py:4366
 msgid ""
 "The model training server is currently in maintenance. Please try again "
 "later."
 msgstr ""
 
-#: src/server.py:3190
+#: src/server.py:4378
 msgid "Upload Label-Studio Training Data (ZIP file)"
 msgstr ""
 
-#: src/server.py:3191
+#: src/server.py:4379
 msgid "Model Name (optional)"
 msgstr ""
 
-#: src/server.py:3191
+#: src/server.py:4379
 msgid "Enter a name for your model"
 msgstr ""
 
-#: src/server.py:3192
+#: src/server.py:4380
 msgid "Username (optional)"
 msgstr ""
 
-#: src/server.py:3192
+#: src/server.py:4380
 msgid "Enter your name"
 msgstr ""
 
-#: src/server.py:3193
+#: src/server.py:4381
 msgid "Email for Notification (optional)"
 msgstr ""
 
-#: src/server.py:3193
+#: src/server.py:4381
 msgid "Enter your email address"
 msgstr ""
 
-#: src/server.py:3194
+#: src/server.py:4382
 msgid ""
 "If you provide an email address, you will be notified when the model "
 "training is finished."
 msgstr ""
 
-#: src/server.py:3196
+#: src/server.py:4384
 msgid "Submit Model for Training"
 msgstr ""
 
-#: src/server.py:3208
+#: src/server.py:4396
 msgid "Description"
 msgstr ""
 
-#: src/server.py:3212
+#: src/server.py:4400
 msgid ""
 "In this section, you can train your own individual AI model for the "
 "Kittyflap. The training process consists of two steps:"
 msgstr ""
 
-#: src/server.py:3213
+#: src/server.py:4401
 msgid ""
 "1. **Label Studio**: In this step, you can label your cat(s) and their prey "
 "in the captured images. This is done using the Label Studio tool."
 msgstr ""
 
-#: src/server.py:3214
+#: src/server.py:4402
 msgid ""
 "2. **Model Training**: In this step, the labeled images are used to train a "
 "new AI model."
 msgstr ""
 
-#: src/server.py:3215
+#: src/server.py:4403
 msgid ""
 "To achieve the best results, it is recommended to label at least 100 images "
 "of each cat and their prey. The more images you label, the better the model "
 "will be."
 msgstr ""
 
-#: src/server.py:3216
+#: src/server.py:4404
 msgid ""
 "The training process can take from several minutes up to an hour, depending "
 "on the number of images."
 msgstr ""
 
-#: src/server.py:3217
+#: src/server.py:4405
 msgid ""
 "Please read the instructions before creating your own model! Following these "
 "exact instructions is crucial for successful training:"
 msgstr ""
 
-#: src/server.py:3222
+#: src/server.py:4410
 msgid "Instructions for training your own model"
 msgstr ""
 
-#: src/server.py:3249
+#: src/server.py:4437
 msgid "Model Training"
 msgstr ""
 
-#: src/server.py:3263
+#: src/server.py:4451
 msgid "Model Management"
 msgstr ""
 
-#: src/server.py:3266
+#: src/server.py:4454
 msgid ""
 "Here you can rename or remove your own models. To activate a model, go to "
 "the [CONFIGURATION] section."
 msgstr ""
 
-#: src/server.py:3295
+#: src/server.py:4483
 msgid "Modify or delete this model"
 msgstr ""
 
-#: src/server.py:3305
+#: src/server.py:4494
 msgid "Creation date"
 msgstr ""
 
-#: src/server.py:3314
+#: src/server.py:4503
 msgid "Nothing here yet. Please train a model first."
 msgstr ""
 
-#: src/server.py:3328
+#: src/server.py:4517
 msgid "No model training in progress."
 msgstr ""
 
-#: src/server.py:3336
+#: src/server.py:4525
 msgid "Do you really want to cancel the model training?"
 msgstr ""
 
-#: src/server.py:3354
+#: src/server.py:4543
 msgid "Model training cancelled."
 msgstr ""
 
-#: src/server.py:3362
+#: src/server.py:4551
 msgid "Please upload a ZIP file with the Label Studio training data."
 msgstr ""
 
-#: src/server.py:3367
+#: src/server.py:4556
 msgid "The uploaded file is not a ZIP file. Please upload a valid ZIP file."
 msgstr ""
 
-#: src/server.py:3379
+#: src/server.py:4568
 msgid "Please enter a valid email address."
 msgstr ""
 
-#: src/server.py:3399
+#: src/server.py:4588
 msgid "The uploaded file is not a valid Label Studio training data ZIP file."
 msgstr ""
 
-#: src/server.py:3402
+#: src/server.py:4591
 msgid ""
 "The destination for the model training is unreachable. Please check your "
 "network connection or try again later."
 msgstr ""
 
-#: src/server.py:3405
+#: src/server.py:4594
+#, python-brace-format
 msgid "An error occurred while starting the model training: {}"
 msgstr ""
 
-#: src/server.py:3418
+#: src/server.py:4607
 msgid ""
 "Insufficient disk space. At least 1.5GB of free space is required to install "
 "Label Studio. Please free up some space and try again."
 msgstr ""
 
-#: src/server.py:3431
+#: src/server.py:4620
 msgid "Label Studio installed successfully! You can start it now."
 msgstr ""
 
-#: src/server.py:3434
+#: src/server.py:4623
 msgid "Label Studio installation failed. Please check the logs for details."
 msgstr ""
 
-#: src/server.py:3449
+#: src/server.py:4638
 msgid "Label Studio updated successfully! You can start it now."
 msgstr ""
 
-#: src/server.py:3452
+#: src/server.py:4641
 msgid "Label Studio update failed. Please check the logs for details."
 msgstr ""
 
-#: src/server.py:3473
+#: src/server.py:4662
 msgid "Removing Label Studio"
 msgstr ""
 
-#: src/server.py:3478
+#: src/server.py:4667
 msgid "Label Studio removed successfully."
 msgstr ""
 
-#: src/server.py:3481
+#: src/server.py:4670
 msgid "Label Studio removal failed. Please check the logs for details."
 msgstr ""
 
-#: src/server.py:3496
+#: src/server.py:4685
 msgid "Stopping Label Studio..."
 msgstr ""
 
-#: src/server.py:3500
+#: src/server.py:4689
 msgid "Label Studio stopped successfully."
 msgstr ""
 
-#: src/server.py:3510
+#: src/server.py:4699
 msgid "Label Studio may not have stopped completely. Please check the logs."
 msgstr ""
 
-#: src/server.py:3524
+#: src/server.py:4713
 msgid "Starting Label Studio..."
 msgstr ""
 
-#: src/server.py:3524
+#: src/server.py:4713
 msgid "(The first start of Label Studio may take several minutes!)"
 msgstr ""
 
-#: src/server.py:3530
+#: src/server.py:4719
 msgid "Label Studio started successfully."
 msgstr ""
 
-#: src/server.py:3540
+#: src/server.py:4729
 msgid "Label Studio may not have started completely. Please check the logs."
 msgstr ""
 
-#: src/server.py:3752
+#: src/server.py:4815
 msgid "General settings"
 msgstr ""
 
-#: src/server.py:3753
+#: src/server.py:4816
 msgid "Basic language, timezone, and display options for Kittyhack."
 msgstr ""
 
-#: src/server.py:3757
+#: src/server.py:4820
 msgid "Language"
 msgstr ""
 
-#: src/server.py:3758
+#: src/server.py:4821
 msgid "Timezone"
 msgstr ""
 
-#: src/server.py:3760
+#: src/server.py:4823
 msgid "See"
 msgstr ""
 
-#: src/server.py:3760
+#: src/server.py:4823
 msgid "for valid timezone strings"
 msgstr ""
 
-#: src/server.py:3764
+#: src/server.py:4827
 msgid "Date format"
 msgstr ""
 
-#: src/server.py:3768
+#: src/server.py:4831
 msgid "Valid placeholders: `yyyy`, `mm`, `dd`"
 msgstr ""
 
-#: src/server.py:3769
+#: src/server.py:4832
 msgid "Example:"
 msgstr ""
 
-#: src/server.py:3770 src/server.py:3771
+#: src/server.py:4833 src/server.py:4834
 msgid "for"
 msgstr ""
 
-#: src/server.py:3777
+#: src/server.py:4840
 msgid "Periodic version check"
 msgstr ""
 
-#: src/server.py:3778
+#: src/server.py:4841
 msgid "Automatically check for new versions of Kittyhack."
 msgstr ""
 
-#: src/server.py:3782
+#: src/server.py:4845
 msgid "WLAN TX power (in dBm)"
 msgstr ""
 
-#: src/server.py:3786
+#: src/server.py:4849
 msgid ""
 "WARNING: You should keep the TX power as low as possible to avoid "
 "interference with the PIR Sensors! You should only increase this value, if "
 "you have problems with the WLAN connection."
 msgstr ""
 
-#: src/server.py:3787 src/server.py:3910 src/server.py:3928 src/server.py:4285
-#: src/server.py:4348
+#: src/server.py:4850 src/server.py:4973 src/server.py:4991 src/server.py:5289
+#: src/server.py:5352
+#, python-brace-format
 msgid "Default value: {}"
 msgstr ""
 
-#: src/server.py:3799
+#: src/server.py:4862
 msgid "Camera settings"
 msgstr ""
 
-#: src/server.py:3800
+#: src/server.py:4863
 msgid "Camera specific settings for the internal and external cameras."
 msgstr ""
 
-#: src/server.py:3806
+#: src/server.py:4869
 msgid "Show IP camera usage tips"
 msgstr ""
 
-#: src/server.py:3808
+#: src/server.py:4871
 msgid ""
 "You can use an **external IP camera** instead of the internal camera to "
 "achieve better viewing angles and better night vision.\n"
@@ -1186,68 +1284,70 @@ msgid ""
 "If you experience interruptions, check WLAN signal and network configuration."
 msgstr ""
 
-#: src/server.py:3824
+#: src/server.py:4887
 msgid "Camera source"
 msgstr ""
 
-#: src/server.py:3826
+#: src/server.py:4889
 msgid "Internal Camera"
 msgstr ""
 
-#: src/server.py:3827
+#: src/server.py:4890
 msgid "External IP Camera"
 msgstr ""
 
-#: src/server.py:3836
+#: src/server.py:4899
 msgid "External IP Camera URL"
 msgstr ""
 
-#: src/server.py:3838
+#: src/server.py:4901
 msgid "e.g. rtsp://user:pass@192.168.1.100:554/stream"
 msgstr ""
 
-#: src/server.py:3848
+#: src/server.py:4911
 msgid "Show stream URL examples"
 msgstr ""
 
-#: src/server.py:3849
+#: src/server.py:4912
 msgid "**Examples of supported stream URLs:**"
 msgstr ""
 
-#: src/server.py:3872
+#: src/server.py:4935
 msgid "Door control settings"
 msgstr ""
 
-#: src/server.py:3873
+#: src/server.py:4936
 msgid ""
 "Detection thresholds, model selection and other settings for the door "
 "control."
 msgstr ""
 
-#: src/server.py:3877
+#: src/server.py:4940
 msgid "Minimum detection threshold"
 msgstr ""
 
-#: src/server.py:3880
+#: src/server.py:4943
 msgid "Explain minimum detection threshold"
 msgstr ""
 
-#: src/server.py:3882
+#: src/server.py:4945
+#, python-brace-format
 msgid ""
 "Used to decide if an outside motion event is logged. At least one picture "
 "must exceed this probability or the event is discarded.\n"
 "*(Default value: {})*"
 msgstr ""
 
-#: src/server.py:3890
+#: src/server.py:4953
 msgid "Mouse detection threshold"
 msgstr ""
 
-#: src/server.py:3893
+#: src/server.py:4956
 msgid "Explain mouse threshold"
 msgstr ""
 
-#: src/server.py:3895
+#: src/server.py:4958
+#, python-brace-format
 msgid ""
 "Kittyhack decides if a picture contains a mouse based on this value. If "
 "probability exceeds it, flap stays closed.\n"
@@ -1256,99 +1356,99 @@ msgid ""
 "**Note:** Minimum is coupled to 'Minimum detection threshold'."
 msgstr ""
 
-#: src/server.py:3904
+#: src/server.py:4967
 msgid "Cat detection threshold"
 msgstr ""
 
-#: src/server.py:3907
+#: src/server.py:4970
 msgid "Explain cat threshold"
 msgstr ""
 
-#: src/server.py:3908
+#: src/server.py:4971
 msgid "Kittyhack decides based on this value, if a picture contains your cat."
 msgstr ""
 
-#: src/server.py:3909
+#: src/server.py:4972
 msgid ""
 "If the detected probability of your cat exceeds this value in a picture, and "
 "the setting `Use camera for cat detection` is enabled, the flap will be "
 "opened."
 msgstr ""
 
-#: src/server.py:3911
+#: src/server.py:4974
 msgid ""
 "Note: The minimum of this value is always coupled to the configured value of "
 "'Minimum detection threshold' above."
 msgstr ""
 
-#: src/server.py:3916
+#: src/server.py:4979
 msgid "Minimum pictures before unlock decision"
 msgstr ""
 
-#: src/server.py:3919
+#: src/server.py:4982
 msgid "Explain minimum pictures"
 msgstr ""
 
-#: src/server.py:3920
+#: src/server.py:4983
 msgid ""
 "Minimum number of pictures that must be analyzed before the flap may unlock."
 msgstr ""
 
-#: src/server.py:3921
+#: src/server.py:4984
 msgid ""
 "Unlock is only possible if none of the first N pictures reaches the mouse "
 "detection threshold."
 msgstr ""
 
-#: src/server.py:3922
+#: src/server.py:4985
 msgid ""
 "If any of these initial pictures reaches or exceeds the mouse_threshold, the "
 "flap stays locked."
 msgstr ""
 
-#: src/server.py:3923
+#: src/server.py:4986
 msgid ""
 "After unlocking: If a later picture (after the first N) reaches the "
 "mouse_threshold, the flap is locked again."
 msgstr ""
 
-#: src/server.py:3924
+#: src/server.py:4987
 msgid "Summary:"
 msgstr ""
 
-#: src/server.py:3925
+#: src/server.py:4988
 msgid "Analyze at least N pictures (this setting)"
 msgstr ""
 
-#: src/server.py:3926
+#: src/server.py:4989
 msgid "Unlock only if no prey detected ≥ mouse_threshold in those N"
 msgstr ""
 
-#: src/server.py:3927
+#: src/server.py:4990
 msgid "Lock again if a subsequent picture shows prey ≥ mouse_threshold"
 msgstr ""
 
-#: src/server.py:3933
+#: src/server.py:4996
 msgid "Lock duration after prey detection (in s)"
 msgstr ""
 
-#: src/server.py:3936
+#: src/server.py:4999
 msgid "Explain lock duration"
 msgstr ""
 
-#: src/server.py:3937
+#: src/server.py:5000
 msgid "The flap will remain closed for this time after a prey detection."
 msgstr ""
 
-#: src/server.py:3942
+#: src/server.py:5005
 msgid "Detect prey"
 msgstr ""
 
-#: src/server.py:3945
+#: src/server.py:5008
 msgid "Explain prey detection"
 msgstr ""
 
-#: src/server.py:3947
+#: src/server.py:5010
 msgid ""
 "If the prey detection is enabled and the mouse detection threshold is "
 "exceeded in a picture, the flap will remain closed.\n"
@@ -1357,606 +1457,598 @@ msgid ""
 "the `MANAGE CATS` section."
 msgstr ""
 
-#: src/server.py:3960
+#: src/server.py:5023
 msgid "Version of the object detection model"
 msgstr ""
 
-#: src/server.py:3976
+#: src/server.py:5039
 msgid "Show model version explanation"
 msgstr ""
 
-#: src/server.py:3977
+#: src/server.py:5040
 msgid "Original Kittyflap Model v1:"
 msgstr ""
 
-#: src/server.py:3977
+#: src/server.py:5040
 msgid ""
 "Always tries to detect objects `Mouse` and `No Mouse`, even if there is no "
 "such object in the picture."
 msgstr ""
 
-#: src/server.py:3978
+#: src/server.py:5041
 msgid "Original Kittyflap Model v2:"
 msgstr ""
 
-#: src/server.py:3978
+#: src/server.py:5041
 msgid ""
 "Only tries to detect objects `Mouse` and `No Mouse` if there is a cat in the "
 "picture."
 msgstr ""
 
-#: src/server.py:3979
+#: src/server.py:5042
 msgid "Custom Models:"
 msgstr ""
 
-#: src/server.py:3979
+#: src/server.py:5042
 msgid ""
 "These are your own trained models, which you have created in the `AI "
 "TRAINING` section."
 msgstr ""
 
-#: src/server.py:3980
+#: src/server.py:5043
 msgid ""
 "If you change this setting, the Kittyflap must be restarted to apply the new "
 "model version."
 msgstr ""
 
-#: src/server.py:3985 src/server.py:4865
+#: src/server.py:5048 src/server.py:5889
 msgid "Use camera for cat detection"
 msgstr ""
 
-#: src/server.py:3988
+#: src/server.py:5051
 msgid "Explain camera cat detection"
 msgstr ""
 
-#: src/server.py:3989
+#: src/server.py:5052
 msgid ""
 "If this setting is enabled, the camera will also be used for cat detection "
 "(in addition to the RFID reader)."
 msgstr ""
 
-#: src/server.py:3990 src/server.py:4008
+#: src/server.py:5053 src/server.py:5071
 msgid ""
 "You can configure the required threshold for the cat detection with the "
 "slider `Cat detection threshold`."
 msgstr ""
 
-#: src/server.py:3991
+#: src/server.py:5054
 msgid "If the detection is successful, the inside direction will be opened."
 msgstr ""
 
-#: src/server.py:3992 src/server.py:4010
+#: src/server.py:5055 src/server.py:5073
 msgid ""
 "**NOTE:** This feature requires a custom trained model for your cat(s). It "
 "does not work with the default kittyflap models."
 msgstr ""
 
-#: src/server.py:3993 src/server.py:4011
+#: src/server.py:5056 src/server.py:5074
 msgid ""
 "This feature depends heavily on the quality of your model and sufficient "
 "lighting conditions."
 msgstr ""
 
-#: src/server.py:3994
+#: src/server.py:5057
 msgid ""
 "If one or both are not good, the detection may either fail or other - "
 "similiar looking cats may be detected as your cat."
 msgstr ""
 
-#: src/server.py:3999 src/server.py:4857
+#: src/server.py:5062 src/server.py:5881
 msgid "Use camera for motion detection"
 msgstr ""
 
-#: src/server.py:4002
+#: src/server.py:5065
 msgid "Explain camera motion detection"
 msgstr ""
 
-#: src/server.py:4003
+#: src/server.py:5066
 msgid ""
 "Disables the outside PIR sensor and uses the camera for motion detection "
 "instead."
 msgstr ""
 
-#: src/server.py:4004
+#: src/server.py:5067
 msgid "**How it works:**"
 msgstr ""
 
-#: src/server.py:4005
+#: src/server.py:5068
 msgid ""
 "- In regular operation, Kittyhack waits for a trigger from the outside PIR "
 "sensor before starting camera analysis"
 msgstr ""
 
-#: src/server.py:4006
+#: src/server.py:5069
 msgid ""
 "- With this feature enabled, the PIR sensor is disabled and the camera "
 "continuously analyzes images"
 msgstr ""
 
-#: src/server.py:4007
+#: src/server.py:5070
 msgid ""
 "- When a cat is detected in the camera feed, it's treated as equivalent to a "
 "motion detection outside"
 msgstr ""
 
-#: src/server.py:4009
+#: src/server.py:5072
 msgid ""
 "This may be very helpful in areas where environmental factors (moving trees, "
 "people passing by) permanently cause false PIR triggers."
 msgstr ""
 
-#: src/server.py:4012
+#: src/server.py:5075
 msgid ""
 "If one or both are not good, you may experience false triggers or your cat "
 "may not be detected correctly."
 msgstr ""
 
-#: src/server.py:4019
+#: src/server.py:5082
 msgid "Open inside direction for:"
 msgstr ""
 
-#: src/server.py:4032
+#: src/server.py:5095
 msgid "Explain entrance modes"
 msgstr ""
 
-#: src/server.py:4033
+#: src/server.py:5096
 msgid ""
 "- **All cats:** *Every* detected motion on the outside will unlock the flap."
 msgstr ""
 
-#: src/server.py:4034
+#: src/server.py:5097
 msgid ""
 "- **All cats with a RFID chip:** Every successful RFID detection will unlock "
 "the flap."
 msgstr ""
 
-#: src/server.py:4035
+#: src/server.py:5098
 msgid ""
 "- **Only registered cats:** Only the cats that are registered in the "
 "database will unlock the flap (either by RFID or by camera detection, if "
 "enabled)."
 msgstr ""
 
-#: src/server.py:4036
+#: src/server.py:5099
 msgid ""
 "- **Individual configuration per cat:** Configure per cat if it is allowed "
 "to enter (in the `MANAGE CATS` section)."
 msgstr ""
 
-#: src/server.py:4037
+#: src/server.py:5100
 msgid "- **No cats:** The inside direction will never be opened."
 msgstr ""
 
-#: src/server.py:4058 src/server.py:4133
+#: src/server.py:5121 src/server.py:5196
 msgid "Show decision logic"
 msgstr ""
 
-#: src/server.py:4059 src/server.py:4134
+#: src/server.py:5122 src/server.py:5197
 msgid "Hide decision logic"
 msgstr ""
 
-#: src/server.py:4060 src/server.py:4135
+#: src/server.py:5123 src/server.py:5198
 msgid "Only the flowchart for the currently selected mode is shown."
 msgstr ""
 
-#: src/server.py:4108
+#: src/server.py:5171
 msgid "Explain exit modes"
 msgstr ""
 
-#: src/server.py:4109
+#: src/server.py:5172
 msgid ""
 "- **Allow exit:** The outside direction is always possible. You can also "
 "configure time ranges below to restrict the exit times."
 msgstr ""
 
-#: src/server.py:4110
+#: src/server.py:5173
 msgid "- **Do not allow exit:** The outside direction is always closed."
 msgstr ""
 
-#: src/server.py:4111
+#: src/server.py:5174
 msgid ""
 "- **Individual configuration per cat:** Configure per cat if it is allowed "
 "to exit (in the `MANAGE CATS` section). The time ranges below are applied in "
 "addition."
 msgstr ""
 
-#: src/server.py:4112
+#: src/server.py:5175
 msgid ""
 "**NOTE:** All your cats must be registered **with a RFID chip** to use this "
 "mode. Cats without RFID can not go outside in this mode!"
 msgstr ""
 
-#: src/server.py:4228
+#: src/server.py:5232
 msgid "Show exit time range rules"
 msgstr ""
 
-#: src/server.py:4229
+#: src/server.py:5233
 msgid ""
 "You can specify up to 3 time ranges, in which your cats are allowed to exit."
 msgstr ""
 
-#: src/server.py:4230
+#: src/server.py:5234
 msgid "Rules:"
 msgstr ""
 
-#: src/server.py:4231
+#: src/server.py:5235
 msgid "The time ranges are global and apply to all cats."
 msgstr ""
 
-#: src/server.py:4232
+#: src/server.py:5236
 msgid ""
 "If no range is enabled, cats may exit at any time (subject to other "
 "settings)."
 msgstr ""
 
-#: src/server.py:4233
+#: src/server.py:5237
 msgid ""
 "If any range is enabled, cats may exit only during the configured time "
 "windows."
 msgstr ""
 
-#: src/server.py:4234
+#: src/server.py:5238
 msgid ""
 "Outside these windows, no cat may exit, even if the per‑cat setting in "
 "'Manage Cats' allows exit."
 msgstr ""
 
-#: src/server.py:4235
+#: src/server.py:5239
 msgid "See the decision logic flowchart above for details."
 msgstr ""
 
-#: src/server.py:4236
+#: src/server.py:5240
 msgid "Enter times in 24h format HH:MM (e.g., 13:00)."
 msgstr ""
 
-#: src/server.py:4237
+#: src/server.py:5241
 msgid ""
 "Example: If ranges are 10:00–18:00 and it is 20:00, no cat may exit, even if "
 "that cat is allowed per‑cat in 'Manage Cats'."
 msgstr ""
 
-#: src/server.py:4243
+#: src/server.py:5247
 msgid "Time range 1"
 msgstr ""
 
-#: src/server.py:4244 src/server.py:4250 src/server.py:4256
+#: src/server.py:5248 src/server.py:5254 src/server.py:5260
 msgid "From"
 msgstr ""
 
-#: src/server.py:4245 src/server.py:4251 src/server.py:4257
+#: src/server.py:5249 src/server.py:5255 src/server.py:5261
 msgid "To"
 msgstr ""
 
-#: src/server.py:4249
+#: src/server.py:5253
 msgid "Time range 2"
 msgstr ""
 
-#: src/server.py:4255
+#: src/server.py:5259
 msgid "Time range 3"
 msgstr ""
 
-#: src/server.py:4269
+#: src/server.py:5273
 msgid "Reaction speed (in s) of the motion sensor on the inside"
 msgstr ""
 
-#: src/server.py:4281
+#: src/server.py:5285
 msgid "Explain inside PIR reaction speed"
 msgstr ""
 
-#: src/server.py:4282
+#: src/server.py:5286
 msgid ""
 "A low value means a fast reaction, but also a higher probability of false "
 "alarms. A high value means a slow reaction, but also a lower probability of "
 "false alarms."
 msgstr ""
 
-#: src/server.py:4284
+#: src/server.py:5288
 msgid "The default setting should be a good value for most cases."
 msgstr ""
 
-#: src/server.py:4298
+#: src/server.py:5302
 msgid "Live view settings"
 msgstr ""
 
-#: src/server.py:4299
+#: src/server.py:5303
 msgid "Update interval for the live camera view in the WebUI."
 msgstr ""
 
-#: src/server.py:4307
+#: src/server.py:5311
 msgid "Live-View update interval:"
 msgstr ""
 
-#: src/server.py:4309
+#: src/server.py:5313
 msgid "Refresh the live view every..."
 msgstr ""
 
-#: src/server.py:4320
+#: src/server.py:5324
 msgid ""
 "NOTE: A high refresh rate could slow down the performance, especially if "
 "several users are connected at the same time. Values below 1s require a fast "
 "and stable WLAN connection."
 msgstr ""
 
-#: src/server.py:4322
+#: src/server.py:5326
 msgid ""
 "This setting affects only the view in the WebUI and has no impact on the "
 "detection process."
 msgstr ""
 
-#: src/server.py:4336
+#: src/server.py:5340
 msgid "Pictures view settings"
 msgstr ""
 
-#: src/server.py:4337
+#: src/server.py:5341
 msgid ""
 "Configuration of the pictures view in the WebUI, maximum number of pictures "
 "in the database and limits of pictures per event."
 msgstr ""
 
-#: src/server.py:4341
+#: src/server.py:5345
 msgid "Maximum number of photos to retain in the database"
 msgstr ""
 
-#: src/server.py:4345
+#: src/server.py:5349
 msgid ""
 "The oldest pictures will be deleted if the number of pictures exceeds this "
 "value."
 msgstr ""
 
-#: src/server.py:4346
+#: src/server.py:5350
 msgid ""
 "The maximum number of pictures depends on the type of the Raspberry Pi, "
 "since some kittyflaps are equipped with 16GB and some with 32GB."
 msgstr ""
 
-#: src/server.py:4347
+#: src/server.py:5351
 msgid ""
 "As a rule of thumb, you can calculate with 200MB per 1000 pictures. You can "
 "check the free disk space in the `INFO` section."
 msgstr ""
 
-#: src/server.py:4354
+#: src/server.py:5358
 msgid "Maximal pictures per event with RFID"
 msgstr ""
 
-#: src/server.py:4358
+#: src/server.py:5362
 msgid ""
 "Maximal number of pictures that will be stored to the database for a motion "
 "event, if a cat with a RFID chip is detected."
 msgstr ""
 
-#: src/server.py:4359 src/server.py:4371
+#: src/server.py:5363 src/server.py:5375
 msgid ""
 "NOTE: The internal prey detection will still be active for all pictures of "
 "this event. This number just limits the number of pictures that will be "
 "stored to the database."
 msgstr ""
 
-#: src/server.py:4360 src/server.py:4372
+#: src/server.py:5364 src/server.py:5376
 msgid ""
 "If you set this to 0, no event will be logged to the database. Too many "
 "pictures can slow down the performance drastically."
 msgstr ""
 
-#: src/server.py:4366
+#: src/server.py:5370
 msgid "Maximal pictures per event without RFID"
 msgstr ""
 
-#: src/server.py:4370
+#: src/server.py:5374
 msgid ""
 "Maximal number of pictures that will be stored to the database for a motion "
 "event, if a motion event without a detected RFID occurs."
 msgstr ""
 
-#: src/server.py:4378
+#: src/server.py:5382
 msgid "Maximum pictures per page"
 msgstr ""
 
-#: src/server.py:4382
+#: src/server.py:5386
 msgid ""
 "This setting applies only to the `PICTURES` section in the ungrouped view "
 "mode."
 msgstr ""
 
-#: src/server.py:4383
+#: src/server.py:5387
 msgid ""
 "NOTE: Too many pictures per page could slow down the performance drastically!"
 msgstr ""
 
-#: src/server.py:4397
+#: src/server.py:5401
 msgid "Home Assistant configuration"
 msgstr ""
 
-#: src/server.py:4398
+#: src/server.py:5402
 msgid "Configure MQTT integration for Home Assistant."
 msgstr ""
 
-#: src/server.py:4406
+#: src/server.py:5410
 msgid "Enable MQTT"
 msgstr ""
 
-#: src/server.py:4417
+#: src/server.py:5421
 msgid "MQTT Broker Address"
 msgstr ""
 
-#: src/server.py:4419
+#: src/server.py:5423
 msgid "e.g. 192.168.1.10"
 msgstr ""
 
-#: src/server.py:4427
+#: src/server.py:5431
 msgid "MQTT Broker Port"
 msgstr ""
 
-#: src/server.py:4440
+#: src/server.py:5444
 msgid "MQTT Username"
 msgstr ""
 
-#: src/server.py:4442
+#: src/server.py:5446
 msgid "MQTT username"
 msgstr ""
 
-#: src/server.py:4450
+#: src/server.py:5454
 msgid "MQTT Password"
 msgstr ""
 
-#: src/server.py:4452
+#: src/server.py:5456
 msgid "MQTT password"
 msgstr ""
 
-#: src/server.py:4463
+#: src/server.py:5467
 msgid "Camera update interval"
 msgstr ""
 
-#: src/server.py:4467
+#: src/server.py:5471
 msgid ""
 "The interval in seconds between publishing camera images to the MQTT broker."
 msgstr ""
 
-#: src/server.py:4474
+#: src/server.py:5478
 msgid "Home Assistant Card Example"
 msgstr ""
 
-#: src/server.py:4475
+#: src/server.py:5479
 msgid "Copy this configuration to create a dashboard card in Home Assistant:"
 msgstr ""
 
-#: src/server.py:4478
+#: src/server.py:5482
 msgid "Home Assistant Dashboard Card"
 msgstr ""
 
-#: src/server.py:4480
+#: src/server.py:5484
 msgid "KittyHack Cat Flap"
 msgstr ""
 
-#: src/server.py:4492
+#: src/server.py:5496
 msgid "Last Event"
 msgstr ""
 
-#: src/server.py:4502
-msgid "Inside"
-msgstr ""
-
-#: src/server.py:4506
-msgid "Outside"
-msgstr ""
-
-#: src/server.py:4509
+#: src/server.py:5513
 msgid "Magnetic Locks"
 msgstr ""
 
-#: src/server.py:4511 src/ui.py:54
+#: src/server.py:5515 src/ui.py:83
 msgid "Configuration"
 msgstr ""
 
-#: src/server.py:4515
+#: src/server.py:5519
 msgid "Open entrance for..."
 msgstr ""
 
-#: src/server.py:4519
+#: src/server.py:5523
 msgid "Allow cats to exit"
 msgstr ""
 
-#: src/server.py:4526
+#: src/server.py:5530
 msgid "Motion outside"
 msgstr ""
 
-#: src/server.py:4529
+#: src/server.py:5533
 msgid "Motion inside"
 msgstr ""
 
-#: src/server.py:4532
+#: src/server.py:5536
 msgid "Prey detected"
 msgstr ""
 
-#: src/server.py:4534
+#: src/server.py:5538
 msgid "Status"
 msgstr ""
 
-#: src/server.py:4549
+#: src/server.py:5553
 msgid "Advanced settings"
 msgstr ""
 
-#: src/server.py:4550
+#: src/server.py:5554
 msgid "Advanced configuration options for hostname, logging, and performance."
 msgstr ""
 
-#: src/server.py:4554
+#: src/server.py:5558
 msgid "Hostname"
 msgstr ""
 
-#: src/server.py:4558
+#: src/server.py:5562
 msgid ""
 "The hostname of the Kittyflap. You can change it to any unique name in your "
 "network for an easier access (mDNS / Avahi must be enabled in your router)."
 msgstr ""
 
-#: src/server.py:4559
+#: src/server.py:5563
 msgid "Allowed characters: `a-z`, `A-Z`, `0-9` and `-`."
 msgstr ""
 
-#: src/server.py:4560 src/server.py:4588
+#: src/server.py:5564 src/server.py:5593
 msgid "NOTE: This setting requires a restart of the kittyflap to take effect."
 msgstr ""
 
-#: src/server.py:4561
+#: src/server.py:5565
 msgid "You can access the Kittyflap via the hostname in your browser:"
 msgstr ""
 
-#: src/server.py:4570
+#: src/server.py:5574
 msgid ""
 "`INFO` is the default log level and should be used in normal operation. "
 "`DEBUG` should only be used if it is really necessary!"
 msgstr ""
 
-#: src/server.py:4574
+#: src/server.py:5578
 msgid "Use all CPU cores for image processing"
 msgstr ""
 
-#: src/server.py:4578
+#: src/server.py:5582
 msgid ""
 "If this is enabled, all CPU cores will be used for image processing. This "
 "results in a faster analysis of the pictures, and therefore a maybe a bit "
 "faster prey detection."
 msgstr ""
 
-#: src/server.py:4584
+#: src/server.py:5589
 msgid ""
-"⚠️ **WARNING**: It is NOT recommended to enable this feature! Several users "
+"**WARNING**: It is NOT recommended to enable this feature! Several users "
 "have reported that this option causes reboots or system freezes."
 msgstr ""
 
-#: src/server.py:4585
+#: src/server.py:5590
 msgid ""
 "If you encounter the same issue, it's strongly recommended to disable this "
 "setting."
 msgstr ""
 
-#: src/server.py:4596
+#: src/server.py:5601
 msgid "IP camera watchdog"
 msgstr ""
 
-#: src/server.py:4603
+#: src/server.py:5608
 msgid ""
 "If enabled, the stream of an external camera will be automatically restarted "
 "if corrupted frames are detected."
 msgstr ""
 
-#: src/server.py:4614
+#: src/server.py:5619
 msgid "WLAN watchdog"
 msgstr ""
 
-#: src/server.py:4621
+#: src/server.py:5626
 msgid ""
 "If enabled, the WLAN connection will be monitored and automatically "
 "reconnected on failure. If this also fails, the Kittyflap will automatically "
 "restart."
 msgstr ""
 
-#: src/server.py:4632
+#: src/server.py:5637
 msgid "Disable RFID reader"
 msgstr ""
 
-#: src/server.py:4639
+#: src/server.py:5644
 msgid ""
 "If this option is enabled, the RFID reader will NOT be powered when motion "
 "is detected. Use only for troubleshooting hardware defects or undervoltage "
@@ -1964,632 +2056,675 @@ msgid ""
 "based cat detection instead."
 msgstr ""
 
-#: src/server.py:4642
+#: src/server.py:5647
 msgid "Default: Disabled"
 msgstr ""
 
-#: src/server.py:4702 src/server.py:4713 src/server.py:4721
+#: src/server.py:5712 src/server.py:5723 src/server.py:5731
 msgid "Allowed to exit time ranges: "
 msgstr ""
 
-#: src/server.py:4703
+#: src/server.py:5713
 msgid "Invalid time format. Please use HH:MM format."
 msgstr ""
 
-#: src/server.py:4704 src/server.py:4715 src/server.py:4723 src/server.py:4749
-#: src/server.py:4770
+#: src/server.py:5714 src/server.py:5725 src/server.py:5733 src/server.py:5759
+#: src/server.py:5780
 msgid "Changes were not saved."
 msgstr ""
 
-#: src/server.py:4714
+#: src/server.py:5724
 msgid "Time must be between 00:00 and 23:59."
 msgstr ""
 
-#: src/server.py:4722
+#: src/server.py:5732
 msgid "Invalid time value."
 msgstr ""
 
-#: src/server.py:4747
+#: src/server.py:5757
 msgid "Hostname: "
 msgstr ""
 
-#: src/server.py:4748
+#: src/server.py:5758
 msgid "Invalid hostname. Only letters, numbers and hyphens are allowed."
 msgstr ""
 
-#: src/server.py:4768
+#: src/server.py:5778
 msgid "IP Camera URL: "
 msgstr ""
 
-#: src/server.py:4769
+#: src/server.py:5779
 msgid ""
 "Invalid stream URL format. Please use a valid URL starting with rtsp://, "
 "http://, https://, rtmp://, udp://, tcp://, or file://"
 msgstr ""
 
-#: src/server.py:4855 src/server.py:4863
+#: src/server.py:5879 src/server.py:5887
 msgid "Invalid configuration: "
 msgstr ""
 
-#: src/server.py:4856
+#: src/server.py:5880
 msgid ""
 "You cannot use the camera for motion detection in combination with an "
 "original Kittyflap model. You need a custom trained model for this."
 msgstr ""
 
-#: src/server.py:4857 src/server.py:4865
+#: src/server.py:5881 src/server.py:5889
+#, python-brace-format
 msgid "The setting \"{}\" was disabled."
 msgstr ""
 
-#: src/server.py:4864
+#: src/server.py:5888
 msgid ""
 "You cannot use the camera for cat detection in combination with an original "
 "Kittyflap model. You need a custom trained model for this."
 msgstr ""
 
-#: src/server.py:4870
+#: src/server.py:5894
 msgid "Kittyhack configuration updated successfully."
 msgstr ""
 
-#: src/server.py:4872
+#: src/server.py:5896
 msgid ""
 "Please restart the kittyflap in the [SYSTEM] section, to apply the new "
 "language."
 msgstr ""
 
-#: src/server.py:4884
+#: src/server.py:5908
 msgid ""
 "A restart is required to apply the changes. Do you want to reboot the "
 "kittyflap now?"
 msgstr ""
 
-#: src/server.py:4888 src/server.py:5686 src/server.py:5746 src/server.py:5946
-#: src/server.py:5971
+#: src/server.py:5912 src/server.py:6753 src/server.py:6813 src/server.py:6983
+#: src/server.py:7008
 msgid "Reboot"
 msgstr ""
 
-#: src/server.py:4898
+#: src/server.py:5922
 msgid "Failed to restart MQTT client. Check the logs for details."
 msgstr ""
 
-#: src/server.py:4911
+#: src/server.py:5935
 msgid "Failed to save the Kittyhack configuration."
 msgstr ""
 
-#: src/server.py:4920
+#: src/server.py:5944
 msgid "Configured WLANs"
 msgstr ""
 
-#: src/server.py:4925
+#: src/server.py:5949
 msgid "Add new WLAN"
 msgstr ""
 
-#: src/server.py:4950
+#: src/server.py:5975
+msgid "Connected"
+msgstr ""
+
+#: src/server.py:5977 src/server.py:6630
+msgid "Not connected"
+msgstr ""
+
+#: src/server.py:5981
 msgid "Enforce connection to this WLAN"
 msgstr ""
 
-#: src/server.py:4955
+#: src/server.py:5987
 msgid "Modify this WLAN"
 msgstr ""
 
-#: src/server.py:4977 src/server.py:5066
+#: src/server.py:6010 src/server.py:6115
 msgid "Failed to scan for available WLANs"
 msgstr ""
 
-#: src/server.py:5023
+#: src/server.py:6056
 msgid "Available WLANs"
 msgstr ""
 
-#: src/server.py:5057
+#: src/server.py:6086
+msgid "No signal"
+msgstr ""
+
+#: src/server.py:6089 src/server.py:6622
+msgid "Weak signal"
+msgstr ""
+
+#: src/server.py:6092 src/server.py:6619
+msgid "Medium signal"
+msgstr ""
+
+#: src/server.py:6095 src/server.py:6616
+msgid "Strong signal"
+msgstr ""
+
+#: src/server.py:6106
 msgid "Channel"
 msgstr ""
 
-#: src/server.py:5057
+#: src/server.py:6106
 msgid "Signal"
 msgstr ""
 
-#: src/server.py:5077
+#: src/server.py:6126
 msgid "Creating log archive. Please wait..."
 msgstr ""
 
-#: src/server.py:5080
+#: src/server.py:6129
 msgid "Preparing Download"
 msgstr ""
 
-#: src/server.py:5197
+#: src/server.py:6246
+#, python-brace-format
 msgid "Failed to create logs zip file: {}"
 msgstr ""
 
-#: src/server.py:5214
+#: src/server.py:6263
+#, python-brace-format
 msgid ""
 "Database snapshot is unavailable during image migration ({} pictures "
 "remaining). Please try again later."
 msgstr ""
 
-#: src/server.py:5229
+#: src/server.py:6278
+#, python-brace-format
 msgid "Failed to create a consistent snapshot: {}"
 msgstr ""
 
-#: src/server.py:5242
+#: src/server.py:6291
+#, python-brace-format
 msgid "Failed to prepare database download: {}"
 msgstr ""
 
-#: src/server.py:5252
+#: src/server.py:6301
 msgid "The original kittyflap database file does not exist."
 msgstr ""
 
-#: src/server.py:5263
+#: src/server.py:6312
 msgid "Latest version check failed."
 msgstr ""
 
-#: src/server.py:5265
+#: src/server.py:6314
 msgid "Internet connection not available."
 msgstr ""
 
-#: src/server.py:5268
+#: src/server.py:6317
+#, python-brace-format
 msgid "Retry failed: {}"
 msgstr ""
 
-#: src/server.py:5281
+#: src/server.py:6330
 msgid ""
 "Unable to fetch the latest version from github. Please try it again later or "
 "check your internet connection."
 msgstr ""
 
-#: src/server.py:5284
+#: src/server.py:6333
 msgid "Retry latest version check"
 msgstr ""
 
-#: src/server.py:5294
+#: src/server.py:6344
 msgid "Release Notes for"
 msgstr ""
 
-#: src/server.py:5303
+#: src/server.py:6353
+#, python-brace-format
 msgid "Automatic update to **{}**:"
 msgstr ""
 
-#: src/server.py:5304
+#: src/server.py:6354
 msgid "Update Kittyhack"
 msgstr ""
 
-#: src/server.py:5306
+#: src/server.py:6356
 msgid "Important: A stable WLAN connection is required for the update process."
 msgstr ""
 
-#: src/server.py:5308
+#: src/server.py:6358
 msgid "The update will end with a reboot of the Kittyflap."
 msgstr ""
 
-#: src/server.py:5309
+#: src/server.py:6359
 msgid ""
 "Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to "
 "see what's new in the latest version."
 msgstr ""
 
-#: src/server.py:5320
+#: src/server.py:6371
 msgid ""
-"⚠️ WARNING: Local changes detected in the git repository in `/root/kittyhack`."
+"WARNING: Local changes detected in the git repository in `/root/kittyhack`."
 msgstr ""
 
-#: src/server.py:5321
+#: src/server.py:6372
 msgid ""
 "If you proceed with the update, these changes will be lost (the database and "
 "configuration will not be affected)."
 msgstr ""
 
-#: src/server.py:5322
+#: src/server.py:6373
 msgid ""
 "Please commit or stash your changes manually before updating, if you want to "
 "keep them."
 msgstr ""
 
-#: src/server.py:5324
+#: src/server.py:6375
 msgid "Local changes:"
 msgstr ""
 
-#: src/server.py:5334
+#: src/server.py:6385
+#, python-brace-format
 msgid ""
 "An error occurred while checking for local changes in the git repository: {}"
 msgstr ""
 
-#: src/server.py:5335
+#: src/server.py:6386
 msgid "No automatic update possible."
 msgstr ""
 
-#: src/server.py:5339
+#: src/server.py:6390
 msgid "You are already using the latest version of Kittyhack."
 msgstr ""
 
-#: src/server.py:5347
+#: src/server.py:6398
+#, python-brace-format
 msgid ""
 "The original kittyflap database file consumes currently **{:.1f} MB** of "
 "disk space."
 msgstr ""
 
-#: src/server.py:5348
+#: src/server.py:6399
 msgid ""
 "The file contains a lot pictures which could not be uploaded to the original "
 "kittyflap servers anymore."
 msgstr ""
 
-#: src/server.py:5349
+#: src/server.py:6400
 msgid "You could delete the pictures from it to free up disk space."
 msgstr ""
 
-#: src/server.py:5351
+#: src/server.py:6402
 msgid "Remove pictures from original Kittyflap Database"
 msgstr ""
 
-#: src/server.py:5352
+#: src/server.py:6403
 msgid "Download Kittyflap Database"
 msgstr ""
 
-#: src/server.py:5358
+#: src/server.py:6409
 msgid "Original Kittyflap Database"
 msgstr ""
 
-#: src/server.py:5371
+#: src/server.py:6422
 msgid "Information"
 msgstr ""
 
-#: src/server.py:5374
+#: src/server.py:6425
 msgid ""
 "Kittyhack is an open-source project that enables offline use of the "
 "Kittyflap cat door—completely without internet access."
 msgstr ""
 
-#: src/server.py:5375
+#: src/server.py:6426
 msgid ""
 "It was created after the manufacturer of Kittyflap filed for bankruptcy, "
 "rendering the associated app non-functional."
 msgstr ""
 
-#: src/server.py:5379
+#: src/server.py:6430
 msgid "**Important Notes**"
 msgstr ""
 
-#: src/server.py:5380
+#: src/server.py:6431
 msgid ""
 "I have no connection to the manufacturer of Kittyflap. This project was "
 "developed on my own initiative to continue using my Kittyflap."
 msgstr ""
 
-#: src/server.py:5381
+#: src/server.py:6432
 msgid ""
 "If you find any bugs or have suggestions for improvement, please report them "
 "on the GitHub page."
 msgstr ""
 
-#: src/server.py:5383
+#: src/server.py:6434
 msgid "GitHub Repository"
 msgstr ""
 
-#: src/server.py:5386
+#: src/server.py:6437
 msgid "**License**"
 msgstr ""
 
-#: src/server.py:5387
+#: src/server.py:6438
 msgid "This project is licensed under the MIT License."
 msgstr ""
 
-#: src/server.py:5388
+#: src/server.py:6439
 msgid "Copyright (c) 2025 Florian Kispert."
 msgstr ""
 
-#: src/server.py:5390
+#: src/server.py:6441
 msgid "MIT License (full text)"
 msgstr ""
 
-#: src/server.py:5391
+#: src/server.py:6442
 msgid ""
 "If you like Kittyhack, you can support the project with a small donation:"
 msgstr ""
 
-#: src/server.py:5392
+#: src/server.py:6443
 msgid "Donate via PayPal"
 msgstr ""
 
-#: src/server.py:5402
+#: src/server.py:6453
 msgid "Version Information"
 msgstr ""
 
-#: src/server.py:5409
+#: src/server.py:6460
 msgid "Show all Changelogs"
 msgstr ""
 
-#: src/server.py:5419
+#: src/server.py:6470
 msgid "System Information"
 msgstr ""
 
-#: src/server.py:5423
+#: src/server.py:6474
 msgid "Kittyhack Database"
 msgstr ""
 
-#: src/server.py:5424
+#: src/server.py:6475
 msgid "Backup and Restore your Kittyhack database"
 msgstr ""
 
-#: src/server.py:5425
+#: src/server.py:6476
 msgid "Download Kittyhack Database"
 msgstr ""
 
-#: src/server.py:5429
+#: src/server.py:6481
 msgid "Restore Kittyhack Database (.db)"
 msgstr ""
 
-#: src/server.py:5431
+#: src/server.py:6483
 msgid "Restore Database"
 msgstr ""
 
-#: src/server.py:5440
+#: src/server.py:6492
 msgid "Configuration File"
 msgstr ""
 
-#: src/server.py:5441
+#: src/server.py:6493
 msgid "Backup and Restore your Kittyhack configuration"
 msgstr ""
 
-#: src/server.py:5442
+#: src/server.py:6494
 msgid "Download Configuration File"
 msgstr ""
 
-#: src/server.py:5446
+#: src/server.py:6499
 msgid "Restore Configuration File (config.ini)"
 msgstr ""
 
-#: src/server.py:5448
+#: src/server.py:6501
 msgid "Restore Configuration"
 msgstr ""
 
-#: src/server.py:5457
+#: src/server.py:6510
 msgid ""
 "> Note: If the database or the configuration gets restored from a backup, "
 "then the Kittyflap will be rebooted afterwards to apply the new "
 "configuration."
 msgstr ""
 
-#: src/server.py:5468
+#: src/server.py:6521
 msgid "Progressive Web App (PWA)"
 msgstr ""
 
-#: src/server.py:5471
+#: src/server.py:6524
 msgid "You can install Kittyhack as a"
 msgstr ""
 
-#: src/server.py:5471
+#: src/server.py:6524
 msgid "Progressive Web App"
 msgstr ""
 
-#: src/server.py:5471
+#: src/server.py:6524
 msgid "on your Smartphone or computer for easier access."
 msgstr ""
 
-#: src/server.py:5472
+#: src/server.py:6525
 msgid ""
 "Such a PWA can be added to your home screen and launched like a native app, "
 "without needing to open a web browser."
 msgstr ""
 
-#: src/server.py:5478
+#: src/server.py:6531
 msgid "**HTTPS Required**"
 msgstr ""
 
-#: src/server.py:5479
+#: src/server.py:6532
 msgid ""
 "PWA installation requires a secure connection (HTTPS). You are currently "
 "accessing Kittyhack via HTTP."
 msgstr ""
 
-#: src/server.py:5480
+#: src/server.py:6533
 msgid "You'll need to set up a reverse proxy with HTTPS."
 msgstr ""
 
-#: src/server.py:5481
+#: src/server.py:6534
 msgid ""
 "If you want to setup a reverse proxy in your home network, you can watch"
 msgstr ""
 
-#: src/server.py:5481
+#: src/server.py:6534
 msgid "this guide"
 msgstr ""
 
-#: src/server.py:5488
+#: src/server.py:6541
 msgid "**App is already installed on this device!**"
 msgstr ""
 
-#: src/server.py:5494
+#: src/server.py:6547
 msgid "**Installation successful!**"
 msgstr ""
 
-#: src/server.py:5502
+#: src/server.py:6555
 msgid "Install as App"
 msgstr ""
 
-#: src/server.py:5519
+#: src/server.py:6572
 msgid "Logfiles"
 msgstr ""
 
-#: src/server.py:5521
+#: src/server.py:6574
 msgid "Download Kittyhack Logfile"
 msgstr ""
 
-#: src/server.py:5561
+#: src/server.py:6627
+#, python-brace-format
 msgid "Quality: {}, Signal: {} dBm"
 msgstr ""
 
-#: src/server.py:5563
-msgid "Not connected"
-msgstr ""
-
-#: src/server.py:5565
+#: src/server.py:6632
 msgid "Unable to determine"
 msgstr ""
 
-#: src/server.py:5569
+#: src/server.py:6636
 msgid "Kittyhack database size"
 msgstr ""
 
-#: src/server.py:5569
+#: src/server.py:6636
 msgid "Free disk space"
 msgstr ""
 
-#: src/server.py:5569
+#: src/server.py:6636
 msgid "Used RAM"
 msgstr ""
 
-#: src/server.py:5569
+#: src/server.py:6636
 msgid "WLAN Status"
 msgstr ""
 
-#: src/server.py:5591
+#: src/server.py:6658
 msgid "Changelogs"
 msgstr ""
 
-#: src/server.py:5608
+#: src/server.py:6675
 msgid ""
 "The pictures from the original kittyflap database were removed successfully."
 msgstr ""
 
-#: src/server.py:5611
+#: src/server.py:6678
+#, python-brace-format
 msgid ""
 "An error occurred while deleting the pictures from the original kittyflap "
 "database: {}"
 msgstr ""
 
-#: src/server.py:5613
+#: src/server.py:6680
 msgid "The original kittyflap database file does not exist anymore."
 msgstr ""
 
-#: src/server.py:5626
+#: src/server.py:6693
 msgid "config.ini not found"
 msgstr ""
 
-#: src/server.py:5630
+#: src/server.py:6697
+#, python-brace-format
 msgid "Failed to download config.ini file: {}"
 msgstr ""
 
-#: src/server.py:5638 src/server.py:5699
+#: src/server.py:6705 src/server.py:6766
 msgid "No file selected."
 msgstr ""
 
-#: src/server.py:5645 src/server.py:5706
+#: src/server.py:6712 src/server.py:6773
 msgid "Uploaded file not found."
 msgstr ""
 
-#: src/server.py:5649
+#: src/server.py:6716
 msgid "Invalid file type. Please upload a .db file."
 msgstr ""
 
-#: src/server.py:5654
+#: src/server.py:6721
 msgid "Database file uploaded. Click 'Restore Database' to apply."
 msgstr ""
 
-#: src/server.py:5661
+#: src/server.py:6728
 msgid "No uploaded database ready to restore."
 msgstr ""
 
-#: src/server.py:5678
+#: src/server.py:6745
 msgid "Database restored successfully."
 msgstr ""
 
-#: src/server.py:5682 src/server.py:5742
+#: src/server.py:6749 src/server.py:6809
 msgid "Please click the 'Reboot' button to restart the Kittyflap."
 msgstr ""
 
-#: src/server.py:5683 src/server.py:5743
+#: src/server.py:6750 src/server.py:6810
 msgid "Reboot required"
 msgstr ""
 
-#: src/server.py:5692
+#: src/server.py:6759
+#, python-brace-format
 msgid "Failed to restore database: {}"
 msgstr ""
 
-#: src/server.py:5710
+#: src/server.py:6777
 msgid "Invalid file type. Please upload a config.ini file."
 msgstr ""
 
-#: src/server.py:5718
+#: src/server.py:6785
 msgid "Invalid configuration file: missing [Settings] section."
 msgstr ""
 
-#: src/server.py:5722
+#: src/server.py:6789
+#, python-brace-format
 msgid "Failed to validate configuration: {}"
 msgstr ""
 
-#: src/server.py:5727
+#: src/server.py:6794
 msgid "Configuration file uploaded. Click 'Restore Configuration' to apply."
 msgstr ""
 
-#: src/server.py:5734
+#: src/server.py:6801
 msgid "No uploaded configuration ready to restore."
 msgstr ""
 
-#: src/server.py:5739
+#: src/server.py:6806
 msgid "Configuration restored successfully."
 msgstr ""
 
-#: src/server.py:5752
+#: src/server.py:6819
+#, python-brace-format
 msgid "Failed to restore configuration: {}"
 msgstr ""
 
-#: src/server.py:5764
+#: src/server.py:6831
 msgid "Starting update..."
 msgstr ""
 
-#: src/server.py:5898
+#: src/server.py:6935
 msgid "Do not close this page until the update is finished!"
 msgstr ""
 
-#: src/server.py:5899
+#: src/server.py:6936
 msgid "*This step may take several minutes. Please be patient.*"
 msgstr ""
 
-#: src/server.py:5901
+#: src/server.py:6938
 msgid "Updating Kittyhack..."
 msgstr ""
 
-#: src/server.py:5942
+#: src/server.py:6979
 msgid ""
 "A restart is required to apply the update. Please click the 'Reboot' button "
 "to restart the Kittyflap."
 msgstr ""
 
-#: src/server.py:5963
+#: src/server.py:7000
 msgid "An error occurred during the update process:"
 msgstr ""
 
-#: src/server.py:5966
+#: src/server.py:7003
 msgid ""
 "A restart is required to recover. Please click the 'Reboot' button to "
 "restart the Kittyflap."
 msgstr ""
 
-#: src/ui.py:23
+#: src/ui.py:52
 msgid "Live view"
 msgstr ""
 
-#: src/ui.py:29
+#: src/ui.py:58
 msgid "Pictures"
 msgstr ""
 
-#: src/ui.py:35
+#: src/ui.py:64
 msgid "Manage cats"
 msgstr ""
 
-#: src/ui.py:45
+#: src/ui.py:74
 msgid "AI Training"
 msgstr ""
 
-#: src/ui.py:50
+#: src/ui.py:79
 msgid "System"
 msgstr ""
 
-#: src/ui.py:58
+#: src/ui.py:87
 msgid "WLAN Configuration"
 msgstr ""
 
-#: src/ui.py:63
+#: src/ui.py:92
 msgid "Info"
+msgstr ""
+
+#: src/ui.py:108 src/ui.py:109
+msgid "Toggle theme"
+msgstr ""
+
+#: src/ui.py:111
+msgid "Theme: Auto"
 msgstr ""
 
 #: src/helper.py:57
@@ -2711,75 +2846,75 @@ msgstr ""
 msgid "No model training is in progress."
 msgstr ""
 
-#: src/system.py:846
+#: src/system.py:916
 msgid "Stopping existing Label Studio service..."
 msgstr ""
 
-#: src/system.py:857
+#: src/system.py:927
 msgid "Removing existing Label Studio installation..."
 msgstr ""
 
-#: src/system.py:864
+#: src/system.py:934
 msgid "Starting Label Studio installation..."
 msgstr ""
 
-#: src/system.py:864 src/system.py:892 src/system.py:967
+#: src/system.py:934 src/system.py:962 src/system.py:1037
 msgid "This may take a few minutes..."
 msgstr ""
 
-#: src/system.py:874
+#: src/system.py:944
 msgid "Creating virtual environment..."
 msgstr ""
 
-#: src/system.py:875
+#: src/system.py:945
 msgid "This may take a moment..."
 msgstr ""
 
-#: src/system.py:884
+#: src/system.py:954
 msgid "Virtual environment already exists"
 msgstr ""
 
-#: src/system.py:884
+#: src/system.py:954
 msgid "Skipping creation..."
 msgstr ""
 
-#: src/system.py:891
+#: src/system.py:961
 msgid "Upgrading pip..."
 msgstr ""
 
-#: src/system.py:904
+#: src/system.py:974
 msgid "Installing Label Studio..."
 msgstr ""
 
-#: src/system.py:905 src/system.py:983
+#: src/system.py:975 src/system.py:1053
 msgid ""
 "This takes several minutes... Do not turn off the power or reload the page!"
 msgstr ""
 
-#: src/system.py:914 src/system.py:924 src/system.py:928 src/system.py:933
+#: src/system.py:984 src/system.py:994 src/system.py:998 src/system.py:1003
 msgid "Creating systemd service..."
 msgstr ""
 
-#: src/system.py:914 src/system.py:942
+#: src/system.py:984 src/system.py:1012
 msgid "Almost done..."
 msgstr ""
 
-#: src/system.py:924
+#: src/system.py:994
 msgid "Service file created successfully."
 msgstr ""
 
-#: src/system.py:933
+#: src/system.py:1003
 msgid "Error: Template file not found."
 msgstr ""
 
-#: src/system.py:941
+#: src/system.py:1011
 msgid "Reloading systemd services..."
 msgstr ""
 
-#: src/system.py:967
+#: src/system.py:1037
 msgid "Starting Label Studio update..."
 msgstr ""
 
-#: src/system.py:982
+#: src/system.py:1052
 msgid "Upgrading Label Studio..."
 msgstr ""

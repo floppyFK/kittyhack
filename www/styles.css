@@ -144,6 +144,123 @@ html[data-bs-theme="dark"] .spinner {
     outline-offset: -2px;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Pictures section (non-grouped view) - modern gallery + pager                */
+/* -------------------------------------------------------------------------- */
+
+.photos-pager {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 10px 0 14px 0;
+}
+
+/* Keep Shiny's label for accessibility, but don't let it affect layout */
+.photos-pager #photos_page-label {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* Remove default spacing from Shiny/Bootstrap wrappers inside the pager */
+.photos-pager .shiny-input-container,
+.photos-pager .form-group {
+    margin: 0 !important;
+}
+
+.btn-page-control {
+    padding: 6px 10px;
+}
+
+.photos-page-total {
+    opacity: 0.75;
+    font-size: 0.95rem;
+}
+
+.photos-count {
+    flex-basis: 100%;
+    text-align: center;
+    opacity: 0.75;
+    font-size: 0.95rem;
+    margin-left: 0;
+    margin-top: 2px;
+}
+
+.kh-photo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+    align-items: start;
+}
+
+.kh-photo-card {
+    margin: 0;
+}
+
+.kh-photo-thumb {
+    position: relative;
+    display: block;
+}
+
+.kh-photo-thumb img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+}
+
+.kh-photo-open {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    text-decoration: none;
+    backdrop-filter: blur(2px);
+}
+
+.kh-photo-open:hover {
+    background: rgba(0, 0, 0, 0.70);
+    color: #fff;
+}
+
+.kh-photo-delete {
+    float: right;
+}
+
+.kh-detect-box {
+    position: absolute;
+    border: 2px solid #ff0000;
+    background-color: rgba(255, 0, 0, 0.05);
+    pointer-events: none;
+}
+
+.kh-detect-label {
+    position: absolute;
+    left: 0px;
+    background-color: rgba(255, 0, 0, 0.7);
+    color: white;
+    padding: 2px 5px;
+    border-radius: 5px;
+    white-space: nowrap;
+    font-size: 12px;
+}
+
 /* Event modal: picture loading spinner overlay */
 .event-modal-picture-wrap {
     position: relative;
@@ -153,7 +270,7 @@ html[data-bs-theme="dark"] .spinner {
     border-radius: .5rem;
     overflow: hidden;
     /* Prevent modal height collapse while the next image is still downloading */
-    aspect-ratio: 4 / 3;
+    aspect-ratio: var(--kh-event-aspect, 4 / 3);
     min-height: 220px;
     background-color: #000;
 }
@@ -186,14 +303,17 @@ html[data-bs-theme="dark"] .spinner {
     will-change: transform;
 }
 
-/* New frame: keep it hidden until JS confirms it's loaded */
-.event-modal-picture-wrap img[data-role="visible"] {
-    opacity: 0;
-    transition: opacity 140ms ease;
+/* Preload layer should never be visible (prevents brief flashes on nav).
+   IMPORTANT: the backdrop <img data-role="bg"> is also aria-hidden, so exclude it. */
+.event-modal-picture-wrap img[aria-hidden="true"]:not([data-role="bg"]) {
+    opacity: 0 !important;
 }
 
-.event-modal-picture-wrap.has-image img[data-role="visible"] {
+/* Visible layer: keep it stable (no opacity crossfade).
+   We swap the src only after preloading, so this avoids jitter. */
+.event-modal-picture-wrap img[data-role="visible"] {
     opacity: 1;
+    transition: none;
 }
 
 /* Firefox mobile: avoid rare black compositing flashes during opacity transitions */

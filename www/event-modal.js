@@ -265,6 +265,60 @@
         }
     }
 
+    function lookupBlobUrl(modal, imgEl) {
+        try {
+            if (!modal || !imgEl || !imgEl.getAttribute) return '';
+
+            var root = modal.querySelector ? modal.querySelector('#event_modal_root') : null;
+            var bundleUrl = root && root.getAttribute ? (root.getAttribute('data-bundle-url') || '') : '';
+            var key = bundleUrl ? String(bundleUrl) : '';
+            if (!key) {
+                var blockId = root && root.getAttribute ? root.getAttribute('data-block-id') : null;
+                if (!blockId) return '';
+                key = String(blockId);
+            }
+
+            var entry = window.__khEventBundles.get(String(key));
+            if (!entry || !entry.urlsByPid) return '';
+
+            var pid = parseIntSafe(imgEl.getAttribute('data-pid'), null);
+            if (pid === null) return '';
+
+            return entry.urlsByPid.get(pid) || '';
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function desiredImgSrc(modal, imgEl) {
+        // Return the src we *want* to use without setting it.
+        try {
+            if (!imgEl || !imgEl.getAttribute) return '';
+
+            // If a bundle is advertised but not ready yet, avoid falling back to /thumb/*.jpg.
+            try {
+                var root = modal && modal.querySelector ? modal.querySelector('#event_modal_root') : null;
+                var bundleUrl = root && root.getAttribute ? (root.getAttribute('data-bundle-url') || '') : '';
+                if (bundleUrl) {
+                    var st = window.__khEventBundleStateByUrl.get(String(bundleUrl));
+                    var startedAt = st && st.startedAtMs ? st.startedAtMs : 0;
+                    var status = st && st.status ? st.status : '';
+                    var age = startedAt ? (Date.now() - startedAt) : 0;
+                    if (status !== 'ready' && age > 0 && age < 2500) {
+                        return '';
+                    }
+                }
+            } catch (e) {}
+
+            var blob = lookupBlobUrl(modal, imgEl);
+            if (blob) return blob;
+
+            return imgEl.getAttribute('data-src') || '';
+        } catch (e) {
+            return '';
+        }
+    }
+
     function ensureImgSrc(modal, imgEl) {
         // Set src from cached blob (if ready) else from data-src.
         try {
@@ -436,54 +490,91 @@
                 wrap.setAttribute('data-event-modal-observer', '1');
             } catch (e) {}
 
-            // Ensure src is set (blob if available, else data-src) BEFORE we proceed.
-            var preload = q('#event_modal_picture img[aria-hidden="true"]');
-            try {
-                if (preload) ensureImgSrc(modal, preload);
-            } catch (e) {}
+            // Preload-then-swap strategy (simpler, avoids flicker/jitter):
+            // - Keep the currently visible frame on screen
+            // - Load the next frame into the hidden preload <img>
+            // - Swap the visible <img>.src only after preload completes
 
-            var src = ensureImgSrc(modal, img) || '';
+            var preload = q('#event_modal_picture img[aria-hidden="true"]:not([data-role="bg"])');
+
+            var src = desiredImgSrc(modal, img) || '';
             if (!src) return;
 
-            // Detect src changes across server re-renders (DOM replacement)
             var currentSrc = wrap.getAttribute('data-current-src') || '';
             var shownSrc = wrap.getAttribute('data-shown-src') || '';
 
-            // Prefer per-block remembered value if wrap doesn't have it yet.
             if (!shownSrc && blockIdKey) {
                 shownSrc = window.__khEventModalLastShownByBlock.get(blockIdKey) || '';
             }
 
+            function syncShownState(finalSrc) {
+                try {
+                    if (!finalSrc) return;
+                    maybeSetAspectRatio();
+                    wrap.classList.add('has-image');
+                    wrap.setAttribute('data-shown-src', finalSrc);
+                    setWrapBg(wrap, finalSrc);
+                    if (blockIdKey) window.__khEventModalLastShownByBlock.set(blockIdKey, finalSrc);
+                } catch (e) {}
+            }
+
+            function swapTo(finalSrc) {
+                try {
+                    if (!finalSrc) return;
+                    var vis = (img.getAttribute && img.getAttribute('src')) ? (img.getAttribute('src') || '') : '';
+                    if (vis !== finalSrc) img.setAttribute('src', finalSrc);
+                    // If it is already decoded from cache, update state immediately.
+                    try {
+                        if (img.complete && img.naturalWidth > 0) {
+                            syncShownState(finalSrc);
+                            maybePulseLoaded();
+                        }
+                    } catch (e) {}
+                } catch (e) {}
+            }
+
             if (currentSrc !== src) {
                 wrap.setAttribute('data-current-src', src);
-                // Keep old visible as background until new is loaded
-                if (shownSrc) {
-                    setWrapBg(wrap, shownSrc);
-                } else {
-                    // If we don't have a stored shownSrc yet, at least avoid flashing the black background.
-                    setWrapBg(wrap, src);
-                }
 
-                // Only hide/fade the visible image if we have a previous frame behind it.
-                // This prevents "first play on mobile" from briefly showing black while decoding.
-                var canHide = !!shownSrc;
+                // Ensure we always have something behind the visible layer.
+                var fallbackBg = shownSrc || (img.getAttribute ? (img.getAttribute('src') || '') : '') || '';
+                if (fallbackBg) setWrapBg(wrap, fallbackBg);
+
+                // If Shiny replaced the <img> node (src empty), restore last frame immediately.
                 try {
-                    if (img && img.complete && img.naturalWidth > 0) {
-                        canHide = false;
-                    }
+                    var visNow = (img.getAttribute && img.getAttribute('src')) ? (img.getAttribute('src') || '') : '';
+                    if (!visNow && fallbackBg) img.setAttribute('src', fallbackBg);
                 } catch (e) {}
-                if (canHide) {
-                    try { wrap.classList.remove('has-image'); } catch (e) {}
+
+                // Initial render: if we have nothing yet, load directly.
+                if (!fallbackBg) {
+                    swapTo(src);
+                } else if (preload && preload.setAttribute) {
+                    try {
+                        preload.__khPreloadFor = src;
+                        var ps = preload.getAttribute('src') || '';
+                        if (ps !== src) preload.setAttribute('src', src);
+                    } catch (e) {
+                        swapTo(src);
+                    }
+                } else {
+                    swapTo(src);
                 }
+            } else {
+                // If server re-render replaced the <img> node, ensure it has the current src.
+                var existing = (img.getAttribute && img.getAttribute('src')) ? (img.getAttribute('src') || '') : '';
+                if (!existing) swapTo(src);
             }
 
             function maybePulseLoaded() {
                 // Re-read on demand so play/pause changes are respected.
                 var playingNow = (pic.getAttribute('data-playing') === '1');
                 if (!playingNow) return;
+                var want = wrap.getAttribute('data-current-src') || '';
+                if (!want) return;
                 var lastAck = wrap.getAttribute('data-last-ack-src') || '';
-                if (lastAck === src) return;
-                wrap.setAttribute('data-last-ack-src', src);
+                if (lastAck === want) return;
+                wrap.setAttribute('data-last-ack-src', want);
                 safeClick(pulseBtn);
             }
 
@@ -504,14 +595,7 @@
             if (!img.__kittyhackBound) {
                 img.__kittyhackBound = true;
                 img.addEventListener('load', function () {
-                    try {
-                        maybeSetAspectRatio();
-                        wrap.classList.add('has-image');
-                        wrap.setAttribute('data-shown-src', src);
-                        // Keep current frame as background so transitions never flash black.
-                        setWrapBg(wrap, src);
-                        if (blockIdKey) window.__khEventModalLastShownByBlock.set(blockIdKey, src);
-                    } catch (e) {}
+                    try { syncShownState(wrap.getAttribute('data-current-src') || (img.getAttribute('src') || '')); } catch (e) {}
                     maybePulseLoaded();
                 });
                 img.addEventListener('error', function () {
@@ -524,14 +608,31 @@
                 });
             }
 
+            // Bind preload handlers (swap visible only after preload completes)
+            if (preload && !preload.__kittyhackBound) {
+                preload.__kittyhackBound = true;
+                preload.addEventListener('load', function () {
+                    try {
+                        var target = preload.__khPreloadFor || '';
+                        var want = wrap.getAttribute('data-current-src') || '';
+                        if (target && want && target === want) {
+                            swapTo(target);
+                        }
+                    } catch (e) {}
+                });
+                preload.addEventListener('error', function () {
+                    // If preload fails, fall back to direct swap so we don't get stuck.
+                    try {
+                        var want = wrap.getAttribute('data-current-src') || '';
+                        if (want) swapTo(want);
+                    } catch (e) {}
+                });
+            }
+
             // If already loaded (from cache), ensure state is updated and pulse once if playing
             try {
                 if (img.complete && img.naturalWidth > 0) {
-                    maybeSetAspectRatio();
-                    wrap.classList.add('has-image');
-                    wrap.setAttribute('data-shown-src', src);
-                    setWrapBg(wrap, src);
-                    if (blockIdKey) window.__khEventModalLastShownByBlock.set(blockIdKey, src);
+                    syncShownState(wrap.getAttribute('data-current-src') || (img.getAttribute('src') || ''));
                     maybePulseLoaded();
                 }
             } catch (e) {}

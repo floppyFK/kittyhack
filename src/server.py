@@ -291,6 +291,14 @@ if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "own_
     logging.warning(f"Column 'own_cat_probability' not found in the 'events' table. Adding it...")
     add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "own_cat_probability", "REAL")
 
+# v2.6.0: Store recorded image dimensions for better initial aspect-ratio in the event modal
+if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "img_width"):
+    logging.warning("Column 'img_width' not found in the 'events' table. Adding it...")
+    add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "img_width", "INTEGER")
+if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "img_height"):
+    logging.warning("Column 'img_height' not found in the 'events' table. Adding it...")
+    add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "img_height", "INTEGER")
+
 if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
     logging.warning(f"Legacy table 'photo' not found in the kittyhack database. Creating it...")
     create_kittyhack_photo_table(CONFIG['KITTYHACK_DATABASE_PATH'])
@@ -706,6 +714,7 @@ def show_event_server(input, output, session, block_id: int):
     slideshow_running = reactive.Value(True)
     scrubber_suppress = reactive.Value(0)  # suppress server-side reactions to programmatic scrubber updates
     bundle_url = [None]  # optional: /thumb/... tar.gz that contains all thumbnails for this event
+    aspect_style = [""]  # CSS var: --kh-event-aspect: w / h
 
     def _event_bundle_rel_url(block_id: int) -> str:
         # Served via static_assets mapping in app.py: "/thumb" -> THUMBNAIL_DIR.
@@ -1068,7 +1077,66 @@ def show_event_server(input, output, session, block_id: int):
             event_datas.clear()
             photo_ids.clear()
             bundle_url[0] = None
+            aspect_style[0] = ""
             return
+
+        # Compute aspect ratio for stable initial modal size (before first image loads).
+        try:
+            w = None
+            h = None
+            if 'img_width' in event.columns and 'img_height' in event.columns:
+                try:
+                    for __, r in event.iterrows():
+                        rw = r.get('img_width')
+                        rh = r.get('img_height')
+                        if rw is not None and rh is not None:
+                            try:
+                                rw_i = int(rw)
+                                rh_i = int(rh)
+                            except Exception:
+                                continue
+                            if rw_i > 0 and rh_i > 0:
+                                w, h = rw_i, rh_i
+                                break
+                except Exception:
+                    pass
+
+            # Fallback: infer from the first thumbnail file
+            if (w is None or h is None) and 'id' in event.columns:
+                try:
+                    pid0 = int(event.iloc[0]['id'])
+                    thumb_path0 = os.path.join(THUMBNAIL_DIR, f"{pid0}.jpg")
+                    if not os.path.exists(thumb_path0):
+                        try:
+                            get_thubmnail_by_id(database=CONFIG['KITTYHACK_DATABASE_PATH'], photo_id=pid0)
+                        except Exception:
+                            pass
+                    if os.path.exists(thumb_path0):
+                        with open(thumb_path0, 'rb') as f:
+                            s = get_jpeg_size(f.read(256 * 1024))
+                        if s:
+                            w, h = int(s[0]), int(s[1])
+                    # As a last resort, try the original image file
+                    if (w is None or h is None):
+                        orig_path0 = os.path.join(ORIGINAL_IMAGE_DIR, f"{pid0}.jpg")
+                        if os.path.exists(orig_path0):
+                            with open(orig_path0, 'rb') as f:
+                                s = get_jpeg_size(f.read(256 * 1024))
+                            if s:
+                                w, h = int(s[0]), int(s[1])
+                except Exception:
+                    pass
+
+            if w and h:
+                aspect_style[0] = f"--kh-event-aspect: {w} / {h};"
+                try:
+                    update_image_dimensions_for_block(CONFIG['KITTYHACK_DATABASE_PATH'], block_id, w, h)
+                except Exception:
+                    pass
+            else:
+                aspect_style[0] = ""
+        except Exception:
+            aspect_style[0] = ""
 
         if not event.iloc[0]["event_text"]:
             fallback_mode[0] = True
@@ -1177,6 +1245,7 @@ def show_event_server(input, output, session, block_id: int):
                             ),
                             id="event_modal_picture_wrap",
                             class_="event-modal-picture-wrap",
+                            style_=aspect_style[0],
                         ),
                         id="event_modal_root",
                         **{
@@ -2560,6 +2629,65 @@ def server(input, output, session):
             # Update the date input using session.send_input_message
             session.send_input_message("date_selector", {"value": new_date.strftime("%Y-%m-%d")})
 
+    def _photos_filters_to_utc_range() -> tuple[str, str]:
+        date_start = format_date_minmax(input.date_selector(), True)
+        date_end = format_date_minmax(input.date_selector(), False)
+        timezone = ZoneInfo(CONFIG['TIMEZONE'])
+        date_start_utc = datetime.strptime(date_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
+        date_end_utc = datetime.strptime(date_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
+        return date_start_utc, date_end_utc
+
+    def _photos_total_pages() -> tuple[int, int]:
+        date_start_utc, date_end_utc = _photos_filters_to_utc_range()
+        total_count = db_count_photos(
+            CONFIG['KITTYHACK_DATABASE_PATH'],
+            date_start_utc,
+            date_end_utc,
+            input.button_cat_only(),
+            input.button_mouse_only(),
+            CONFIG['MOUSE_THRESHOLD'],
+        )
+        per_page = max(1, int(CONFIG['ELEMENTS_PER_PAGE']))
+        total_pages = max(1, int(math.ceil(float(total_count) / float(per_page))))
+        return total_count, total_pages
+
+    @reactive.Effect
+    @reactive.event(input.button_reload, input.date_selector, input.button_cat_only, input.button_mouse_only, reload_trigger_photos, ignore_none=True)
+    def reset_photos_page_on_filter_change():
+        if input.button_events_view():
+            return
+        try:
+            __count, total_pages = _photos_total_pages()
+            session.send_input_message("photos_page", {"value": 1, "min": 1, "max": total_pages})
+        except Exception:
+            pass
+
+    @reactive.Effect
+    @reactive.event(input.photos_prev_page, ignore_none=True)
+    def photos_prev_page():
+        if input.button_events_view():
+            return
+        try:
+            __count, total_pages = _photos_total_pages()
+            current = int(input.photos_page() or 1)
+            new_val = max(1, min(total_pages, current - 1))
+            session.send_input_message("photos_page", {"value": new_val, "min": 1, "max": total_pages})
+        except Exception:
+            pass
+
+    @reactive.Effect
+    @reactive.event(input.photos_next_page, ignore_none=True)
+    def photos_next_page():
+        if input.button_events_view():
+            return
+        try:
+            __count, total_pages = _photos_total_pages()
+            current = int(input.photos_page() or 1)
+            new_val = max(1, min(total_pages, current + 1))
+            session.send_input_message("photos_page", {"value": new_val, "min": 1, "max": total_pages})
+        except Exception:
+            pass
+
     @reactive.Effect
     @reactive.event(input.button_today, ignore_none=True)
     def reset_ui_photos_date():
@@ -2583,52 +2711,66 @@ def server(input, output, session):
     @render.ui
     @reactive.event(input.button_reload, input.date_selector, input.button_cat_only, input.button_mouse_only, reload_trigger_photos, ignore_none=True)
     def ui_photos_cards_nav():
-        ui_tabs = []
+        if input.button_events_view():
+            return ui.div()
+
         date_start = format_date_minmax(input.date_selector(), True)
         date_end = format_date_minmax(input.date_selector(), False)
         timezone = ZoneInfo(CONFIG['TIMEZONE'])
         date_start = datetime.strptime(date_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
         date_end = datetime.strptime(date_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
-        df_photo_ids = db_get_photos(
+
+        total_count = db_count_photos(
             CONFIG['KITTYHACK_DATABASE_PATH'],
-            ReturnDataPhotosDB.only_ids,
             date_start,
             date_end,
             input.button_cat_only(),
             input.button_mouse_only(),
-            CONFIG['MOUSE_THRESHOLD']
+            CONFIG['MOUSE_THRESHOLD'],
         )
 
-        try:
-            data_elements_count = df_photo_ids.shape[0]
-        except:
-            data_elements_count = 0
-        tabs_count = int(math.ceil(data_elements_count / CONFIG['ELEMENTS_PER_PAGE']))
-        # Encode current filter state into the tab value to ensure a single, deterministic trigger
-        cat_flag = 1 if input.button_cat_only() else 0
-        mouse_flag = 1 if input.button_mouse_only() else 0
+        per_page = max(1, int(CONFIG['ELEMENTS_PER_PAGE']))
+        total_pages = max(1, int(math.ceil(float(total_count) / float(per_page))))
 
-        if tabs_count > 0:
-            for i in range(tabs_count, 0, -1):
-                # value format: "{date_start}_{date_end}_{page}|{cat_flag}|{mouse_flag}"
-                ui_tabs.append(
-                    ui.nav_panel(
-                        f"{i}",
-                        "",
-                        value=f"{date_start}_{date_end}_{i}|{cat_flag}|{mouse_flag}"
-                    )
-                )
-        else:
-            ui_tabs.append(ui.nav_panel("1", "", value="empty"))
-        logging.debug(f"[WEBGUI] Pictures-Nav: Recalculating tabs: {tabs_count} tabs for {data_elements_count} elements")
-        return ui.navset_tab(*ui_tabs, id="ui_photos_cards_tabs")
+        try:
+            current_page = int(input.photos_page())
+        except Exception:
+            current_page = 1
+        current_page = max(1, min(total_pages, current_page))
+
+        # Keep input bounds synced (use raw input message since update_numeric isn't used elsewhere)
+        try:
+            session.send_input_message("photos_page", {"value": current_page, "min": 1, "max": total_pages})
+        except Exception:
+            pass
+
+        return ui.div(
+            ui.div(
+                ui.input_action_button("photos_prev_page", "", icon=icon_svg("angle-left"), class_="btn-page-control"),
+                ui.input_numeric("photos_page", _("Page"), value=current_page, min=1, max=total_pages, step=1, width="7rem"),
+                ui.tags.span(f"/ {total_pages}", class_="photos-page-total"),
+                ui.input_action_button("photos_next_page", "", icon=icon_svg("angle-right"), class_="btn-page-control"),
+                ui.tags.span(
+                    f"{total_count} " + _("pictures"),
+                    class_="photos-count",
+                ),
+                class_="photos-pager",
+            ),
+            class_="container",
+        )
 
     @output
     @render.ui
     @reactive.event(
-        input.ui_photos_cards_tabs,       # single source of truth
+        input.photos_page,
+        input.photos_prev_page,
+        input.photos_next_page,
         input.button_events_view,         # to clear when switching view mode
         input.button_detection_overlay,   # to toggle overlays without extra reloads
+        input.button_reload,
+        input.date_selector,
+        input.button_cat_only,
+        input.button_mouse_only,
         ignore_none=True
     )
     def ui_photos_cards():
@@ -2637,52 +2779,52 @@ def server(input, output, session):
         if input.button_events_view():
             return ui.div()
 
-        current_tab = input.ui_photos_cards_tabs()
-        if not current_tab:
-            return ui.help_text(_("No tab selected. Please choose a page."), class_="no-images-found")
-        if current_tab == "empty":
-            logging.info("No pictures for the selected filter criteria found.")
-            return ui.help_text(_("No pictures for the selected filter criteria found."), class_="no-images-found")
+        date_start = format_date_minmax(input.date_selector(), True)
+        date_end = format_date_minmax(input.date_selector(), False)
+        timezone = ZoneInfo(CONFIG['TIMEZONE'])
+        date_start = datetime.strptime(date_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
+        date_end = datetime.strptime(date_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
 
-        # Split encoded value: "{date_start}_{date_end}_{page}|{cat_flag}|{mouse_flag}"
-        base = current_tab.split('|', 1)[0]
+        total_count = db_count_photos(
+            CONFIG['KITTYHACK_DATABASE_PATH'],
+            date_start,
+            date_end,
+            input.button_cat_only(),
+            input.button_mouse_only(),
+            CONFIG['MOUSE_THRESHOLD'],
+        )
+        per_page = max(1, int(CONFIG['ELEMENTS_PER_PAGE']))
+        total_pages = max(1, int(math.ceil(float(total_count) / float(per_page))))
 
         try:
-            base_parts = base.rsplit('_', 2)  # safe from right
-            date_start = base_parts[0]
-            date_end = base_parts[1]
-            page_index = int(base_parts[2]) - 1
-        except Exception as e:
-            logging.warning(f"[WEBGUI] Failed to parse tab value '{current_tab}': {e}")
-            return ui.help_text(_("Failed to parse page selection."), class_="no-images-found")
+            page_number = int(input.photos_page())
+        except Exception:
+            page_number = 1
+        page_number = max(1, min(total_pages, page_number))
+
+        # db_get_photos uses a reverse paging scheme; convert "newest page=1" into its index.
+        page_index = max(0, total_pages - page_number)
 
         df_photos = db_get_photos(
             CONFIG['KITTYHACK_DATABASE_PATH'],
-            ReturnDataPhotosDB.all,
+            ReturnDataPhotosDB.all_except_photos,
             date_start,
             date_end,
             input.button_cat_only(),
             input.button_mouse_only(),
             CONFIG['MOUSE_THRESHOLD'],
             page_index,
-            CONFIG['ELEMENTS_PER_PAGE']
+            per_page,
         )
+
+        if df_photos.empty:
+            logging.info("No pictures for the selected filter criteria found.")
+            return ui.help_text(_("No pictures for the selected filter criteria found."), class_="no-images-found")
 
         # Get a dictionary mapping RFIDs to cat names
         cat_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
 
         for index, data_row in df_photos.iterrows():
-            # FALLBACK: The event_text column was added in version 1.4.0. If it is not present, show the "modified_image" with baked-in event data
-            if not data_row["event_text"] and CONFIG['SHOW_IMAGES_WITH_OVERLAY']:
-                blob_picture = "modified_image"
-            else:
-                blob_picture = "original_image"
-            
-            try:
-                decoded_picture = base64.b64encode(data_row[blob_picture]).decode('utf-8')
-            except:
-                decoded_picture = None
-            
             mouse_probability = data_row["mouse_probability"]
 
             event_text = data_row['event_text']
@@ -2707,46 +2849,33 @@ def server(input, output, session):
             else:
                 card_footer_cat = ""
             
-            if decoded_picture:
-                img_html = f'''
-                <div style="position: relative; display: inline-block;">
-                    <img src="data:image/jpeg;base64,{decoded_picture}" style="min-width: 250px;" />'''
-                
-                if input.button_detection_overlay():
-                    for detected_object in detected_objects:
-                        img_html += f'''
-                        <div style="position: absolute; 
-                                    left: {detected_object.x}%; 
-                                    top: {detected_object.y}%; 
-                                    width: {detected_object.width}%; 
-                                    height: {detected_object.height}%; 
-                                    border: 2px solid #ff0000; 
-                                    background-color: rgba(255, 0, 0, 0.05);
-                                    pointer-events: none;">
-                            <div style="position: absolute; 
-                                        {f'bottom: -26px' if detected_object.y < 16 else 'top: -26px'}; 
-                                        left: 0px; 
-                                        background-color: rgba(255, 0, 0, 0.7); 
-                                        color: white; 
-                                        padding: 2px 5px;
-                                        border-radius: 5px;
-                                        text-wrap-mode: nowrap;
-                                        font-size: 12px;">
-                                {detected_object.object_name} ({detected_object.probability:.0f}%)
-                            </div>
-                        </div>'''
-                    pass
-                img_html += "</div>"
-            else:
-                img_html = '<div class="placeholder-image"><strong>' + _('No picture found!') + '</strong></div>'
-                logging.warning(f"No blob_picture found for entry {photo_timestamp}")
+            pid = int(data_row['id'])
+            thumb_src = f"/thumb/{pid}.jpg"
+            orig_src = f"/orig/{pid}.jpg"
+
+            img_html = f'''
+                <div class="kh-photo-thumb">
+                    <a class="kh-photo-open" href="{orig_src}" target="_blank" rel="noopener" aria-label="Open original">{icon_svg('up-right-from-square')}</a>
+                    <img src="{thumb_src}" loading="lazy" decoding="async" />'''
+
+            if input.button_detection_overlay() and detected_objects:
+                for detected_object in detected_objects:
+                    label_pos = 'bottom: -26px' if detected_object.y < 16 else 'top: -26px'
+                    img_html += f'''
+                    <div class="kh-detect-box" style="left:{detected_object.x}%; top:{detected_object.y}%; width:{detected_object.width}%; height:{detected_object.height}%;">
+                        <div class="kh-detect-label" style="{label_pos};">
+                            {detected_object.object_name} ({detected_object.probability:.0f}%)
+                        </div>
+                    </div>'''
+
+            img_html += "</div>"
             
             ui_cards.append(
                 ui.card(
                     ui.card_header(
                         ui.div(
                             ui.HTML(f"{photo_timestamp} | {data_row['id']}"),
-                            ui.div(ui.input_checkbox(id=f"delete_photo_{data_row['id']}", label="", value=False), style_="float: right; width: 15px;"),
+                            ui.div(ui.input_checkbox(id=f"delete_photo_{data_row['id']}", label="", value=False), class_="kh-photo-delete"),
                         ),
                     ),
                     ui.HTML(img_html),
@@ -2757,13 +2886,13 @@ def server(input, output, session):
                         )
                     ),
                     full_screen=True,
-                    class_="image-container" + (" image-container-alert" if mouse_probability >= CONFIG['MOUSE_THRESHOLD'] else "")
+                    class_="image-container kh-photo-card" + (" image-container-alert" if mouse_probability >= CONFIG['MOUSE_THRESHOLD'] else "")
                 )
             )
             pass
 
         return ui.div(
-            ui.layout_column_wrap(*ui_cards, width="400px"),
+            ui.tags.div(*ui_cards, class_="kh-photo-grid"),
             ui.panel_absolute(
                 ui.panel_well(
                     ui.input_action_button(id="delete_selected_photos", label=_("Delete selected photos"), icon=icon_svg("trash")),
@@ -2781,9 +2910,40 @@ def server(input, output, session):
     def delete_selected_photos():
         deleted_photos = []
 
-        df_photos = db_get_photos(CONFIG['KITTYHACK_DATABASE_PATH'], ReturnDataPhotosDB.only_ids)
+        try:
+            # Only consider IDs that are currently rendered on the page
+            date_start_utc, date_end_utc = _photos_filters_to_utc_range()
+            total_count = db_count_photos(
+                CONFIG['KITTYHACK_DATABASE_PATH'],
+                date_start_utc,
+                date_end_utc,
+                input.button_cat_only(),
+                input.button_mouse_only(),
+                CONFIG['MOUSE_THRESHOLD'],
+            )
+            per_page = max(1, int(CONFIG['ELEMENTS_PER_PAGE']))
+            total_pages = max(1, int(math.ceil(float(total_count) / float(per_page))))
+            try:
+                page_number = int(input.photos_page() or 1)
+            except Exception:
+                page_number = 1
+            page_number = max(1, min(total_pages, page_number))
+            page_index = max(0, total_pages - page_number)
+            df_photos = db_get_photos(
+                CONFIG['KITTYHACK_DATABASE_PATH'],
+                ReturnDataPhotosDB.only_ids,
+                date_start_utc,
+                date_end_utc,
+                input.button_cat_only(),
+                input.button_mouse_only(),
+                CONFIG['MOUSE_THRESHOLD'],
+                page_index,
+                per_page,
+            )
+        except Exception:
+            df_photos = pd.DataFrame()
 
-        for id in df_photos['id']:
+        for id in (df_photos['id'] if not df_photos.empty and 'id' in df_photos.columns else []):
             try:
                 card_del = input[f"delete_photo_{id}"]()
             except:

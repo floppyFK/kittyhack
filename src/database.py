@@ -43,6 +43,99 @@ os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 EVENT_BUNDLE_DIR = os.path.join(THUMBNAIL_DIR, "bundles")
 os.makedirs(EVENT_BUNDLE_DIR, exist_ok=True)
 
+def get_jpeg_size(jpeg_bytes: bytes | None) -> tuple[int, int] | None:
+    """Return (width, height) from JPEG bytes without fully decoding the image."""
+    if not jpeg_bytes or not isinstance(jpeg_bytes, (bytes, bytearray)):
+        return None
+
+    b = jpeg_bytes
+    try:
+        if len(b) < 4 or b[0] != 0xFF or b[1] != 0xD8:
+            return None  # not a JPEG
+
+        i = 2
+        while i + 1 < len(b):
+            # Find marker (0xFF ..)
+            if b[i] != 0xFF:
+                i += 1
+                continue
+
+            # Skip fill bytes 0xFF
+            while i < len(b) and b[i] == 0xFF:
+                i += 1
+            if i >= len(b):
+                break
+
+            marker = b[i]
+            i += 1
+
+            # Standalone markers without length
+            if marker in (0xD8, 0xD9):
+                continue
+            if marker == 0xDA:
+                # Start of scan: image data follows, no more headers
+                break
+
+            if i + 1 >= len(b):
+                break
+            seg_len = (b[i] << 8) + b[i + 1]
+            if seg_len < 2:
+                return None
+
+            seg_start = i + 2
+            seg_end = seg_start + (seg_len - 2)
+            if seg_end > len(b):
+                break
+
+            # SOF markers that contain size (baseline/progressive)
+            if marker in (
+                0xC0, 0xC1, 0xC2, 0xC3,
+                0xC5, 0xC6, 0xC7,
+                0xC9, 0xCA, 0xCB,
+                0xCD, 0xCE, 0xCF,
+            ):
+                if seg_start + 6 <= len(b):
+                    # seg_start: precision (1), then height (2), width (2)
+                    height = (b[seg_start + 1] << 8) + b[seg_start + 2]
+                    width = (b[seg_start + 3] << 8) + b[seg_start + 4]
+                    if width > 0 and height > 0:
+                        return (int(width), int(height))
+
+            i = seg_end
+    except Exception:
+        return None
+
+    return None
+
+
+def update_image_dimensions_for_block(database: str, block_id: int, width: int, height: int) -> Result:
+    """Store image dimensions for an event block if columns exist and values are missing."""
+    try:
+        if not check_if_column_exists(database, "events", "img_width") or not check_if_column_exists(database, "events", "img_height"):
+            return Result(True, "")
+    except Exception:
+        return Result(True, "")
+
+    result = lock_database()
+    if not result.success:
+        return result
+
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE events SET img_width = ?, img_height = ? WHERE block_id = ? AND (img_width IS NULL OR img_height IS NULL)",
+            (int(width), int(height), int(block_id)),
+        )
+        conn.commit()
+        conn.close()
+        return Result(True, "")
+    except Exception as e:
+        logging.warning(f"[DATABASE] Failed updating image dimensions for block_id {block_id}: {e}")
+        return Result(False, str(e))
+    finally:
+        release_database()
+
 def _event_bundle_paths(block_id: int) -> List[str]:
     """Return possible bundle paths for a block (supports legacy .tar.gz and current .tar)."""
     bid = int(block_id)
@@ -376,20 +469,22 @@ def db_get_photos_by_block_id(
     :param return_data: Type of data to return (ReturnDataPhotosDB enum)
     :return: DataFrame containing the requested data
     """
+    columns_info = read_column_info_from_database(database, "events")
+    column_names = set(info[1] for info in (columns_info or []))
+    dims_cols = ", img_width, img_height" if ('img_width' in column_names and 'img_height' in column_names) else ""
+
     if return_data == ReturnDataPhotosDB.all:
-        columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text, thumbnail"
+        columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + dims_cols + ", thumbnail"
     elif return_data == ReturnDataPhotosDB.all_modified_image:
-        columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text, thumbnail"
+        columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + dims_cols + ", thumbnail"
     elif return_data == ReturnDataPhotosDB.all_original_image:
-        columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text, thumbnail"
+        columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + dims_cols + ", thumbnail"
     elif return_data == ReturnDataPhotosDB.all_except_photos:
-        columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text"
+        columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + dims_cols
     elif return_data == ReturnDataPhotosDB.only_ids:
         columns = "id"
         
     # Check if 'deleted' column exists (this column exists only in the kittyhack database)
-    columns_info = read_column_info_from_database(database, "events")
-    column_names = [info[1] for info in columns_info]
     if 'deleted' in column_names and ignore_deleted is True:
         stmt = f"SELECT {columns} FROM events WHERE block_id = {block_id} AND deleted != 1"
     else:
@@ -418,6 +513,47 @@ def db_get_photos_by_block_id(
                     except Exception as e:
                         logging.warning(f"[DATABASE] Failed to read thumbnail file '{thumb_path}': {e}")
     return df
+
+
+def db_count_photos(
+    database: str,
+    date_start: str = "2020-01-01 00:00:00",
+    date_end: str = "2100-12-31 23:59:59",
+    cats_only: bool = False,
+    mouse_only: bool = False,
+    mouse_probability: float = 0.0,
+    ignore_deleted: bool = True,
+) -> int:
+    """Count photos in the events table matching the given filters.
+
+    This is a lightweight alternative to loading all IDs via db_get_photos(...only_ids).
+    """
+    try:
+        where = f"created_at BETWEEN '{date_start}' AND '{date_end}'"
+
+        # Check if 'deleted' column exists (this column exists only in the kittyhack database)
+        columns_info = read_column_info_from_database(database, "events")
+        column_names = [info[1] for info in columns_info]
+        if 'deleted' in column_names and ignore_deleted:
+            where += " AND deleted != 1"
+
+        if mouse_only:
+            where += f" AND mouse_probability >= {float(mouse_probability)}"
+        if cats_only:
+            where += " AND rfid != ''"
+
+        stmt = f"SELECT COUNT(*) AS count FROM events WHERE {where}"
+        df = read_df_from_database(database, stmt)
+        if df.empty:
+            return 0
+        try:
+            return int(df.iloc[0]['count'])
+        except Exception:
+            # sqlite can return tuple-like data depending on pandas version
+            return int(df.iloc[0][0])
+    except Exception as e:
+        logging.error(f"[DATABASE] Failed counting photos: {e}")
+        return 0
 
 def get_ids_without_thumbnail(database: str):
     """
@@ -586,6 +722,8 @@ def create_kittyhack_events_table(database: str):
             own_cat_probability REAL,
             rfid TEXT,
             event_text TEXT,
+            img_width INTEGER,
+            img_height INTEGER,
             deleted BOOLEAN DEFAULT 0,
             thumbnail BLOB
         )
@@ -987,6 +1125,14 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
         elements = image_buffer.get_by_block_id(buffer_block_id)
         logging.info(f"[DATABASE] Writing {len(elements)} images from buffer image block '{buffer_block_id}' as database block '{db_block_id}' to '{database}'.")
 
+        # Determine whether dimension columns exist (avoid nested lock acquisition).
+        try:
+            cursor.execute("PRAGMA table_info(events)")
+            _cols = set(r[1] for r in cursor.fetchall())
+            has_dims = ('img_width' in _cols and 'img_height' in _cols)
+        except Exception:
+            has_dims = False
+
         # Decide the max number of pictures to write to the database, based on the content of the first element.tag_id
         # (every element of the block has the same tag_id)
         max_images = CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID'] if elements[0].tag_id else CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID']
@@ -1001,7 +1147,20 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
                 except Exception as e:
                     event_json = json.dumps({'detected_objects': [], 'event_text': ''})
                     logging.error(f"[DATABASE] Failed to serialize event data: {e}")
+
+                img_w = None
+                img_h = None
+                if has_dims and element.original_image is not None:
+                    try:
+                        s = get_jpeg_size(element.original_image)
+                        if s:
+                            img_w, img_h = int(s[0]), int(s[1])
+                    except Exception:
+                        pass
+
                 columns = "block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, own_cat_probability, rfid, event_text"
+                if has_dims:
+                    columns += ", img_width, img_height"
                 values = ', '.join(['?' for _ in columns.split(', ')])
                 values_list = [
                     db_block_id,
@@ -1015,6 +1174,8 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
                     element.tag_id,
                     event_json
                 ]
+                if has_dims:
+                    values_list.extend([img_w, img_h])
                 cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
                 new_row_id = cursor.lastrowid
                 # Persist original image to filesystem (if available)

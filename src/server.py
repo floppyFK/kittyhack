@@ -392,6 +392,9 @@ def start_background_task():
         wlan_reconnect_attempted = False
         last_periodic_jobs_run = tm.time() # Start the first periodic jobs in PERIODIC_JOBS_INTERVAL seconds
 
+        # Model training status check cadence (seconds)
+        last_model_training_check = tm.time() - 120  # allow immediate first check after boot
+
         # --- Added migration control state ---
         migration_last_ts = tm.time() - 5  # allow immediate first run
         migration_in_progress = False
@@ -510,6 +513,17 @@ def start_background_task():
                 if wlan_connected and gateway_reachable:
                     wlan_disconnect_counter = 0
                     wlan_reconnect_attempted = False
+
+            # --- Model training status polling (every 120s, only if a training is active) ---
+            now = tm.time()
+            if (now - last_model_training_check) >= 120:
+                last_model_training_check = now
+                try:
+                    if is_valid_uuid4(CONFIG.get("MODEL_TRAINING", "")):
+                        # Important: do not emit UI notifications from the background thread.
+                        RemoteModelTrainer.check_model_training_result(show_notification=False, show_in_progress=False)
+                except Exception as e:
+                    logging.warning(f"[MODEL_TRAINING] Periodic status check failed: {e}")
 
             # --- Main periodic jobs (every PERIODIC_JOBS_INTERVAL seconds) ---
             # Periodically check that the kwork and manager services are NOT running anymore
@@ -2259,8 +2273,32 @@ def server(input, output, session):
     # Monitor updates of the database
     sess_last_imgblock_ts = [last_imgblock_ts.get_timestamp()]
 
-    # When a new WebGUI session is opened, check if a model training is in progress:
-    RemoteModelTrainer.check_model_training_result(show_notification=True)
+    # Auto-refresh AI Training view while a finalized model is being downloaded/installed.
+    # This keeps the UI responsive and updates the progress text without requiring manual reload.
+    _model_dl_last_finished_at = [0.0]
+
+    @reactive.effect
+    def auto_refresh_ai_training_during_model_download():
+        reactive.invalidate_later(2)
+        try:
+            state = RemoteModelTrainer.get_model_download_state()
+        except Exception:
+            return
+
+        status = (state or {}).get("status")
+        if status in ("downloading", "extracting"):
+            reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+
+        finished_at = float((state or {}).get("finished_at") or 0.0)
+        if finished_at > 0.0 and finished_at != float(_model_dl_last_finished_at[0] or 0.0):
+            _model_dl_last_finished_at[0] = finished_at
+            # Finalize completion in the main process (clears MODEL_TRAINING, stores notification)
+            try:
+                RemoteModelTrainer.check_model_training_result(show_notification=False)
+            except Exception:
+                pass
+            reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+            reload_trigger_config.set(reload_trigger_config.get() + 1)
 
     # Show user notifications if there are any
     show_user_notifications()
@@ -4313,7 +4351,7 @@ def server(input, output, session):
             )
 
         # Check if a model training is in progress
-        training_status = RemoteModelTrainer.check_model_training_result(show_notification=True, show_in_progress=True, return_pretty_status=True)
+        training_status = RemoteModelTrainer.check_model_training_result(show_in_progress=True, return_pretty_status=True)
 
         # Show user notifications, if they are any
         show_user_notifications()

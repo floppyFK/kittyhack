@@ -576,6 +576,8 @@ class Rfid:
             try:
                 line = None
                 duplicate_count = 0
+                last_skip_log = 0.0
+                skipped_noise_count = 0
                 with open(RFID_READ_PATH, "rb") as f:
                     cycle = 0
                     while (read_cycles == 0 or cycle < read_cycles) and (self.get_run_state() != RfidRunState.stop_requested):
@@ -587,7 +589,20 @@ class Rfid:
                             # Skip empty lines and initialization messages from the RFID reader
                             match = re.search(r'([0-9A-Fa-f]{16})', line)
                             if not match:
-                                logging.info(f"[RFID] Skipping line: '{line}' - No valid 16-char hex substring found")
+                                # Very noisy on some readers (e.g. repeated '>'); keep it out of INFO logs.
+                                skipped_noise_count += 1
+                                now = tm.time()
+                                if now - last_skip_log >= 30.0:
+                                    if skipped_noise_count > 1:
+                                        logging.debug(
+                                            f"[RFID] Skipping non-tag lines (suppressed {skipped_noise_count - 1} similar messages in last 30s). Example: '{line}'"
+                                        )
+                                    else:
+                                        logging.debug(
+                                            f"[RFID] Skipping line: '{line}' - No valid 16-char hex substring found"
+                                        )
+                                    last_skip_log = now
+                                    skipped_noise_count = 0
                                 continue
 
                             # We found a valid 16-char hex substring

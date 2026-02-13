@@ -1,6 +1,7 @@
 from shiny import ui
 from faicons import icon_svg
 from pathlib import Path
+from src.mode import is_remote_mode
 from src.baseconfig import CONFIG, set_language
 
 js_file = Path(__file__).parent.parent / "www" / "app.js"
@@ -31,6 +32,61 @@ except Exception:
 # Prepare gettext for translations
 _ = set_language(CONFIG['LANGUAGE'])
 
+# Build navigation panels (conditionally add WLAN config for target-mode)
+_nav_items = [
+    ui.nav_panel(
+        _("Live view"),
+        ui.output_ui("ui_live_view"),
+        ui.output_ui("ui_live_view_footer"),
+        ui.output_ui("ui_last_events"),
+    ),
+    ui.nav_panel(
+        _("Pictures"),
+        ui.output_ui("ui_photos_date"),
+        ui.output_ui("ui_photos_events"),
+        ui.br(),
+    ),
+    ui.nav_panel(
+        _("Manage cats"),
+        ui.output_ui("ui_manage_cats"),
+        ui.br(),
+    ),
+    ui.nav_panel(
+        _("Add new cat"),
+        ui.output_ui("ui_add_new_cat"),
+        ui.br(),
+    ),
+    ui.nav_panel(
+        _("AI Training"),
+        ui.output_ui("ui_ai_training"),
+        ui.br(),
+    ),
+    ui.nav_panel(
+        _("System"),
+        ui.output_ui("ui_system"),
+    ),
+    ui.nav_panel(
+        _("Configuration"),
+        ui.output_ui("ui_configuration"),
+    ),
+]
+
+if not is_remote_mode():
+    _nav_items.append(
+        ui.nav_panel(
+            _("WLAN Configuration"),
+            ui.output_ui("ui_wlan_configured_connections"),
+            ui.output_ui("ui_wlan_available_networks"),
+        )
+    )
+
+_nav_items.append(
+    ui.nav_panel(
+        _("Info"),
+        ui.output_ui("ui_info"),
+    )
+)
+
 # the main kittyhack ui
 app_ui = ui.page_fillable(
     ui.tags.script(src=f"app.js?v={_js_version}", defer=True),
@@ -48,50 +104,7 @@ app_ui = ui.page_fillable(
         ui.tags.link(rel="icon", type="image/x-icon", href="favicon.ico?v=6"),
     ),
     ui.navset_bar(
-        ui.nav_panel(
-            _("Live view"),
-            ui.output_ui("ui_live_view"),
-            ui.output_ui("ui_live_view_footer"),
-            ui.output_ui("ui_last_events"),
-        ),
-        ui.nav_panel(
-            _("Pictures"),
-            ui.output_ui("ui_photos_date"),
-            ui.output_ui("ui_photos_events"),
-            ui.br(),
-        ),
-        ui.nav_panel(
-            _("Manage cats"),
-            ui.output_ui("ui_manage_cats"),
-            ui.br(),
-        ),
-        ui.nav_panel(
-            _("Add new cat"),
-            ui.output_ui("ui_add_new_cat"),
-            ui.br(),
-        ),
-        ui.nav_panel(
-            _("AI Training"),
-            ui.output_ui("ui_ai_training"),
-            ui.br(),
-        ),
-        ui.nav_panel(
-            _("System"),
-            ui.output_ui("ui_system")
-        ),
-        ui.nav_panel(
-            _("Configuration"),
-            ui.output_ui("ui_configuration")
-        ),
-        ui.nav_panel(
-            _("WLAN Configuration"),
-            ui.output_ui("ui_wlan_configured_connections"),
-            ui.output_ui("ui_wlan_available_networks"),
-        ),
-        ui.nav_panel(
-            _("Info"),
-            ui.output_ui("ui_info")
-        ),
+        *_nav_items,
         title=ui.tags.div(
             {
                 "class": "d-flex align-items-center gap-2 flex-wrap navbar-title-wrap",

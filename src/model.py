@@ -16,9 +16,11 @@ import numpy as np
 import time as tm
 import multiprocessing
 from src.baseconfig import CONFIG, set_language, update_single_config_parameter, UserNotifications
+from src.mode import is_remote_mode
 from src.camera import videostream, image_buffer, VideoStream, DetectedObject
 from src.helper import sigterm_monitor, get_timezone, is_valid_uuid4
 from src.database import get_cat_names_list
+from src.paths import models_yolo_root
 
 from typing import TYPE_CHECKING
 
@@ -412,7 +414,7 @@ class RemoteModelTrainer:
         if not model_name:
             model_name = info_json_model_name or creation_date
 
-        base_dir = "/root/models/yolo"
+        base_dir = models_yolo_root()
         model_name = sanitize_directory_name(model_name)
         target_dir = os.path.join(base_dir, model_name)
         unique_dir = target_dir
@@ -603,7 +605,7 @@ class YoloModel:
     """
     Class to handle YOLO models on the local filesystem.
     """
-    BASE_DIR = "/root/models/yolo"
+    BASE_DIR = models_yolo_root()
 
     @staticmethod
     def get_model_list():
@@ -892,12 +894,32 @@ class ModelHandler:
                         # Set CPU affinity for this process based on num_threads
                         import psutil
                         process = psutil.Process()
-                        
-                        # Calculate which cores to use (0 to num_threads-1)
-                        cores_to_use = list(range(num_threads))
-                        process.cpu_affinity(cores_to_use)
-                        
-                        logging.info(f"[MODEL] Worker process running on CPU cores {cores_to_use}")
+
+                        # Calculate which cores to use (0..num_threads-1) but respect cpuset/container limits.
+                        requested = list(range(int(num_threads) if num_threads else 1))
+                        try:
+                            allowed = process.cpu_affinity()  # type: ignore[call-arg]
+                        except Exception:
+                            allowed = []
+
+                        cores_to_use = requested
+                        if allowed:
+                            cores_to_use = [c for c in requested if c in allowed]
+                            if not cores_to_use:
+                                # Fallback: use whatever the OS allows.
+                                cores_to_use = list(allowed)
+
+                        # Best-effort pinning: may fail on some kernels/containers (e.g. Errno 22).
+                        try:
+                            if cores_to_use:
+                                process.cpu_affinity(cores_to_use)
+                                logging.info(f"[MODEL] Worker process running on CPU cores {cores_to_use}")
+                            else:
+                                logging.info("[MODEL] Worker process running without CPU affinity (no cores resolved)")
+                        except OSError as e:
+                            logging.warning(f"[MODEL] CPU affinity not supported/allowed here; continuing without pinning: {e}")
+                        except Exception as e:
+                            logging.warning(f"[MODEL] Failed to set CPU affinity; continuing without pinning: {e}")
                         
                         # Load the YOLO model in this process
                         logging.getLogger("ultralytics").setLevel(logging.WARNING)
@@ -1214,8 +1236,17 @@ class ModelHandler:
                         self._fps_sum_since_log += frame_rate_calc
                         now = tm.time()
                         if now - self._last_model_log_time >= 60:
-                            avg_fps = self._fps_sum_since_log / self._frame_count_since_log if self._frame_count_since_log > 0 else 0
-                            logging.info(f"[MODEL] Model processing: {self._frame_count_since_log} frames in last 60s, avg FPS: {avg_fps:.2f}")
+                            interval_s = max(0.001, float(now - self._last_model_log_time))
+                            effective_fps = float(self._frame_count_since_log) / interval_s if self._frame_count_since_log > 0 else 0.0
+                            avg_inference_fps = (
+                                self._fps_sum_since_log / self._frame_count_since_log
+                                if self._frame_count_since_log > 0
+                                else 0.0
+                            )
+                            logging.info(
+                                f"[MODEL] Model processing: {self._frame_count_since_log} frames in last {interval_s:.0f}s, "
+                                f"effective FPS: {effective_fps:.2f}, avg inference FPS: {avg_inference_fps:.2f}"
+                            )
                             self._last_model_log_time = now
                             self._frame_count_since_log = 0
                             self._fps_sum_since_log = 0.0
@@ -1234,7 +1265,20 @@ class ModelHandler:
             
                 # To avoid intensive CPU load, wait here until we reached the desired framerate
                 elapsed_time = (cv2.getTickCount() - t1) / freq
-                sleep_time = max(0, (1.0 / self.framerate) - elapsed_time)
+                effective_fps = float(self.framerate or 10)
+                if is_remote_mode():
+                    try:
+                        effective_fps = float(CONFIG.get('REMOTE_INFERENCE_MAX_FPS', effective_fps) or effective_fps)
+                    except Exception:
+                        effective_fps = float(self.framerate or 10)
+
+                # Clamp to sane values to avoid division-by-zero or extreme sleeps.
+                if effective_fps < 1.0:
+                    effective_fps = 1.0
+                if effective_fps > 60.0:
+                    effective_fps = 60.0
+
+                sleep_time = max(0, (1.0 / effective_fps) - elapsed_time)
                 tm.sleep(sleep_time)
         except Exception as e:
             logging.error(f"[MODEL] Unhandled error in model loop: {e}")

@@ -354,9 +354,10 @@ install_full() {
 
     echo -e "${CYAN}--- BASE INSTALL Step 8: Install python ---${NC}"
     PYTHON_PACKAGES=(
-        python3.11
-        python3.11-venv
-        python3.11-dev
+        python3
+        python3-venv
+        python3-dev
+        python3-pip
     )
     echo -e "${GREY}Installing all Python packages...${NC}"
     # Wait for any existing package operations to complete
@@ -384,32 +385,11 @@ install_full() {
         sleep 0.1
     done
 
-    if ! python3.11 -m pip --version &>/dev/null; then
-        echo -e "${GREY}Python pip is not installed. Installing...${NC}"
-        # Wait for any existing package operations to complete
-        while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-            echo -e "${GREY}Waiting for other package operations to complete...${NC}"
-            sleep 5
-        done
-
-        # Try to install pip with retries
-        for i in {1..5}; do
-            if apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y python3-pip; then
-                break
-            else
-                echo -e "${YELLOW}Attempt $i of 5 failed. Retrying in 5 seconds...${NC}"
-                sleep 5
-            fi
-        done
-
-        if python3.11 -m pip --version &>/dev/null; then
-            echo -e "${GREEN}Python 3.11 pip installed successfully.${NC}"
-        else
-            ((FAIL_COUNT++))
-            echo -e "${RED}Failed to install Python 3.11 pip.${NC}"
-        fi
+    if python3 -m pip --version &>/dev/null; then
+        echo -e "${GREEN}Python pip is installed.${NC}"
     else
-        echo -e "${GREEN}Python 3.11 pip is already installed.${NC}"
+        ((FAIL_COUNT++))
+        echo -e "${RED}Python pip is not available.${NC}"
     fi
 
     echo -e "${CYAN}--- BASE INSTALL Step 9: Install git ---${NC}"
@@ -498,15 +478,142 @@ install_full() {
         echo -e "${GREEN}Tar is already installed.${NC}"
     fi
 
+    echo -e "${CYAN}--- BASE INSTALL Step 11: Install OpenCV runtime libs ---${NC}"
+    # Some OpenCV wheels require libGL at import time, even in headless setups.
+    for i in {1..5}; do
+        if apt-get -o Acquire::http::Timeout=120 -o Acquire::Retries=5 install -y libgl1 libglib2.0-0; then
+            break
+        else
+            echo -e "${YELLOW}Attempt $i of 5 failed. Retrying in 5 seconds...${NC}"
+            sleep 5
+        fi
+    done
+
+    if ldconfig -p 2>/dev/null | grep -q "libGL.so.1"; then
+        echo -e "${GREEN}OpenCV runtime libs installed.${NC}"
+    else
+        echo -e "${YELLOW}OpenCV runtime libs may be missing (libGL.so.1 not found in ldconfig).${NC}"
+    fi
+
     install_kittyhack
+}
+
+# Remote-mode installation (e.g. amd64 Debian): no Raspberry Pi camera steps.
+install_remote_mode() {
+    echo -e "${CYAN}--- REMOTE MODE INSTALL: Check internet connection ---${NC}"
+    if ! ping -c 1 google.com &>/dev/null; then
+        if $USE_LOCAL_SOURCES; then
+            echo -e "${YELLOW}No internet connection detected. Continuing because --use-local-sources was set.${NC}"
+        else
+            echo -e "${RED}No internet connection detected. Please check your connection and try again.${NC}"
+            exit 1
+        fi
+    fi
+
+    echo -e "${CYAN}--- REMOTE MODE INSTALL: Summary ---${NC}"
+    if [ "$LANGUAGE" == "de" ]; then
+        echo -e "Systemanforderungen:"
+        echo -e "  - Debian (oder Derivat, z.B. Ubuntu)"
+        echo -e "  - Möglichst ein sauberes System oder eine VM"
+        echo -e "  - AMD64 (normale 64-bit Intel/AMD PCs, nicht Raspberry Pi/ARM)"
+        echo -e "  - Mindestens 2GB RAM"
+        echo -e "Folgende Pakete werden installiert:"
+        echo -e "  - python3, python3-venv, python3-pip"
+        echo -e "  - rsync, git, curl, ca-certificates"
+        echo -e "  - libgl1, libglib2.0-0"
+        echo -e "Zusatzlich: Es wird ein Python 3.11 Virtualenv erstellt und die Abhangigkeiten aus requirements_remote.txt installiert."
+        read -r -p "Mit diesen Installationen fortfahren? (y/N): " CONFIRM_REMOTE_MODE
+    else
+        echo -e "System requirements:"
+        echo -e "  - Debian (or derivative, e.g. Ubuntu)"
+        echo -e "  - Ideally a clean system or VM"
+        echo -e "  - AMD64 (regular 64-bit Intel/AMD PCs, not Raspberry Pi/ARM)"
+        echo -e "  - At least 2GB RAM"
+        echo -e "The following packages will be installed:"
+        echo -e "  - python3, python3-venv, python3-pip"
+        echo -e "  - rsync, git, curl, ca-certificates"
+        echo -e "  - libgl1, libglib2.0-0"
+        echo -e "Additionally: A Python 3.11 virtualenv will be created and dependencies from requirements_remote.txt will be installed."
+        read -r -p "Continue with these installations? (y/N): " CONFIRM_REMOTE_MODE
+    fi
+
+    case "${CONFIRM_REMOTE_MODE,,}" in
+        y|yes|j|ja)
+            ;;
+        *)
+            echo -e "${YELLOW}Remote-mode installation cancelled by user.${NC}"
+            exit 0
+            ;;
+    esac
+
+    # Use already computed source dir (supports --sources-dir)
+    KITTYHACK_INSTALL_DIR="$KITTYHACK_ROOT"
+    echo -e "${CYAN}Kittyhack path: ${KITTYHACK_ROOT}${NC}"
+
+    echo -e "${CYAN}--- REMOTE MODE INSTALL Step 1: Install system packages ---${NC}"
+    apt-get update
+    # libgl1 is required by some OpenCV wheels (even in headless/container setups)
+    apt-get install -y python3 python3-venv python3-pip rsync git curl ca-certificates libgl1 libglib2.0-0
+
+    echo -e "${CYAN}--- REMOTE MODE INSTALL Step 2: Create virtualenv + install Python deps ---${NC}"
+    cd "$KITTYHACK_ROOT" || exit 1
+    if ! create_venv_py311 .venv; then
+        echo -e "${RED}Failed to create Python 3.11 virtualenv. Aborting.${NC}"
+        exit 1
+    fi
+    source .venv/bin/activate
+    pip install --upgrade pip
+    pip install --timeout 120 --retries 10 -r requirements_remote.txt
+
+    echo -e "${CYAN}--- REMOTE MODE INSTALL Step 3: Configure remote-mode ---${NC}"
+    # Create remote-mode marker file
+    touch "${KITTYHACK_ROOT}/.remote-mode"
+
+    # Configure config.ini (best-effort): camera source on remote nodes
+    if [ -f "${KITTYHACK_ROOT}/config.ini" ]; then
+        sed -i "s/^camera_source\s*=\s*.*/camera_source = ip_camera/" "${KITTYHACK_ROOT}/config.ini" || true
+    fi
+
+    echo -e "${CYAN}--- REMOTE MODE INSTALL Step 4: Install/enable kittyhack.service ---${NC}"
+    cat << EOF > /etc/systemd/system/kittyhack.service
+[Unit]
+Description=KittyHack WebGUI
+After=network.target
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=${KITTYHACK_ROOT}
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${KITTYHACK_ROOT}/.venv/bin"
+ExecStart=${KITTYHACK_ROOT}/.venv/bin/shiny run --host=0.0.0.0 --port=80
+Restart=always
+RestartSec=5
+
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable kittyhack.service
+    systemctl restart kittyhack.service
+
+    echo -e "${GREEN}Remote-mode installation complete.${NC}"
 }
 
 # Update Kittyhack only
 install_update() {
     echo -e "${CYAN}--- Check internet connection ---${NC}"
     if ! ping -c 1 google.com &>/dev/null; then
-        echo -e "${RED}No internet connection detected. Please check your connection and try again.${NC}"
-        exit 1
+        if $USE_LOCAL_SOURCES; then
+            echo -e "${YELLOW}No internet connection detected. Continuing because --use-local-sources was set.${NC}"
+        else
+            echo -e "${RED}No internet connection detected. Please check your connection and try again.${NC}"
+            exit 1
+        fi
     else
         echo -e "${GREEN}Internet connection is active.${NC}"
     fi
@@ -528,29 +635,53 @@ install_update() {
 }
 
 install_kittyhack() {
-    echo -e "${CYAN}--- KITTYHACK INSTALL Step 1: Clone KittyHack repository ---${NC}"
-    if [[ -d /root/kittyhack ]]; then
-        echo -e "${GREY}Existing KittyHack repository found. Backing up database and config.ini...${NC}"
-        
-        # Backup important files if they exist
-        [ -f /root/kittyhack/config.ini ] && cp /root/kittyhack/config.ini /tmp/config.ini.bak
-        [ -f /root/kittyhack/kittyhack.db ] && cp /root/kittyhack/kittyhack.db /tmp/kittyhack.db.bak
-        
-        # Remove old repository
-        echo -e "${GREY}removing kittyhack installation...${NC}"
-        rm -rf /root/kittyhack
-    fi
+    if $USE_LOCAL_SOURCES; then
+        KITTYHACK_INSTALL_DIR="$KITTYHACK_ROOT"
+        echo -e "${CYAN}--- KITTYHACK INSTALL Step 1: Use local sources ---${NC}"
+        echo -e "${GREY}Using local sources from: ${KITTYHACK_INSTALL_DIR}${NC}"
 
-    echo -e "${GREY}Cloning KittyHack repository...${NC}"
-    git clone https://github.com/floppyFK/kittyhack.git /root/kittyhack --quiet
-    if [[ $? -eq 0 ]]; then
-        echo -e "${GREEN}Repository cloned successfully.${NC}"
+        if [[ ! -f "${KITTYHACK_INSTALL_DIR}/requirements.txt" ]]; then
+            ((FAIL_COUNT++))
+            echo -e "${RED}Local sources appear invalid: requirements.txt not found in ${KITTYHACK_INSTALL_DIR}.${NC}"
+            return 1
+        fi
+
+        # Best-effort: if an old /root/kittyhack exists, import its config/db if local ones don't exist.
+        if [[ -d /root/kittyhack && "${KITTYHACK_INSTALL_DIR}" != "/root/kittyhack" ]]; then
+            [ -f /root/kittyhack/config.ini ] && [ ! -f "${KITTYHACK_INSTALL_DIR}/config.ini" ] && cp /root/kittyhack/config.ini "${KITTYHACK_INSTALL_DIR}/config.ini" || true
+            [ -f /root/kittyhack/config.remote.ini ] && [ ! -f "${KITTYHACK_INSTALL_DIR}/config.remote.ini" ] && cp /root/kittyhack/config.remote.ini "${KITTYHACK_INSTALL_DIR}/config.remote.ini" || true
+            [ -f /root/kittyhack/kittyhack.db ] && [ ! -f "${KITTYHACK_INSTALL_DIR}/kittyhack.db" ] && cp /root/kittyhack/kittyhack.db "${KITTYHACK_INSTALL_DIR}/kittyhack.db" || true
+        fi
     else
-        ((FAIL_COUNT++))
-        echo -e "${RED}Failed to clone the repository. Please check your internet connection.${NC}"
+        KITTYHACK_INSTALL_DIR="/root/kittyhack"
+        echo -e "${CYAN}--- KITTYHACK INSTALL Step 1: Clone KittyHack repository ---${NC}"
+        if [[ -d "${KITTYHACK_INSTALL_DIR}" ]]; then
+            echo -e "${GREY}Existing KittyHack repository found. Backing up database and config.ini...${NC}"
+
+            # Backup important files if they exist
+            [ -f "${KITTYHACK_INSTALL_DIR}/config.ini" ] && cp "${KITTYHACK_INSTALL_DIR}/config.ini" /tmp/config.ini.bak
+            [ -f "${KITTYHACK_INSTALL_DIR}/config.remote.ini" ] && cp "${KITTYHACK_INSTALL_DIR}/config.remote.ini" /tmp/config.remote.ini.bak
+            [ -f "${KITTYHACK_INSTALL_DIR}/kittyhack.db" ] && cp "${KITTYHACK_INSTALL_DIR}/kittyhack.db" /tmp/kittyhack.db.bak
+
+            # Remove old repository
+            echo -e "${GREY}removing kittyhack installation...${NC}"
+            rm -rf "${KITTYHACK_INSTALL_DIR}"
+        fi
+
+        echo -e "${GREY}Cloning KittyHack repository...${NC}"
+        git clone https://github.com/floppyFK/kittyhack.git "${KITTYHACK_INSTALL_DIR}" --quiet
+        if [[ $? -eq 0 ]]; then
+            echo -e "${GREEN}Repository cloned successfully.${NC}"
+        else
+            ((FAIL_COUNT++))
+            echo -e "${RED}Failed to clone the repository. Please check your internet connection.${NC}"
+        fi
     fi
 
-    if [ $INSTALL_LEGACY_KITTYHACK -eq 0 ]; then
+    if $USE_LOCAL_SOURCES; then
+        GIT_TAG=""
+        echo -e "${GREY}Skipping release checkout because local sources are used.${NC}"
+    elif [ $INSTALL_LEGACY_KITTYHACK -eq 0 ]; then
         echo -e "${GREY}Fetching latest release...${NC}"
         # Try up to 5 times to get the latest tag
         for i in {1..5}; do
@@ -576,32 +707,39 @@ install_kittyhack() {
         GIT_TAG="v1.1.1"
     fi
 
-    if [[ -n "$GIT_TAG" ]]; then
+    if [[ -n "$GIT_TAG" && $USE_LOCAL_SOURCES == false ]]; then
         echo -e "${GREY}Checking out ${GIT_TAG}...${NC}"
-        git -C /root/kittyhack fetch --tags --quiet
-        git -C /root/kittyhack checkout ${GIT_TAG} --quiet
+        git -C "${KITTYHACK_INSTALL_DIR}" fetch --tags --quiet
+        git -C "${KITTYHACK_INSTALL_DIR}" checkout ${GIT_TAG} --quiet
         if [[ $? -eq 0 ]]; then
             echo -e "${GREEN}Repository updated to ${GIT_TAG}${NC}"
         else
             ((FAIL_COUNT++))
             echo -e "${RED}Failed to checkout ${GIT_TAG}. Please check your internet connection.${NC}"
         fi
-    else
+    elif [[ $USE_LOCAL_SOURCES == false ]]; then
         ((FAIL_COUNT++))
         echo -e "${RED}Failed to fetch tags. Please check your internet connection.${NC}"
     fi
     
     # Restore backed up files if they exist
     if [ -f /tmp/config.ini.bak ]; then
-        cp /tmp/config.ini.bak /root/kittyhack/config.ini && rm -f /tmp/config.ini.bak
+        cp /tmp/config.ini.bak "${KITTYHACK_INSTALL_DIR}/config.ini" && rm -f /tmp/config.ini.bak
+    fi
+    if [ -f /tmp/config.remote.ini.bak ]; then
+        cp /tmp/config.remote.ini.bak "${KITTYHACK_INSTALL_DIR}/config.remote.ini" && rm -f /tmp/config.remote.ini.bak
     fi
     if [ -f /tmp/kittyhack.db.bak ]; then
-        cp /tmp/kittyhack.db.bak /root/kittyhack/kittyhack.db && rm -f /tmp/kittyhack.db.bak
+        cp /tmp/kittyhack.db.bak "${KITTYHACK_INSTALL_DIR}/kittyhack.db" && rm -f /tmp/kittyhack.db.bak
     fi
 
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 2: Set up Python virtual environment ---${NC}"
-    python3.11 -m venv /root/kittyhack/.venv
-    source /root/kittyhack/.venv/bin/activate
+    if ! create_venv_py311 "${KITTYHACK_INSTALL_DIR}/.venv"; then
+        ((FAIL_COUNT++))
+        echo -e "${RED}Failed to create Python 3.11 virtualenv.${NC}"
+        return 1
+    fi
+    source "${KITTYHACK_INSTALL_DIR}/.venv/bin/activate"
 
     # Force pip to use PyPI only to satisfy --require-hashes entries in requirements.txt
     # Some systems have PIP_EXTRA_INDEX_URL=piwheels; unset it to avoid hash mismatches.
@@ -612,7 +750,7 @@ install_kittyhack() {
     pip install --timeout 120 --no-cache-dir -U pip setuptools wheel
 
     # Install project dependencies from PyPI (no extra indexes), fail fast if hashes don’t match
-    if ! pip install --timeout 120 --no-cache-dir -r /root/kittyhack/requirements.txt; then
+    if ! pip install --timeout 120 --no-cache-dir -r "${KITTYHACK_INSTALL_DIR}/requirements.txt"; then
         ((FAIL_COUNT++))
         echo -e "${RED}Failed to install Python dependencies.${NC}"
     else
@@ -654,7 +792,27 @@ install_kittyhack() {
 
 
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 4: Install and start KittyHack service ---${NC}"
-    cp /root/kittyhack/setup/kittyhack.service /etc/systemd/system/kittyhack.service
+    cat > /etc/systemd/system/kittyhack.service << EOF
+[Unit]
+Description=KittyHack WebGUI
+After=network.target
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=${KITTYHACK_INSTALL_DIR}
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${KITTYHACK_INSTALL_DIR}/.venv/bin"
+ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/shiny run --host=0.0.0.0 --port=80
+Restart=always
+RestartSec=5
+
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
     systemctl daemon-reload
     systemctl enable kittyhack.service
     systemctl start kittyhack.service
@@ -662,6 +820,37 @@ install_kittyhack() {
         echo -e "${GREEN}KittyHack service installed and started successfully.${NC}"
     else
         echo -e "${RED}Failed to start KittyHack service.${NC}"
+    fi
+
+    echo -e "${CYAN}--- KITTYHACK INSTALL Step 5: Install and start kittyhack_control service ---${NC}"
+    cat > /etc/systemd/system/kittyhack_control.service << EOF
+[Unit]
+Description=KittyHack Control Service (remote control target)
+After=network.target
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=${KITTYHACK_INSTALL_DIR}
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${KITTYHACK_INSTALL_DIR}/.venv/bin"
+ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/python -m src.kittyhack_control
+Restart=always
+RestartSec=2
+
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable kittyhack_control.service
+    systemctl start kittyhack_control.service
+    if systemctl is-active --quiet kittyhack_control.service; then
+        echo -e "${GREEN}kittyhack_control service installed and started successfully.${NC}"
+    else
+        echo -e "${RED}Failed to start kittyhack_control service.${NC}"
     fi
 
     # Log system journal information
@@ -680,7 +869,7 @@ reinstall_camera_drivers() {
     echo -e "${CYAN}--- CAMERA DRIVER REINSTALL ---${NC}"
     # Download and install camera drivers
     local base_url="https://github.com/floppyFK/kittyhack-dependencies/raw/refs/heads/main/camera"
-    local dependencies_file="/root/kittyhack/camera_dependencies.txt"
+    local dependencies_file="${KITTYHACK_INSTALL_DIR}/camera_dependencies.txt"
     local download_dir="/tmp/camera_drivers"
 
     mkdir -p "$download_dir"
@@ -714,14 +903,116 @@ reinstall_camera_drivers() {
 
 # Main script logic
 
-# Default language
-LANGUAGE="en"
+# Defaults / CLI flags
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+KITTYHACK_ROOT=$(realpath "${SCRIPT_DIR}/..")
 
-# Check for language argument or environment variable
-if [ -n "$1" ]; then
-  LANGUAGE="$1"
-elif [ -n "$SCRIPT_LANG" ]; then
-  LANGUAGE="$SCRIPT_LANG"
+# When true: do not clone from GitHub, use this repo folder as install source.
+USE_LOCAL_SOURCES=false
+
+# The directory where kittyhack will run from (venv, config.ini, kittyhack.db).
+# Default is /root/kittyhack for backward compatibility.
+KITTYHACK_INSTALL_DIR="/root/kittyhack"
+
+print_usage() {
+    cat << EOF
+Usage: $(basename "$0") [en|de] [--use-local-sources] [--sources-dir=/path] [--lang=en|de]
+
+  --use-local-sources   Use the current repo folder (no git clone).
+  --sources-dir=/path   Use a specific local repo folder (implies --use-local-sources).
+  --lang=en|de          Set UI language.
+EOF
+}
+
+# Parse args (order independent)
+LANGUAGE="en"
+for arg in "$@"; do
+    case "$arg" in
+        --use-local-sources)
+            USE_LOCAL_SOURCES=true
+            ;;
+        --sources-dir=*)
+            USE_LOCAL_SOURCES=true
+            KITTYHACK_ROOT=$(realpath "${arg#*=}")
+            ;;
+        --lang=*)
+            LANGUAGE="${arg#*=}"
+            ;;
+        en|de)
+            LANGUAGE="$arg"
+            ;;
+        -h|--help)
+            print_usage
+            exit 0
+            ;;
+    esac
+done
+
+# If local sources are used, default install dir to that folder.
+if $USE_LOCAL_SOURCES; then
+    KITTYHACK_INSTALL_DIR="$KITTYHACK_ROOT"
+fi
+
+ensure_uv_installed() {
+    if command -v uv >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo -e "${CYAN}Installing uv (Python version manager) ...${NC}"
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y curl ca-certificates >/dev/null 2>&1 || true
+
+    # Official installer (installs into ~/.local/bin)
+    if curl -LsSf https://astral.sh/uv/install.sh | sh; then
+        export PATH="$PATH:/root/.local/bin"
+    fi
+
+    if ! command -v uv >/dev/null 2>&1; then
+        echo -e "${RED}Failed to install uv. Please install it manually (https://astral.sh/uv) or install python3.11 via apt.${NC}"
+        return 1
+    fi
+}
+
+ensure_python311_available() {
+    if command -v python3.11 >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo -e "${YELLOW}python3.11 not found. Trying to install python3.11 via apt...${NC}"
+    apt-get update -y >/dev/null 2>&1 || true
+    if apt-get install -y python3.11 python3.11-venv python3.11-dev >/dev/null 2>&1; then
+        if command -v python3.11 >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    echo -e "${YELLOW}python3.11 not available via apt. Falling back to uv-managed Python 3.11...${NC}"
+    ensure_uv_installed || return 1
+    uv python install 3.11 || return 1
+    return 0
+}
+
+create_venv_py311() {
+    local venv_path="$1"
+
+    # Ensure we don't keep an old venv created with a different Python version.
+    if [[ -d "$venv_path" ]]; then
+        rm -rf "$venv_path"
+    fi
+
+    ensure_python311_available || return 1
+
+    if command -v python3.11 >/dev/null 2>&1; then
+        python3.11 -m venv "$venv_path"
+        return $?
+    fi
+
+    uv venv --python 3.11 "$venv_path"
+}
+
+# Environment override (kept for compatibility)
+if [ -n "$SCRIPT_LANG" ]; then
+    LANGUAGE="$SCRIPT_LANG"
 fi
 
 # Check for command-line arguments or prompt for a choice 
@@ -781,15 +1072,23 @@ EOF
     echo -e "${ERRMSG}" 
     if [ "$LANGUAGE" == "de" ]; then
         echo -e "${CYAN}Bitte die gewünschte Option auswählen:${NC}"
+        echo -e "${GREY}--- Zielgerät (direkt auf einer Kittyflap) ---${NC}"
         echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Erstmalige Installation von Kittyhack ausführen"
         echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Kameratreiber erneut installieren (bitte nur ausführen, wenn du keine Live-Bilder siehst. Ist inzwischen auch über die Kittyhack Web-Oberfläche möglich)"
         echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Update auf die neueste Version von Kittyhack (bitte nur ausführen, wenn du bereits Kittyhack installiert hast)"
+        echo -e ""
+        echo -e "${GREY}--- Remote-Mode (beliebiger Linux-PC) ---${NC}"
+        echo -e "(${BLUE}${FMTBOLD}4${FMTDEF}${NC}) Installation als Remote-Control (remote-mode) auf einem separaten System"
         echo -e "(${BLUE}${FMTBOLD}b${FMTDEF}${NC})eenden"
     else
         echo -e "${CYAN}Please choose the desired option:${NC}"
+        echo -e "${GREY}--- Target device (directly on a Kittyflap) ---${NC}"
         echo -e "(${BLUE}${FMTBOLD}1${FMTDEF}${NC}) Run initial installation of Kittyhack"
         echo -e "(${BLUE}${FMTBOLD}2${FMTDEF}${NC}) Reinstall camera drivers (only run if you don't see live images. Can also be done via the Kittyhack web interface now)"
         echo -e "(${BLUE}${FMTBOLD}3${FMTDEF}${NC}) Update to the latest version of Kittyhack (only run if you already have Kittyhack installed)"
+        echo -e ""
+        echo -e "${GREY}--- Remote mode (any Linux PC) ---${NC}"
+        echo -e "(${BLUE}${FMTBOLD}4${FMTDEF}${NC}) Install as remote-control (remote-mode) on a dedicated system"
         echo -e "(${BLUE}${FMTBOLD}q${FMTDEF}${NC})uit"
     fi
     read -r MODE
@@ -813,15 +1112,21 @@ EOF
             install_update
             break
             ;;
+        4)
+            echo -e "${CYAN}Installing Kittyhack in remote-mode...${NC}"
+            INSTALL_LEGACY_KITTYHACK=0
+            install_remote_mode
+            break
+            ;;
         q|b)
             echo -e "${YELLOW}Quitting installation.${NC}"
             exit 0
             ;;
         *)
             if [ "$LANGUAGE" == "de" ]; then
-                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2', '3' oder 'b' eingeben.${NC}\n"
+                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2', '3', '4' oder 'b' eingeben.${NC}\n"
             else
-                ERRMSG="${RED}Invalid choice. Please enter '1', '2', '3' or 'q'.${NC}\n"
+                ERRMSG="${RED}Invalid choice. Please enter '1', '2', '3', '4' or 'q'.${NC}\n"
             fi
             MODE=""
             ;;
@@ -833,17 +1138,9 @@ if systemctl is-active --quiet kittyhack.service; then
         if [ "$LANGUAGE" == "de" ]; then
             echo -e "\n${GREEN}Setup abgeschlossen!${NC}\n"
             echo -e "Öffne ${CYAN}http://${CURRENT_IP}${NC} in deinem Browser, um auf deine Kittyflap zuzugreifen!\n"
-            if [ $INSTALL_LEGACY_KITTYHACK -eq 0 ]; then
-                echo -e "${GREY}Falls auf deiner Kittyflap bereits viele Bilder gespeichert sind, kann es einige Zeit dauern, bis du die KittyHack Seite in deinem Browser aufrufen kannst. Bitte habe etwas Geduld.${NC}"
-                echo -e "${GREY}Wenn alle Bilder importiert wurden, starte bitte anschließend deine Kittyflap über die Weboberfläche in der Sektion 'System' einmal neu, um alle Änderungen zu übernehmen.${NC}"
-            fi
         else
             echo -e "\n${GREEN}Setup complete!${NC}\n"
             echo -e "Open ${CYAN}http://${CURRENT_IP}${NC} in your browser to access your Kittyflap!\n"
-            if [ $INSTALL_LEGACY_KITTYHACK -eq 0 ]; then
-                echo -e "${GREY}If your Kittyflap already has many images stored, it may take some time before you can access the KittyHack page in your browser. Please be patient.${NC}"
-                echo -e "${GREY}Once all images have been imported, please restart your Kittyflap via the web interface in the 'System' section to apply all changes.${NC}"
-            fi
         fi
     else
         if [ "$LANGUAGE" == "de" ]; then

@@ -371,11 +371,16 @@ def get_git_version():
         return tag
     except subprocess.CalledProcessError:
         # If no tag is found, return the short commit hash
-        commit_hash = subprocess.check_output(
-            [git_command, "rev-parse", "--short", "HEAD"],
-            text=True
-        ).strip()
-        return commit_hash
+        try:
+            commit_hash = subprocess.check_output(
+                [git_command, "rev-parse", "--short", "HEAD"],
+                text=True
+            ).strip()
+            return commit_hash
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            return "unknown"
+    except (FileNotFoundError, OSError):
+        return "unknown"
     
 def normalize_version(version_str):
     """

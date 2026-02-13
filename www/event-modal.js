@@ -869,8 +869,20 @@
                     if (lastAck === finalSrc) return;
                     wrap.setAttribute('data-last-ack-src', finalSrc);
 
-                    // Pace autoplay to ~4fps (250ms). When paused we pulse immediately so overlays stay in sync.
-                    var fpsIntervalMs = 250;
+                    // Pace autoplay based on the capture FPS stored for this event.
+                    // When paused we pulse immediately so overlays stay in sync.
+                    var fpsIntervalMs = 250; // default ~4fps for legacy events
+                    try {
+                        var root = document.getElementById('event_modal_root');
+                        var fpsAttr = root && root.getAttribute ? (root.getAttribute('data-event-fps') || '') : '';
+                        var fps = parseFloat(String(fpsAttr || '').trim());
+                        if (typeof fps === 'number' && isFinite(fps) && fps > 0) {
+                            // Clamp to avoid extreme values (CPU/network spikes or division issues)
+                            if (fps < 1) fps = 1;
+                            if (fps > 30) fps = 30;
+                            fpsIntervalMs = Math.max(10, Math.round(1000 / fps));
+                        }
+                    } catch (e) {}
                     if (!playingNow) {
                         safeClick(pulseBtn);
                         return;

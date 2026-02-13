@@ -4,9 +4,14 @@ import logging
 import multiprocessing
 from threading import Lock
 from src.baseconfig import AllowedToEnter, AllowedToExit, CONFIG, set_language
-from src.pir import Pir
+from src.mode import is_remote_mode
 from src.database import *
-from src.magnets_rfid import Magnets, Rfid, RfidRunState
+
+if is_remote_mode():
+    from src.remote.hardware import Pir, Magnets, Rfid, RfidRunState  # type: ignore
+else:
+    from src.pir import Pir
+    from src.magnets_rfid import Magnets, Rfid, RfidRunState
 from src.camera import image_buffer
 from src.helper import sigterm_monitor, EventType, check_allowed_to_exit
 from src.model import ModelHandler, YoloModel

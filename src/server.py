@@ -2335,11 +2335,25 @@ def server(input, output, session):
     last_uploaded_cfg_path = reactive.Value(None)
     remote_setup_active = reactive.Value(bool(is_remote_mode() and remote_setup_required))
 
+    def _remote_synced_marker_path() -> str:
+        # Written by RemoteControlClient when a sync tar.gz was extracted successfully.
+        return str(CONFIG.get("KITTYHACK_DATABASE_PATH", "kittyhack.db")) + ".remote_synced"
+
+    def _remote_restart_pending_marker_path() -> str:
+        # Marker to persist "restart required" across browser refreshes.
+        return str(CONFIG.get("KITTYHACK_DATABASE_PATH", "kittyhack.db")) + ".remote_restart_pending"
+
+    remote_sync_status = reactive.Value({})
+    remote_sync_modal_open = reactive.Value(False)
+    remote_restart_modal_open = reactive.Value(False)
+    remote_sync_finalized = reactive.Value(False)
+
     # Live status for overlay in live view
     live_status = reactive.Value(
         {
             "ok": False,
             "ts": "",
+            "remote_waiting": False,
             "inside_lock": False,
             "outside_lock": False,
             "inside_motion": False,
@@ -2377,9 +2391,78 @@ def server(input, output, session):
                 )
             )
 
+    @output
+    @render.ui
+    def ui_remote_connection_badge():
+        # Navbar indicator: show if we are in remote-mode and currently connected to the target.
+        if not is_remote_mode():
+            return ui.HTML("")
+
+        reactive.invalidate_later(1.0)
+
+        host = (CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
+        if not host:
+            return ui.tags.span(
+                {"class": "badge rounded-pill text-bg-secondary", "title": _("Remote target host not configured")},
+                _("Remote: not configured"),
+            )
+
+        try:
+            from src.remote.control_client import RemoteControlClient
+
+            client = RemoteControlClient.instance()
+            client.ensure_started()
+            is_ready = bool(client.wait_until_ready(timeout=0))
+        except Exception:
+            is_ready = False
+
+        if is_ready:
+            return ui.tags.span(
+                {"class": "badge rounded-pill text-bg-success", "title": _("Connected to Kittyflap") + f": {host}"},
+                _("Remote: connected"),
+            )
+
+        # Connecting / reconnecting
+        return ui.tags.span(
+            {"class": "badge rounded-pill text-bg-warning", "title": _("Connecting to Kittyflap") + f": {host}"},
+            ui.tags.span(
+                {"class": "spinner-border spinner-border-sm me-1", "role": "status", "aria-hidden": "true"}
+            ),
+            _("Remote: connecting"),
+        )
+
     def show_remote_setup_modal():
         if not (is_remote_mode() and remote_setup_required):
             return
+
+        # If a restart is pending (e.g. user refreshed after sync), block with restart modal.
+        try:
+            if os.path.exists(_remote_restart_pending_marker_path()):
+                show_remote_restart_required_modal()
+                return
+        except Exception:
+            pass
+
+        # If an initial sync is currently in progress (or pending), show the sync modal instead
+        # of the settings form. This also covers browser refresh during sync.
+        if bool(CONFIG.get("REMOTE_SYNC_ON_FIRST_CONNECT", True)):
+            try:
+                from src.remote.control_client import RemoteControlClient
+
+                client = RemoteControlClient.instance()
+                client.ensure_started()
+                st = client.get_sync_status()
+                in_progress = bool(st.get("in_progress"))
+                requested = bool(st.get("requested"))
+                ok = st.get("ok")
+                if requested and (in_progress or ok is None):
+                    remote_sync_status.set(st)
+                    show_remote_initial_sync_modal()
+                    remote_sync_modal_open.set(True)
+                    return
+            except Exception:
+                pass
+
         values = read_remote_config_values()
         ui.modal_show(
             ui.modal(
@@ -2391,7 +2474,7 @@ def server(input, output, session):
                         + "\n"
                         + _("Please keep this browser tab open and do not close or reload it until synchronization is finished.")
                         + "\n"
-                        + _("Startup continues automatically after a successful sync.")
+                        + _("Startup continues after a successful sync and service restart.")
                     ),
                     ui.input_text(
                         "remote_target_host",
@@ -2430,57 +2513,225 @@ def server(input, output, session):
             )
         )
 
-    def run_remote_initial_sync(timeout_s: float) -> tuple[bool, str]:
-        try:
-            from src.remote.control_client import RemoteControlClient
-        except Exception as e:
-            return False, _("Failed to initialize remote control client: {}.").format(e)
+    def show_remote_initial_sync_modal(error_reason: str | None = None):
+        body = ui.div(
+            ui.div(
+                ui.tags.div(
+                    {
+                        "class": "spinner-border text-primary",
+                        "role": "status",
+                    },
+                    ui.tags.span({"class": "visually-hidden"}, _("Loading...")),
+                ),
+                class_="d-flex align-items-center gap-3",
+            ),
+            ui.div(ui.output_ui("remote_initial_sync_status_ui"), class_="mt-3"),
+        )
 
-        client = RemoteControlClient.instance()
-        client.ensure_started()
+        footer = None
+        if error_reason:
+            body = ui.div(
+                ui.markdown(_("Initial sync failed.")),
+                ui.markdown(error_reason),
+                ui.div(ui.output_ui("remote_initial_sync_status_ui"), class_="mt-3"),
+            )
+            footer = ui.div(
+                ui.input_action_button("btn_remote_sync_failed_close", _("Back"))
+            )
 
-        connect_timeout = max(20.0, min(120.0, float(timeout_s or 10.0) * 4.0))
-        sync_timeout = max(180.0, float(timeout_s or 10.0) * 120.0)
-        start_ts = tm.time()
+        ui.modal_show(
+            ui.modal(
+                body,
+                title=_("Initial sync"),
+                easy_close=False,
+                footer=footer,
+                size="lg",
+            )
+        )
 
-        with ui.Progress(min=0, max=100) as p:
-            p.set(2, message=_("Initial sync in progress..."), detail=_("Connecting to target device..."))
-
-            if not client.wait_until_ready(timeout=connect_timeout):
-                return False, _("Could not connect to the remote target device.")
-
-            p.set(8, message=_("Initial sync in progress..."), detail=_("Requesting sync from target device..."))
-            client.start_initial_sync(force=True)
-
-            while True:
-                status = client.get_sync_status()
-                in_progress = bool(status.get("in_progress"))
-                ok = status.get("ok")
-
-                if ok is True and not in_progress:
-                    p.set(100, message=_("Initial sync completed."), detail=_("All data has been synchronized."))
-                    return True, ""
-
-                if ok is False and not in_progress:
-                    reason = (status.get("reason") or "").strip()
-                    return False, _("Initial sync failed: {}.").format(reason or _("unknown error"))
-
-                elapsed = tm.time() - start_ts
-                if elapsed > sync_timeout:
-                    return False, _("Initial sync timed out.")
-
-                bytes_mb = float(status.get("bytes_received") or 0) / (1024.0 * 1024.0)
-                items = status.get("items") or []
-                detail = _("Receiving data... {:.1f} MB").format(bytes_mb)
-                if items:
-                    detail = _("Receiving data ({} items)... {:.1f} MB").format(len(items), bytes_mb)
-
-                pseudo_percent = min(95, 10 + int((elapsed / sync_timeout) * 85))
-                p.set(pseudo_percent, message=_("Initial sync in progress..."), detail=detail)
-                tm.sleep(0.25)
+    def show_remote_restart_required_modal():
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.markdown(
+                        _("Initial sync has completed.")
+                        + "\n\n"
+                        + _("To fully apply all settings, the Kittyhack service must be restarted now.")
+                        + "\n"
+                        + _("The web interface will be briefly unavailable during the restart.")
+                    )
+                ),
+                title=_("Restart required"),
+                easy_close=False,
+                footer=ui.div(
+                    ui.input_action_button("btn_remote_restart_kittyhack", _("Restart Kittyhack service"))
+                ),
+                size="lg",
+            )
+        )
 
     if is_remote_mode() and remote_setup_required:
         show_remote_setup_modal()
+
+    # If a restart is pending (e.g. browser refreshed after sync), show the restart modal.
+    if is_remote_mode():
+        try:
+            if os.path.exists(_remote_restart_pending_marker_path()):
+                show_remote_restart_required_modal()
+                remote_restart_modal_open.set(True)
+        except Exception:
+            pass
+
+    @output
+    @render.ui
+    def remote_initial_sync_status_ui():
+        st = remote_sync_status.get() or {}
+        requested = bool(st.get("requested"))
+        in_progress = bool(st.get("in_progress"))
+        ok = st.get("ok")
+        reason = (st.get("reason") or "").strip()
+        bytes_mb = float(st.get("bytes_received") or 0) / (1024.0 * 1024.0)
+        items = st.get("items") or []
+        items_count = len(items) if isinstance(items, list) else 0
+
+        if not requested:
+            headline = _("Waiting for sync to start...")
+        elif in_progress:
+            headline = _("Initial sync in progress...")
+        elif ok is True:
+            headline = _("Initial sync completed.")
+        elif ok is False:
+            headline = _("Initial sync failed.")
+        else:
+            headline = _("Connecting to Kittyflap...")
+
+        detail = _("Transferred: {:.1f} MB").format(bytes_mb)
+        if items_count:
+            detail = _("Transferred ({} items): {:.1f} MB").format(items_count, bytes_mb)
+
+        extra = ""
+        if ok is False and reason:
+            extra = _("Reason: {} ").format(reason)
+
+        return ui.div(
+            ui.markdown(f"**{headline}**"),
+            ui.div(detail),
+            ui.div(extra) if extra else ui.HTML(""),
+        )
+
+    @reactive.Effect
+    def _remote_sync_poller():
+        # Poll RemoteControlClient to keep the modal state in sync and survive refreshes.
+        if not is_remote_mode():
+            return
+
+        # Always keep restart marker-driven flow visible.
+        try:
+            if os.path.exists(_remote_restart_pending_marker_path()):
+                if not bool(remote_restart_modal_open.get()):
+                    show_remote_restart_required_modal()
+                    remote_restart_modal_open.set(True)
+                return
+        except Exception:
+            pass
+
+        if not bool(remote_setup_active.get()):
+            return
+        if not bool(CONFIG.get("REMOTE_SYNC_ON_FIRST_CONNECT", True)):
+            return
+
+        try:
+            from src.remote.control_client import RemoteControlClient
+            client = RemoteControlClient.instance()
+            client.ensure_started()
+            st = client.get_sync_status()
+        except Exception:
+            reactive.invalidate_later(1000)
+            return
+
+        remote_sync_status.set(st)
+        requested = bool(st.get("requested"))
+        in_progress = bool(st.get("in_progress"))
+        ok = st.get("ok")
+
+        # If a sync was requested (even if not yet in_progress), show modal.
+        if requested and (in_progress or ok is None) and not bool(remote_sync_modal_open.get()):
+            ui.modal_remove()
+            show_remote_initial_sync_modal()
+            remote_sync_modal_open.set(True)
+
+        # Timeouts (best effort): if requested but never finishes, mark as failed.
+        try:
+            timeout_s = float(CONFIG.get("REMOTE_CONTROL_TIMEOUT") or 10.0)
+        except Exception:
+            timeout_s = 10.0
+        connect_timeout = max(20.0, min(120.0, float(timeout_s or 10.0) * 4.0))
+        sync_timeout = max(180.0, float(timeout_s or 10.0) * 120.0)
+        now = tm.time()
+        try:
+            requested_at = float(st.get("requested_at") or 0.0)
+            started_at = float(st.get("started_at") or 0.0)
+        except Exception:
+            requested_at = 0.0
+            started_at = 0.0
+        age = max(0.0, now - requested_at) if requested_at else 0.0
+        sync_age = max(0.0, now - started_at) if started_at else 0.0
+
+        if requested and ok is None and not in_progress and age > connect_timeout:
+            show_remote_initial_sync_modal(error_reason=_("Could not connect to the remote Kittyflap."))
+            remote_sync_modal_open.set(True)
+            reactive.invalidate_later(2000)
+            return
+
+        if requested and ok is None and (in_progress or started_at) and sync_age > sync_timeout:
+            show_remote_initial_sync_modal(error_reason=_("Initial sync timed out."))
+            remote_sync_modal_open.set(True)
+            reactive.invalidate_later(2000)
+            return
+
+        # Sync finished.
+        if requested and not in_progress and ok is True and not bool(remote_sync_finalized.get()):
+            remote_sync_finalized.set(True)
+
+            # Sync may have replaced config.ini: reload it now so next startup uses the synced values.
+            try:
+                load_config()
+            except Exception as e:
+                ui.notification_show(_("Failed to reload synced config.ini: {}.").format(e), duration=12, type="error")
+                return
+
+            # Trigger immediate UI refresh after synced DB/config are applied.
+            try:
+                reload_trigger_photos.set(reload_trigger_photos.get() + 1)
+                reload_trigger_cats.set(reload_trigger_cats.get() + 1)
+                reload_trigger_config.set(reload_trigger_config.get() + 1)
+                reload_trigger_info.set(reload_trigger_info.get() + 1)
+            except Exception:
+                pass
+
+            # Mark "restart required" to persist across refresh.
+            try:
+                with open(_remote_restart_pending_marker_path(), "w", encoding="utf-8") as f:
+                    f.write(str(tm.time()))
+            except Exception:
+                pass
+
+            global remote_setup_required
+            remote_setup_required = False
+            remote_setup_active.set(False)
+            ui.modal_remove()
+            show_remote_restart_required_modal()
+            remote_restart_modal_open.set(True)
+            return
+
+        if requested and not in_progress and ok is False:
+            reason = (st.get("reason") or "").strip()
+            show_remote_initial_sync_modal(error_reason=reason or _("unknown error"))
+            remote_sync_modal_open.set(True)
+            reactive.invalidate_later(2000)
+            return
+
+        reactive.invalidate_later(250)
 
     @reactive.Effect
     @reactive.event(input.btn_remote_setup_save)
@@ -2528,25 +2779,22 @@ def server(input, output, session):
         CONFIG["REMOTE_SYNC_ON_FIRST_CONNECT"] = sync_first
 
         if sync_first:
-            ok, error_msg = run_remote_initial_sync(
-                timeout_s=timeout,
-            )
-            if not ok:
-                ui.notification_show(error_msg, duration=12, type="error")
-                return
-
-            # Sync may have replaced config.ini: reload it now so startup uses the synced values.
+            # Start sync (non-blocking). Progress is shown in a non-closable modal and
+            # survives browser refresh by polling the RemoteControlClient status.
             try:
-                load_config()
+                from src.remote.control_client import RemoteControlClient
+
+                client = RemoteControlClient.instance()
+                client.ensure_started()
+                client.start_initial_sync(force=True)
             except Exception as e:
-                ui.notification_show(_("Failed to reload synced config.ini: {}.").format(e), duration=12, type="error")
+                ui.notification_show(_("Failed to initialize remote control client: {}.").format(e), duration=12, type="error")
                 return
 
-            # Trigger immediate UI refresh (e.g. Last Events) after synced DB/config are applied.
-            reload_trigger_photos.set(reload_trigger_photos.get() + 1)
-            reload_trigger_cats.set(reload_trigger_cats.get() + 1)
-            reload_trigger_config.set(reload_trigger_config.get() + 1)
-            reload_trigger_info.set(reload_trigger_info.get() + 1)
+            ui.modal_remove()
+            show_remote_initial_sync_modal()
+            remote_sync_modal_open.set(True)
+            return
 
         global remote_setup_required
         remote_setup_required = False
@@ -2556,6 +2804,41 @@ def server(input, output, session):
 
         start_backend_if_needed()
         start_background_task_if_needed()
+
+    @reactive.Effect
+    @reactive.event(input.btn_remote_sync_failed_close)
+    def _remote_sync_failed_close():
+        # Allow user to go back to the remote setup form after a sync failure.
+        if not is_remote_mode():
+            return
+        remote_sync_modal_open.set(False)
+        ui.modal_remove()
+        show_remote_setup_modal()
+
+    @reactive.Effect
+    @reactive.event(input.btn_remote_restart_kittyhack)
+    def _remote_restart_after_sync():
+        if not is_remote_mode():
+            return
+        # Best effort: clear marker before restart so it doesn't reappear after restart.
+        try:
+            if os.path.exists(_remote_restart_pending_marker_path()):
+                os.remove(_remote_restart_pending_marker_path())
+        except Exception:
+            pass
+
+        ui.notification_show(_("Restarting Kittyhack service..."), duration=10, type="message")
+
+        def _do_restart():
+            try:
+                tm.sleep(0.75)
+                systemctl("restart", "kittyhack")
+            except Exception:
+                pass
+
+        threading.Thread(target=_do_restart, daemon=True).start()
+        # The service restart will typically terminate this process shortly.
+        ui.modal_remove()
     
     # Show a notification if a new version of Kittyhack is available
     if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
@@ -2698,12 +2981,55 @@ def server(input, output, session):
     @reactive.effect
     def update_live_status():
         reactive.invalidate_later(0.25)
-        ts = datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S')
+
+        def _set_live_status_if_changed(new_state: dict) -> None:
+            try:
+                prev = live_status.get() or {}
+            except Exception:
+                prev = {}
+            if prev != new_state:
+                live_status.set(new_state)
+
         try:
+            if is_remote_mode():
+                remote_ready = False
+                try:
+                    from src.remote.control_client import RemoteControlClient
+
+                    client = RemoteControlClient.instance()
+                    client.ensure_started()
+                    remote_ready = bool(client.wait_until_ready(timeout=0))
+                except Exception:
+                    remote_ready = False
+
+                if not remote_ready:
+                    _set_live_status_if_changed({"ok": False, "remote_waiting": True})
+
+                    now = tm.time()
+                    last_log = getattr(update_live_status, "_last_remote_not_ready_log", 0.0)
+                    if (now - float(last_log or 0.0)) > 10.0:
+                        logging.info("[LIVE_STATUS] Remote control not connected yet; skipping live status update.")
+                        update_live_status._last_remote_not_ready_log = now
+
+                    try:
+                        ui.update_action_button(
+                            "bManualOverride",
+                            label=_("Manual unlock not yet initialized..."),
+                            icon=icon_svg("unlock"),
+                            disabled=True,
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        ui.update_action_button("bResetPreyCooldown", disabled=True)
+                    except Exception:
+                        pass
+                    return
+
             magnets = getattr(Magnets, "instance", None)
             if magnets is None:
                 # During boot the backend (and thus Magnets.init()) may not be ready yet.
-                live_status.set({"ok": False, "ts": ts})
+                _set_live_status_if_changed({"ok": False, "remote_waiting": False})
 
                 now = tm.time()
                 last_log = getattr(update_live_status, "_last_hw_not_ready_log", 0.0)
@@ -2741,14 +3067,19 @@ def server(input, output, session):
                 time_until_release = CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'] - delta_to_last_prey_detection
                 forced_lock_due_prey = time_until_release > 0
             else:
-                delta_to_last_prey_detection = tm.time()
+                delta_to_last_prey_detection = 0
                 time_until_release = 0
                 forced_lock_due_prey = False
 
-            live_status.set(
+            if not forced_lock_due_prey:
+                # Keep stable values when no prey lock is active to avoid unnecessary UI re-renders.
+                delta_to_last_prey_detection = 0
+                time_until_release = 0
+
+            _set_live_status_if_changed(
                 {
                     "ok": True,
-                    "ts": ts,
+                    "remote_waiting": False,
                     "inside_lock": bool(inside_lock_state),
                     "outside_lock": bool(outside_lock_state),
                     "inside_motion": bool(inside_motion_state),
@@ -2781,7 +3112,7 @@ def server(input, output, session):
             if (now - float(last_log or 0.0)) > 10.0:
                 logging.exception("Failed to update live status: %s", e)
                 update_live_status._last_error_log = now
-            live_status.set({"ok": False, "ts": ts})
+            _set_live_status_if_changed({"ok": False, "remote_waiting": False})
     
     @render.ui
     def live_view_aspect_style():
@@ -2911,13 +3242,16 @@ def server(input, output, session):
                         '</div>'
                     )
                 else:
+                    extra_hint = ''
+                    if not is_remote_mode():
+                        extra_hint = '<div>' + _('If this message does not disappear within 30 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>'
                     img_html = (
                         '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
                         '<div></div>'
                         '<div><strong>' + _('Connection to the camera failed.') + '</strong></div>'
                         '<div>' + _("Please wait...") + '</div>'
                         '<div class="spinner-container"><div class="spinner"></div></div>'
-                        '<div>' + _('If this message does not disappear within 30 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>'
+                        + extra_hint +
                         '<div></div>'
                         '</div>'
                     )
@@ -3000,8 +3334,8 @@ def server(input, output, session):
     @render.ui
     def live_view_overlay_clock():
         # Clock stays on top of the picture.
-        st = live_status.get() or {}
-        ts = st.get("ts", datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S'))
+        reactive.invalidate_later(1.0)
+        ts = datetime.now(ZoneInfo(CONFIG['TIMEZONE'])).strftime('%H:%M:%S')
 
         clock_label = _("Clock")
         clock_title = _("Current time")
@@ -3031,6 +3365,45 @@ def server(input, output, session):
         inside_label = _("Inside")
         outside_label = _("Outside")
         status_unavailable_label = _("Status unavailable")
+
+        remote_indicator_html = ""
+        if is_remote_mode():
+            host = (CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
+
+            is_ready = False
+            if host:
+                try:
+                    from src.remote.control_client import RemoteControlClient
+
+                    client = RemoteControlClient.instance()
+                    client.ensure_started()
+                    is_ready = bool(client.wait_until_ready(timeout=0))
+                except Exception:
+                    is_ready = False
+
+            remote_variant = "muted"
+            remote_title = _("Remote target host not configured")
+            remote_aria = _("Remote: not configured")
+
+            if host and is_ready:
+                remote_variant = "ok"
+                remote_title = _("Connected to Kittyflap") + f": {host}"
+                remote_aria = _("Remote: connected")
+            elif host:
+                remote_variant = "blocked"
+                remote_title = _("Connecting to Kittyflap") + f": {host}"
+                remote_aria = _("Remote: connecting")
+
+            remote_indicator_html = (
+                '<div class="remote-connection-indicator" '
+                f'aria-label="{remote_aria}" title="{remote_title}" data-bs-title="{remote_title}" '
+                'data-bs-toggle="tooltip" data-bs-trigger="hover focus" data-bs-placement="top" tabindex="0">'
+                + (
+                    f'<span class="remote-status-chip remote-status-chip--{remote_variant}" '
+                    f'role="img" aria-label="{remote_aria}"></span>'
+                )
+                + "</div>"
+            )
 
         if st.get("ok"):
             inside_lock_is_open = bool(st.get("inside_lock"))
@@ -3094,17 +3467,23 @@ def server(input, output, session):
                     title=_("Outside motion: Motion") if outside_motion else _("Outside motion: No motion"),
                 )
                 + '</div>'
-                '</div>'
+                + '</div>'
+                + remote_indicator_html
                 + prey_banner_html
                 + '</div>'
             )
         else:
+            unavailable_text = status_unavailable_label
+            if is_remote_mode() and bool(st.get("remote_waiting")):
+                unavailable_text = _("Remote control not connected")
+
             status_html = (
                 '<div class="live-view-statusbar">'
                 '<div class="live-view-overlay-row">'
-                f'<div class="live-view-overlay-chip live-view-overlay-chip--error">{status_unavailable_label}</div>'
-                '</div>'
-                '</div>'
+                f'<div class="live-view-overlay-chip live-view-overlay-chip--error">{unavailable_text}</div>'
+                + '</div>'
+                + remote_indicator_html
+                + '</div>'
             )
 
         return ui.HTML(status_html)
@@ -3865,6 +4244,16 @@ def server(input, output, session):
     @output
     @render.ui
     def ui_system():
+        camera_driver_action = ui.div(
+            ui.hr(),
+            ui.div(
+                ui.input_task_button("reinstall_camera_driver", _("Reinstall Camera Driver"), icon=icon_svg("rotate-right"), class_="btn-default"),
+                style_="text-align: center;"
+            ),
+            ui.help_text(_("Reinstall the camera driver if the live view does not work properly.")),
+            ui.br(),
+        ) if not is_remote_mode() else ui.HTML("")
+
         return ui.div(
             ui.div(
                 ui.card(
@@ -3884,13 +4273,7 @@ def server(input, output, session):
                         style_="text-align: center;"
                     ),
                     ui.help_text(_("To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again.")),
-                    ui.hr(),
-                    ui.div(
-                        ui.input_task_button("reinstall_camera_driver", _("Reinstall Camera Driver"), icon=icon_svg("rotate-right"), class_="btn-default"),
-                        style_="text-align: center;"
-                    ),
-                    ui.help_text(_("Reinstall the camera driver if the live view does not work properly.")),
-                    ui.br(),
+                    camera_driver_action,
                     full_screen=False,
                     class_="generic-container",
                     style_="padding-left: 1rem !important; padding-right: 1rem !important;",
@@ -3904,6 +4287,8 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.reinstall_camera_driver)
     def on_action_reinstall_camera_driver():
+        if is_remote_mode():
+            return
         m = ui.modal(
             _("Do you really want to reinstall the camera driver? This operation can take several minutes."),
             title=_("Reinstall Camera Driver"),
@@ -3918,6 +4303,8 @@ def server(input, output, session):
     @reactive.effect
     @reactive.event(input.btn_modal_reinstall_cam_ok)
     def reinstall_camera_driver_process():
+        if is_remote_mode():
+            return
         # Read the dependencies (*.deb packages) from the "camera_dependencies.txt" file
         dependencies_file = "./camera_dependencies.txt"
         dependencies_url = "https://github.com/floppyFK/kittyhack-dependencies/raw/refs/heads/main/camera/"
@@ -6795,15 +7182,23 @@ def server(input, output, session):
                 )
 
             ui_update_kittyhack = release_notes_block if release_notes_block else ui.div()
-            ui_update_kittyhack = ui_update_kittyhack, ui.div(
-                ui.markdown(_("Automatic update to **{}**:").format(latest_version)),
-                ui.input_task_button("update_kittyhack", _("Update Kittyhack"), icon=icon_svg("download"), class_="btn-primary"),
-                ui.br(),
-                ui.help_text(_("Important: A stable WLAN connection is required for the update process.")),
-                ui.br(),
-                ui.help_text(_("The update will end with a reboot of the Kittyflap.")),
-                ui.markdown(_("Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to see what's new in the latest version.")),
-            )
+
+            if git_repo_available:
+                ui_update_kittyhack = ui_update_kittyhack, ui.div(
+                    ui.markdown(_("Automatic update to **{}**:").format(latest_version)),
+                    ui.input_task_button("update_kittyhack", _("Update Kittyhack"), icon=icon_svg("download"), class_="btn-primary"),
+                    ui.br(),
+                    ui.help_text(_("Important: A stable WLAN connection is required for the update process.")),
+                    ui.br(),
+                    ui.help_text(_("The update will end with a reboot of the Kittyflap.")),
+                    ui.markdown(_("Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to see what's new in the latest version.")),
+                )
+            else:
+                ui_update_kittyhack = ui_update_kittyhack, ui.div(
+                    ui.markdown(
+                        _("This installation does not appear to be a git clone. Automatic updates require a git repository (git clone).")
+                    )
+                )
 
             if git_repo_available:
                 try:
@@ -6832,12 +7227,8 @@ def server(input, output, session):
                         ui.markdown(_("Unable to check local git changes: {}").format(e))
                     )
             else:
-                ui_update_kittyhack = ui_update_kittyhack, ui.div(
-                    ui.hr(),
-                    ui.markdown(
-                        _("This installation does not appear to be a git clone. Automatic updates require a git repository (git clone).")
-                    )
-                )
+                # No local git repo: update button is hidden
+                pass
         
         else:
             ui_update_kittyhack = ui.markdown(_("You are already using the latest version of Kittyhack."))
@@ -6869,9 +7260,6 @@ def server(input, output, session):
                 ),
                 width="400px"
             )
-        version_note = ""
-        if version_from_changelog and not git_repo_available:
-            version_note = "  \n" + _("Note: Version inferred from local changelog files (no git repository detected).")
 
         return ui.div(
             ui.div(
@@ -6909,7 +7297,7 @@ def server(input, output, session):
                 ui.card(
                     ui.card_header(ui.h4(_("Version Information"), style_="text-align: center;")),
                     ui.br(),
-                    ui.markdown("**" + _("Current Version") + ":** `" + git_version + "`" + version_note + "  \n" \
+                    ui.markdown("**" + _("Current Version") + ":** `" + git_version + "`" + "  \n" \
                                 "**" + _("Latest Version") + ":** `" + latest_version + "`"),
                     ui_update_kittyhack,
                     ui.br(),

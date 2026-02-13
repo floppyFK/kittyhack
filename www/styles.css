@@ -1689,6 +1689,8 @@ html[data-bs-theme="dark"] .btn-default.btn-outline-danger:focus {
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
+    position: relative;
+    padding-right: 1.05rem;
 }
 
 .live-view-statusbar .live-view-overlay-row {
@@ -1697,6 +1699,23 @@ html[data-bs-theme="dark"] .btn-default.btn-outline-danger:focus {
 
 .live-view-statusbar .live-view-overlay-banner {
     align-self: center;
+}
+
+.remote-connection-indicator {
+    position: absolute;
+    right: 0.10rem;
+    bottom: 0.08rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.16rem;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0;
+    line-height: 1;
+    cursor: help;
+    pointer-events: auto;
 }
 
 /* Live view: bslib adds fairly large default gaps; tighten spacing for this card */
@@ -1859,6 +1878,10 @@ html[data-bs-theme="dark"] .live-view-overlay-clock {
     .live-view-overlay-title {
         font-size: 0.72rem;
     }
+    .remote-connection-indicator {
+        right: 0.00rem;
+        bottom: 0.06rem;
+    }
 }
 
 .live-view-header-top {
@@ -2018,6 +2041,30 @@ html[data-bs-theme="dark"] .live-view-card-header {
     line-height: 1.35;
     border: 1px solid transparent;
     white-space: nowrap;
+}
+
+.remote-status-chip {
+    width: 0.78rem;
+    height: 0.78rem;
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+
+.remote-status-chip--ok {
+    background: #22c55e;
+}
+
+.remote-status-chip--blocked {
+    background: #f59e0b;
+}
+
+.remote-status-chip--muted {
+    background: #94a3b8;
+}
+
+html[data-bs-theme="dark"] .remote-status-chip {
+    box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.95), 0 0 0 1px rgba(255, 255, 255, 0.22);
 }
 
 .live-view-pill--ok {

@@ -29,6 +29,10 @@ class ControlState:
         self.control_timeout_s: float = float(CONFIG.get("REMOTE_CONTROL_TIMEOUT") or 10.0)
         self.last_seen: float = 0.0
 
+        # If the controller disconnects, we delay restarting kittyhack on the target device.
+        # This prevents unwanted start/stop cycles when the remote UI service restarts.
+        self.pending_kittyhack_start_at: float = 0.0
+
         self.pir: Pir | None = None
         self.magnets: Magnets | None = None
         self.rfid: Rfid | None = None
@@ -203,9 +207,6 @@ async def _publisher(ws: WebSocketServerProtocol):
 
 
 async def _release_control(reason: str):
-    if not STATE.is_controlled():
-        return
-
     logging.warning(f"[CONTROL] Releasing control: {reason}")
 
     try:
@@ -235,6 +236,13 @@ async def _release_control(reason: str):
     STATE._pir_stop_event = None
     STATE.sync_in_progress = False
 
+    # If we are waiting for a possible reconnect, keep the info page on port 80
+    # and do not start kittyhack yet.
+    if STATE.pending_kittyhack_start_at and time.time() < float(STATE.pending_kittyhack_start_at or 0.0):
+        return
+
+    STATE.pending_kittyhack_start_at = 0.0
+
     # Give port 80 back to kittyhack before restarting it
     await _stop_info_http_server()
 
@@ -251,6 +259,8 @@ async def _take_control(ws: WebSocketServerProtocol, client_id: str, timeout_s: 
     STATE.controller_id = client_id
     STATE.control_timeout_s = float(timeout_s or STATE.control_timeout_s)
     STATE.last_seen = time.time()
+    # Cancel any delayed kittyhack start from a previous disconnect.
+    STATE.pending_kittyhack_start_at = 0.0
 
     try:
         ra = getattr(ws, "remote_address", None)
@@ -448,14 +458,28 @@ async def _handler(ws: WebSocketServerProtocol):
         pass
     finally:
         if STATE.controller is ws:
+            # Do not restart kittyhack immediately on disconnect. Instead, wait for the
+            # configured timeout to allow the controller to reconnect (e.g. during
+            # remote UI service restart).
+            try:
+                STATE.pending_kittyhack_start_at = time.time() + float(STATE.control_timeout_s or 10.0)
+            except Exception:
+                STATE.pending_kittyhack_start_at = time.time() + 10.0
             await _release_control("controller disconnected")
 
 
 async def _watchdog():
     while not sigterm_monitor.stop_now:
         await asyncio.sleep(0.5)
+        now = time.time()
+
+        # If a controller disconnected recently, start kittyhack only after the timeout.
+        if (not STATE.is_controlled()) and STATE.pending_kittyhack_start_at and (now >= float(STATE.pending_kittyhack_start_at or 0.0)):
+            await _release_control("controller timeout")
+            continue
+
         if STATE.is_controlled() and not STATE.sync_in_progress:
-            if (time.time() - STATE.last_seen) > float(STATE.control_timeout_s or 10.0):
+            if (now - STATE.last_seen) > float(STATE.control_timeout_s or 10.0):
                 await _release_control("controller timeout")
 
 

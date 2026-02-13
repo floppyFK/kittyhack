@@ -115,7 +115,7 @@ def read_remote_config_values() -> dict:
     defaults = {
         "remote_target_host": (CONFIG.get("REMOTE_TARGET_HOST") or "").strip(),
         "remote_control_port": int(CONFIG.get("REMOTE_CONTROL_PORT", 8888) or 8888),
-        "remote_control_timeout": float(CONFIG.get("REMOTE_CONTROL_TIMEOUT", 10.0) or 10.0),
+        "remote_control_timeout": float(CONFIG.get("REMOTE_CONTROL_TIMEOUT", 30.0) or 30.0),
         "remote_sync_on_first_connect": bool(CONFIG.get("REMOTE_SYNC_ON_FIRST_CONNECT", True)),
         "remote_sync_include_pictures": bool(CONFIG.get("REMOTE_SYNC_INCLUDE_PICTURES", True)),
         "remote_sync_include_models": bool(CONFIG.get("REMOTE_SYNC_INCLUDE_MODELS", True)),
@@ -263,7 +263,7 @@ DEFAULT_CONFIG = {
         # Remote control / remote-mode
         "remote_target_host": "",
         "remote_control_port": 8888,
-        "remote_control_timeout": 10.0,
+        "remote_control_timeout": 30.0,
         "remote_sync_on_first_connect": True,
         "remote_sync_include_pictures": True,
         "remote_sync_include_models": True,
@@ -455,7 +455,7 @@ def load_config():
         # Remote control / remote-mode
         "REMOTE_TARGET_HOST": safe_str("REMOTE_TARGET_HOST", d.get('remote_target_host', "")),
         "REMOTE_CONTROL_PORT": safe_int("REMOTE_CONTROL_PORT", int(d.get('remote_control_port', 8888))),
-        "REMOTE_CONTROL_TIMEOUT": safe_float("REMOTE_CONTROL_TIMEOUT", float(d.get('remote_control_timeout', 10.0))),
+        "REMOTE_CONTROL_TIMEOUT": safe_float("REMOTE_CONTROL_TIMEOUT", float(d.get('remote_control_timeout', 30.0))),
         "REMOTE_SYNC_ON_FIRST_CONNECT": safe_bool("REMOTE_SYNC_ON_FIRST_CONNECT", d.get('remote_sync_on_first_connect', True)),
         "REMOTE_SYNC_INCLUDE_PICTURES": safe_bool("REMOTE_SYNC_INCLUDE_PICTURES", d.get('remote_sync_include_pictures', True)),
         "REMOTE_SYNC_INCLUDE_MODELS": safe_bool("REMOTE_SYNC_INCLUDE_MODELS", d.get('remote_sync_include_models', True)),
@@ -602,6 +602,15 @@ def save_config():
     settings['disable_rfid_reader'] = CONFIG['DISABLE_RFID_READER']
     #settings['event_images_fs_migrated'] = CONFIG['EVENT_IMAGES_FS_MIGRATED']  # This value may not be written to the config file
 
+    # Never persist remote-only settings in config.ini.
+    # They are stored in config.remote.ini so they survive sync operations.
+    try:
+        for _cfg_key, (opt, _t) in _REMOTE_ONLY_SETTINGS.items():
+            if opt in settings:
+                del settings[opt]
+    except Exception:
+        pass
+
     # Write updated configuration back to the file
     try:
         with open(CONFIGFILE, 'w') as configfile:
@@ -657,6 +666,22 @@ def update_single_config_parameter(parameter: str):
     if 'Settings' not in updater:
         updater.add_section('Settings')
     
+    # Remote-mode: never persist remote-only settings in config.ini.
+    if is_remote_mode() and parameter.upper() in _REMOTE_ONLY_SETTINGS:
+        try:
+            _write_remote_overrides_from_config(_remote_configfile_path())
+        except Exception:
+            pass
+        try:
+            # Best-effort cleanup: remove the option from config.ini if present.
+            if 'Settings' in updater and parameter.lower() in updater['Settings']:
+                del updater['Settings'][parameter.lower()]
+                with open(CONFIGFILE, 'w') as configfile:
+                    updater.write(configfile)
+        except Exception:
+            pass
+        return
+
     # Get the value to write
     value = CONFIG[parameter.upper()]
     

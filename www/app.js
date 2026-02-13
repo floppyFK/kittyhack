@@ -210,6 +210,24 @@ document.addEventListener("DOMContentLoaded", function() {
 
     // Tooltips are not auto-enabled by Bootstrap from data attributes.
     // Shiny often re-renders UI outputs; ensure new tooltip triggers are initialized.
+    function cleanupOrphanTooltips() {
+        try {
+            // Remove tooltip popups whose trigger element no longer exists
+            // (can happen when Shiny replaces hovered nodes during re-render).
+            const popups = document.querySelectorAll('.tooltip[id]');
+            popups.forEach(function(popup) {
+                const id = popup.getAttribute('id');
+                if (!id) return;
+                const trigger = document.querySelector('[aria-describedby="' + id + '"]');
+                if (!trigger) {
+                    try { popup.remove(); } catch (e) {}
+                }
+            });
+        } catch (e) {
+            // ignore
+        }
+    }
+
     ensureBootstrapTooltips(document);
     let tooltipInitScheduled = false;
     const tooltipInitObserver = new MutationObserver(function(mutations) {
@@ -223,11 +241,13 @@ document.addEventListener("DOMContentLoaded", function() {
                 for (let i = 0; i < mutations.length; i++) {
                     const m = mutations[i];
                     if (m && m.addedNodes && m.addedNodes.length) {
+                        cleanupOrphanTooltips();
                         ensureBootstrapTooltips(document);
                         break;
                     }
                 }
             } catch (e) {
+                cleanupOrphanTooltips();
                 ensureBootstrapTooltips(document);
             }
         }, 0);

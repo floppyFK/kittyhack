@@ -15,10 +15,10 @@ If you find any bugs or have suggestions for improvement, please report them on 
 
 ## Features
 
-Until version `v1.1.x`, Kittyhack was merely a frontend for visualizing camera images and changing some settings.  
+Until version `v1.1.x`, Kittyhack was merely a frontend for visualizing camera images and changing some settings.
 From version `v1.2.0`, Kittyhack replaces the complete original Kittyflap software with extended functionality.
 
-Current features:  
+Current features:
 - **Toggle prey detection**
 - **Configure thresholds for mouse detection**
 - **Switch entry direction** between "All cats", "All chipped cats", "my cats only" or "no cats"
@@ -27,10 +27,10 @@ Current features:
 - **Show overlay with detected objects**
 - **Live camera feed**
 - **Manage cats and add new cats**
-- **Show incoming/outgoing Events** 
+- **Show incoming/outgoing Events**
 - **AI Training** Create a custom object detection model for your cat and your environment by using your own images
 - **Support of external IP cameras** for enhanced viewing angles and improved night vision comapred to the internal Kittyflap camera
-- **Home Assistant integration via MQTT** 
+- **Home Assistant integration via MQTT**
 
 ---
 
@@ -42,6 +42,10 @@ Current features:
   - The hostname begins with `kittyflap-`
   - The MAC address should start with `d8:3a:dd`.
   ![kittyflap router configuration](doc/kittyflap-hostname.png)
+
+- **Python 3.11** is currently required. On newer systems (e.g. Debian 13 / Python 3.13 by default) the setup script will try to install/provision Python 3.11 automatically (via apt, or `uv` as fallback).
+
+- Headless/container installs may need OpenCV runtime libraries (`libgl1`, `libglib2.0-0`). The setup script installs them automatically.
 
 ### If your Kittyflap hasn't been set up yet
 If you never configured your Kittyflap with the official app, it is preset to a default WiFi network.
@@ -169,6 +173,35 @@ Updates for Kittyhack are available directly in the WebGUI in the 'Info' section
 Alternatively, you can also run the [setup script](#setup_en) again on the Kittyflap to perform an update.
 
 
+## Remote control (experimental)
+
+For a more detailed overview (requirements, setup, failure behavior), see [remote-mode.md](doc/remote-mode.md)
+
+Kittyhack can be split into two roles:
+
+- **target-mode**: runs on the Kittyflap hardware and controls sensors/actors (PIR, magnets/locks, RFID).
+- **remote-mode**: runs on a more powerful remote system and performs inference + UI, while the target device exposes sensors/actors over WebSocket.
+
+How it works:
+
+- The target device runs an always-on service **kittyhack_control** listening on port **8888**.
+- When a remote-mode instance connects, the target stops **kittyhack.service**, waits ~1s, then accepts remote control.
+- If the remote connection is lost (timeout), the target automatically starts **kittyhack.service** again.
+
+Mode selection:
+
+- Kittyhack defaults to **target-mode**.
+- If the marker file `.remote-mode` exists in the kittyhack folder, kittyhack runs in **remote-mode**.
+
+Initial sync (first remote connect):
+
+- The remote-mode client requests a best-effort sync of `kittyhack.db`, `config.ini`, pictures (`pictures/`), and models (`models/yolo/`).
+
+Remote-mode limitations (initial state):
+
+- Only **IP camera** is supported (no internal Kittyflap camera stream yet).
+
+
 ## FAQ
 
 ### My Kittyflap disappears from my WLAN after a few hours
@@ -203,7 +236,7 @@ You can find the option under **Configuration** → **Use camera for motion dete
 
 Kittyhack ist ein Open-Source-Projekt, das die Offline-Nutzung der Kittyflap-Katzenklappe ermöglicht – ganz ohne Internetzugang. Es wurde ins Leben gerufen, nachdem der Anbieter der Kittyflap Insolvenz angemeldet hat und die zugehörige App nicht mehr funktionierte.
 
-⚠️ **Wichtige Hinweise**  
+⚠️ **Wichtige Hinweise**
 Ich stehe in keinerlei Verbindung mit dem Hersteller der Kittyflap. Dieses Projekt wurde aus eigenem Antrieb erstellt, um meine eigene Katzenklappe weiterhin nutzen zu können.
 
 Wenn du Bugs findest oder Verbesserungsvorschläge hast, melde sie bitte im Issue Tracker dieses GitHub Projekts.
@@ -212,10 +245,10 @@ Wenn du Bugs findest oder Verbesserungsvorschläge hast, melde sie bitte im Issu
 
 ## Funktionsumfang
 
-Bis Version `v1.1.x` war Kittyhack lediglich ein Frontend zur Visualisierung der Kamerabilder und zum Ändern einiger Einstellungen.  
+Bis Version `v1.1.x` war Kittyhack lediglich ein Frontend zur Visualisierung der Kamerabilder und zum Ändern einiger Einstellungen.
 Ab Version `v1.2.0` ersetzt Kittyhack die komplette Originalsoftware der Kittyflap mit einem erweiterten Funktionsumfang.
 
-Aktuelle Features:  
+Aktuelle Features:
 - **Beuteerkennung ein-/ausschalten**
 - **Schwellwerte für Mauserkennung konfigurieren**
 - **Eingangsrichtung umschalten** zwischen "Alle Katzen", "Alle gechippten Katzen", "nur meine Katzen" oder "keine Katzen"
@@ -227,7 +260,7 @@ Aktuelle Features:
 - **Ereignisse von ankommenden/rausgehenden Katzen anzeigen**
 - **"KI" Modell Training** Erstelle ein individuelles Objekterkennungsmodell für deine Katze und deine Umgebung anhand der eigenen Bilder
 - **Support externer IP-Kameras** für bessere Blickwinkel und verbesserte Nachtsicht gegenüber der internen Kittyflap Kamera
-- **Home Assistant Unterstützung via MQTT**  
+- **Home Assistant Unterstützung via MQTT**
 
 ---
 
@@ -365,6 +398,35 @@ auf die Kittyflap über deinen Router freigibst. Für eine sichere Verbindung k�
 ### Updates
 Updates von Kittyhack sind direkt in der WebGUI in der Sektion 'Info' möglich.  
 Alternativ zu den Updates über die WebGUI kann auch das [Setup Script](#setup_de) erneut ausgeführt werden. Auch dort ist ein Update möglich.
+
+
+## Fernsteuerung (experimentell)
+
+Für einen detaillierteren Überblick (Anforderungen, Einrichtung, Verhalten bei Ausfällen), siehe [remote-mode_de.md](doc/remote-mode_de.md)
+
+Kittyhack kann in zwei Rollen aufgeteilt werden:
+
+- **target-mode**: läuft auf der Kittyflap-Hardware und steuert Sensoren/Aktoren (PIR, Magnete/Schlösser, RFID).
+- **remote-mode**: läuft auf einem leistungsfähigeren Remote-System und führt Inference + UI aus, während das Zielgerät Sensoren/Aktoren über WebSocket exponiert.
+
+Funktionsweise:
+
+- Das Zielgerät führt einen immer laufenden Dienst **kittyhack_control** aus, der auf Port **8888** hört.
+- Wenn sich eine remote-mode Instanz verbindet, stoppt das Ziel **kittyhack.service**, wartet ~1s und akzeptiert dann die Fernsteuerung.
+- Falls die Remote-Verbindung verloren geht (Timeout), startet das Ziel automatisch **kittyhack.service** erneut.
+
+Modusauswahl:
+
+- Kittyhack läuft standardmäßig im **target-mode**.
+- Wenn die Markierungsdatei `.remote-mode` im kittyhack Ordner existiert, läuft kittyhack im **remote-mode**.
+
+Erste Synchronisation (erste Remote-Verbindung):
+
+- Der remote-mode Client fordert eine bestmögliche Synchronisation von `kittyhack.db`, `config.ini`, Bildern (`pictures/`) und Modellen (`models/yolo/`) an.
+
+Einschränkungen des remote-modes (Anfangsstatus):
+
+- Nur **IP-Kamera** wird unterstützt (kein Stream der internen Kittyflap Kamera verfügbar).
 
 
 ## FAQ

@@ -12,6 +12,8 @@ from typing import Any
 
 import requests
 
+from src.paths import models_yolo_root
+
 
 def _atomic_write_json(path: str, data: dict[str, Any]) -> None:
     tmp_path = f"{path}.tmp"
@@ -134,7 +136,7 @@ def download_and_extract(*, base_url: str, result_id: str, model_name: str, toke
         info_name, creation_date = _determine_model_name_from_info(tmp_zip_path)
         final_name = model_name or info_name or creation_date
 
-        base_dir = "/root/models/yolo"
+        base_dir = models_yolo_root()
         os.makedirs(base_dir, exist_ok=True)
 
         dir_name = _sanitize_directory_name(final_name)

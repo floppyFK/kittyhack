@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620">
+  <defs>
+    <style>
+      .title{font:700 28px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#111;}
+      .h{font:700 18px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#111;}
+      .t{font:400 16px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#111;}
+      .muted{font:400 14px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#444;}
+      .box{fill:#fff;stroke:#111;stroke-width:2;rx:12;}
+      .lane{fill:#f7f7f7;stroke:#bbb;stroke-width:2;rx:18;}
+      .arrow{stroke:#111;stroke-width:3;fill:none;marker-end:url(#m);} 
+      .darrow{stroke:#111;stroke-width:3;fill:none;stroke-dasharray:7 7;marker-end:url(#m);} 
+    </style>
+    <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#111" />
+    </marker>
+  </defs>
+
+  <text x="40" y="55" class="title">Connection loss / timeout recovery</text>
+  <text x="40" y="90" class="muted">Target self-recovers by releasing control and restarting kittyhack.service.</text>
+
+  <rect x="40" y="130" width="520" height="440" class="lane"/>
+  <rect x="640" y="130" width="520" height="440" class="lane"/>
+  <text x="60" y="165" class="h">Remote system</text>
+  <text x="660" y="165" class="h">Kittyflap target</text>
+
+  <rect x="80" y="230" width="440" height="90" class="box"/>
+  <text x="100" y="262" class="t">Remote disconnects</text>
+  <text x="100" y="288" class="muted">WiFi drop / crash / shutdown</text>
+
+  <rect x="80" y="360" width="440" height="90" class="box"/>
+  <text x="100" y="392" class="t">Remote retries connecting</text>
+  <text x="100" y="418" class="muted">Backoff up to ~30s</text>
+
+  <rect x="680" y="230" width="440" height="110" class="box"/>
+  <text x="700" y="262" class="t">No keepalive seen</text>
+  <text x="700" y="288" class="muted">If exceeded REMOTE_CONTROL_TIMEOUT</text>
+
+  <rect x="680" y="370" width="440" height="150" class="box"/>
+  <text x="700" y="402" class="t">Target releases control</text>
+  <text x="720" y="430" class="muted">• stop RFID read</text>
+  <text x="720" y="454" class="muted">• disable RFID field/power</text>
+  <text x="720" y="478" class="muted">• clear magnet queue (shutdown)</text>
+
+  <rect x="680" y="540" width="440" height="70" class="box"/>
+  <text x="700" y="582" class="t">Restart kittyhack.service (local mode)</text>
+
+  <path d="M 520 275 C 570 275, 590 275, 640 275" class="darrow"/>
+  <text x="535" y="255" class="muted">keepalive stops</text>
+
+  <path d="M 900 340 C 900 355, 900 355, 900 370" class="arrow"/>
+  <path d="M 900 520 C 900 530, 900 530, 900 540" class="arrow"/>
+
+  <path d="M 300 320 C 300 340, 300 340, 300 360" class="arrow"/>
+</svg>

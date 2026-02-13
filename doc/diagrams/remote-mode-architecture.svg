@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640">
+  <defs>
+    <style>
+      .title{font:700 28px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#111;}
+      .h{font:700 18px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#111;}
+      .t{font:400 16px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#111;}
+      .muted{font:400 14px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#444;}
+      .box{fill:#fff;stroke:#111;stroke-width:2;rx:14;}
+      .lane{fill:#f7f7f7;stroke:#bbb;stroke-width:2;rx:18;}
+      .arrow{stroke:#111;stroke-width:3;fill:none;marker-end:url(#m);} 
+      .darrow{stroke:#111;stroke-width:3;fill:none;stroke-dasharray:8 8;marker-end:url(#m);} 
+      .thin{stroke:#111;stroke-width:2;fill:none;marker-end:url(#m);} 
+    </style>
+    <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#111" />
+    </marker>
+  </defs>
+
+  <text x="40" y="55" class="title">Kittyhack remote-mode — architecture</text>
+  <text x="40" y="90" class="muted">Remote system runs UI + inference. Kittyflap target exposes sensors/actors via WebSocket control service.</text>
+
+  <!-- LAN lane -->
+  <rect x="30" y="120" width="1140" height="470" class="lane"/>
+  <text x="55" y="155" class="h">Local network (LAN)</text>
+
+  <!-- Browser -->
+  <rect x="70" y="210" width="260" height="120" class="box"/>
+  <text x="95" y="245" class="h">User browser</text>
+  <text x="95" y="275" class="t">Connects to UI on</text>
+  <text x="95" y="300" class="t">remote system (HTTP)</text>
+
+  <!-- Remote system -->
+  <rect x="420" y="190" width="340" height="210" class="box"/>
+  <text x="445" y="225" class="h">Remote system (remote-mode)</text>
+  <text x="445" y="255" class="t">Kittyhack UI + backend</text>
+  <text x="445" y="280" class="t">Inference / training</text>
+  <text x="445" y="305" class="t">Reads IP camera stream</text>
+  <text x="445" y="330" class="t">Controls target via WebSocket</text>
+
+  <!-- Target -->
+  <rect x="860" y="190" width="290" height="210" class="box"/>
+  <text x="885" y="225" class="h">Kittyflap (target-mode)</text>
+  <text x="885" y="255" class="t">Sensors/actors:</text>
+  <text x="905" y="280" class="t">• PIR</text>
+  <text x="905" y="305" class="t">• RFID</text>
+  <text x="905" y="330" class="t">• Locks (magnets)</text>
+  <text x="885" y="360" class="t">Service: kittyhack_control</text>
+
+  <!-- IP Camera -->
+  <rect x="420" y="450" width="340" height="110" class="box"/>
+  <text x="445" y="485" class="h">IP camera</text>
+  <text x="445" y="515" class="t">RTSP / HTTP stream</text>
+
+  <!-- Arrows -->
+  <path d="M 330 260 C 360 260, 380 260, 420 260" class="arrow"/>
+  <text x="335" y="240" class="muted">HTTP :80</text>
+
+  <path d="M 760 250 C 800 250, 820 250, 860 250" class="arrow"/>
+  <text x="765" y="230" class="muted">WebSocket :8888</text>
+
+  <path d="M 860 310 C 820 310, 800 310, 760 310" class="darrow"/>
+  <text x="765" y="335" class="muted">state stream (PIR/RFID/locks)</text>
+
+  <path d="M 590 450 C 590 420, 590 410, 590 400" class="thin"/>
+  <text x="610" y="425" class="muted">video stream</text>
+
+  <!-- Optional sync note -->
+  <path d="M 760 365 C 805 405, 820 430, 860 470" class="thin"/>
+  <text x="740" y="395" class="muted">optional initial sync</text>
+
+  <!-- Footer note -->
+  <text x="55" y="580" class="muted">If the remote disconnects, the target can restart kittyhack.service and operate autonomously again.</text>
+</svg>

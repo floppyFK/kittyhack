@@ -15,6 +15,9 @@ import json
 from configupdater import ConfigUpdater
 from typing import Any, Callable, List, Tuple
 
+from src.mode import is_remote_mode
+from src.paths import kittyhack_root
+
 ###### ENUM DEFINITIONS ######
 class AllowedToEnter(Enum):
     ALL = 'all'
@@ -32,6 +35,146 @@ class AllowedToExit(Enum):
 
 # Files
 CONFIGFILE = 'config.ini'
+REMOTE_CONFIGFILE = 'config.remote.ini'
+
+# Remote-mode settings must be local to the remote device (sync overwrites config.ini).
+# We keep them in a separate overlay file that is loaded only in remote-mode.
+_REMOTE_ONLY_SETTINGS: dict[str, tuple[str, str]] = {
+    # CONFIG_KEY: (ini_option_name, type)
+    "REMOTE_TARGET_HOST": ("remote_target_host", "str"),
+    "REMOTE_CONTROL_PORT": ("remote_control_port", "int"),
+    "REMOTE_CONTROL_TIMEOUT": ("remote_control_timeout", "float"),
+    "REMOTE_SYNC_ON_FIRST_CONNECT": ("remote_sync_on_first_connect", "bool"),
+    "REMOTE_SYNC_INCLUDE_PICTURES": ("remote_sync_include_pictures", "bool"),
+    "REMOTE_SYNC_INCLUDE_MODELS": ("remote_sync_include_models", "bool"),
+    "REMOTE_INFERENCE_MAX_FPS": ("remote_inference_max_fps", "float"),
+}
+
+
+def _remote_configfile_path() -> str:
+    # Allow override primarily for testing.
+    override = os.environ.get("KITTYHACK_REMOTE_CONFIGFILE")
+    if override:
+        return override
+    return os.path.join(kittyhack_root(), REMOTE_CONFIGFILE)
+
+
+def _write_remote_overrides_from_config(path: str) -> None:
+    parser = configparser.ConfigParser()
+    parser["Settings"] = {}
+    for cfg_key, (opt, _t) in _REMOTE_ONLY_SETTINGS.items():
+        # Values in configparser need to be strings
+        parser["Settings"][opt] = str(CONFIG.get(cfg_key, ""))
+    with open(path, "w", encoding="utf-8") as f:
+        parser.write(f)
+
+
+def _apply_remote_overrides() -> None:
+    """Apply remote-only settings from config.remote.ini.
+
+    In remote-mode we want REMOTE_* parameters to survive sync operations,
+    therefore they are loaded from a local-only overlay file.
+    """
+    path = _remote_configfile_path()
+    if not os.path.exists(path):
+        try:
+            _write_remote_overrides_from_config(path)
+            logging.info(f"[CONFIG] Created remote override file: {path}")
+        except Exception as e:
+            logging.warning(f"[CONFIG] Failed to create remote override file '{path}': {e}")
+        return
+
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(path)
+    except Exception as e:
+        logging.warning(f"[CONFIG] Failed to read remote override file '{path}': {e}")
+        return
+
+    if not parser.has_section("Settings"):
+        return
+
+    for cfg_key, (opt, t) in _REMOTE_ONLY_SETTINGS.items():
+        if not parser.has_option("Settings", opt):
+            continue
+        try:
+            if t == "int":
+                CONFIG[cfg_key] = parser.getint("Settings", opt)
+            elif t == "float":
+                CONFIG[cfg_key] = parser.getfloat("Settings", opt)
+            elif t == "bool":
+                CONFIG[cfg_key] = parser.getboolean("Settings", opt)
+            else:
+                CONFIG[cfg_key] = parser.get("Settings", opt)
+        except Exception:
+            # Keep the value from config.ini/defaults if override parsing fails.
+            logging.warning(f"[CONFIG] Invalid remote override '{opt}' in {path}; keeping current value")
+
+
+def read_remote_config_values() -> dict:
+    defaults = {
+        "remote_target_host": (CONFIG.get("REMOTE_TARGET_HOST") or "").strip(),
+        "remote_control_port": int(CONFIG.get("REMOTE_CONTROL_PORT", 8888) or 8888),
+        "remote_control_timeout": float(CONFIG.get("REMOTE_CONTROL_TIMEOUT", 10.0) or 10.0),
+        "remote_sync_on_first_connect": bool(CONFIG.get("REMOTE_SYNC_ON_FIRST_CONNECT", True)),
+        "remote_sync_include_pictures": bool(CONFIG.get("REMOTE_SYNC_INCLUDE_PICTURES", True)),
+        "remote_sync_include_models": bool(CONFIG.get("REMOTE_SYNC_INCLUDE_MODELS", True)),
+    }
+    remote_cfg_path = _remote_configfile_path()
+    if not os.path.exists(remote_cfg_path):
+        return defaults
+
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(remote_cfg_path)
+        if "Settings" not in parser:
+            return defaults
+        section = parser["Settings"]
+        return {
+            "remote_target_host": (section.get("remote_target_host", defaults["remote_target_host"]) or "").strip(),
+            "remote_control_port": section.getint("remote_control_port", fallback=defaults["remote_control_port"]),
+            "remote_control_timeout": section.getfloat("remote_control_timeout", fallback=defaults["remote_control_timeout"]),
+            "remote_sync_on_first_connect": section.getboolean(
+                "remote_sync_on_first_connect", fallback=defaults["remote_sync_on_first_connect"]
+            ),
+            "remote_sync_include_pictures": section.getboolean(
+                "remote_sync_include_pictures", fallback=defaults["remote_sync_include_pictures"]
+            ),
+            "remote_sync_include_models": section.getboolean(
+                "remote_sync_include_models", fallback=defaults["remote_sync_include_models"]
+            ),
+        }
+    except Exception as e:
+        logging.warning(f"Failed to read config.remote.ini: {e}")
+        return defaults
+
+
+def remote_setup_required() -> bool:
+    if not is_remote_mode():
+        return False
+    remote_cfg_path = _remote_configfile_path()
+    if not os.path.exists(remote_cfg_path):
+        return True
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(remote_cfg_path)
+    except Exception:
+        return True
+    if "Settings" not in parser:
+        return True
+    section = parser["Settings"]
+    required_keys = [
+        "remote_target_host",
+        "remote_control_port",
+        "remote_control_timeout",
+        "remote_sync_on_first_connect",
+    ]
+    for key in required_keys:
+        if key not in section:
+            return True
+    if not (section.get("remote_target_host", "") or "").strip():
+        return True
+    return False
 
 # Gettext constants
 LOCALE_DIR = "locales"
@@ -39,6 +182,9 @@ DOMAIN = "messages"
 
 # Global dictionary to store configuration settings
 CONFIG = {}
+
+# True if config.ini had to be created or recreated during this process startup.
+CONFIG_CREATED_AT_STARTUP = False
 
 # Default configuration values
 DEFAULT_CONFIG = {
@@ -112,7 +258,16 @@ DEFAULT_CONFIG = {
         "restart_ip_camera_stream_on_failure": True,
         "wlan_watchdog_enabled": True,
         "disable_rfid_reader": False,
-        "event_images_fs_migrated": False
+        "event_images_fs_migrated": False,
+
+        # Remote control / remote-mode
+        "remote_target_host": "",
+        "remote_control_port": 8888,
+        "remote_control_timeout": 10.0,
+        "remote_sync_on_first_connect": True,
+        "remote_sync_include_pictures": True,
+        "remote_sync_include_models": True,
+        "remote_inference_max_fps": 10.0,
     }
 }
 
@@ -131,10 +286,11 @@ def load_config():
     Missing keys are silently defaulted (not treated as invalid).
     Invalid keys are removed from config.ini.
     """
-    global CONFIG
+    global CONFIG, CONFIG_CREATED_AT_STARTUP
     if not os.path.exists(CONFIGFILE):
         print(f"Configuration file '{CONFIGFILE}' not found. Creating with default values...")
         create_default_config()
+        CONFIG_CREATED_AT_STARTUP = True
     
     parser = configparser.ConfigParser()
     parser.read(CONFIGFILE)
@@ -151,6 +307,7 @@ def load_config():
         except Exception as e:
             logging.warning(f"[CONFIG] Failed to remove corrupt config.ini: {e}")
         create_default_config()
+        CONFIG_CREATED_AT_STARTUP = True
         parser = configparser.ConfigParser()
         parser.read(CONFIGFILE)
 
@@ -222,7 +379,7 @@ def load_config():
 
     d = DEFAULT_CONFIG['Settings']
 
-    CONFIG = {
+    new_config = {
         "TIMEZONE": safe_str("TIMEZONE", d['timezone']),
         "LANGUAGE": safe_str("LANGUAGE", d['language']),
         "DATE_FORMAT": safe_str("DATE_FORMAT", d['date_format']),
@@ -293,8 +450,21 @@ def load_config():
         "RESTART_IP_CAMERA_STREAM_ON_FAILURE": safe_bool("RESTART_IP_CAMERA_STREAM_ON_FAILURE", d.get('restart_ip_camera_stream_on_failure', True)),
         "WLAN_WATCHDOG_ENABLED": safe_bool("WLAN_WATCHDOG_ENABLED", d.get('wlan_watchdog_enabled', True)),
         "DISABLE_RFID_READER": safe_bool("DISABLE_RFID_READER", d.get('disable_rfid_reader', False)),
-        "EVENT_IMAGES_FS_MIGRATED": safe_bool("EVENT_IMAGES_FS_MIGRATED", d.get('event_images_fs_migrated', False))
+        "EVENT_IMAGES_FS_MIGRATED": safe_bool("EVENT_IMAGES_FS_MIGRATED", d.get('event_images_fs_migrated', False)),
+
+        # Remote control / remote-mode
+        "REMOTE_TARGET_HOST": safe_str("REMOTE_TARGET_HOST", d.get('remote_target_host', "")),
+        "REMOTE_CONTROL_PORT": safe_int("REMOTE_CONTROL_PORT", int(d.get('remote_control_port', 8888))),
+        "REMOTE_CONTROL_TIMEOUT": safe_float("REMOTE_CONTROL_TIMEOUT", float(d.get('remote_control_timeout', 10.0))),
+        "REMOTE_SYNC_ON_FIRST_CONNECT": safe_bool("REMOTE_SYNC_ON_FIRST_CONNECT", d.get('remote_sync_on_first_connect', True)),
+        "REMOTE_SYNC_INCLUDE_PICTURES": safe_bool("REMOTE_SYNC_INCLUDE_PICTURES", d.get('remote_sync_include_pictures', True)),
+        "REMOTE_SYNC_INCLUDE_MODELS": safe_bool("REMOTE_SYNC_INCLUDE_MODELS", d.get('remote_sync_include_models', True)),
+        "REMOTE_INFERENCE_MAX_FPS": safe_float("REMOTE_INFERENCE_MAX_FPS", float(d.get('remote_inference_max_fps', 10.0))),
     }
+
+    # Update in-place so imported CONFIG references in other modules stay valid.
+    CONFIG.clear()
+    CONFIG.update(new_config)
 
     if invalid_values:
         # Remove invalid keys from config.ini before notifying user
@@ -341,6 +511,11 @@ def load_config():
             )
         except Exception:
             logging.warning("[CONFIG] Could not add user notification for invalid values.")
+
+    # Remote-mode: load remote-only overrides from a local overlay file.
+    # This ensures sync operations (which overwrite config.ini) cannot wipe these settings.
+    if is_remote_mode():
+        _apply_remote_overrides()
 
 def save_config():
     """
@@ -436,6 +611,15 @@ def save_config():
         return False
     
     logging.info("Updated the values in the configfile")
+
+    # Remote-mode: persist remote-only settings to the local overlay file too.
+    # This ensures sync operations (which overwrite config.ini) cannot wipe these settings.
+    if is_remote_mode():
+        try:
+            _write_remote_overrides_from_config(_remote_configfile_path())
+        except Exception as e:
+            logging.warning(f"[CONFIG] Failed to write remote override file '{_remote_configfile_path()}': {e}")
+
     return True
 
 def update_config_images_overlay():
@@ -489,6 +673,13 @@ def update_single_config_parameter(parameter: str):
         logging.info(f"Updated {parameter.upper()} in the configfile to: {value}")
     except Exception as e:
         logging.error(f"Failed to update {parameter.upper()} in the configfile: {e}")
+
+    # Keep remote override file in sync in remote-mode.
+    if is_remote_mode() and parameter.upper() in _REMOTE_ONLY_SETTINGS:
+        try:
+            _write_remote_overrides_from_config(_remote_configfile_path())
+        except Exception:
+            pass
 
 def create_default_config():
     """

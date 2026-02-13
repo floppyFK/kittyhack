@@ -1,4 +1,5 @@
 import os
+import configparser
 import pandas as pd
 from datetime import datetime, timedelta
 import time as tm
@@ -23,13 +24,17 @@ import shutil
 from typing import List
 from src.baseconfig import (
     CONFIG,
+    CONFIG_CREATED_AT_STARTUP,
     AllowedToEnter,
+    load_config,
     set_language,
     save_config,
     configure_logging,
     get_loggable_config_value,
     DEFAULT_CONFIG,
-    UserNotifications
+    UserNotifications,
+    read_remote_config_values,
+    remote_setup_required
 )
 from src.helper import (
     EventType,
@@ -78,9 +83,22 @@ from src.system import (
     is_gateway_reachable,
     upgrade_base_system_packages
 )
+from src.paths import pictures_original_dir, kittyhack_root
+from src.mode import is_remote_mode
 
 # Prepare gettext for translations based on the configured language
 _ = set_language(CONFIG['LANGUAGE'])
+
+
+def _disable_numeric_input(tag):
+    """Disable a ui.input_numeric Tag (shiny currently has no disabled= for input_numeric)."""
+    try:
+        # Structure: <div> [0]=<label>, [1]=<input>
+        if getattr(tag, "children", None) and len(tag.children) >= 2:
+            tag.children[1].attrs["disabled"] = "disabled"
+    except Exception:
+        pass
+    return tag
 
 
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
@@ -124,13 +142,96 @@ if not CONFIG['MQTT_DEVICE_ID']:
     
 # Now proceed with the startup
 from src.backend import backend_main, restart_mqtt, update_mqtt_config, update_mqtt_language, manual_door_override, model_handler
-from src.magnets_rfid import Magnets
-from src.pir import Pir
+if is_remote_mode():
+    from src.remote.hardware import Magnets, Pir  # type: ignore
+else:
+    from src.magnets_rfid import Magnets
+    from src.pir import Pir
 from src.model import RemoteModelTrainer, YoloModel
 from src.shiny_wrappers import uix
 
 # Read the GIT version
-git_version = get_git_version()
+def _parse_version_tuple(version: str) -> tuple[int, ...]:
+    parts = []
+    for part in (version or "").split("."):
+        if part.isdigit():
+            parts.append(int(part))
+        else:
+            break
+    return tuple(parts)
+
+
+def _get_highest_changelog_version() -> str | None:
+    changelog_dir = os.path.join(kittyhack_root(), "doc", "changelogs")
+    pattern = os.path.join(changelog_dir, "changelog_v*_*.md")
+    best_version = None
+    best_tuple = None
+    for path in glob.glob(pattern):
+        name = os.path.basename(path)
+        match = re.search(r"changelog_v(\d+(?:\.\d+)+)_", name)
+        if not match:
+            continue
+        version = match.group(1)
+        version_tuple = _parse_version_tuple(version)
+        if not version_tuple:
+            continue
+        if best_tuple is None or version_tuple > best_tuple:
+            best_tuple = version_tuple
+            best_version = version
+    return best_version
+
+
+def _get_fallback_version() -> str:
+    version = _get_highest_changelog_version()
+    if version:
+        return f"v{version}"
+    return "unknown"
+
+
+git_repo_available = os.path.isdir(os.path.join(kittyhack_root(), ".git"))
+version_from_changelog = False
+try:
+    git_version = get_git_version()
+except Exception as e:
+    logging.warning(f"Failed to read git version: {e}")
+    git_version = "unknown"
+
+if not git_version or git_version == "unknown":
+    fallback_version = _get_fallback_version()
+    if fallback_version != "unknown":
+        git_version = fallback_version
+        version_from_changelog = True
+        logging.warning(f"Using version from changelog files: {git_version}")
+
+# Fresh/corrupt-recovered config.ini should not trigger startup changelog popups.
+if CONFIG_CREATED_AT_STARTUP and CONFIG.get('LAST_READ_CHANGELOGS') != git_version:
+    CONFIG['LAST_READ_CHANGELOGS'] = git_version
+    try:
+        update_single_config_parameter("LAST_READ_CHANGELOGS")
+    except Exception as e:
+        logging.warning(f"Failed to initialize LAST_READ_CHANGELOGS for fresh config: {e}")
+
+
+remote_setup_required = remote_setup_required()
+backend_thread = None
+background_task_started = False
+
+
+def start_backend_if_needed():
+    global backend_thread
+    if backend_thread is not None and backend_thread.is_alive():
+        return
+    logging.info("Starting backend...")
+    backend_thread = threading.Thread(target=backend_main, args=(CONFIG['SIMULATE_KITTYFLAP'],), daemon=True)
+    backend_thread.start()
+
+
+def start_background_task_if_needed():
+    global background_task_started
+    if background_task_started:
+        return
+    start_background_task()
+    background_task_started = True
 
 # MIGRATION RULES ##################################################################################################
 
@@ -163,7 +264,22 @@ for key, value in CONFIG.items():
     logging.info(f"{key}={loggable_value}")
 
 # IMPORTANT: First of all check that the kwork and manager services are NOT running
-check_and_stop_kittyflap_services(CONFIG['SIMULATE_KITTYFLAP'])
+# (only relevant on the target device)
+if not is_remote_mode():
+    check_and_stop_kittyflap_services(CONFIG['SIMULATE_KITTYFLAP'])
+
+# Remote-mode constraints
+if is_remote_mode():
+    if CONFIG.get('CAMERA_SOURCE') != 'ip_camera':
+        logging.warning("[REMOTE_MODE] Forcing CAMERA_SOURCE='ip_camera' (internal camera not supported in remote-mode yet).")
+        CONFIG['CAMERA_SOURCE'] = 'ip_camera'
+        try:
+            update_single_config_parameter('CAMERA_SOURCE')
+        except Exception:
+            pass
+
+    if not (CONFIG.get('REMOTE_TARGET_HOST') or '').strip():
+        logging.warning("[REMOTE_MODE] REMOTE_TARGET_HOST is empty; remote sensors/actors will not connect.")
 
 # Cleanup old temp files
 if os.path.exists("/tmp/kittyhack.db"):
@@ -277,13 +393,18 @@ if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "own_
     logging.warning(f"Column 'own_cat_probability' not found in the 'events' table. Adding it...")
     add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "own_cat_probability", "REAL")
 
-# v2.6.0: Store recorded image dimensions for better initial aspect-ratio in the event modal
+# v2.5.0: Store recorded image dimensions for better initial aspect-ratio in the event modal
 if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "img_width"):
     logging.warning("Column 'img_width' not found in the 'events' table. Adding it...")
     add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "img_width", "INTEGER")
 if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "img_height"):
     logging.warning("Column 'img_height' not found in the 'events' table. Adding it...")
     add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "img_height", "INTEGER")
+
+# v2.5.0: Store effective FPS per event so playback speed matches capture speed
+if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "effective_fps"):
+    logging.warning("Column 'effective_fps' not found in the 'events' table. Adding it...")
+    add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "effective_fps", "REAL")
 
 if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
     logging.warning(f"Legacy table 'photo' not found in the kittyhack database. Creating it...")
@@ -350,18 +471,22 @@ if wait_for_network(timeout=10):
         logging.warning(f"[VERSION] Failed to fetch latest Kittyhack version at startup: {e}")
 else:
     logging.warning("Timeout for network connectivity reached. Proceeding without network connection.")
-logging.info("Starting backend...")
-backend_thread = threading.Thread(target=backend_main, args=(CONFIG['SIMULATE_KITTYFLAP'],), daemon=True)
-backend_thread.start()
+if is_remote_mode() and remote_setup_required:
+    logging.warning("[REMOTE_MODE] Remote configuration missing; backend startup deferred.")
+else:
+    start_backend_if_needed()
 
 # Log the relevant installed deb packages
 log_relevant_deb_packages()
 
 # Set the WLAN TX Power level
-logging.info(f"Setting WLAN TX Power to {CONFIG['WLAN_TX_POWER']} dBm...")
-systemcmd(["iwconfig", "wlan0", "txpower", f"{CONFIG['WLAN_TX_POWER']}"], CONFIG['SIMULATE_KITTYFLAP'])
-logging.info("Disabling WiFi power saving mode...")
-systemcmd(["iw", "dev", "wlan0", "set", "power_save", "off"], CONFIG['SIMULATE_KITTYFLAP'])
+if is_remote_mode():
+    logging.info("Remote-mode detected: skipping WLAN txpower and power-save configuration.")
+else:
+    logging.info(f"Setting WLAN TX Power to {CONFIG['WLAN_TX_POWER']} dBm...")
+    systemcmd(["iwconfig", "wlan0", "txpower", f"{CONFIG['WLAN_TX_POWER']}"] , CONFIG['SIMULATE_KITTYFLAP'])
+    logging.info("Disabling WiFi power saving mode...")
+    systemcmd(["iw", "dev", "wlan0", "set", "power_save", "off"], CONFIG['SIMULATE_KITTYFLAP'])
 
 logging.info("Starting frontend...")
 
@@ -452,18 +577,23 @@ def start_background_task():
                 migration_last_ts = tm.time()
 
             # --- WLAN connection check every 5 seconds ---
-            # Check WLAN connection state
-            try:
-                wlan_connections = get_wlan_connections()
-                wlan_connected = any(wlan['connected'] for wlan in wlan_connections)
-                gateway_reachable = is_gateway_reachable()
-            except Exception as e:
-                logging.error(f"[WLAN CHECK] Failed to get WLAN connections or gateway state: {e}")
-                wlan_connected = False
-                gateway_reachable = False
+            if is_remote_mode():
+                # Remote-mode runs on non-target systems where WLAN control is not applicable.
+                wlan_connected = True
+                gateway_reachable = True
+            else:
+                # Check WLAN connection state
+                try:
+                    wlan_connections = get_wlan_connections()
+                    wlan_connected = any(wlan['connected'] for wlan in wlan_connections)
+                    gateway_reachable = is_gateway_reachable()
+                except Exception as e:
+                    logging.error(f"[WLAN CHECK] Failed to get WLAN connections or gateway state: {e}")
+                    wlan_connected = False
+                    gateway_reachable = False
 
             # Only perform reconnect/reboot if WLAN watchdog is enabled
-            if CONFIG['WLAN_WATCHDOG_ENABLED']:
+            if (not is_remote_mode()) and CONFIG['WLAN_WATCHDOG_ENABLED']:
                 # Consider WLAN as not connected if either the interface or gateway is not reachable
                 if not wlan_connected or not gateway_reachable:
                     wlan_disconnect_counter += 1
@@ -641,7 +771,10 @@ def immediate_bg_task(trigger = "reload"):
     logging.info(f"[TRIGGER: {trigger}] End immediate background task")
 
 # Start the background task
-start_background_task()
+if is_remote_mode() and remote_setup_required:
+    logging.warning("[REMOTE_MODE] Remote configuration missing; background tasks deferred.")
+else:
+    start_background_task_if_needed()
 
 # Global reactive triggers
 reload_trigger_wlan = reactive.Value(0)
@@ -722,6 +855,7 @@ def show_event_server(input, output, session, block_id: int):
     last_scrubber_seen = [None]  # 1-based last observed scrubber value (for robustness)
     bundle_url = [None]  # optional: /thumb/... tar.gz that contains all thumbnails for this event
     aspect_style = [""]  # CSS var: --kh-event-aspect: w / h
+    event_effective_fps = [None]  # float | None
 
     def _event_bundle_rel_url(block_id: int) -> str:
         # Served via static_assets mapping in app.py: "/thumb" -> THUMBNAIL_DIR.
@@ -1115,6 +1249,24 @@ def show_event_server(input, output, session, block_id: int):
             aspect_style[0] = ""
             return
 
+        # Read effective FPS (capture/playback speed) from DB if available.
+        event_effective_fps[0] = None
+        try:
+            if 'effective_fps' in event.columns:
+                for __, r in event.iterrows():
+                    v = r.get('effective_fps')
+                    if v is None or pd.isna(v):
+                        continue
+                    try:
+                        fv = float(v)
+                    except Exception:
+                        continue
+                    if fv > 0:
+                        event_effective_fps[0] = fv
+                        break
+        except Exception:
+            event_effective_fps[0] = None
+
         # Compute aspect ratio for stable initial modal size (before first image loads).
         try:
             w = None
@@ -1243,6 +1395,22 @@ def show_event_server(input, output, session, block_id: int):
             event_datas[:] = list(event_datas)
             timestamps[:] = list(timestamps)
 
+        # Legacy fallback: if no effective_fps stored, approximate it from the event's frame timestamps.
+        if event_effective_fps[0] is None:
+            try:
+                ts = pd.to_datetime(event["created_at"], errors="coerce")
+                ts = ts.dropna()
+                if len(ts) >= 2 and len(pictures) >= 2:
+                    span = (ts.max() - ts.min()).total_seconds()
+                    if span and span > 0:
+                        fps = float(len(pictures) - 1) / float(span)
+                        if fps > 0:
+                            # Keep within the same bounds as the frontend.
+                            fps = max(0.1, min(30.0, fps))
+                            event_effective_fps[0] = fps
+            except Exception:
+                pass
+
         # Initialize double-buffer state for the slideshow: visible + preload
         frame_index[0] = 0
         shown_index[0] = 0
@@ -1295,6 +1463,7 @@ def show_event_server(input, output, session, block_id: int):
                         **{
                             "data-block-id": str(block_id),
                             "data-bundle-url": str(bundle_url[0] or ""),
+                            "data-event-fps": "" if event_effective_fps[0] is None else str(event_effective_fps[0]),
                         },
                     ),
                     ui.card_footer(
@@ -1625,7 +1794,7 @@ def show_event_server(input, output, session, block_id: int):
             # Prefer original image from filesystem if present
             img_bytes = None
             try:
-                fp = os.path.join("/root/pictures/original_images", f"{int(pid)}.jpg")
+                fp = os.path.join(pictures_original_dir(), f"{int(pid)}.jpg")
                 if os.path.exists(fp):
                     with open(fp, "rb") as f:
                         img_bytes = f.read()
@@ -1701,7 +1870,7 @@ def show_event_server(input, output, session, block_id: int):
                 orig_bytes = None
                 # Try filesystem path
                 try:
-                    fp = os.path.join("/root/pictures/original_images", f"{pid}.jpg")
+                    fp = os.path.join(pictures_original_dir(), f"{pid}.jpg")
                     if os.path.exists(fp):
                         with open(fp, "rb") as f:
                             orig_bytes = f.read()
@@ -2164,6 +2333,7 @@ def server(input, output, session):
     # Hold last uploaded file paths until user confirms restore
     last_uploaded_db_path = reactive.Value(None)
     last_uploaded_cfg_path = reactive.Value(None)
+    remote_setup_active = reactive.Value(bool(is_remote_mode() and remote_setup_required))
 
     # Live status for overlay in live view
     live_status = reactive.Value(
@@ -2206,6 +2376,186 @@ def server(input, output, session):
                     )
                 )
             )
+
+    def show_remote_setup_modal():
+        if not (is_remote_mode() and remote_setup_required):
+            return
+        values = read_remote_config_values()
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.markdown(
+                        _("Remote-mode setup is required before Kittyhack can start.")
+                        + "\n\n"
+                        + _("After saving, an initial sync can take several minutes (depending on pictures/models size).")
+                        + "\n"
+                        + _("Please keep this browser tab open and do not close or reload it until synchronization is finished.")
+                        + "\n"
+                        + _("Startup continues automatically after a successful sync.")
+                    ),
+                    ui.input_text(
+                        "remote_target_host",
+                        _("Remote target host"),
+                        value=values["remote_target_host"],
+                        width="100%"
+                    ),
+                    ui.input_numeric(
+                        "remote_control_port",
+                        _("Remote control port"),
+                        value=values["remote_control_port"],
+                        min=1,
+                        max=65535,
+                        step=1
+                    ),
+                    ui.input_numeric(
+                        "remote_control_timeout",
+                        _("Remote control timeout (seconds)"),
+                        value=values["remote_control_timeout"],
+                        min=1,
+                        max=120,
+                        step=1
+                    ),
+                    ui.input_switch(
+                        "remote_sync_on_first_connect",
+                        _("Sync on first connect"),
+                        values["remote_sync_on_first_connect"]
+                    ),
+                ),
+                title=_("Remote-mode setup"),
+                easy_close=False,
+                footer=ui.div(
+                    ui.input_action_button("btn_remote_setup_save", _("Save settings"))
+                ),
+                size="lg",
+            )
+        )
+
+    def run_remote_initial_sync(timeout_s: float) -> tuple[bool, str]:
+        try:
+            from src.remote.control_client import RemoteControlClient
+        except Exception as e:
+            return False, _("Failed to initialize remote control client: {}.").format(e)
+
+        client = RemoteControlClient.instance()
+        client.ensure_started()
+
+        connect_timeout = max(20.0, min(120.0, float(timeout_s or 10.0) * 4.0))
+        sync_timeout = max(180.0, float(timeout_s or 10.0) * 120.0)
+        start_ts = tm.time()
+
+        with ui.Progress(min=0, max=100) as p:
+            p.set(2, message=_("Initial sync in progress..."), detail=_("Connecting to target device..."))
+
+            if not client.wait_until_ready(timeout=connect_timeout):
+                return False, _("Could not connect to the remote target device.")
+
+            p.set(8, message=_("Initial sync in progress..."), detail=_("Requesting sync from target device..."))
+            client.start_initial_sync(force=True)
+
+            while True:
+                status = client.get_sync_status()
+                in_progress = bool(status.get("in_progress"))
+                ok = status.get("ok")
+
+                if ok is True and not in_progress:
+                    p.set(100, message=_("Initial sync completed."), detail=_("All data has been synchronized."))
+                    return True, ""
+
+                if ok is False and not in_progress:
+                    reason = (status.get("reason") or "").strip()
+                    return False, _("Initial sync failed: {}.").format(reason or _("unknown error"))
+
+                elapsed = tm.time() - start_ts
+                if elapsed > sync_timeout:
+                    return False, _("Initial sync timed out.")
+
+                bytes_mb = float(status.get("bytes_received") or 0) / (1024.0 * 1024.0)
+                items = status.get("items") or []
+                detail = _("Receiving data... {:.1f} MB").format(bytes_mb)
+                if items:
+                    detail = _("Receiving data ({} items)... {:.1f} MB").format(len(items), bytes_mb)
+
+                pseudo_percent = min(95, 10 + int((elapsed / sync_timeout) * 85))
+                p.set(pseudo_percent, message=_("Initial sync in progress..."), detail=detail)
+                tm.sleep(0.25)
+
+    if is_remote_mode() and remote_setup_required:
+        show_remote_setup_modal()
+
+    @reactive.Effect
+    @reactive.event(input.btn_remote_setup_save)
+    def on_remote_setup_save():
+        if not (is_remote_mode() and remote_setup_active.get()):
+            return
+        host = (input.remote_target_host() or "").strip()
+        if not host:
+            ui.notification_show(_("Remote target host must not be empty."), duration=8, type="error")
+            return
+        try:
+            port = int(input.remote_control_port() or 0)
+        except Exception:
+            port = 0
+        if port < 1 or port > 65535:
+            ui.notification_show(_("Remote control port must be between 1 and 65535."), duration=8, type="error")
+            return
+        try:
+            timeout = float(input.remote_control_timeout() or 0)
+        except Exception:
+            timeout = 0.0
+        if timeout <= 0:
+            ui.notification_show(_("Remote control timeout must be greater than 0."), duration=8, type="error")
+            return
+
+        sync_first = bool(input.remote_sync_on_first_connect())
+        remote_cfg_path = os.path.join(kittyhack_root(), "config.remote.ini")
+        parser = configparser.ConfigParser()
+        parser["Settings"] = {
+            "remote_target_host": host,
+            "remote_control_port": str(port),
+            "remote_control_timeout": str(timeout),
+            "remote_sync_on_first_connect": str(sync_first),
+        }
+        try:
+            with open(remote_cfg_path, "w", encoding="utf-8") as f:
+                parser.write(f)
+        except Exception as e:
+            ui.notification_show(_("Failed to write config.remote.ini: {}").format(e), duration=10, type="error")
+            return
+
+        CONFIG["REMOTE_TARGET_HOST"] = host
+        CONFIG["REMOTE_CONTROL_PORT"] = port
+        CONFIG["REMOTE_CONTROL_TIMEOUT"] = timeout
+        CONFIG["REMOTE_SYNC_ON_FIRST_CONNECT"] = sync_first
+
+        if sync_first:
+            ok, error_msg = run_remote_initial_sync(
+                timeout_s=timeout,
+            )
+            if not ok:
+                ui.notification_show(error_msg, duration=12, type="error")
+                return
+
+            # Sync may have replaced config.ini: reload it now so startup uses the synced values.
+            try:
+                load_config()
+            except Exception as e:
+                ui.notification_show(_("Failed to reload synced config.ini: {}.").format(e), duration=12, type="error")
+                return
+
+            # Trigger immediate UI refresh (e.g. Last Events) after synced DB/config are applied.
+            reload_trigger_photos.set(reload_trigger_photos.get() + 1)
+            reload_trigger_cats.set(reload_trigger_cats.get() + 1)
+            reload_trigger_config.set(reload_trigger_config.get() + 1)
+            reload_trigger_info.set(reload_trigger_info.get() + 1)
+
+        global remote_setup_required
+        remote_setup_required = False
+        remote_setup_active.set(False)
+        ui.modal_remove()
+        ui.notification_show(_("Remote-mode configuration saved. Starting services..."), duration=8, type="message")
+
+        start_backend_if_needed()
+        start_background_task_if_needed()
     
     # Show a notification if a new version of Kittyhack is available
     if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
@@ -2222,7 +2572,10 @@ def server(input, output, session):
 
     # Show changelogs, if the version was updated
     state = get_update_progress()
-    if not (state.get("result") == "reboot_dialog" or state.get("in_progress") is True):
+    if (
+        not (state.get("result") == "reboot_dialog" or state.get("in_progress") is True)
+        and not (is_remote_mode() and remote_setup_required)
+    ):
         changelog_text = get_changelogs(after_version=CONFIG['LAST_READ_CHANGELOGS'], language=CONFIG['LANGUAGE'])
         if changelog_text:
             ui.modal_show(
@@ -4879,15 +5232,21 @@ def server(input, output, session):
                             ui.column(12, ui.markdown(_("Automatically check for new versions of Kittyhack.")), style_="color: grey;"),
                         ),
                         ui.hr(),
-                        ui.row(
-                            ui.column(4, ui.input_slider("sldWlanTxPower", _("WLAN TX power (in dBm)"), min=0, max=20, value=CONFIG['WLAN_TX_POWER'], step=1)),
-                            ui.column(
-                                8,
-                                ui.markdown(
-                                    _("WARNING: You should keep the TX power as low as possible to avoid interference with the PIR Sensors! You should only increase this value, if you have problems with the WLAN connection.") + "\n\n" +
-                                    "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['wlan_tx_power']) + ")*"
-                                ), style_="color: grey;"
-                            ),
+                        (
+                            ui.row(
+                                ui.column(12, ui.markdown(_("WLAN settings are not available in remote-mode.")), style_="color: grey;")
+                            )
+                            if is_remote_mode()
+                            else ui.row(
+                                ui.column(4, ui.input_slider("sldWlanTxPower", _("WLAN TX power (in dBm)"), min=0, max=20, value=CONFIG['WLAN_TX_POWER'], step=1)),
+                                ui.column(
+                                    8,
+                                    ui.markdown(
+                                        _("WARNING: You should keep the TX power as low as possible to avoid interference with the PIR Sensors! You should only increase this value, if you have problems with the WLAN connection.") + "\n\n" +
+                                        "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['wlan_tx_power']) + ")*"
+                                    ), style_="color: grey;"
+                                ),
+                            )
                         ),
                         class_="generic-container align-left",
                         style_="padding-left: 1rem !important; padding-right: 1rem !important;",
@@ -5634,6 +5993,32 @@ def server(input, output, session):
                         ui.row(
                             ui.column(
                                 12,
+                                (lambda _inp: (_inp if is_remote_mode() else _disable_numeric_input(_inp)))(
+                                    ui.input_numeric(
+                                        "numRemoteInferenceMaxFps",
+                                        _("Remote inference FPS limit"),
+                                        float(CONFIG.get('REMOTE_INFERENCE_MAX_FPS', 10.0) or 10.0),
+                                        min=1,
+                                        max=60,
+                                        step=1,
+                                        width="100%",
+                                    )
+                                ),
+                            ),
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    (_("Limits the model inference loop to reduce CPU load in remote-mode.")
+                                     + "\n\n> "
+                                     + (_("This setting is only configurable in remote-mode.") if not is_remote_mode() else _("Default: 10 FPS")))
+                                ),
+                                style_="color: grey;",
+                            ),
+                        ),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(
+                                12,
                                 ui.input_switch(
                                     "btnRestartIpCameraStreamOnFailure",
                                     _("IP camera watchdog"),
@@ -5649,22 +6034,28 @@ def server(input, output, session):
                             ),
                         ),
                         ui.hr(),
-                        ui.row(
-                            ui.column(
-                                12,
-                                ui.input_switch(
-                                    "btnWlanWatchdogEnabled",
-                                    _("WLAN watchdog"),
-                                    CONFIG['WLAN_WATCHDOG_ENABLED']
+                        (
+                            ui.row(
+                                ui.column(12, ui.markdown(_("WLAN watchdog is not available in remote-mode.")), style_="color: grey;")
+                            )
+                            if is_remote_mode()
+                            else ui.row(
+                                ui.column(
+                                    12,
+                                    ui.input_switch(
+                                        "btnWlanWatchdogEnabled",
+                                        _("WLAN watchdog"),
+                                        CONFIG['WLAN_WATCHDOG_ENABLED']
+                                    ),
                                 ),
-                            ),
-                            ui.column(
-                                12,
-                                ui.markdown(
-                                    _("If enabled, the WLAN connection will be monitored and automatically reconnected on failure. If this also fails, the Kittyflap will automatically restart."),
+                                ui.column(
+                                    12,
+                                    ui.markdown(
+                                        _("If enabled, the WLAN connection will be monitored and automatically reconnected on failure. If this also fails, the Kittyflap will automatically restart."),
+                                    ),
+                                    style_="color: grey;"
                                 ),
-                                style_="color: grey;"
-                            ),
+                            )
                         ),
                         ui.hr(),
                         ui.row(
@@ -5864,7 +6255,8 @@ def server(input, output, session):
         # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
         #CONFIG['PIR_OUTSIDE_THRESHOLD'] = 10-int(input.sldPirOutsideThreshold())
         CONFIG['PIR_INSIDE_THRESHOLD'] = float(input.sldPirInsideThreshold())
-        CONFIG['WLAN_TX_POWER'] = int(input.sldWlanTxPower())
+        if not is_remote_mode():
+            CONFIG['WLAN_TX_POWER'] = int(input.sldWlanTxPower())
         CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'] = int(input.sldLockAfterPreyDetect())
         CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID'] = int(input.numMaxPicturesPerEventWithRfid())
         CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID'] = int(input.numMaxPicturesPerEventWithoutRfid())
@@ -5901,8 +6293,17 @@ def server(input, output, session):
         CONFIG['MQTT_PASSWORD'] = input.txtMqttPassword()
         CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL'] = float(input.mqtt_image_publish_interval())
         CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE'] = input.btnRestartIpCameraStreamOnFailure()
-        CONFIG['WLAN_WATCHDOG_ENABLED'] = input.btnWlanWatchdogEnabled()
+        if not is_remote_mode():
+            CONFIG['WLAN_WATCHDOG_ENABLED'] = input.btnWlanWatchdogEnabled()
+        else:
+            CONFIG['WLAN_WATCHDOG_ENABLED'] = False
         CONFIG['DISABLE_RFID_READER'] = input.btnDisableRfidReader()
+
+        if is_remote_mode():
+            try:
+                CONFIG['REMOTE_INFERENCE_MAX_FPS'] = float(input.numRemoteInferenceMaxFps())
+            except Exception:
+                CONFIG['REMOTE_INFERENCE_MAX_FPS'] = float(CONFIG.get('REMOTE_INFERENCE_MAX_FPS', 10.0) or 10.0)
 
         # Update the log level
         configure_logging(input.txtLoglevel())
@@ -6373,12 +6774,12 @@ def server(input, output, session):
                 )
             )
         elif git_version != latest_version:
-            # Check for local changes in the git repository
+            release_notes_block = None
             try:
                 # Fetch the release notes of the latest version
                 release_notes = fetch_github_release_notes(latest_version)
                 release_notes = filter_release_notes_for_language(release_notes, CONFIG.get('LANGUAGE', 'en'))
-                ui_update_kittyhack = ui.div(
+                release_notes_block = ui.div(
                     ui.markdown("**" + _("Release Notes for") + " " + latest_version + ":**"),
                     ui.div(
                         ui.markdown(release_notes),
@@ -6386,42 +6787,56 @@ def server(input, output, session):
                     ),
                     ui.br()
                 )
-                
-                ui_update_kittyhack = ui_update_kittyhack, ui.div(
-                    ui.markdown(_("Automatic update to **{}**:").format(latest_version)),
-                    ui.input_task_button("update_kittyhack", _("Update Kittyhack"), icon=icon_svg("download"), class_="btn-primary"),
-                    ui.br(),
-                    ui.help_text(_("Important: A stable WLAN connection is required for the update process.")),
-                    ui.br(),
-                    ui.help_text(_("The update will end with a reboot of the Kittyflap.")),
-                    ui.markdown(_("Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to see what's new in the latest version.")),
+            except Exception as e:
+                logging.warning(f"[VERSION] Failed to fetch release notes: {e}")
+                release_notes_block = ui.div(
+                    ui.markdown(_("Release notes unavailable: {}").format(e)),
+                    ui.br()
                 )
 
-                # Check for local changes in the git repository and warn the user
-                result = subprocess.run(["/bin/git", "status", "--porcelain"], capture_output=True, text=True, check=True)
-                if result.stdout.strip():
-                    # Local changes detected
-                    result = subprocess.run(["/bin/git", "status"], capture_output=True, text=True, check=True)
+            ui_update_kittyhack = release_notes_block if release_notes_block else ui.div()
+            ui_update_kittyhack = ui_update_kittyhack, ui.div(
+                ui.markdown(_("Automatic update to **{}**:").format(latest_version)),
+                ui.input_task_button("update_kittyhack", _("Update Kittyhack"), icon=icon_svg("download"), class_="btn-primary"),
+                ui.br(),
+                ui.help_text(_("Important: A stable WLAN connection is required for the update process.")),
+                ui.br(),
+                ui.help_text(_("The update will end with a reboot of the Kittyflap.")),
+                ui.markdown(_("Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to see what's new in the latest version.")),
+            )
+
+            if git_repo_available:
+                try:
+                    # Check for local changes in the git repository and warn the user
+                    result = subprocess.run(["/bin/git", "status", "--porcelain"], capture_output=True, text=True, check=True)
+                    if result.stdout.strip():
+                        result = subprocess.run(["/bin/git", "status"], capture_output=True, text=True, check=True)
+                        ui_update_kittyhack = ui_update_kittyhack, ui.div(
+                            ui.hr(),
+                            ui.markdown(
+                                f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
+                                + _("WARNING: Local changes detected in the git repository in `{}`.").format(kittyhack_root()) + "\n\n" +
+                                _("If you proceed with the update, these changes will be lost (the database and configuration will not be affected).") + "\n\n" +
+                                _("Please commit or stash your changes manually before updating, if you want to keep them.")
+                            ),
+                            ui.h6(_("Local changes:")),
+                            ui.div(
+                                result.stdout,
+                                class_="release_notes",
+                                style_="font-family: monospace; white-space: pre-wrap;"
+                            )
+                        )
+                except Exception as e:
                     ui_update_kittyhack = ui_update_kittyhack, ui.div(
                         ui.hr(),
-                        ui.markdown(
-                            f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
-                            + _("WARNING: Local changes detected in the git repository in `/root/kittyhack`.") + "\n\n" +
-                            _("If you proceed with the update, these changes will be lost (the database and configuration will not be affected).") + "\n\n" +
-                            _("Please commit or stash your changes manually before updating, if you want to keep them.")
-                        ),
-                        ui.h6(_("Local changes:")),
-                        ui.div(
-                            result.stdout,
-                            class_ = "release_notes",
-                            style_ = "font-family: monospace; white-space: pre-wrap;"
-                        )
+                        ui.markdown(_("Unable to check local git changes: {}").format(e))
                     )
-                    
-            except Exception as e:
-                ui_update_kittyhack = ui.markdown(
-                    _("An error occurred while checking for local changes in the git repository: {}").format(e) + "\n\n" +
-                    _("No automatic update possible.")
+            else:
+                ui_update_kittyhack = ui_update_kittyhack, ui.div(
+                    ui.hr(),
+                    ui.markdown(
+                        _("This installation does not appear to be a git clone. Automatic updates require a git repository (git clone).")
+                    )
                 )
         
         else:
@@ -6454,6 +6869,10 @@ def server(input, output, session):
                 ),
                 width="400px"
             )
+        version_note = ""
+        if version_from_changelog and not git_repo_available:
+            version_note = "  \n" + _("Note: Version inferred from local changelog files (no git repository detected).")
+
         return ui.div(
             ui.div(
                 ui.card(
@@ -6490,7 +6909,7 @@ def server(input, output, session):
                 ui.card(
                     ui.card_header(ui.h4(_("Version Information"), style_="text-align: center;")),
                     ui.br(),
-                    ui.markdown("**" + _("Current Version") + ":** `" + git_version + "`" + "  \n" \
+                    ui.markdown("**" + _("Current Version") + ":** `" + git_version + "`" + version_note + "  \n" \
                                 "**" + _("Latest Version") + ":** `" + latest_version + "`"),
                     ui_update_kittyhack,
                     ui.br(),
@@ -6642,32 +7061,35 @@ def server(input, output, session):
             return ui.span(icon, class_=f"table-icon {color_class}", title=title)
 
         # Get WLAN status information
-        try:
-            wlan = subprocess.run(["/sbin/iwconfig", "wlan0"], capture_output=True, text=True, check=True)
-            if "Link Quality=" in wlan.stdout and "Signal level=" in wlan.stdout:
-                quality = wlan.stdout.split("Link Quality=")[1].split(" ")[0]
-                signal = wlan.stdout.split("Signal level=")[1].split(" ")[0]
-                quality_value = float(quality.split('/')[0]) / float(quality.split('/')[1])
+        if is_remote_mode():
+            wlan_info = _("Not available in remote-mode")
+        else:
+            try:
+                wlan = subprocess.run(["/sbin/iwconfig", "wlan0"], capture_output=True, text=True, check=True)
+                if "Link Quality=" in wlan.stdout and "Signal level=" in wlan.stdout:
+                    quality = wlan.stdout.split("Link Quality=")[1].split(" ")[0]
+                    signal = wlan.stdout.split("Signal level=")[1].split(" ")[0]
+                    quality_value = float(quality.split('/')[0]) / float(quality.split('/')[1])
 
-                if quality_value >= 0.8:
-                    color_class = "text-success"
-                    title = _("Strong signal")
-                elif quality_value >= 0.4:
-                    color_class = "text-warning"
-                    title = _("Medium signal")
+                    if quality_value >= 0.8:
+                        color_class = "text-success"
+                        title = _("Strong signal")
+                    elif quality_value >= 0.4:
+                        color_class = "text-warning"
+                        title = _("Medium signal")
+                    else:
+                        color_class = "text-danger"
+                        title = _("Weak signal")
+
+                    wlan_info = ui.span(
+                        _wlan_status_icon(color_class, title),
+                        " ",
+                        _("Quality: {}, Signal: {} dBm").format(quality, signal),
+                    )
                 else:
-                    color_class = "text-danger"
-                    title = _("Weak signal")
-
-                wlan_info = ui.span(
-                    _wlan_status_icon(color_class, title),
-                    " ",
-                    _("Quality: {}, Signal: {} dBm").format(quality, signal),
-                )
-            else:
-                wlan_info = _("Not connected")
-        except Exception:
-            wlan_info = _("Unable to determine")
+                    wlan_info = _("Not connected")
+            except Exception:
+                wlan_info = _("Unable to determine")
 
         # Create a DataFrame with the system information
         df = pd.DataFrame({
@@ -6862,6 +7284,14 @@ def server(input, output, session):
         latest_version = CONFIG['LATEST_VERSION']
         current_version = git_version
 
+        if not git_repo_available:
+            ui.notification_show(
+                _("Automatic update requires a git repository. Please reinstall via git clone or the setup script."),
+                duration=12,
+                type="error"
+            )
+            return
+
         set_update_progress(
             in_progress=True,
             step=1,
@@ -6915,18 +7345,7 @@ def server(input, output, session):
         state = get_update_progress()
         return state["detail"]
 
-    @output
-    @render.text
-    def update_progress_percent():
-        reactive.invalidate_later(0.5)
-        state = get_update_progress()
-        if state["max_steps"]:
-            return f"{int(100 * state['step'] / state['max_steps'])}%"
-        return "0%"
-
-    # Update progress modal for all sessions
     def show_update_progress_modal():
-        reactive.invalidate_later(0.5)
         state = get_update_progress()
         if not state["in_progress"] and state["result"] is None:
             ui.modal_remove()
@@ -6976,9 +7395,23 @@ def server(input, output, session):
                 title=_("Updating Kittyhack..."),
                 easy_close=False,
                 footer=None,
-                id="update_progress_modal"
+                id="update_progress_modal",
             )
         )
+
+    @output
+    @render.text
+    def update_progress_percent():
+        reactive.invalidate_later(0.5)
+        state = get_update_progress()
+        max_steps = int(state.get("max_steps") or 0)
+        step = int(state.get("step") or 0)
+        if max_steps <= 0:
+            percent = 0
+        else:
+            percent = int(round((step / max_steps) * 100))
+            percent = max(0, min(100, percent))
+        return f"{percent}%"
 
     # Reactive effect to show/update the modal in all sessions
     @reactive.Effect

@@ -25,6 +25,7 @@ from src.helper import (
     Result
     )
 from src.camera import image_buffer, DetectedObject
+from src.paths import pictures_original_dir, pictures_thumbnails_dir
 
 # -----------------------------------------------------------------------------
 # Filesystem storage for original images and thumbnails (v2.4+)
@@ -34,8 +35,8 @@ from src.camera import image_buffer, DetectedObject
 # Backward compatibility: if a file is missing we fall back to the legacy
 # BLOBs stored in the database (for older rows) when reading.
 # -----------------------------------------------------------------------------
-ORIGINAL_IMAGE_DIR = "/root/pictures/original_images"
-THUMBNAIL_DIR = "/root/pictures/thumbnails"
+ORIGINAL_IMAGE_DIR = pictures_original_dir()
+THUMBNAIL_DIR = pictures_thumbnails_dir()
 os.makedirs(ORIGINAL_IMAGE_DIR, exist_ok=True)
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
@@ -401,22 +402,24 @@ def db_get_photos(database: str,
     If no filters are specified, this function returns all avaliable dataframes.
     The newest data are at the top of the dataframe.
     """
-    if return_data == ReturnDataPhotosDB.all:
-         columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text"
-    elif return_data == ReturnDataPhotosDB.all_modified_image:
-         columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text"
-    elif return_data == ReturnDataPhotosDB.all_original_image:
-         columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text"
-    elif return_data == ReturnDataPhotosDB.all_except_photos:
-         columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text"
-    elif return_data == ReturnDataPhotosDB.only_ids:
-         columns = "id"
-    else:
-         columns = "*"
-    
-    # Check if 'deleted' column exists (this column exists only in the kittyhack database)
+    # Discover optional columns once to keep queries compatible across schema versions.
     columns_info = read_column_info_from_database(database, "events")
-    column_names = [info[1] for info in columns_info]
+    column_names = [info[1] for info in (columns_info or [])]
+    fps_col = ", effective_fps" if ('effective_fps' in column_names) else ""
+
+    if return_data == ReturnDataPhotosDB.all:
+        columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + fps_col
+    elif return_data == ReturnDataPhotosDB.all_modified_image:
+        columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + fps_col
+    elif return_data == ReturnDataPhotosDB.all_original_image:
+        columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + fps_col
+    elif return_data == ReturnDataPhotosDB.all_except_photos:
+        columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + fps_col
+    elif return_data == ReturnDataPhotosDB.only_ids:
+        columns = "id"
+    else:
+        columns = "*"
+
     if 'deleted' in column_names and ignore_deleted == True:
         stmt = f"SELECT {columns} FROM events WHERE created_at BETWEEN '{date_start}' AND '{date_end}' AND deleted != 1"
     else:
@@ -472,15 +475,16 @@ def db_get_photos_by_block_id(
     columns_info = read_column_info_from_database(database, "events")
     column_names = set(info[1] for info in (columns_info or []))
     dims_cols = ", img_width, img_height" if ('img_width' in column_names and 'img_height' in column_names) else ""
+    fps_col = ", effective_fps" if ('effective_fps' in column_names) else ""
 
     if return_data == ReturnDataPhotosDB.all:
-        columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + dims_cols + ", thumbnail"
+        columns = "id, block_id, created_at, event_type, original_image, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + dims_cols + fps_col + ", thumbnail"
     elif return_data == ReturnDataPhotosDB.all_modified_image:
-        columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + dims_cols + ", thumbnail"
+        columns = "id, block_id, created_at, event_type, modified_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + dims_cols + fps_col + ", thumbnail"
     elif return_data == ReturnDataPhotosDB.all_original_image:
-        columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + dims_cols + ", thumbnail"
+        columns = "id, block_id, created_at, event_type, original_image, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + dims_cols + fps_col + ", thumbnail"
     elif return_data == ReturnDataPhotosDB.all_except_photos:
-        columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + dims_cols
+        columns = "id, block_id, created_at, event_type, no_mouse_probability, mouse_probability, own_cat_probability, rfid, event_text" + dims_cols + fps_col
     elif return_data == ReturnDataPhotosDB.only_ids:
         columns = "id"
         
@@ -724,6 +728,7 @@ def create_kittyhack_events_table(database: str):
             event_text TEXT,
             img_width INTEGER,
             img_height INTEGER,
+            effective_fps REAL,
             deleted BOOLEAN DEFAULT 0,
             thumbnail BLOB
         )
@@ -980,7 +985,10 @@ def read_photo_by_id(database: str, photo_id: int) -> pd.DataFrame:
     """
     This function reads a specific dataframe based on the ID from the source database.
     """
-    columns = "id, block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, own_cat_probability, rfid, event_text"
+    columns_info = read_column_info_from_database(database, "events")
+    column_names = set(info[1] for info in (columns_info or []))
+    fps_col = ", effective_fps" if ('effective_fps' in column_names) else ""
+    columns = "id, block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, own_cat_probability, rfid, event_text" + fps_col
     stmt = f"SELECT {columns} FROM events WHERE id = {photo_id}"
     df = read_df_from_database(database, stmt)
     if not df.empty and 'original_image' in df.columns:
@@ -1125,17 +1133,49 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
         elements = image_buffer.get_by_block_id(buffer_block_id)
         logging.info(f"[DATABASE] Writing {len(elements)} images from buffer image block '{buffer_block_id}' as database block '{db_block_id}' to '{database}'.")
 
-        # Determine whether dimension columns exist (avoid nested lock acquisition).
+        # Determine whether optional columns exist (avoid nested lock acquisition).
         try:
             cursor.execute("PRAGMA table_info(events)")
             _cols = set(r[1] for r in cursor.fetchall())
             has_dims = ('img_width' in _cols and 'img_height' in _cols)
+            has_effective_fps = ('effective_fps' in _cols)
         except Exception:
             has_dims = False
+            has_effective_fps = False
 
         # Decide the max number of pictures to write to the database, based on the content of the first element.tag_id
         # (every element of the block has the same tag_id)
         max_images = CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID'] if elements[0].tag_id else CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID']
+
+        # Compute effective FPS for this event block based on element timestamps.
+        # This should match the real spacing of the stored frames (target devices often ~3fps,
+        # remote-mode may be higher depending on REMOTE_INFERENCE_MAX_FPS).
+        effective_fps_block = None
+        try:
+            el_for_fps = list(elements[:max_images])
+            if len(el_for_fps) >= 2:
+                t0 = float(el_for_fps[0].timestamp)
+                t1 = float(el_for_fps[-1].timestamp)
+                span = float(t1 - t0)
+                if span > 0:
+                    effective_fps_block = float(len(el_for_fps) - 1) / span
+        except Exception:
+            effective_fps_block = None
+
+        if effective_fps_block is None:
+            try:
+                effective_fps_block = float(CONFIG.get('REMOTE_INFERENCE_MAX_FPS', 10.0) or 10.0)
+            except Exception:
+                effective_fps_block = 10.0
+
+        try:
+            effective_fps_block = float(effective_fps_block)
+        except Exception:
+            effective_fps_block = 10.0
+        if effective_fps_block < 0.1:
+            effective_fps_block = 0.1
+        if effective_fps_block > 60.0:
+            effective_fps_block = 60.0
 
         index = 0
         for element in elements:
@@ -1161,6 +1201,8 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
                 columns = "block_id, created_at, event_type, original_image, modified_image, mouse_probability, no_mouse_probability, own_cat_probability, rfid, event_text"
                 if has_dims:
                     columns += ", img_width, img_height"
+                if has_effective_fps:
+                    columns += ", effective_fps"
                 values = ', '.join(['?' for _ in columns.split(', ')])
                 values_list = [
                     db_block_id,
@@ -1176,6 +1218,8 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
                 ]
                 if has_dims:
                     values_list.extend([img_w, img_h])
+                if has_effective_fps:
+                    values_list.append(float(effective_fps_block))
                 cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
                 new_row_id = cursor.lastrowid
                 # Persist original image to filesystem (if available)

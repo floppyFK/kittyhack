@@ -24,7 +24,7 @@ gpio = Gpio()
 class Pir:
     instance = None
 
-    def __init__(self, simulate_kittyflap=False):
+    def __init__(self, simulate_kittyflap=False, stop_event: threading.Event | None = None):
         self.state_outside = 0  # 0 = no motion, 1 = motion detected
         self.state_inside = 0   # 0 = no motion, 1 = motion detected
         self.state_outside_raw = 0
@@ -33,6 +33,7 @@ class Pir:
         self.outside_motion_count = 0
         self.inside_motion_count = 0
         self.simulate_kittyflap = simulate_kittyflap
+        self._stop_event = stop_event
 
     def init(self):
         """Enable both PIRs."""
@@ -61,7 +62,12 @@ class Pir:
         # Register task in the sigterm_monitor object
         sigterm_monitor.register_task()
 
-        while not sigterm_monitor.stop_now:
+        while not sigterm_monitor.stop_now and not (self._stop_event and self._stop_event.is_set()):
+            # Always start with current states so we never reference undefined locals
+            state_outside = self.state_outside
+            state_inside = self.state_inside
+            state_outside_raw = self.state_outside_raw
+            state_inside_raw = self.state_inside_raw
             try:
                 if self.simulate_kittyflap:
                     # Simulate motion detection with 5% chance and keep the state active for 5-10 seconds
@@ -76,6 +82,10 @@ class Pir:
                         threading.Timer(random.uniform(5, 10), lambda: self.update_state("INSIDE", 0)).start()
                     else:
                         state_inside = self.state_inside
+
+                    # Raw states mirror motion states in simulation
+                    state_outside_raw = state_outside
+                    state_inside_raw = state_inside
                 else:
                     # No simulation, read actual PIR states
                     try:
@@ -107,9 +117,13 @@ class Pir:
                             state_inside = 1
                         if self.inside_motion_count > 0:
                             state_inside_raw = 1
-                    except:
-                        # Ignore errors. Error logging is done in gpio.get()
-                        pass
+                    except Exception:
+                        # Keep last known states if GPIO access fails.
+                        # Error logging is done in gpio.get().
+                        state_outside = self.state_outside
+                        state_inside = self.state_inside
+                        state_outside_raw = self.state_outside_raw
+                        state_inside_raw = self.state_inside_raw
 
                 # Log only changes in state
                 if self.state_outside != state_outside:

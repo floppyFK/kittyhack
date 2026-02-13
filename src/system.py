@@ -8,10 +8,12 @@ import requests
 import time as tm
 
 from src.baseconfig import CONFIG, set_language
+from src.paths import kittyhack_root, labelstudio_root
+from src.mode import is_remote_mode
 
 GPIO_BASE_PATH = "/sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/"
 
-LABELSTUDIO_PATH = "/root/labelstudio/"
+LABELSTUDIO_PATH = os.path.join(labelstudio_root(), "")
 LABELSTUDIO_VENV = "venv/"
 
 # Cache for latest Label Studio version fetched from PyPI.
@@ -169,6 +171,9 @@ def systemcmd(command: list[str], simulate_operations=False):
         except subprocess.CalledProcessError as e:
             logging.error(f"Failed to run command '{cString}': {e.stderr}")
             return False
+        except FileNotFoundError as e:
+            logging.error(f"Failed to run command '{cString}': {e}")
+            return False
     
     return True
 
@@ -186,6 +191,9 @@ def manage_and_switch_wlan(ssid, password="", priority=-1, update_password=False
     - True if the WLAN configuration was successful.
     - False if there was an error.
     """
+    if is_remote_mode():
+        logging.info("[SYSTEM] WLAN management is not available in remote-mode.")
+        return False
     if priority == -1:
         try:
             result = subprocess.run(
@@ -276,6 +284,9 @@ def switch_wlan_connection(ssid: str):
     - True if the switch was successful
     - False if there was an error
     """
+    if is_remote_mode():
+        logging.info("[SYSTEM] WLAN management is not available in remote-mode.")
+        return False
     try:
         subprocess.run(
             ["/usr/bin/nmcli", "connection", "up", ssid],
@@ -312,6 +323,9 @@ def delete_wlan_connection(ssid):
     - True if the deletion was successful
     - False if there was an error
     """
+    if is_remote_mode():
+        logging.info("[SYSTEM] WLAN management is not available in remote-mode.")
+        return False
     try:
         subprocess.run(
             ["/usr/bin/nmcli", "connection", "delete", ssid],
@@ -345,6 +359,9 @@ def scan_wlan_networks():
     Logs:
         An error message if there is an issue scanning WLAN networks.
     """
+    if is_remote_mode():
+        logging.info("[SYSTEM] WLAN scan is not available in remote-mode.")
+        return []
     try:
         result = subprocess.run(
             ["/usr/bin/nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,BARS,CHAN,BSSID", "device", "wifi", "list"],
@@ -394,6 +411,9 @@ def get_wlan_connections():
     Returns:
     - A list of dictionaries, each containing the SSID, connection status, and priority of a WLAN network.
     """
+    if is_remote_mode():
+        logging.info("[SYSTEM] WLAN connections are not available in remote-mode.")
+        return []
     try:
         result = subprocess.run(
             ["/usr/bin/nmcli", "-t", "-f", "NAME,DEVICE,AUTOCONNECT-PRIORITY,STATE", "connection", "show"],
@@ -594,6 +614,26 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
             logging.error(f"Command failed with return code {process.returncode}:\n{output}")
             raise subprocess.CalledProcessError(process.returncode, cmd, output=output)
 
+    def _install_kittyhack_service_file() -> None:
+        template_path = os.path.join(kittyhack_root(), "setup", "kittyhack.service")
+        target_path = "/etc/systemd/system/kittyhack.service"
+        with open(template_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        content = content.replace("/root/kittyhack", kittyhack_root())
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def _install_kittyhack_control_service_file() -> None:
+        template_path = os.path.join(kittyhack_root(), "setup", "kittyhack_control.service")
+        target_path = "/etc/systemd/system/kittyhack_control.service"
+        if not os.path.exists(template_path):
+            return
+        with open(template_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        content = content.replace("/root/kittyhack", kittyhack_root())
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
     # Step 0: Stop the backend process
     if progress_callback:
         progress_callback(0, "Stopping backend process", "")
@@ -605,11 +645,12 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
     except Exception as e:
         logging.error(f"Failed to stop backend process: {e}")
 
-    requirements_path = "/root/kittyhack/requirements.txt"
+    requirements_path = os.path.join(kittyhack_root(), "requirements.txt")
+    venv_activate = os.path.join(kittyhack_root(), ".venv", "bin", "activate")
     pip_install_cmd = [
         "/bin/bash",
         "-c",
-        "source /root/kittyhack/.venv/bin/activate && pip install --timeout 120 --retries 10 -r /root/kittyhack/requirements.txt",
+        f"source {venv_activate} && pip install --timeout 120 --retries 10 -r {requirements_path}",
     ]
 
     req_hash_before: str | None = None
@@ -646,11 +687,11 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
             did_update_deps = True
 
         # 6
-        _run_step(
-            6,
-            "Updating systemd service file",
-            ["/bin/cp", "/root/kittyhack/setup/kittyhack.service", "/etc/systemd/system/kittyhack.service"],
-        )
+        if progress_callback:
+            progress_callback(6, "Updating systemd service file", "")
+        logging.info("Updating systemd service file")
+        _install_kittyhack_service_file()
+        _install_kittyhack_control_service_file()
         # 7
         _run_step(7, "Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"])
     except Exception as e:
@@ -662,10 +703,8 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
                 # Only reinstall deps on rollback if we actually modified them during the update.
                 if did_update_deps:
                     subprocess.run(pip_install_cmd, check=True)
-                subprocess.run(
-                    ["/bin/cp", "/root/kittyhack/setup/kittyhack.service", "/etc/systemd/system/kittyhack.service"],
-                    check=True,
-                )
+                _install_kittyhack_service_file()
+                _install_kittyhack_control_service_file()
                 subprocess.run(["/bin/systemctl", "daemon-reload"], check=True)
             except Exception as rollback_e:
                 logging.error(f"Rollback failed: {rollback_e}")
@@ -904,7 +943,7 @@ def install_labelstudio(progress_callback=None):
     """
     venv_path = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV)
     venv_python = os.path.join(venv_path, "bin", "python")
-    service_template_path = "/root/kittyhack/setup/labelstudio.service"
+    service_template_path = os.path.join(kittyhack_root(), "setup", "labelstudio.service")
     service_file_path = "/etc/systemd/system/labelstudio.service"
 
     # Stop the service if it's running

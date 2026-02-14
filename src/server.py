@@ -101,6 +101,17 @@ def _disable_numeric_input(tag):
     return tag
 
 
+def _disable_input(tag):
+    """Disable generic input tags (e.g. select/text) by setting disabled on the input element."""
+    try:
+        # Structure: <div> [0]=<label>, [1]=<input/select>
+        if getattr(tag, "children", None) and len(tag.children) >= 2:
+            tag.children[1].attrs["disabled"] = "disabled"
+    except Exception:
+        pass
+    return tag
+
+
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
 
 # Check and set the startup flag - this must be done before loading the model
@@ -5150,6 +5161,34 @@ def server(input, output, session):
                 )
             else:
                 # Show the original upload form
+                model_training_base_model_input = ui.input_select(
+                    "model_training_base_model",
+                    _("YOLOv8 model"),
+                    {
+                        "n": "YOLOv8n",
+                        "s": "YOLOv8s",
+                        "m": "YOLOv8m",
+                        "l": "YOLOv8l",
+                        "x": "YOLOv8x",
+                    },
+                    selected="n",
+                    width="90%",
+                )
+                model_training_image_size_input = ui.input_select(
+                    "model_training_image_size",
+                    _("Image size"),
+                    {
+                        "320": "320",
+                        "640": "640",
+                    },
+                    selected="320",
+                    width="90%",
+                )
+
+                if not is_remote_mode():
+                    model_training_base_model_input = _disable_input(model_training_base_model_input)
+                    model_training_image_size_input = _disable_input(model_training_image_size_input)
+
                 training_content = ui.div(
                     ui.div(
                         ui.div(
@@ -5158,6 +5197,18 @@ def server(input, output, session):
                             ui.input_text("user_name", _("Username (optional)"), value=CONFIG['USER_NAME'], placeholder=_("Enter your name"), width="90%"),
                             ui.input_text("email_notification", _("Email for Notification (optional)"), value=CONFIG['EMAIL'], placeholder=_("Enter your email address"), width="90%"),
                             ui.help_text(_("If you provide an email address, you will be notified when the model training is finished.")),
+                            ui.tags.details(
+                                ui.tags.summary(_("Advanced options")),
+                                ui.br(),
+                                model_training_base_model_input,
+                                model_training_image_size_input,
+                                (
+                                    ui.help_text(_("These options are only available in remote mode."))
+                                    if not is_remote_mode()
+                                    else ui.help_text(_("Defaults: YOLOv8n and image size 320."))
+                                ),
+                                style="width: 90%; text-align: left; margin: 0 auto;",
+                            ),
                             ui.br(),
                             ui.input_task_button("submit_model_training", _("Submit Model for Training"), class_="btn-primary"),
                             id="model_training_form",
@@ -5339,6 +5390,22 @@ def server(input, output, session):
         model_name = input.model_name()
         email_notification = input.email_notification()
         user_name = input.user_name()
+        model_variant = str(input.model_training_base_model() or "n").strip().lower()
+        image_size_raw = str(input.model_training_image_size() or "320").strip()
+
+        # Advanced model parameters are only enabled in remote-mode.
+        if not is_remote_mode():
+            model_variant = "n"
+            image_size_raw = "320"
+
+        if model_variant not in {"n", "s", "m", "l", "x"}:
+            ui.notification_show(_("Invalid YOLOv8 model selection."), duration=10, type="error")
+            return
+        if image_size_raw not in {"320", "640"}:
+            ui.notification_show(_("Invalid image size selection."), duration=10, type="error")
+            return
+
+        image_size = int(image_size_raw)
 
         if email_notification:
             # Validate the email address
@@ -5354,10 +5421,20 @@ def server(input, output, session):
             CONFIG['USER_NAME'] = user_name
             update_single_config_parameter("USER_NAME")
             
-        logging.info(f"Enqueued model training: Model Name: '{model_name}', Email: '{email_notification}', ZIP file: '{zip_file_path}'")
+        logging.info(
+            f"Enqueued model training: Model Name: '{model_name}', Email: '{email_notification}', "
+            f"ZIP file: '{zip_file_path}', YOLOv8 variant: '{model_variant}', image size: {image_size}"
+        )
         
         # Start the model training process
-        result = RemoteModelTrainer.enqueue_model_training(zip_file_path, model_name, user_name, email_notification)
+        result = RemoteModelTrainer.enqueue_model_training(
+            zip_file_path,
+            model_name,
+            user_name,
+            email_notification,
+            yolo_model_variant=model_variant,
+            image_size=image_size,
+        )
         if is_valid_uuid4(result):
             # Update the config with the training details
             CONFIG["MODEL_TRAINING"] = result

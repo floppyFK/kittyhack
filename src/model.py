@@ -229,17 +229,38 @@ class RemoteModelTrainer:
             return None
 
     @staticmethod
-    def enqueue_model_training(zip_file_path, model_name = "", user_name = "", email = ""):
+    def enqueue_model_training(
+        zip_file_path,
+        model_name = "",
+        user_name = "",
+        email = "",
+        yolo_model_variant: str = "n",
+        image_size: int = 320,
+    ):
         """
         Uploads a zip file to the remote server to start model training.
         Returns the job_id on success.
         """
         url = f"{RemoteModelTrainer.BASE_URL}/upload"
         files = {'file': open(zip_file_path, 'rb')}
+
+        variant = str(yolo_model_variant or "n").strip().lower()
+        if variant not in {"n", "s", "m", "l", "x"}:
+            variant = "n"
+
+        image_size_int = 640 if str(image_size).strip() == "640" else 320
+        pretrained_model = f"yolov8{variant}.pt"
+
         data = {
             'username': user_name,
             'email': email,
             'model_name': model_name,
+            # Explicit model training configuration (remote-mode advanced options)
+            'yolo_model_variant': variant,
+            'pretrained_model': pretrained_model,
+            'image_size': str(image_size_int),
+            # Backward/compat key used by some training pipelines
+            'imgsz': str(image_size_int),
         }
         try:
             response = requests.post(url, files=files, data=data, verify=True)

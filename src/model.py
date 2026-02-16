@@ -629,6 +629,15 @@ class YoloModel:
     BASE_DIR = models_yolo_root()
 
     @staticmethod
+    def _normalize_model_image_size(raw_value: Any) -> int:
+        """Normalize model image size to supported values (320 or 640)."""
+        try:
+            size = int(str(raw_value).strip())
+        except Exception:
+            size = 320
+        return 640 if size == 640 else 320
+
+    @staticmethod
     def get_model_list():
         """
         Returns a list of available YOLO models with their creation dates.
@@ -642,6 +651,7 @@ class YoloModel:
             model_path = os.path.join(YoloModel.BASE_DIR, dir_name)
             if os.path.isdir(model_path):
                 model_name = dir_name
+                model_image_size = 320
                 
                 # Try to read model_name, timestamp and unique_id from info.json if it exists
                 info_json_path = os.path.join(model_path, "info.json")
@@ -652,7 +662,17 @@ class YoloModel:
                             info_data = json.load(f)
                             model_name = info_data.get('MODEL_NAME', dir_name)
                             unique_id = info_data.get('JOB_ID')
-                            model_image_size = info_data.get('MODEL_IMAGE_SIZE', 320)
+                            # Support current and legacy keys from info.json
+                            # (MODEL_IMAGE_SIZE, IMAGE_SIZE/image_size, IMGSZ/imgsz).
+                            raw_image_size = (
+                                info_data.get('MODEL_IMAGE_SIZE')
+                                or info_data.get('IMAGE_SIZE')
+                                or info_data.get('image_size')
+                                or info_data.get('IMGSZ')
+                                or info_data.get('imgsz')
+                                or 320
+                            )
+                            model_image_size = YoloModel._normalize_model_image_size(raw_image_size)
                             # Read the creation date from info.json
                             try:
                                 # Parse timestamp from info.json

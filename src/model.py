@@ -248,7 +248,7 @@ class RemoteModelTrainer:
         if variant not in {"n", "s", "m", "l", "x"}:
             variant = "n"
 
-        image_size_int = 640 if str(image_size).strip() == "640" else 320
+        image_size_int = YoloModel._normalize_model_image_size(image_size)
         pretrained_model = f"yolov8{variant}.pt"
 
         data = {
@@ -629,13 +629,40 @@ class YoloModel:
     BASE_DIR = models_yolo_root()
 
     @staticmethod
+    def get_supported_image_sizes() -> list[int]:
+        """Return supported YOLO image sizes.
+
+        YOLO models commonly expect input dimensions that are multiples of 32.
+        We support the common range between 320 and 640 (inclusive).
+        """
+        return list(range(320, 640 + 1, 32))
+
+    @staticmethod
     def _normalize_model_image_size(raw_value: Any) -> int:
-        """Normalize model image size to supported values (320 or 640)."""
+        """Normalize model image size to a supported value.
+
+        - Parses any input to int (fallback 320)
+        - Clamps into the supported range
+        - Snaps to the nearest supported size (multiples of 32)
+        """
         try:
             size = int(str(raw_value).strip())
         except Exception:
             size = 320
-        return 640 if size == 640 else 320
+
+        supported = YoloModel.get_supported_image_sizes()
+        if not supported:
+            return 320
+
+        min_size = supported[0]
+        max_size = supported[-1]
+        if size < min_size:
+            size = min_size
+        elif size > max_size:
+            size = max_size
+
+        # Snap to nearest supported size
+        return min(supported, key=lambda s: (abs(s - size), s))
 
     @staticmethod
     def get_model_list():

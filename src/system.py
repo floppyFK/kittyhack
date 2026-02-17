@@ -83,19 +83,21 @@ def run_with_progress(command, progress_callback, step, message, detail):
         logging.error(f"Command failed with return code {process.returncode}")
     return process.returncode == 0, ''.join(output_lines)
 
-def is_service_running(service: str, simulate_operations=False):
+def is_service_running(service: str, simulate_operations=False, log_output=True):
     """
     Check if a service is running.
 
     Parameters:
     - service: The name of the service, e.g. 'kwork'
+    - log_output: Whether to log the output of the command
 
     Returns:
     - True, if the service is running
     - False, if the service is not running
     """
     if simulate_operations == True:
-        logging.info(f"kittyhack is in development mode. Skip 'is_service_running {service}'.")
+        if log_output:
+            logging.info(f"kittyhack is in development mode. Skip 'is_service_running {service}'.")
         return True
     
     try:
@@ -105,10 +107,12 @@ def is_service_running(service: str, simulate_operations=False):
             text=True,
             capture_output=True
         )
-        logging.info(f"service {service} is active. {result.stdout}")
+        if log_output:
+            logging.info(f"service {service} is active: {result.stdout.strip()}")
         return True
     except subprocess.CalledProcessError as e:
-        logging.info(f"service {service} is not active. {e.stderr}")
+        if log_output:
+            logging.info(f"service {service} is not active. {e.stderr.strip()}")
         return False
     
 def is_service_masked(service: str, simulate_operations=False):
@@ -634,6 +638,59 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(content)
 
+    def _apply_target_boot_service_semantics() -> None:
+        """Best-effort migration of systemd enable/disable state.
+
+        This is important for devices updating from older versions where only kittyhack.service
+        existed and was enabled. We want:
+        - target-mode: enable kittyhack_control, disable kittyhack
+        - remote-mode: enable kittyhack, disable kittyhack_control
+        """
+        try:
+            is_remote = bool(is_remote_mode())
+        except Exception:
+            is_remote = False
+
+        try:
+            # Ensure service files exist before enabling.
+            _install_kittyhack_service_file()
+            _install_kittyhack_control_service_file()
+        except Exception:
+            pass
+
+        try:
+            subprocess.run(["/bin/systemctl", "daemon-reload"], check=False)
+        except Exception:
+            pass
+
+        if is_remote:
+            # Remote-mode: kittyhack.service is the primary service.
+            try:
+                subprocess.run(["/bin/systemctl", "enable", "kittyhack.service"], check=False)
+            except Exception:
+                pass
+            try:
+                subprocess.run(["/bin/systemctl", "disable", "kittyhack_control.service"], check=False)
+                subprocess.run(["/bin/systemctl", "stop", "kittyhack_control.service"], check=False)
+            except Exception:
+                pass
+            return
+
+        # Target-mode: kittyhack_control is the boot supervisor.
+        try:
+            subprocess.run(["/bin/systemctl", "enable", "kittyhack_control.service"], check=False)
+        except Exception:
+            pass
+        try:
+            # Do not stop kittyhack here (we are currently running inside it).
+            subprocess.run(["/bin/systemctl", "disable", "kittyhack.service"], check=False)
+        except Exception:
+            pass
+        try:
+            subprocess.run(["/bin/systemctl", "start", "kittyhack_control.service"], check=False)
+        except Exception:
+            pass
+
     # Step 0: Stop the backend process
     if progress_callback:
         progress_callback(0, "Stopping backend process", "")
@@ -694,6 +751,12 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
         _install_kittyhack_control_service_file()
         # 7
         _run_step(7, "Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"])
+
+        # 8
+        if progress_callback:
+            progress_callback(8, "Updating systemd enable/disable state", "")
+        logging.info("Updating systemd enable/disable state")
+        _apply_target_boot_service_semantics()
     except Exception as e:
         logging.error(f"Update step failed: {e}")
         # Rollback logic
@@ -706,10 +769,119 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
                 _install_kittyhack_service_file()
                 _install_kittyhack_control_service_file()
                 subprocess.run(["/bin/systemctl", "daemon-reload"], check=True)
+                # Best-effort: keep service enablement consistent even after rollback.
+                try:
+                    _apply_target_boot_service_semantics()
+                except Exception:
+                    pass
             except Exception as rollback_e:
                 logging.error(f"Rollback failed: {rollback_e}")
         return False, str(e)
     return True, "Update completed"
+
+
+def ensure_target_boot_service_semantics() -> None:
+    """Ensure systemd services match the target-mode boot concept.
+
+    This is a runtime migration hook: devices updating from pre-remote versions
+    may still have kittyhack.service enabled and kittyhack_control missing/disabled.
+    Running this on the target device fixes the next reboot.
+    """
+    if is_remote_mode():
+        return
+
+    def _pick_systemctl() -> str:
+        # Prefer common absolute paths to avoid PATH issues under systemd.
+        for candidate in ("/usr/bin/systemctl", "/bin/systemctl"):
+            try:
+                if os.path.exists(candidate):
+                    return candidate
+            except Exception:
+                continue
+        return "systemctl"
+
+    systemctl = _pick_systemctl()
+
+    def _run_systemctl(*args: str) -> subprocess.CompletedProcess:
+        try:
+            return subprocess.run([systemctl, *args], check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        except Exception:
+            # Return a dummy object-like fallback.
+            return subprocess.CompletedProcess(args=[systemctl, *args], returncode=1, stdout="")
+
+    def _systemctl_stdout(*args: str) -> str:
+        return (_run_systemctl(*args).stdout or "").strip()
+
+    def _is_enabled(service_name: str) -> bool:
+        out = _systemctl_stdout("is-enabled", service_name)
+        # 'static' services can't be enabled, but are still valid.
+        return out in {"enabled", "enabled-runtime", "static"}
+
+    def _is_active(service_name: str) -> bool:
+        out = _systemctl_stdout("is-active", service_name)
+        return out in {"active", "activating"}
+
+    def _is_disabled(service_name: str) -> bool:
+        out = _systemctl_stdout("is-enabled", service_name)
+        return out in {"disabled", "masked", "indirect", "generated", "transient", ""}
+
+    # Fast-path: if we're already in the desired state, do nothing.
+    try:
+        if _is_enabled("kittyhack_control.service") and _is_active("kittyhack_control.service") and _is_disabled("kittyhack.service"):
+            return
+    except Exception:
+        pass
+
+    template_path = os.path.join(kittyhack_root(), "setup", "kittyhack_control.service")
+    target_path = "/etc/systemd/system/kittyhack_control.service"
+    did_update_unit_file = False
+
+    try:
+        if os.path.exists(template_path):
+            with open(template_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            content = content.replace("/root/kittyhack", kittyhack_root())
+
+            existing: str | None = None
+            try:
+                if os.path.exists(target_path):
+                    with open(target_path, "r", encoding="utf-8") as f:
+                        existing = f.read()
+            except Exception:
+                existing = None
+
+            if existing != content:
+                with open(target_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                did_update_unit_file = True
+    except Exception as e:
+        logging.warning(f"[SYSTEM] Could not install kittyhack_control.service: {e}")
+
+    # Only daemon-reload if we updated/installed the unit file.
+    if did_update_unit_file:
+        try:
+            _run_systemctl("daemon-reload")
+        except Exception:
+            pass
+
+    # Ensure kittyhack_control is enabled + running (best-effort).
+    try:
+        if not _is_enabled("kittyhack_control.service"):
+            _run_systemctl("enable", "kittyhack_control.service")
+    except Exception:
+        pass
+    try:
+        if not _is_active("kittyhack_control.service"):
+            _run_systemctl("start", "kittyhack_control.service")
+    except Exception:
+        pass
+
+    # Prevent kittyhack.service from being the primary boot service going forward.
+    try:
+        if not _is_disabled("kittyhack.service"):
+            _run_systemctl("disable", "kittyhack.service")
+    except Exception:
+        pass
 
 def upgrade_base_system_packages(packages: list[str] | None = None) -> tuple[bool, str]:
     """

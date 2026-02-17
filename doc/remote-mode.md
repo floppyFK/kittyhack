@@ -129,6 +129,17 @@ If the remote controller disconnects or stops sending keepalives for longer than
 
 In other words: remote-mode is designed so the Kittyflap can recover and continue running autonomously when the remote link is gone.
 
+---
+
+## Target-mode boot behavior (wait for remote after reboot)
+
+If the Kittyflap has been controlled remotely at least once, the target creates a local marker file and can change its boot behavior:
+
+- On reboot/powerup, **only `kittyhack_control.service` starts first**.
+- If the marker exists, the target **waits for an incoming remote-control takeover** for a configurable timeout.
+  - During the wait, the target serves a small page on port 80 with a **countdown**, a **skip** button (start Kittyhack now) and a **disable wait after reboot** button (deletes the marker).
+- If no takeover happens within the timeout, the target starts `kittyhack.service` automatically.
+
 ### Remote behavior
 - The remote client logs the disconnect and **retries** with exponential backoff.
 - Until it reconnects, "remote hardware" (PIR/RFID/locks) data may stop updating.

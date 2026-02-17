@@ -4,6 +4,7 @@ Dieses Release bringt Theme-Unterstützung (Hell/Dunkel/Auto), eine deutlich üb
 
 ## Neue Features
 - **Theme-Support (Hell/Dunkel/Auto)**: In der WebGUI kann nun zwischen Light/Dark/Auto umgeschaltet werden.
+- **Remote-Control-Modus (Beta)**: Kittyhack kann auf einem leistungsstärkeren Remote-PC laufen (schnellere Inferenz, Katzen-/Beute-Erkennung in Echtzeit), während die Katzenklappe weiterhin für Sensoren/Verriegelungen verbunden bleibt. Details & Setup: https://github.com/floppyFK/kittyhack/blob/main/doc/remote-mode_de.md
 - **Event-View überarbeitet**:
   - **Scrubber/Timeline** im Event-Modal zur schnellen Navigation innerhalb eines Events.
   - **Marker-Overlay** auf der Timeline für Frames mit erkannten Labels (z. B. Beute in Rot, sonst Grün).
@@ -13,3 +14,4 @@ Dieses Release bringt Theme-Unterstützung (Hell/Dunkel/Auto), eine deutlich üb
 ## Verbesserungen
 - **Performance & RAM**: Ressourcenintensive Schritte wurden von der Katzenklappe in den Webclient verlagert.
 - **UI/UX**: Viele kleine UI-Verbesserungen (Styles, Icons, Tooltips, Dark-Theme-Details).
+- **Konfiguration (Entscheidungszeitpunkt fürs Entriegeln)**: Die Verzögerung bis zur Entscheidung zur Entriegelung wird jetzt in **Sekunden** nach einem Bewegungs-Trigger eingestellt (statt über eine Anzahl von Bildern).

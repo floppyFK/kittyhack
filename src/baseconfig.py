@@ -204,7 +204,7 @@ DEFAULT_CONFIG = {
         "periodic_jobs_interval": 900,
         "allowed_to_enter": "all",
         "mouse_check_enabled": True,
-        "min_pictures_to_analyze": 5,
+        "min_seconds_to_analyze": 1.5,
         "show_images_with_overlay": True,
         "live_view_refresh_interval": 5.0,
         "kittyflap_config_migrated": False,
@@ -264,6 +264,8 @@ DEFAULT_CONFIG = {
         "remote_target_host": "",
         "remote_control_port": 8888,
         "remote_control_timeout": 30.0,
+        # Target-mode boot behavior: if remote control was used once, the target may wait for a remote reconnect.
+        "remote_wait_after_reboot_timeout": 30.0,
         "remote_sync_on_first_connect": True,
         "remote_sync_include_pictures": True,
         "remote_sync_include_models": True,
@@ -278,6 +280,10 @@ SENSITIVE_CONFIG_KEYS = {
     'EMAIL',
     'IP_CAMERA_URL'  # May contain embedded credentials
 }
+
+# Legacy config defaults (kept for migration only; not written to new configs)
+_LEGACY_MIN_PICTURES_TO_ANALYZE_DEFAULT = 5
+_LEGACY_INFERENCE_FPS_FOR_MIGRATION = 3.33
 
 def load_config():
     """
@@ -379,6 +385,60 @@ def load_config():
 
     d = DEFAULT_CONFIG['Settings']
 
+    # --- Migration: MIN_PICTURES_TO_ANALYZE -> MIN_SECONDS_TO_ANALYZE ---
+    # Old configs may contain `min_pictures_to_analyze`. New configs use `min_seconds_to_analyze`.
+    # If the new key is missing, derive it via: seconds = pictures / 3.33 (avg legacy inference FPS).
+    # Also remove the legacy key to avoid user confusion.
+    try:
+        has_legacy = parser.has_option('Settings', 'min_pictures_to_analyze')
+        has_new = parser.has_option('Settings', 'min_seconds_to_analyze')
+
+        if has_legacy and not has_new:
+            try:
+                legacy_pics = float(parser.get('Settings', 'min_pictures_to_analyze'))
+            except Exception:
+                legacy_pics = float(_LEGACY_MIN_PICTURES_TO_ANALYZE_DEFAULT)
+            migrated_seconds = round(float(legacy_pics) / float(_LEGACY_INFERENCE_FPS_FOR_MIGRATION), 1)
+            # Keep it sane; avoid 0.0 which would effectively skip analysis.
+            migrated_seconds = max(0.1, migrated_seconds)
+
+            try:
+                updater = ConfigUpdater()
+                updater.read(CONFIGFILE)
+                if 'Settings' not in updater:
+                    updater.add_section('Settings')
+                settings_section = updater['Settings']
+                settings_section['min_seconds_to_analyze'] = f"{migrated_seconds:.1f}"
+                if 'min_pictures_to_analyze' in settings_section:
+                    del settings_section['min_pictures_to_analyze']
+                with open(CONFIGFILE, 'w', encoding='utf-8') as f:
+                    updater.write(f)
+                logging.info(
+                    f"[CONFIG] Migrated min_pictures_to_analyze={legacy_pics} -> min_seconds_to_analyze={migrated_seconds:.1f}"
+                )
+            except Exception as e:
+                logging.warning(f"[CONFIG] Failed to migrate min_seconds_to_analyze: {e}")
+
+            # Reload parser so safe_* picks up the migrated value.
+            parser = configparser.ConfigParser()
+            parser.read(CONFIGFILE)
+
+        elif has_legacy and has_new:
+            # Best-effort cleanup: remove legacy key once new key exists.
+            try:
+                updater = ConfigUpdater()
+                updater.read(CONFIGFILE)
+                if 'Settings' in updater and 'min_pictures_to_analyze' in updater['Settings']:
+                    del updater['Settings']['min_pictures_to_analyze']
+                    with open(CONFIGFILE, 'w', encoding='utf-8') as f:
+                        updater.write(f)
+                    logging.info("[CONFIG] Removed legacy key min_pictures_to_analyze from config.ini")
+            except Exception:
+                pass
+    except Exception:
+        # Migration must never break startup.
+        pass
+
     new_config = {
         "TIMEZONE": safe_str("TIMEZONE", d['timezone']),
         "LANGUAGE": safe_str("LANGUAGE", d['language']),
@@ -395,7 +455,7 @@ def load_config():
         "PERIODIC_JOBS_INTERVAL": safe_int("PERIODIC_JOBS_INTERVAL", int(d['periodic_jobs_interval'])),
         "ALLOWED_TO_ENTER": safe_enum("ALLOWED_TO_ENTER", AllowedToEnter, AllowedToEnter(d['allowed_to_enter'])),
         "MOUSE_CHECK_ENABLED": safe_bool("MOUSE_CHECK_ENABLED", d['mouse_check_enabled']),
-        "MIN_PICTURES_TO_ANALYZE": safe_int("MIN_PICTURES_TO_ANALYZE", int(d['min_pictures_to_analyze'])),
+        "MIN_SECONDS_TO_ANALYZE": safe_float("MIN_SECONDS_TO_ANALYZE", float(d['min_seconds_to_analyze'])),
         "SHOW_IMAGES_WITH_OVERLAY": safe_bool("SHOW_IMAGES_WITH_OVERLAY", d['show_images_with_overlay']),
         "LIVE_VIEW_REFRESH_INTERVAL": safe_float("LIVE_VIEW_REFRESH_INTERVAL", float(d['live_view_refresh_interval'])),
         "KITTYFLAP_CONFIG_MIGRATED": safe_bool("KITTYFLAP_CONFIG_MIGRATED", d['kittyflap_config_migrated']),
@@ -456,6 +516,10 @@ def load_config():
         "REMOTE_TARGET_HOST": safe_str("REMOTE_TARGET_HOST", d.get('remote_target_host', "")),
         "REMOTE_CONTROL_PORT": safe_int("REMOTE_CONTROL_PORT", int(d.get('remote_control_port', 8888))),
         "REMOTE_CONTROL_TIMEOUT": safe_float("REMOTE_CONTROL_TIMEOUT", float(d.get('remote_control_timeout', 30.0))),
+        "REMOTE_WAIT_AFTER_REBOOT_TIMEOUT": safe_float(
+            "REMOTE_WAIT_AFTER_REBOOT_TIMEOUT",
+            float(d.get('remote_wait_after_reboot_timeout', 30.0)),
+        ),
         "REMOTE_SYNC_ON_FIRST_CONNECT": safe_bool("REMOTE_SYNC_ON_FIRST_CONNECT", d.get('remote_sync_on_first_connect', True)),
         "REMOTE_SYNC_INCLUDE_PICTURES": safe_bool("REMOTE_SYNC_INCLUDE_PICTURES", d.get('remote_sync_include_pictures', True)),
         "REMOTE_SYNC_INCLUDE_MODELS": safe_bool("REMOTE_SYNC_INCLUDE_MODELS", d.get('remote_sync_include_models', True)),
@@ -546,7 +610,11 @@ def save_config():
     settings['periodic_jobs_interval'] = CONFIG['PERIODIC_JOBS_INTERVAL']
     settings['allowed_to_enter'] = CONFIG['ALLOWED_TO_ENTER'].value
     settings['mouse_check_enabled'] = str(CONFIG['MOUSE_CHECK_ENABLED'])
-    settings['min_pictures_to_analyze'] = CONFIG['MIN_PICTURES_TO_ANALYZE']
+    # Persist with 1 decimal precision
+    try:
+        settings['min_seconds_to_analyze'] = f"{float(CONFIG['MIN_SECONDS_TO_ANALYZE']):.1f}"
+    except Exception:
+        settings['min_seconds_to_analyze'] = str(CONFIG['MIN_SECONDS_TO_ANALYZE'])
     settings['show_images_with_overlay'] = CONFIG['SHOW_IMAGES_WITH_OVERLAY']
     settings['live_view_refresh_interval'] = CONFIG['LIVE_VIEW_REFRESH_INTERVAL']
     settings['kittyflap_config_migrated'] = CONFIG['KITTYFLAP_CONFIG_MIGRATED']
@@ -576,6 +644,7 @@ def save_config():
     settings['allowed_to_exit_range3'] = CONFIG['ALLOWED_TO_EXIT_RANGE3']
     settings['allowed_to_exit_range3_from'] = CONFIG['ALLOWED_TO_EXIT_RANGE3_FROM']
     settings['allowed_to_exit_range3_to'] = CONFIG['ALLOWED_TO_EXIT_RANGE3_TO']
+    settings['remote_wait_after_reboot_timeout'] = CONFIG.get('REMOTE_WAIT_AFTER_REBOOT_TIMEOUT', 30.0)
     #settings['labelstudio_version'] = CONFIG['LABELSTUDIO_VERSION'] # This value may not be written to the config file
     settings['email'] = CONFIG['EMAIL']
     settings['user_name'] = CONFIG['USER_NAME']
@@ -600,7 +669,6 @@ def save_config():
     settings['restart_ip_camera_stream_on_failure'] = CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE']
     settings['wlan_watchdog_enabled'] = CONFIG['WLAN_WATCHDOG_ENABLED']
     settings['disable_rfid_reader'] = CONFIG['DISABLE_RFID_READER']
-    #settings['event_images_fs_migrated'] = CONFIG['EVENT_IMAGES_FS_MIGRATED']  # This value may not be written to the config file
 
     # Never persist remote-only settings in config.ini.
     # They are stored in config.remote.ini so they survive sync operations.

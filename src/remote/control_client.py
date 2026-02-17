@@ -40,6 +40,7 @@ class RemoteControlClient:
         self._last_rx = 0.0
         self._control_acquired = False
         self._client_id = f"remote_{int(time.time())}"
+        self._missing_target_host_logged = False
 
         self._sync_tmp_path: str | None = None
         self._sync_started_at: float = 0.0
@@ -150,6 +151,28 @@ class RemoteControlClient:
     def wait_for_sync_completion(self, timeout: float = 300.0) -> bool:
         return self._sync_done_event.wait(timeout=timeout)
 
+    def abort_initial_sync(self, reason: str = "aborted by user") -> None:
+        tmp_path = None
+        with self._sync_status_lock:
+            tmp_path = self._sync_tmp_path
+            self._sync_tmp_path = None
+            self._sync_status.update(
+                {
+                    "requested": False,
+                    "in_progress": False,
+                    "ok": False,
+                    "reason": reason,
+                    "finished_at": time.time(),
+                }
+            )
+            self._sync_done_event.set()
+
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
     def _ws_url(self) -> str:
         host = (CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
         port = int(CONFIG.get("REMOTE_CONTROL_PORT") or 8888)
@@ -167,15 +190,20 @@ class RemoteControlClient:
             logging.error(f"[REMOTE_CTRL] Client thread crashed: {e}")
 
     async def _main(self) -> None:
-        url = self._ws_url()
-        if not url:
-            logging.error("[REMOTE_CTRL] REMOTE_TARGET_HOST is not configured; remote sensors/actors disabled.")
-            return
-
         timeout_s = float(CONFIG.get("REMOTE_CONTROL_TIMEOUT") or 10.0)
         backoff = 1.0
 
         while not sigterm_monitor.stop_now:
+            url = self._ws_url()
+            if not url:
+                if not self._missing_target_host_logged:
+                    logging.info("[REMOTE_CTRL] REMOTE_TARGET_HOST is not configured yet; remote sensors/actors disabled until it is set.")
+                    self._missing_target_host_logged = True
+                await asyncio.sleep(1.0)
+                continue
+
+            self._missing_target_host_logged = False
+
             try:
                 logging.info(f"[REMOTE_CTRL] Connecting to {url} ...")
                 async with websockets.connect(url, ping_interval=None, max_size=2**24) as ws:

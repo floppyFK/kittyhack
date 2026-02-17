@@ -791,7 +791,7 @@ install_kittyhack() {
     fi
 
 
-    echo -e "${CYAN}--- KITTYHACK INSTALL Step 4: Install and start KittyHack service ---${NC}"
+    echo -e "${CYAN}--- KITTYHACK INSTALL Step 4: Install KittyHack service (supervised by kittyhack_control) ---${NC}"
     cat > /etc/systemd/system/kittyhack.service << EOF
 [Unit]
 Description=KittyHack WebGUI
@@ -814,13 +814,10 @@ TimeoutStopSec=30
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable kittyhack.service
-    systemctl start kittyhack.service
-    if systemctl is-active --quiet kittyhack.service; then
-        echo -e "${GREEN}KittyHack service installed and started successfully.${NC}"
-    else
-        echo -e "${RED}Failed to start KittyHack service.${NC}"
-    fi
+    # Target-mode: kittyhack_control supervises kittyhack startup. Do not enable kittyhack.service here.
+    systemctl disable kittyhack.service 2>/dev/null || true
+    systemctl stop kittyhack.service 2>/dev/null || true
+    echo -e "${GREEN}KittyHack service installed (will be started by kittyhack_control).${NC}"
 
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 5: Install and start kittyhack_control service ---${NC}"
     cat > /etc/systemd/system/kittyhack_control.service << EOF

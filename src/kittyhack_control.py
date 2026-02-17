@@ -13,6 +13,13 @@ from src.helper import sigterm_monitor
 from src.magnets_rfid import Magnets, Rfid
 from src.pir import Pir
 from src.system import systemctl
+from src.system import (
+    get_wlan_connections,
+    is_gateway_reachable,
+    switch_wlan_connection,
+    systemcmd,
+    is_service_running,
+)
 from src.paths import install_base, kittyhack_root, pictures_root, models_yolo_root
 from src.mode import is_remote_mode
 
@@ -45,11 +52,48 @@ class ControlState:
         self.http_server: asyncio.base_events.Server | None = None
         self.sync_in_progress: bool = False
 
+        # Boot wait behavior (target-mode only)
+        self.boot_wait_active: bool = False
+        self.boot_wait_deadline_ts: float = 0.0
+        self.boot_wait_timeout_s: float = float(CONFIG.get("REMOTE_WAIT_AFTER_REBOOT_TIMEOUT") or 30.0)
+        self.boot_wait_takeover_attempted: bool = False
+        self.boot_wait_started_at: float = 0.0
+
     def is_controlled(self) -> bool:
         return self.controller is not None
 
 
 STATE = ControlState()
+
+
+def _remote_control_marker_path() -> str:
+    # Marker: if it exists, kittyhack_control will wait for a remote control attempt after reboot.
+    return os.path.join(kittyhack_root(), ".remote-control-session")
+
+
+def _write_remote_control_marker() -> None:
+    try:
+        with open(_remote_control_marker_path(), "w", encoding="utf-8") as f:
+            f.write(str(time.time()))
+    except Exception:
+        pass
+
+
+def _delete_remote_control_marker() -> bool:
+    try:
+        p = _remote_control_marker_path()
+        if os.path.exists(p):
+            os.remove(p)
+        return True
+    except Exception:
+        return False
+
+
+def _remote_control_marker_exists() -> bool:
+    try:
+        return os.path.exists(_remote_control_marker_path())
+    except Exception:
+        return False
 
 
 def _ensure_dirs() -> None:
@@ -103,11 +147,95 @@ def _build_info_page_html() -> str:
     )
 
 
+def _build_boot_wait_page_html() -> str:
+    # Minimal standalone UI: countdown + skip + disable.
+    return (
+        "<!doctype html>\n"
+        "<html lang=\"en\">\n"
+        "<head>\n"
+        "  <meta charset=\"utf-8\">\n"
+        "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+        "  <title>Kittyhack Startup</title>\n"
+        "  <style>\n"
+        "    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;"
+        "         margin:2rem;max-width:55rem;line-height:1.5;}\n"
+        "    .card{border:1px solid #ddd;border-radius:12px;padding:1.25rem;}\n"
+        "    .row{display:flex;gap:.75rem;flex-wrap:wrap;margin-top:1rem;}\n"
+        "    button{padding:.6rem .9rem;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer;}\n"
+        "    button.primary{border-color:#999;font-weight:600;}\n"
+        "    button:disabled{opacity:.6;cursor:not-allowed;}\n"
+        "    code{background:#f6f8fa;padding:.15rem .35rem;border-radius:6px;}\n"
+        "    .muted{color:#666;}\n"
+        "  </style>\n"
+        "</head>\n"
+        "<body>\n"
+        "  <h1>Waiting for remote connection</h1>\n"
+        "  <div class=\"card\">\n"
+        "    <p>This Kittyflap is configured to wait for a remote-control connection after reboot.</p>\n"
+        "    <p><strong>Autostart Kittyhack in:</strong> <span id=\"countdown\">...</span></p>\n"
+        "    <p class=\"muted\" id=\"status\"></p>\n"
+        "    <div class=\"row\">\n"
+        "      <button class=\"primary\" id=\"btnSkip\">Skip wait (start Kittyhack now)</button>\n"
+        "      <button id=\"btnDisable\">Disable wait after reboot</button>\n"
+        "    </div>\n"
+        "  </div>\n"
+        "  <script>\n"
+        "    async function post(path){\n"
+        "      try{ await fetch(path,{method:'POST'});}catch(e){}\n"
+        "    }\n"
+        "    async function poll(){\n"
+        "      try{\n"
+        "        const r = await fetch('/api/status',{cache:'no-store'});\n"
+        "        const st = await r.json();\n"
+        "        const cd = document.getElementById('countdown');\n"
+        "        const msg = document.getElementById('status');\n"
+        "        if(st.controlled){\n"
+        "          cd.textContent = 'remote control active';\n"
+        "          msg.textContent = 'A remote controller is connected.';\n"
+        "          document.getElementById('btnSkip').disabled = true;\n"
+        "          document.getElementById('btnDisable').disabled = true;\n"
+        "          return;\n"
+        "        }\n"
+        "        if(!st.boot_wait_active){\n"
+        "          cd.textContent = 'starting...';\n"
+        "          msg.textContent = 'Kittyhack is starting.';\n"
+        "          document.getElementById('btnSkip').disabled = true;\n"
+        "          document.getElementById('btnDisable').disabled = true;\n"
+        "          return;\n"
+        "        }\n"
+        "        if(st.boot_wait_takeover_attempted){\n"
+        "          cd.textContent = 'remote attempt detected';\n"
+        "          msg.textContent = 'Remote control attempt detected. Waiting for controller...';\n"
+        "        }else{\n"
+        "          cd.textContent = Math.max(0, Math.ceil(st.boot_wait_remaining_s)) + ' s';\n"
+        "          msg.textContent = '';\n"
+        "        }\n"
+        "      }catch(e){}\n"
+        "    }\n"
+        "    document.getElementById('btnSkip').addEventListener('click',()=>post('/api/skip'));\n"
+        "    document.getElementById('btnDisable').addEventListener('click',()=>post('/api/disable_wait'));\n"
+        "    poll();\n"
+        "    setInterval(poll,1000);\n"
+        "  </script>\n"
+        "</body>\n"
+        "</html>\n"
+    )
+
+
 async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
         # Read request line + headers (best-effort; do not block too long)
+        method = "GET"
+        path = "/"
         try:
-            await asyncio.wait_for(reader.readline(), timeout=2.0)
+            req_line = await asyncio.wait_for(reader.readline(), timeout=2.0)
+            try:
+                parts = (req_line.decode("utf-8", "ignore") or "").strip().split()
+                if len(parts) >= 2:
+                    method = parts[0].upper()
+                    path = parts[1]
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -117,15 +245,67 @@ async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.Strea
             if not line or line in (b"\r\n", b"\n"):
                 break
 
-        body = _build_info_page_html().encode("utf-8")
-        headers = (
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/html; charset=utf-8\r\n"
-            f"Content-Length: {len(body)}\r\n"
-            "Cache-Control: no-store\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-        ).encode("utf-8")
+        # Simple API for boot-wait UI
+        if path.startswith("/api/status"):
+            st = {
+                "controlled": bool(STATE.is_controlled()),
+                "boot_wait_active": bool(STATE.boot_wait_active),
+                "boot_wait_takeover_attempted": bool(STATE.boot_wait_takeover_attempted),
+                "boot_wait_remaining_s": max(0.0, float(STATE.boot_wait_deadline_ts or 0.0) - time.time()) if STATE.boot_wait_active else 0.0,
+                "marker_exists": bool(_remote_control_marker_exists()),
+            }
+            body = json.dumps(st).encode("utf-8")
+            headers = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json; charset=utf-8\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Cache-Control: no-store\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode("utf-8")
+
+        elif path.startswith("/api/skip") and method == "POST":
+            # Start kittyhack immediately (keep marker)
+            asyncio.create_task(_start_kittyhack_from_control(reason="user skip"))
+            body = b"OK"
+            headers = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/plain; charset=utf-8\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Cache-Control: no-store\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode("utf-8")
+
+        elif path.startswith("/api/disable_wait") and method == "POST":
+            # Delete marker and start kittyhack immediately
+            _delete_remote_control_marker()
+            asyncio.create_task(_start_kittyhack_from_control(reason="user disable wait"))
+            body = b"OK"
+            headers = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/plain; charset=utf-8\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Cache-Control: no-store\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode("utf-8")
+
+        else:
+            # Default pages
+            if STATE.boot_wait_active and not STATE.is_controlled():
+                body = _build_boot_wait_page_html().encode("utf-8")
+            else:
+                body = _build_info_page_html().encode("utf-8")
+
+            headers = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/html; charset=utf-8\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Cache-Control: no-store\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode("utf-8")
         writer.write(headers)
         writer.write(body)
         await writer.drain()
@@ -160,6 +340,21 @@ async def _stop_info_http_server() -> None:
         pass
     finally:
         STATE.http_server = None
+
+
+async def _start_kittyhack_from_control(reason: str) -> None:
+    # Ensure port 80 is free before starting kittyhack.
+    try:
+        STATE.boot_wait_active = False
+        STATE.boot_wait_deadline_ts = 0.0
+        await _stop_info_http_server()
+    except Exception:
+        pass
+    logging.info(f"[CONTROL] Starting kittyhack ({reason})")
+    try:
+        systemctl("start", "kittyhack")
+    except Exception:
+        pass
 
 
 async def _publisher(ws: WebSocketServerProtocol):
@@ -251,6 +446,11 @@ async def _release_control(reason: str):
 
 
 async def _take_control(ws: WebSocketServerProtocol, client_id: str, timeout_s: float):
+    # Any successful/attempted take_control means remote control was used at least once.
+    # This is used for target-mode boot behavior after reboot.
+    STATE.boot_wait_takeover_attempted = True
+    _write_remote_control_marker()
+
     if STATE.is_controlled():
         await ws.send(json.dumps({"type": "take_control_ack", "ok": False, "reason": "already_controlled"}))
         return False
@@ -483,6 +683,138 @@ async def _watchdog():
                 await _release_control("controller timeout")
 
 
+async def _boot_wait_supervisor():
+    # If the marker exists, we delay starting kittyhack after reboot.
+    if not _remote_control_marker_exists():
+        return
+
+    try:
+        timeout_s = float(CONFIG.get("REMOTE_WAIT_AFTER_REBOOT_TIMEOUT") or 30.0)
+    except Exception:
+        timeout_s = 30.0
+    timeout_s = max(5.0, min(600.0, float(timeout_s)))
+
+    STATE.boot_wait_active = True
+    STATE.boot_wait_takeover_attempted = False
+    STATE.boot_wait_started_at = time.time()
+    STATE.boot_wait_deadline_ts = STATE.boot_wait_started_at + timeout_s
+
+    # Ensure kittyhack is not running while we wait.
+    try:
+        systemctl("stop", "kittyhack")
+    except Exception:
+        pass
+
+    # Serve countdown UI on port 80 during wait.
+    await _start_info_http_server()
+
+    while not sigterm_monitor.stop_now and STATE.boot_wait_active:
+        await asyncio.sleep(0.5)
+
+        # If controller already took over, keep waiting (kittyhack stays stopped).
+        if STATE.is_controlled() or STATE.boot_wait_takeover_attempted:
+            continue
+
+        # Timeout reached with no remote take_control attempt: start kittyhack.
+        if time.time() >= float(STATE.boot_wait_deadline_ts or 0.0):
+            await _start_kittyhack_from_control(reason="boot wait timeout")
+            return
+
+
+async def _wlan_watchdog_loop():
+    # Run on target device, independent from kittyhack.service.
+    # If kittyhack_control is running, server.py will skip its own watchdog.
+    wlan_disconnect_counter = 0
+    wlan_reconnect_attempted = False
+
+    while not sigterm_monitor.stop_now:
+        await asyncio.sleep(5.0)
+
+        if not bool(CONFIG.get("WLAN_WATCHDOG_ENABLED", True)):
+            wlan_disconnect_counter = 0
+            wlan_reconnect_attempted = False
+            continue
+
+        # Determine WLAN state
+        try:
+            wlan_connections = get_wlan_connections()
+            wlan_connected = any(wlan.get("connected") for wlan in wlan_connections)
+            gateway_reachable = bool(is_gateway_reachable())
+        except Exception as e:
+            logging.error(f"[WLAN WATCHDOG] Failed to get WLAN state: {e}")
+            wlan_connections = []
+            wlan_connected = False
+            gateway_reachable = False
+
+        if wlan_connected and gateway_reachable:
+            wlan_disconnect_counter = 0
+            wlan_reconnect_attempted = False
+            continue
+
+        wlan_disconnect_counter += 1
+        if wlan_disconnect_counter <= 5:
+            logging.warning(
+                f"[WLAN WATCHDOG] WLAN not fully connected (attempt {wlan_disconnect_counter}/5): "
+                f"Interface connected: {wlan_connected}, Gateway reachable: {gateway_reachable}"
+            )
+        elif wlan_disconnect_counter <= 8:
+            logging.error(
+                f"[WLAN WATCHDOG] WLAN still not connected (attempt {wlan_disconnect_counter}/8)! "
+                f"Interface connected: {wlan_connected}, Gateway reachable: {gateway_reachable}"
+            )
+
+        # Reconnect attempt after 5 failed checks (~25s)
+        if wlan_disconnect_counter == 5 and not wlan_reconnect_attempted:
+            logging.warning("[WLAN WATCHDOG] Attempting to reconnect WLAN after 5 failed checks...")
+            try:
+                sorted_wlans = sorted(wlan_connections, key=lambda w: int(w.get("priority", 0) or 0), reverse=True)[:6]
+            except Exception:
+                sorted_wlans = []
+
+            for wlan in sorted_wlans:
+                ssid = str(wlan.get("ssid") or "")
+                if not ssid:
+                    continue
+                try:
+                    systemctl("stop", "NetworkManager")
+                    await asyncio.sleep(2.0)
+                    systemctl("start", "NetworkManager")
+                    await asyncio.sleep(2.0)
+                    switch_wlan_connection(ssid)
+                except Exception:
+                    pass
+
+                # Wait briefly for reconnection
+                ok = False
+                for _ in range(10):
+                    await asyncio.sleep(1.0)
+                    try:
+                        wc = get_wlan_connections()
+                        if any(w.get("connected") for w in wc) and is_gateway_reachable():
+                            ok = True
+                            break
+                    except Exception:
+                        pass
+                if ok:
+                    logging.info(f"[WLAN WATCHDOG] Successfully reconnected to SSID: {ssid}")
+                    wlan_disconnect_counter = 0
+                    wlan_reconnect_attempted = False
+                    break
+
+            wlan_reconnect_attempted = True
+
+        # Reboot after 8 failed checks (~40s)
+        if wlan_disconnect_counter >= 8:
+            logging.error("[WLAN WATCHDOG] WLAN still not connected after reconnect attempts. Rebooting system...")
+            try:
+                systemcmd(["/sbin/reboot"], bool(CONFIG.get("SIMULATE_KITTYFLAP")))
+            except Exception:
+                pass
+            return
+        
+        logging.info(f"[WLAN WATCHDOG] Current WLAN connections: {wlan_connections}")
+
+
 async def main():
     configure_logging(CONFIG.get("LOGLEVEL", "INFO"))
 
@@ -490,8 +822,29 @@ async def main():
         logging.error("[CONTROL] Refusing to start: kittyhack_control must not run in remote-mode.")
         return
 
+    # Enforce target-mode boot semantics: kittyhack_control supervises kittyhack startup.
+    # Best-effort: prevent kittyhack.service from auto-starting on subsequent boots.
+    try:
+        if is_service_running("kittyhack"):
+            # Keep it running; we only enforce disable to ensure next boot starts via kittyhack_control.
+            pass
+        systemctl("disable", "kittyhack")
+    except Exception:
+        pass
+
     async with websockets.serve(_handler, host="0.0.0.0", port=8888, ping_interval=None):
         logging.info("[CONTROL] kittyhack_control listening on 0.0.0.0:8888")
+
+        # Start WLAN watchdog (target side)
+        asyncio.create_task(_wlan_watchdog_loop())
+
+        # Boot wait supervisor (only if marker exists)
+        asyncio.create_task(_boot_wait_supervisor())
+
+        # If we are not in boot-wait mode, start kittyhack immediately.
+        if not _remote_control_marker_exists():
+            await _start_kittyhack_from_control(reason="boot: no remote marker")
+
         await _watchdog()
 
 

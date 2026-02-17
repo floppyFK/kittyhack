@@ -69,6 +69,7 @@ from src.system import (
     systemcmd, 
     manage_and_switch_wlan, 
     delete_wlan_connection,
+    is_service_running,
     get_labelstudio_status,
     get_labelstudio_installed_version,
     get_labelstudio_latest_version,
@@ -81,7 +82,8 @@ from src.system import (
     set_hostname,
     update_kittyhack,
     is_gateway_reachable,
-    upgrade_base_system_packages
+    upgrade_base_system_packages,
+    ensure_target_boot_service_semantics
 )
 from src.paths import pictures_original_dir, kittyhack_root
 from src.mode import is_remote_mode
@@ -278,6 +280,14 @@ for key, value in CONFIG.items():
 # (only relevant on the target device)
 if not is_remote_mode():
     check_and_stop_kittyflap_services(CONFIG['SIMULATE_KITTYFLAP'])
+
+    # Migration: devices updating from pre-remote versions may still have kittyhack.service enabled
+    # and kittyhack_control.service disabled/missing. Ensure the new boot semantics take effect
+    # on the next reboot (best-effort; should never block startup).
+    try:
+        ensure_target_boot_service_semantics()
+    except Exception as e:
+        logging.warning(f"[SYSTEM] Failed to ensure target boot service semantics: {e}")
 
 # Remote-mode constraints
 if is_remote_mode():
@@ -603,8 +613,10 @@ def start_background_task():
                     wlan_connected = False
                     gateway_reachable = False
 
-            # Only perform reconnect/reboot if WLAN watchdog is enabled
-            if (not is_remote_mode()) and CONFIG['WLAN_WATCHDOG_ENABLED']:
+            # Only perform reconnect/reboot if WLAN watchdog is enabled.
+            # On target devices, kittyhack_control owns the WLAN watchdog so it remains active during remote-control
+            # even while kittyhack.service is stopped. Avoid running it twice.
+            if (not is_remote_mode()) and CONFIG['WLAN_WATCHDOG_ENABLED'] and (not is_service_running('kittyhack_control', log_output=False)):
                 # Consider WLAN as not connected if either the interface or gateway is not reachable
                 if not wlan_connected or not gateway_reachable:
                     wlan_disconnect_counter += 1
@@ -2489,17 +2501,9 @@ def server(input, output, session):
                     ),
                     ui.input_text(
                         "remote_target_host",
-                        _("Remote target host"),
+                        _("Remote target host IP:"),
                         value=values["remote_target_host"],
                         width="100%"
-                    ),
-                    ui.input_numeric(
-                        "remote_control_port",
-                        _("Remote control port"),
-                        value=values["remote_control_port"],
-                        min=1,
-                        max=65535,
-                        step=1
                     ),
                     ui.input_numeric(
                         "remote_control_timeout",
@@ -2508,6 +2512,9 @@ def server(input, output, session):
                         min=1,
                         max=120,
                         step=1
+                    ),
+                    ui.help_text(
+                        _("Defines how long the client waits for control and sync responses before a reconnect/timeout is triggered.")
                     ),
                     ui.input_switch(
                         "remote_sync_on_first_connect",
@@ -2539,7 +2546,9 @@ def server(input, output, session):
             ui.div(ui.output_ui("remote_initial_sync_status_ui"), class_="mt-3"),
         )
 
-        footer = None
+        footer = ui.div(
+            ui.input_action_button("btn_remote_sync_abort", _("Abort"), class_="btn-danger")
+        )
         if error_reason:
             body = ui.div(
                 ui.markdown(_("Initial sync failed.")),
@@ -2547,7 +2556,8 @@ def server(input, output, session):
                 ui.div(ui.output_ui("remote_initial_sync_status_ui"), class_="mt-3"),
             )
             footer = ui.div(
-                ui.input_action_button("btn_remote_sync_failed_close", _("Back"))
+                ui.input_action_button("btn_remote_sync_failed_close", _("Back")),
+                ui.input_action_button("btn_remote_sync_abort", _("Abort"), class_="btn-danger")
             )
 
         ui.modal_show(
@@ -2621,7 +2631,7 @@ def server(input, output, session):
             detail = _("Transferred ({} items): {:.1f} MB").format(items_count, bytes_mb)
 
         extra = ""
-        if ok is False and reason:
+        if requested and ok is False and reason:
             extra = _("Reason: {} ").format(reason)
 
         return ui.div(
@@ -2657,7 +2667,7 @@ def server(input, output, session):
             client.ensure_started()
             st = client.get_sync_status()
         except Exception:
-            reactive.invalidate_later(1000)
+            reactive.invalidate_later(1.0)
             return
 
         remote_sync_status.set(st)
@@ -2691,13 +2701,13 @@ def server(input, output, session):
         if requested and ok is None and not in_progress and age > connect_timeout:
             show_remote_initial_sync_modal(error_reason=_("Could not connect to the remote Kittyflap."))
             remote_sync_modal_open.set(True)
-            reactive.invalidate_later(2000)
+            reactive.invalidate_later(2.0)
             return
 
         if requested and ok is None and (in_progress or started_at) and sync_age > sync_timeout:
             show_remote_initial_sync_modal(error_reason=_("Initial sync timed out."))
             remote_sync_modal_open.set(True)
-            reactive.invalidate_later(2000)
+            reactive.invalidate_later(2.0)
             return
 
         # Sync finished.
@@ -2739,10 +2749,10 @@ def server(input, output, session):
             reason = (st.get("reason") or "").strip()
             show_remote_initial_sync_modal(error_reason=reason or _("unknown error"))
             remote_sync_modal_open.set(True)
-            reactive.invalidate_later(2000)
+            reactive.invalidate_later(2.0)
             return
 
-        reactive.invalidate_later(250)
+        reactive.invalidate_later(0.25)
 
     @reactive.Effect
     @reactive.event(input.btn_remote_setup_save)
@@ -2753,13 +2763,7 @@ def server(input, output, session):
         if not host:
             ui.notification_show(_("Remote target host must not be empty."), duration=8, type="error")
             return
-        try:
-            port = int(input.remote_control_port() or 0)
-        except Exception:
-            port = 0
-        if port < 1 or port > 65535:
-            ui.notification_show(_("Remote control port must be between 1 and 65535."), duration=8, type="error")
-            return
+        port = 8888
         try:
             timeout = float(input.remote_control_timeout() or 0)
         except Exception:
@@ -2798,6 +2802,7 @@ def server(input, output, session):
                 client = RemoteControlClient.instance()
                 client.ensure_started()
                 client.start_initial_sync(force=True)
+                remote_sync_status.set(client.get_sync_status())
             except Exception as e:
                 ui.notification_show(_("Failed to initialize remote control client: {}.").format(e), duration=12, type="error")
                 return
@@ -2824,6 +2829,48 @@ def server(input, output, session):
             return
         remote_sync_modal_open.set(False)
         ui.modal_remove()
+        show_remote_setup_modal()
+
+    @reactive.Effect
+    @reactive.event(input.btn_remote_sync_abort)
+    def _remote_sync_abort():
+        if not is_remote_mode():
+            return
+
+        try:
+            from src.remote.control_client import RemoteControlClient
+
+            client = RemoteControlClient.instance()
+            client.abort_initial_sync(reason="aborted by user")
+        except Exception:
+            pass
+
+        # Clear target host and persist cleanup in config.remote.ini/config.ini.
+        CONFIG["REMOTE_TARGET_HOST"] = ""
+        try:
+            update_single_config_parameter("REMOTE_TARGET_HOST")
+        except Exception:
+            pass
+
+        remote_sync_status.set(
+            {
+                "requested": False,
+                "in_progress": False,
+                "ok": False,
+                "reason": "aborted by user",
+                "requested_at": 0.0,
+                "started_at": 0.0,
+                "finished_at": tm.time(),
+                "bytes_received": 0,
+                "items": [],
+            }
+        )
+        remote_sync_modal_open.set(False)
+        remote_sync_finalized.set(False)
+        remote_setup_active.set(True)
+
+        ui.modal_remove()
+        ui.notification_show(_("Initial sync aborted. Remote target host has been cleared."), duration=8, type="message")
         show_remote_setup_modal()
 
     @reactive.Effect
@@ -5177,10 +5224,7 @@ def server(input, output, session):
                 model_training_image_size_input = ui.input_select(
                     "model_training_image_size",
                     _("Image size"),
-                    {
-                        "320": "320",
-                        "640": "640",
-                    },
+                    {str(s): str(s) for s in YoloModel.get_supported_image_sizes()},
                     selected="320",
                     width="90%",
                 )
@@ -5198,17 +5242,30 @@ def server(input, output, session):
                             ui.input_text("email_notification", _("Email for Notification (optional)"), value=CONFIG['EMAIL'], placeholder=_("Enter your email address"), width="90%"),
                             ui.help_text(_("If you provide an email address, you will be notified when the model training is finished.")),
                             ui.tags.details(
+                                ui.br(),
                                 ui.tags.summary(_("Advanced options")),
                                 ui.br(),
                                 model_training_base_model_input,
+                                ui.help_text(
+                                    _(
+                                        "Base model (YOLOv8n/s/m/l/x): larger variants are usually more accurate, but they run slower and need more CPU/RAM. "
+                                        "Choose smaller variants (e.g. 'n') if your device struggles to keep up in real-time."
+                                    )
+                                ),
                                 model_training_image_size_input,
+                                ui.help_text(
+                                    _(
+                                        "Image size (imgsz): higher values can improve detection of small objects, but increase computation and can reduce FPS."
+                                    )
+                                ),
                                 (
-                                    ui.help_text(_("These options are only available in remote mode."))
+                                    ui.help_text(_("These options are only available if you run Kittyhack on a dedicated system in remote mode."))
                                     if not is_remote_mode()
                                     else ui.help_text(_("Defaults: YOLOv8n and image size 320."))
                                 ),
                                 style="width: 90%; text-align: left; margin: 0 auto;",
                             ),
+                            ui.br(),
                             ui.br(),
                             ui.input_task_button("submit_model_training", _("Submit Model for Training"), class_="btn-primary"),
                             id="model_training_form",
@@ -5401,11 +5458,19 @@ def server(input, output, session):
         if model_variant not in {"n", "s", "m", "l", "x"}:
             ui.notification_show(_("Invalid YOLOv8 model selection."), duration=10, type="error")
             return
-        if image_size_raw not in {"320", "640"}:
+
+        try:
+            image_size_candidate = int(image_size_raw)
+        except Exception:
             ui.notification_show(_("Invalid image size selection."), duration=10, type="error")
             return
 
-        image_size = int(image_size_raw)
+        supported_sizes = set(YoloModel.get_supported_image_sizes())
+        if image_size_candidate not in supported_sizes:
+            ui.notification_show(_("Invalid image size selection."), duration=10, type="error")
+            return
+
+        image_size = int(image_size_candidate)
 
         if email_notification:
             # Validate the email address
@@ -5837,19 +5902,23 @@ def server(input, output, session):
                         ),
                         ui.hr(),
                         ui.row(
-                            ui.column(12, ui.input_numeric("numMinPicturesToAnalyze", _("Minimum pictures before unlock decision"), CONFIG['MIN_PICTURES_TO_ANALYZE'], min=1)),
+                            ui.column(
+                                12,
+                                ui.input_numeric(
+                                    "numMinSecondsToAnalyze",
+                                    _("Seconds before unlock decision"),
+                                    float(CONFIG.get('MIN_SECONDS_TO_ANALYZE', 1.5) or 1.5),
+                                    min=0.1,
+                                    step=0.1,
+                                ),
+                            ),
                             ui.column(12, info_toggle(
-                                "min_pics_info",
-                                _("Explain minimum pictures"),
-                                _("Minimum number of pictures that must be analyzed before the flap may unlock.") + "  \n" +
-                                _("Unlock is only possible if none of the first N pictures reaches the mouse detection threshold.") + "  \n" +
-                                _("If any of these initial pictures reaches or exceeds the mouse_threshold, the flap stays locked.") + "  \n\n" +
-                                _("After unlocking: If a later picture (after the first N) reaches the mouse_threshold, the flap is locked again.") + "  \n\n" +
-                                _("Summary:") + "  \n" +
-                                "- " + _("Analyze at least N pictures (this setting)") + "  \n" +
-                                "- " + _("Unlock only if no prey detected ≥ mouse_threshold in those N") + "  \n" +
-                                "- " + _("Lock again if a subsequent picture shows prey ≥ mouse_threshold") + "  \n\n" +
-                                "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['min_pictures_to_analyze']) + ")*"
+                                "min_seconds_info",
+                                _("Explain unlock decision delay"),
+                                _("Time in seconds after an outside motion trigger before Kittyhack may unlock.") + "  \n" +
+                                _("Unlock is only possible if no prey was detected during this initial analysis window.") + "  \n\n" +
+                                _("After unlocking: If a later picture reaches the mouse_threshold, the flap is locked again.") + "  \n\n" +
+                                "*(" + _("Default value: {}").format(DEFAULT_CONFIG['Settings']['min_seconds_to_analyze']) + ")*"
                             )),
                         ),
                         ui.hr(),
@@ -6480,6 +6549,44 @@ def server(input, output, session):
                             ),
                         ),
                         ui.hr(),
+                        (
+                            ui.row(
+                                ui.column(
+                                    12,
+                                    ui.input_numeric(
+                                        "numRemoteWaitAfterRebootTimeout",
+                                        _("Wait for remote after reboot (seconds)"),
+                                        float(CONFIG.get("REMOTE_WAIT_AFTER_REBOOT_TIMEOUT", 30.0) or 30.0),
+                                        min=5,
+                                        max=600,
+                                        step=1,
+                                        width="100%",
+                                    ),
+                                ),
+                                ui.column(
+                                    12,
+                                    ui.markdown(
+                                        _(
+                                            "Target-mode only: If the device has been controlled remotely before, it will wait this long for a remote-control takeover after reboot before starting Kittyhack locally."
+                                        )
+                                    ),
+                                    style_="color: grey;",
+                                ),
+                            )
+                            if not is_remote_mode()
+                            else ui.row(
+                                ui.column(
+                                    12,
+                                    ui.markdown(
+                                        _(
+                                            "Wait-for-remote-after-reboot is a target-device setting and cannot be configured in remote-mode UI."
+                                        )
+                                    ),
+                                    style_="color: grey;",
+                                )
+                            )
+                        ),
+                        ui.hr(),
                         ui.row(
                             ui.column(
                                 12,
@@ -6693,7 +6800,10 @@ def server(input, output, session):
         CONFIG['DATE_FORMAT'] = input.txtConfigDateformat()
         CONFIG['MOUSE_THRESHOLD'] = float(input.sldMouseThreshold())
         CONFIG['MIN_THRESHOLD'] = float(input.sldMinThreshold())
-        CONFIG['MIN_PICTURES_TO_ANALYZE'] = int(input.numMinPicturesToAnalyze())
+        try:
+            CONFIG['MIN_SECONDS_TO_ANALYZE'] = max(0.1, round(float(input.numMinSecondsToAnalyze()), 1))
+        except Exception:
+            CONFIG['MIN_SECONDS_TO_ANALYZE'] = float(DEFAULT_CONFIG['Settings']['min_seconds_to_analyze'])
         CONFIG['ELEMENTS_PER_PAGE'] = int(input.numElementsPerPage())
         CONFIG['MAX_PHOTOS_COUNT'] = int(input.numMaxPhotosCount())
         CONFIG['LOGLEVEL'] = input.txtLoglevel()
@@ -6762,6 +6872,17 @@ def server(input, output, session):
         else:
             CONFIG['WLAN_WATCHDOG_ENABLED'] = False
         CONFIG['DISABLE_RFID_READER'] = input.btnDisableRfidReader()
+
+        if not is_remote_mode():
+            try:
+                CONFIG['REMOTE_WAIT_AFTER_REBOOT_TIMEOUT'] = float(input.numRemoteWaitAfterRebootTimeout())
+            except Exception:
+                CONFIG['REMOTE_WAIT_AFTER_REBOOT_TIMEOUT'] = float(
+                    CONFIG.get('REMOTE_WAIT_AFTER_REBOOT_TIMEOUT', DEFAULT_CONFIG['Settings']['remote_wait_after_reboot_timeout'])
+                    or DEFAULT_CONFIG['Settings']['remote_wait_after_reboot_timeout']
+                )
+            # Keep it within a sane operational range.
+            CONFIG['REMOTE_WAIT_AFTER_REBOOT_TIMEOUT'] = max(5.0, min(600.0, float(CONFIG['REMOTE_WAIT_AFTER_REBOOT_TIMEOUT'])))
 
         if is_remote_mode():
             try:

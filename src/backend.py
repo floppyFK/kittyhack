@@ -793,13 +793,22 @@ def backend_main(simulate_kittyflap = False):
             except Exception:
                 pass
 
+            analysis_elapsed_s = 0.0
+            try:
+                if first_motion_outside_tm > 0.0:
+                    analysis_elapsed_s = max(0.0, tm.time() - float(first_motion_outside_tm))
+            except Exception:
+                analysis_elapsed_s = 0.0
+
             mouse_check_conditions = {
                 "mouse_check_disabled": prey_detection_enabled == False,
                 "no_mouse_detected": len(ids_with_mouse) == 0,
-                "sufficient_pictures": len(ids_of_current_motion_block) >= CONFIG['MIN_PICTURES_TO_ANALYZE']
+                "sufficient_analysis_time": analysis_elapsed_s >= float(CONFIG.get('MIN_SECONDS_TO_ANALYZE', 0.0) or 0.0),
             }
 
-            mouse_check = mouse_check_conditions["mouse_check_disabled"] or (mouse_check_conditions["no_mouse_detected"] and mouse_check_conditions["sufficient_pictures"])
+            mouse_check = mouse_check_conditions["mouse_check_disabled"] or (
+                mouse_check_conditions["no_mouse_detected"] and mouse_check_conditions["sufficient_analysis_time"]
+            )
 
             # If per-cat prey detection is disabled for the currently identified cat,
             # ignore the global prey timeout gate for unlocking. This ensures that

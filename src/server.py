@@ -224,13 +224,97 @@ if is_remote_mode() and not CONFIG.get('USE_ALL_CORES_FOR_IMAGE_PROCESSING', Fal
     CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = True
     update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
 
-from src.backend import backend_main, restart_mqtt, update_mqtt_config, update_mqtt_language, manual_door_override, model_handler
+from src.model import YoloModel
+
+
+def _ensure_valid_startup_model_selection() -> None:
+    """Ensure configured model exists, otherwise fallback and notify user."""
+    configured_yolo = (CONFIG.get('YOLO_MODEL') or '').strip()
+    if not configured_yolo:
+        return
+
+    try:
+        configured_path = YoloModel.get_model_path(configured_yolo)
+    except Exception as e:
+        logging.warning(f"[MODEL] Failed to validate configured YOLO model '{configured_yolo}': {e}")
+        configured_path = None
+
+    if configured_path:
+        return
+
+    logging.warning(
+        f"[MODEL] Configured YOLO model '{configured_yolo}' does not exist. Selecting fallback model."
+    )
+
+    fallback_yolo_id = None
+    fallback_yolo_name = ""
+    try:
+        available_models = [m for m in YoloModel.get_model_list() if (m.get('unique_id') or '').strip()]
+        available_models.sort(key=lambda m: (m.get('creation_date') or ''), reverse=True)
+        for model in available_models:
+            candidate_id = (model.get('unique_id') or '').strip()
+            if not candidate_id:
+                continue
+            if candidate_id == configured_yolo:
+                continue
+            if YoloModel.get_model_path(candidate_id):
+                fallback_yolo_id = candidate_id
+                fallback_yolo_name = str(model.get('full_display_name') or model.get('display_name') or candidate_id)
+                break
+    except Exception as e:
+        logging.warning(f"[MODEL] Failed while searching fallback YOLO model: {e}")
+
+    if fallback_yolo_id:
+        CONFIG['YOLO_MODEL'] = fallback_yolo_id
+        CONFIG['TFLITE_MODEL_VERSION'] = ""
+        update_single_config_parameter("YOLO_MODEL")
+        update_single_config_parameter("TFLITE_MODEL_VERSION")
+        try:
+            UserNotifications.add(
+                header=_("Model fallback applied"),
+                message=(
+                    _("The configured YOLO model was not found at startup:") + f" {configured_yolo}\n\n" +
+                    _("Kittyhack switched automatically to another available YOLO model:") + f" {fallback_yolo_name}"
+                ),
+                type="warning",
+                id="model_fallback_missing_yolo",
+                skip_if_id_exists=True,
+            )
+        except Exception as e:
+            logging.warning(f"[MODEL] Failed to create user notification for YOLO fallback: {e}")
+        logging.info(f"[MODEL] Fallback applied: YOLO_MODEL={fallback_yolo_id}")
+        return
+
+    CONFIG['YOLO_MODEL'] = ""
+    CONFIG['TFLITE_MODEL_VERSION'] = "original_kittyflap_model_v2"
+    update_single_config_parameter("YOLO_MODEL")
+    update_single_config_parameter("TFLITE_MODEL_VERSION")
+    try:
+        UserNotifications.add(
+            header=_("Model fallback applied"),
+            message=(
+                _("The configured YOLO model was not found at startup:") + f" {configured_yolo}\n\n" +
+                _("No other YOLO model was available. Kittyhack switched to the shipped TFLite model:") +
+                " original_kittyflap_model_v2"
+            ),
+            type="warning",
+            id="model_fallback_missing_yolo",
+            skip_if_id_exists=True,
+        )
+    except Exception as e:
+        logging.warning(f"[MODEL] Failed to create user notification for TFLite fallback: {e}")
+    logging.info("[MODEL] Fallback applied: TFLITE_MODEL_VERSION=original_kittyflap_model_v2")
+
+
+_ensure_valid_startup_model_selection()
+
+from src.backend import backend_main, restart_mqtt, update_mqtt_config, update_mqtt_language, manual_door_override, model_handler, reload_model_handler_runtime
 if is_remote_mode():
     from src.remote.hardware import Magnets, Pir  # type: ignore
 else:
     from src.magnets_rfid import Magnets
     from src.pir import Pir
-from src.model import RemoteModelTrainer, YoloModel
+from src.model import RemoteModelTrainer
 from src.shiny_wrappers import uix
 
 # Read the GIT version
@@ -6877,6 +6961,7 @@ def server(input, output, session):
     @reactive.event(input.bSaveKittyhackConfig)
     def on_save_kittyhack_config():
         global _
+        global model_handler
 
         camera_settings_changed = (
             CONFIG.get('CAMERA_SOURCE') != input.camera_source() or
@@ -7123,12 +7208,35 @@ def server(input, output, session):
         
         if save_config():
             ui.notification_show(_("Kittyhack configuration updated successfully."), duration=5, type="message")
+            model_reload_failed = False
+
+            if selected_model_changed:
+                try:
+                    reload_ok, active_model_handler = reload_model_handler_runtime()
+                    if reload_ok:
+                        model_handler = active_model_handler
+                        ui.notification_show(
+                            _("Model change applied."),
+                            duration=6,
+                            type="message",
+                        )
+                    else:
+                        model_reload_failed = True
+                        ui.notification_show(
+                            _("Model change could not be applied live. A reboot is still required."),
+                            duration=10,
+                            type="warning",
+                        )
+                except Exception as e:
+                    model_reload_failed = True
+                    logging.error(f"Failed to apply model change live: {e}")
+
             if language_changed:
                 ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the new language."), duration=30, type="message")
                 update_mqtt_language()
 
             if (
-                selected_model_changed or
+                (selected_model_changed and model_reload_failed) or
                 hostname_changed or
                 img_processing_cores_changed or
                 rfid_state_changed

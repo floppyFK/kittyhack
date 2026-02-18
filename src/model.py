@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 import time as tm
 import multiprocessing
+import threading
 from src.baseconfig import CONFIG, set_language, update_single_config_parameter, UserNotifications
 from src.mode import is_remote_mode
 from src.camera import videostream, image_buffer, VideoStream, DetectedObject
@@ -842,6 +843,7 @@ class ModelHandler:
         self.input_size = int(model_image_size)
         self.num_threads = num_threads
         self.cat_names = [cat_name.lower() for cat_name in get_cat_names_list(CONFIG['KITTYHACK_DATABASE_PATH'])]
+        self._stop_requested = threading.Event()
 
         # Load labels early so the model loop cannot crash depending on whether a UI client
         # accessed the camera API during startup.
@@ -1130,6 +1132,8 @@ class ModelHandler:
         global videostream
         global CONFIG
 
+        self._stop_requested.clear()
+
         resW, resH = self.resolution.split('x')
         imW, imH = int(resW), int(resH)
 
@@ -1202,7 +1206,7 @@ class ModelHandler:
             detected_objects = []
             frame = None
             stream_start_time = tm.time()
-            while frame is None and not sigterm_monitor.stop_now:
+            while frame is None and not sigterm_monitor.stop_now and not self._stop_requested.is_set():
                 frame = videostream.read_oldest()
                 if tm.time() - stream_start_time > 10:
                     logging.error("[CAMERA] Camera stream failed to start within 10 seconds!")
@@ -1221,7 +1225,7 @@ class ModelHandler:
             # Flag to ensure we run at least one inference to initialize the model
             first_run = True
             
-            while not sigterm_monitor.stop_now:
+            while not sigterm_monitor.stop_now and not self._stop_requested.is_set():
                 # --- Detect camera config changes and re-init videostream if needed ---
                 current_camera_source = CONFIG['CAMERA_SOURCE']
                 current_ip_camera_url = CONFIG['IP_CAMERA_URL']
@@ -1248,7 +1252,7 @@ class ModelHandler:
                     # Wait for the new stream to warm up
                     frame = None
                     stream_start_time = tm.time()
-                    while frame is None and not sigterm_monitor.stop_now:
+                    while frame is None and not sigterm_monitor.stop_now and not self._stop_requested.is_set():
                         frame = videostream.read_oldest()
                         if tm.time() - stream_start_time > 10:
                             logging.error("[CAMERA] Camera stream failed to start within 10 seconds after reinit!")
@@ -1398,6 +1402,11 @@ class ModelHandler:
     def pause(self):
         logging.info("[MODEL] Pausing model processing.")
         self.paused = True
+
+    def stop(self):
+        logging.info("[MODEL] Stop requested.")
+        self.paused = True
+        self._stop_requested.set()
 
     def resume(self):
         logging.info("[MODEL] Resuming model processing.")

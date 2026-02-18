@@ -28,7 +28,7 @@ LAZY_CAT_DELAY_CAM_MOTION = 12.0 # Keep the PIR active for an additional 12 seco
 _ = set_language(CONFIG['LANGUAGE'])
 
 # Initialize Model
-if CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']:
+if is_remote_mode() or CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']:
     threads = multiprocessing.cpu_count()
 else:
     threads = 1

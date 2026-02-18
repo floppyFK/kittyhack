@@ -149,12 +149,13 @@
     }
 
     function initIpCameraUrlToggle() {
-        // Toggle IP camera URL input visibility based on #camera_source
-        // Expects containers: #ip_camera_url_container, #ip_camera_warning
+        // Toggle IP camera specific inputs visibility based on #camera_source
+        // Expects containers: #ip_camera_url_container, #ip_camera_warning, #ip_camera_pipeline_settings
         var sel = q('#camera_source');
         var urlWrap = q('#ip_camera_url_container');
         var warn = q('#ip_camera_warning');
-        if (!sel || (!urlWrap && !warn)) return;
+        var pipelineWrap = q('#ip_camera_pipeline_settings');
+        if (!sel || (!urlWrap && !warn && !pipelineWrap)) return;
 
         if (sel.getAttribute('data-kh-ipcam-bound') === '1') return;
         sel.setAttribute('data-kh-ipcam-bound', '1');
@@ -164,6 +165,7 @@
             try { isIp = (String(sel.value) === 'ip_camera'); } catch (e) {}
             if (urlWrap) urlWrap.style.display = isIp ? '' : 'none';
             if (warn) warn.style.display = isIp ? '' : 'none';
+            if (pipelineWrap) pipelineWrap.style.display = isIp ? '' : 'none';
         }
 
         apply();

@@ -1170,6 +1170,13 @@ html[data-bs-theme="dark"] .date-separator-row td {
     box-shadow: 0 1px 4px rgba(0,0,0,0.01);
 }
 
+html[data-bs-theme="dark"] .warning-container {
+    background: rgba(255, 193, 7, 0.12);
+    border: 1px solid rgba(255, 193, 7, 0.55);
+    color: #ffe08a;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
 /* Modern style for dropdown selectors */
 .form-select,
 .shiny-input-select,
@@ -1721,6 +1728,68 @@ html[data-bs-theme="dark"] .btn-default.btn-outline-danger:focus {
 /* Live view: bslib adds fairly large default gaps; tighten spacing for this card */
 .live-view-card .card-body.bslib-gap-spacing {
     gap: 0.15rem !important;
+}
+
+.live-view-warning-panel {
+    margin: 0 auto 0.2rem;
+    position: relative;
+    width: fit-content;
+    max-width: 100%;
+}
+
+.live-view-warning-dismiss {
+    position: absolute;
+    top: 50%;
+    right: 0.25rem;
+    transform: translateY(-50%);
+    z-index: 20;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    max-height: 0;
+    overflow: hidden;
+    pointer-events: none;
+    transition: opacity 0.18s ease, max-height 0.18s ease;
+}
+
+.live-view-warning-dismiss .btn {
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(108, 117, 125, 0.45);
+    color: #495057;
+    backdrop-filter: blur(2px);
+}
+
+.live-view-warning-dismiss .btn:hover,
+.live-view-warning-dismiss .btn:focus {
+    background: rgba(248, 249, 250, 0.98);
+    border-color: rgba(108, 117, 125, 0.7);
+    color: #212529;
+}
+
+html[data-bs-theme="dark"] .live-view-warning-dismiss .btn {
+    background: rgba(33, 37, 41, 0.9);
+    border-color: rgba(173, 181, 189, 0.55);
+    color: #f8f9fa;
+}
+
+html[data-bs-theme="dark"] .live-view-warning-dismiss .btn:hover,
+html[data-bs-theme="dark"] .live-view-warning-dismiss .btn:focus {
+    background: rgba(52, 58, 64, 0.95);
+    border-color: rgba(222, 226, 230, 0.75);
+    color: #ffffff;
+}
+
+.live-view-warning-panel .warning-container {
+    /* Keep room for the dismiss button overlay in the top-right corner */
+    padding-right: 4.8rem;
+}
+
+.live-view-warning-panel:hover .live-view-warning-dismiss,
+.live-view-warning-panel:focus-within .live-view-warning-dismiss {
+    opacity: 1;
+    max-height: 3rem;
+    pointer-events: auto;
 }
 
 /* When no warning is shown, remove the element to avoid extra gap */

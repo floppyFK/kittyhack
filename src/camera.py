@@ -11,6 +11,8 @@ import shlex
 import threading
 import logging
 import time as tm
+import os
+import shutil
 from typing import List, Optional
 from src.baseconfig import CONFIG
 class VideoStream:
@@ -31,7 +33,10 @@ class VideoStream:
         jpeg_quality=75,
         tuning_file="/usr/share/libcamera/ipa/rpi/vc4/ov5647_noir.json",
         source="internal",  # "internal" or "ip_camera"
-        ip_camera_url: str = None
+        ip_camera_url: str = None,
+        use_ip_camera_decode_scale_pipeline: bool = False,
+        ip_camera_target_resolution: str = "640x360",
+        ip_camera_pipeline_fps_limit: int = 10,
     ):
         self.resolution = resolution
         self.framerate = framerate
@@ -44,9 +49,90 @@ class VideoStream:
         self.lock = threading.Lock()
         self.source = source
         self.ip_camera_url = ip_camera_url
+        self.use_ip_camera_decode_scale_pipeline = use_ip_camera_decode_scale_pipeline
+        self.ip_camera_target_resolution = ip_camera_target_resolution
+        self.ip_camera_pipeline_fps_limit = ip_camera_pipeline_fps_limit
         self.cap = None  # For IP camera
         self.thread = None
         self.camera_state = self.STATE_INITIALIZING  # <-- Add this line
+
+    def _parse_target_resolution(self) -> tuple[int, int]:
+        """Parse WxH target resolution string with a safe fallback."""
+        default_resolution = (640, 360)
+        try:
+            match = re.match(r"^\s*(\d{2,5})x(\d{2,5})\s*$", str(self.ip_camera_target_resolution or ""), re.IGNORECASE)
+            if not match:
+                return default_resolution
+            width = int(match.group(1))
+            height = int(match.group(2))
+            if width < 64 or height < 64:
+                return default_resolution
+            return (width, height)
+        except Exception:
+            return default_resolution
+
+    def _ensure_ffmpeg_installed(self) -> bool:
+        """Ensure ffmpeg is available. Try to install it on Debian-based systems if missing."""
+        if shutil.which("ffmpeg"):
+            return True
+
+        logging.warning("[CAMERA] ffmpeg not found. Attempting to install it...")
+
+        apt_update_cmd = ["apt-get", "update"]
+        apt_install_cmd = ["apt-get", "install", "-y", "ffmpeg"]
+
+        if os.geteuid() != 0:
+            if shutil.which("sudo"):
+                apt_update_cmd = ["sudo", *apt_update_cmd]
+                apt_install_cmd = ["sudo", *apt_install_cmd]
+            else:
+                logging.error("[CAMERA] ffmpeg is missing and sudo is not available for installation.")
+                return False
+
+        try:
+            update_proc = subprocess.run(
+                apt_update_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+            if update_proc.returncode != 0:
+                logging.error(f"[CAMERA] Failed to update package index for ffmpeg install: {update_proc.stderr.strip()}")
+                return False
+
+            install_proc = subprocess.run(
+                apt_install_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=900,
+                check=False,
+            )
+            if install_proc.returncode != 0:
+                logging.error(f"[CAMERA] Failed to install ffmpeg: {install_proc.stderr.strip()}")
+                return False
+        except Exception as e:
+            logging.error(f"[CAMERA] Error while installing ffmpeg: {e}")
+            return False
+
+        installed = shutil.which("ffmpeg") is not None
+        if installed:
+            logging.info("[CAMERA] ffmpeg installed successfully.")
+        else:
+            logging.error("[CAMERA] ffmpeg installation command finished, but ffmpeg is still unavailable.")
+        return installed
+
+    def _normalized_pipeline_fps_limit(self) -> int:
+        """Normalize the configured pipeline FPS limit. 0 means unlimited."""
+        try:
+            value = int(self.ip_camera_pipeline_fps_limit)
+        except Exception:
+            return 10
+        if value in (0, 5, 10, 15, 20, 25):
+            return value
+        return 10
 
     def get_camera_state(self):
         """Return the current camera connection state."""
@@ -207,6 +293,122 @@ class VideoStream:
             while not self.stopped:
                 logging.info(f"[CAMERA] Connecting to IP camera at {self.ip_camera_url}")
                 self.camera_state = self.STATE_INITIALIZING
+
+                # Optional ffmpeg decode+scale pipeline for IP streams
+                if self.use_ip_camera_decode_scale_pipeline:
+                    if not self._ensure_ffmpeg_installed():
+                        logging.error("[CAMERA] FFmpeg decode+scale pipeline enabled, but ffmpeg is unavailable.")
+                        self.camera_state = self.STATE_ERROR
+                        if self.stopped:
+                            break
+                        tm.sleep(retry_delay)
+                        continue
+
+                    target_w, target_h = self._parse_target_resolution()
+                    fps_limit = self._normalized_pipeline_fps_limit()
+                    if fps_limit > 0:
+                        vf_arg = f"fps={fps_limit},scale={target_w}:{target_h}:flags=fast_bilinear"
+                    else:
+                        vf_arg = f"scale={target_w}:{target_h}:flags=fast_bilinear"
+                    ffmpeg_cmd = [
+                        "ffmpeg",
+                        "-hide_banner",
+                        "-loglevel", "error",
+                        "-fflags", "nobuffer",
+                        "-flags", "low_delay",
+                    ]
+                    if str(self.ip_camera_url).lower().startswith("rtsp://"):
+                        ffmpeg_cmd.extend(["-rtsp_transport", "tcp"])
+                    ffmpeg_cmd.extend([
+                        "-i", self.ip_camera_url,
+                        "-an",
+                        "-sn",
+                        "-dn",
+                        "-vf", vf_arg,
+                        "-pix_fmt", "bgr24",
+                        "-f", "rawvideo",
+                        "pipe:1",
+                    ])
+
+                    logging.info(
+                        f"[CAMERA] Starting FFmpeg pipeline for IP camera at target resolution {target_w}x{target_h}, fps_limit={'unlimited' if fps_limit == 0 else fps_limit}"
+                    )
+                    try:
+                        self.process = subprocess.Popen(
+                            ffmpeg_cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            bufsize=target_w * target_h * 3 * 2,
+                        )
+                    except Exception as e:
+                        logging.error(f"[CAMERA] Failed to start FFmpeg IP pipeline: {e}")
+                        self.camera_state = self.STATE_ERROR
+                        if self.stopped:
+                            break
+                        tm.sleep(retry_delay)
+                        continue
+
+                    self.resolution = (target_w, target_h)
+                    frame_bytes = target_w * target_h * 3
+                    self.camera_state = self.STATE_RUNNING
+
+                    while not self.stopped:
+                        try:
+                            raw = self.process.stdout.read(frame_bytes) if self.process and self.process.stdout else b""
+                        except Exception as e:
+                            logging.error(f"[CAMERA] FFmpeg pipeline read error: {e}")
+                            raw = b""
+
+                        if len(raw) != frame_bytes:
+                            corrupt_frame_count += 1
+                            logging.warning(
+                                f"[CAMERA] Incomplete frame from FFmpeg pipeline (count={corrupt_frame_count}, got={len(raw)}/{frame_bytes})"
+                            )
+                            if corrupt_frame_count >= max_corrupt_frames:
+                                logging.error("[CAMERA] Too many incomplete frames from FFmpeg pipeline, reconnecting...")
+                                self.camera_state = self.STATE_ERROR
+                                break
+                            continue
+
+                        try:
+                            frame = np.frombuffer(raw, dtype=np.uint8).reshape((target_h, target_w, 3))
+                        except Exception as e:
+                            corrupt_frame_count += 1
+                            logging.warning(f"[CAMERA] Corrupt FFmpeg frame reshape error (count={corrupt_frame_count}): {e}")
+                            if corrupt_frame_count >= max_corrupt_frames:
+                                logging.error("[CAMERA] Too many corrupt FFmpeg frames, reconnecting...")
+                                self.camera_state = self.STATE_ERROR
+                                break
+                            continue
+
+                        corrupt_frame_count = 0
+                        with self.lock:
+                            self.frames.append(frame)
+                            if len(self.frames) > self.buffer_size:
+                                self.frames.pop(0)
+
+                    try:
+                        if self.process:
+                            self.process.terminate()
+                            try:
+                                self.process.wait(timeout=2)
+                            except Exception:
+                                try:
+                                    self.process.kill()
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                    finally:
+                        self.process = None
+
+                    if self.stopped:
+                        break
+                    logging.info(f"[CAMERA] Reconnecting FFmpeg IP camera pipeline in {retry_delay}s...")
+                    self.camera_state = self.STATE_INITIALIZING
+                    tm.sleep(retry_delay)
+                    continue
+
                 self.cap = cv2.VideoCapture(self.ip_camera_url)
                 if not self.cap.isOpened():
                     logging.error(f"[CAMERA] Failed to open IP camera stream: {self.ip_camera_url}. Retrying in {retry_delay}s...")
@@ -306,7 +508,7 @@ class VideoStream:
         # Stop the video stream
         self.stopped = True
         self.stop_journal_monitor()
-        if self.source == "internal" and self.process:
+        if self.process:
             try:
                 self.process.terminate()
                 try:

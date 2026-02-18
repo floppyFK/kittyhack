@@ -69,7 +69,6 @@ from src.system import (
     systemcmd, 
     manage_and_switch_wlan, 
     delete_wlan_connection,
-    is_service_running,
     get_labelstudio_status,
     get_labelstudio_installed_version,
     get_labelstudio_latest_version,
@@ -81,7 +80,6 @@ from src.system import (
     get_hostname,
     set_hostname,
     update_kittyhack,
-    is_gateway_reachable,
     upgrade_base_system_packages,
     ensure_target_boot_service_semantics
 )
@@ -114,6 +112,60 @@ def _disable_input(tag):
     return tag
 
 
+def _ensure_ffmpeg_installed() -> bool:
+    """Ensure ffmpeg is available. Try to install it on Debian-based systems if missing."""
+    if shutil.which("ffmpeg"):
+        return True
+
+    logging.warning("[CAMERA] ffmpeg not found. Attempting to install it...")
+
+    apt_update_cmd = ["apt-get", "update"]
+    apt_install_cmd = ["apt-get", "install", "-y", "ffmpeg"]
+
+    if os.geteuid() != 0:
+        if shutil.which("sudo"):
+            apt_update_cmd = ["sudo", *apt_update_cmd]
+            apt_install_cmd = ["sudo", *apt_install_cmd]
+        else:
+            logging.error("[CAMERA] ffmpeg is missing and sudo is not available for installation.")
+            return False
+
+    try:
+        update_proc = subprocess.run(
+            apt_update_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        if update_proc.returncode != 0:
+            logging.error(f"[CAMERA] Failed to update package index for ffmpeg install: {update_proc.stderr.strip()}")
+            return False
+
+        install_proc = subprocess.run(
+            apt_install_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=900,
+            check=False,
+        )
+        if install_proc.returncode != 0:
+            logging.error(f"[CAMERA] Failed to install ffmpeg: {install_proc.stderr.strip()}")
+            return False
+    except Exception as e:
+        logging.error(f"[CAMERA] Error while installing ffmpeg: {e}")
+        return False
+
+    installed = shutil.which("ffmpeg") is not None
+    if installed:
+        logging.info("[CAMERA] ffmpeg installed successfully.")
+    else:
+        logging.error("[CAMERA] ffmpeg installation command finished, but ffmpeg is still unavailable.")
+    return installed
+
+
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
 
 # Check and set the startup flag - this must be done before loading the model
@@ -127,21 +179,33 @@ update_single_config_parameter("NOT_GRACEFUL_SHUTDOWNS")
 update_single_config_parameter("STARTUP_SHUTDOWN_FLAG")
 
 if CONFIG['NOT_GRACEFUL_SHUTDOWNS'] >= 3:
-    logging.error("Not graceful shutdown detected 3 times in a row! We will disable the 'use all cores' setting, if it was enabled.")
-    CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = False
+    logging.error("Not graceful shutdown detected 3 times in a row!")
+    if not is_remote_mode():
+        logging.error("We will disable the 'use all cores' setting, if it was enabled.")
+        CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = False
+        update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
+    else:
+        logging.error("[REMOTE_MODE] Keeping 'use all cores' enabled by policy.")
     CONFIG['NOT_GRACEFUL_SHUTDOWNS'] = 0
-    update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
     update_single_config_parameter("NOT_GRACEFUL_SHUTDOWNS")
 
     # Add a entry to the user notifications, which will be shown at the next login in the frontend
+    shutdown_message = (
+        _("The kittyflap was not shut down gracefully several times in a row. Please do not power off the device without shutting it down first, otherwise the database may be corrupted!") + "\n\n" +
+        _("If you have shut it down gracefully and see this message, please report it in the") + " " +
+        "[GitHub issue tracker](https://github.com/floppyFK/kittyhack/issues), " +
+        _("thanks!")
+    )
+    if not is_remote_mode():
+        shutdown_message += (
+            "\n\n" +
+            _("> **NOTE:** The option `Use all CPU cores for image processing` has been disabled now automatically, since this could cause the issue on some devices.") + "\n" +
+            _("Please check the settings and enable it again, if you want to use it.")
+        )
+
     UserNotifications.add(
         header=_("Several crashes detected!"),
-        message=_("The kittyflap was not shut down gracefully several times in a row. Please do not power off the device without shutting it down first, otherwise the database may be corrupted!") + "\n\n" +
-                _("If you have shut it down gracefully and see this message, please report it in the") + " " +
-                "[GitHub issue tracker](https://github.com/floppyFK/kittyhack/issues), " + 
-                _("thanks!") + "\n\n" +
-                _("> **NOTE:** The option `Use all CPU cores for image processing` has been disabled now automatically, since this could cause the issue on some devices.") + "\n" +
-                _("Please check the settings and enable it again, if you want to use it."),
+        message=shutdown_message,
                 type="warning",
                 id="not_graceful_shutdown",
                 skip_if_id_exists=True
@@ -154,6 +218,12 @@ if not CONFIG['MQTT_DEVICE_ID']:
     logging.info(f"[BACKEND] Generated MQTT device ID: {CONFIG['MQTT_DEVICE_ID']}")
     
 # Now proceed with the startup
+# Remote-mode policy: image processing must always use all CPU cores.
+if is_remote_mode() and not CONFIG.get('USE_ALL_CORES_FOR_IMAGE_PROCESSING', False):
+    logging.info("[REMOTE_MODE] Enforcing USE_ALL_CORES_FOR_IMAGE_PROCESSING=True.")
+    CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = True
+    update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
+
 from src.backend import backend_main, restart_mqtt, update_mqtt_config, update_mqtt_language, manual_door_override, model_handler
 if is_remote_mode():
     from src.remote.hardware import Magnets, Pir  # type: ignore
@@ -251,7 +321,7 @@ def start_background_task_if_needed():
 last_booted_version = CONFIG['LAST_BOOTED_VERSION']
 # Check if we need to update the USE_ALL_CORES_FOR_IMAGE_PROCESSING setting
 # This is only needed once after updating to version 1.5.2 or higher
-if normalize_version(last_booted_version) < '1.5.2' and normalize_version(git_version) >= '1.5.2':
+if (not is_remote_mode()) and normalize_version(last_booted_version) < '1.5.2' and normalize_version(git_version) >= '1.5.2':
     logging.info("First run after update to 1.5.2 or higher. Setting USE_ALL_CORES_FOR_IMAGE_PROCESSING to the new default value.")
     CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = False
     update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
@@ -520,6 +590,34 @@ free_disk_space = get_free_disk_space()
 # Global flag to indicate if a user WLAN action is in progress
 user_wlan_action_in_progress = False
 
+
+def _wlan_action_marker_path() -> str:
+    return os.path.join(kittyhack_root(), ".wlan-action-in-progress")
+
+
+def _set_wlan_action_in_progress(active: bool) -> None:
+    """Set/clear a cross-service marker for intentional WLAN reconfiguration.
+
+    kittyhack_control reads this marker and temporarily pauses its WLAN watchdog
+    so user-triggered WLAN changes are not treated as failures.
+    """
+    global user_wlan_action_in_progress
+    user_wlan_action_in_progress = bool(active)
+
+    marker = _wlan_action_marker_path()
+    if active:
+        try:
+            with open(marker, "w", encoding="utf-8") as f:
+                f.write(str(tm.time()))
+        except Exception as e:
+            logging.warning(f"[WLAN ACTION] Failed to create marker file '{marker}': {e}")
+    else:
+        try:
+            if os.path.exists(marker):
+                os.remove(marker)
+        except Exception as e:
+            logging.warning(f"[WLAN ACTION] Failed to remove marker file '{marker}': {e}")
+
 # Check ids with images in the database
 # In v2.4 we moved the images from the kittyhack database to the filesystem.
 logging.info("Checking ids with images in the database...")
@@ -534,8 +632,6 @@ def start_background_task():
     sigterm_monitor.register_task()
 
     def run_periodically():
-        wlan_disconnect_counter = 0
-        wlan_reconnect_attempted = False
         last_periodic_jobs_run = tm.time() # Start the first periodic jobs in PERIODIC_JOBS_INTERVAL seconds
 
         # Model training status check cadence (seconds)
@@ -551,17 +647,6 @@ def start_background_task():
         last_apt_update_ts = tm.time() - 86400  # allow immediate first check on boot
 
         while not sigterm_monitor.stop_now:
-            if user_wlan_action_in_progress:
-                # Skip automatic reconnect/reboot while user action is in progress
-                logging.info("[WLAN CHECK] User WLAN action in progress, skipping automatic reconnect/reboot checks.")
-                wlan_disconnect_counter = 0
-                wlan_reconnect_attempted = False
-                for __ in range(5):
-                    if sigterm_monitor.stop_now:
-                        break
-                    tm.sleep(1.0)
-                continue
-
             # --- Background legacy image migration (every >=5s) ---
             # Migrate original_image / thumbnail BLOBs batch-wise (max 100 IDs) to filesystem
             try:
@@ -596,76 +681,6 @@ def start_background_task():
                 logging.error(f"[BG_MIGRATION] Unexpected migration error: {e}")
                 migration_in_progress = False
                 migration_last_ts = tm.time()
-
-            # --- WLAN connection check every 5 seconds ---
-            if is_remote_mode():
-                # Remote-mode runs on non-target systems where WLAN control is not applicable.
-                wlan_connected = True
-                gateway_reachable = True
-            else:
-                # Check WLAN connection state
-                try:
-                    wlan_connections = get_wlan_connections()
-                    wlan_connected = any(wlan['connected'] for wlan in wlan_connections)
-                    gateway_reachable = is_gateway_reachable()
-                except Exception as e:
-                    logging.error(f"[WLAN CHECK] Failed to get WLAN connections or gateway state: {e}")
-                    wlan_connected = False
-                    gateway_reachable = False
-
-            # Only perform reconnect/reboot if WLAN watchdog is enabled.
-            # On target devices, kittyhack_control owns the WLAN watchdog so it remains active during remote-control
-            # even while kittyhack.service is stopped. Avoid running it twice.
-            if (not is_remote_mode()) and CONFIG['WLAN_WATCHDOG_ENABLED'] and (not is_service_running('kittyhack_control', log_output=False)):
-                # Consider WLAN as not connected if either the interface or gateway is not reachable
-                if not wlan_connected or not gateway_reachable:
-                    wlan_disconnect_counter += 1
-                    if wlan_disconnect_counter <= 5:
-                        logging.warning(
-                            f"[WLAN CHECK] WLAN not fully connected (attempt {wlan_disconnect_counter}/5): "
-                            f"Interface connected: {wlan_connected}, Gateway reachable: {gateway_reachable}"
-                        )
-                    elif wlan_disconnect_counter <= 8:
-                        logging.error(
-                            f"[WLAN CHECK] WLAN still not connected after proactive reconnect attempt (attempt {wlan_disconnect_counter}/8)! "
-                            f"LAST CHANCES! REBOOTING SYSTEM IF NOT RECONNECTED WITHIN 8 ATTEMPTS!"
-                            f"Interface connected: {wlan_connected}, Gateway reachable: {gateway_reachable}"
-                        )
-                else:
-                    wlan_disconnect_counter = 0
-                    wlan_reconnect_attempted = False
-
-                # If disconnected for 5 consecutive checks (25 seconds), try to reconnect
-                if wlan_disconnect_counter == 5 and not wlan_reconnect_attempted:
-                    logging.warning("[WLAN CHECK] Attempting to reconnect WLAN after 5 failed checks...")
-                    # Sort configured WLANs by priority (highest first) and limit to max 6
-                    sorted_wlans = sorted(wlan_connections, key=lambda w: w.get('priority', 0), reverse=True)[:6]
-                    for wlan in sorted_wlans:
-                        ssid = wlan['ssid']
-                        systemctl("stop", f"NetworkManager")
-                        tm.sleep(2)
-                        systemctl("start", f"NetworkManager")
-                        tm.sleep(2)
-                        switch_wlan_connection(ssid)
-                        # Wait up to 10 seconds for connection
-                        for __ in range(10):
-                            tm.sleep(1)
-                            wlan_connections = get_wlan_connections()
-                            if any(w['connected'] for w in wlan_connections) and is_gateway_reachable():
-                                logging.info(f"[WLAN CHECK] Successfully reconnected to SSID: {ssid}")
-                                break
-                    wlan_reconnect_attempted = True
-
-                # If still disconnected after 3 more checks (total 8, 40 seconds), reboot
-                if wlan_disconnect_counter >= 8:
-                    logging.error("[WLAN CHECK] WLAN still not connected after reconnect attempts. Rebooting system...")
-                    systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
-                    break
-            else:
-                # If watchdog is disabled, just reset counters if connected, but do nothing on disconnect
-                if wlan_connected and gateway_reachable:
-                    wlan_disconnect_counter = 0
-                    wlan_reconnect_attempted = False
 
             # --- Model training status polling (every 120s, only if a training is active) ---
             now = tm.time()
@@ -2122,8 +2137,7 @@ def wlan_connect_server(input, output, session, ssid: str):
     @reactive.effect
     @reactive.event(input.btn_wlan_connect)
     def wlan_connect():
-        global user_wlan_action_in_progress
-        user_wlan_action_in_progress = True
+        _set_wlan_action_in_progress(True)
         ui.modal_show(
             ui.modal(
                 _("The WLAN connection will be interrupted now!"),
@@ -2133,10 +2147,12 @@ def wlan_connect_server(input, output, session, ssid: str):
                 footer=None
             )
         )
-        switch_wlan_connection(ssid)
-        user_wlan_action_in_progress = False
-        reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
-        ui.modal_remove()
+        try:
+            switch_wlan_connection(ssid)
+            reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
+        finally:
+            _set_wlan_action_in_progress(False)
+            ui.modal_remove()
 
 @module.server
 def wlan_modify_server(input, output, session, ssid: str):
@@ -2191,6 +2207,7 @@ def wlan_modify_server(input, output, session, ssid: str):
     @reactive.effect
     @reactive.event(input.btn_wlan_save)
     def wlan_save():
+        _set_wlan_action_in_progress(True)
         ssid = input.txtWlanSSID()
         password = input.txtWlanPassword()
         priority = input.numWlanPriority()
@@ -2206,13 +2223,16 @@ def wlan_modify_server(input, output, session, ssid: str):
                 footer=None
             )
         )
-        success = manage_and_switch_wlan(ssid, password, priority, password_changed)
-        if success:
-            ui.notification_show(_("WLAN configuration for {} updated successfully.").format(ssid), duration=5, type="message")
-            reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
-        else:
-            ui.notification_show(_("Failed to update WLAN configuration for {}").format(ssid), duration=10, type="error")
-        ui.modal_remove()
+        try:
+            success = manage_and_switch_wlan(ssid, password, priority, password_changed)
+            if success:
+                ui.notification_show(_("WLAN configuration for {} updated successfully.").format(ssid), duration=5, type="message")
+                reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
+            else:
+                ui.notification_show(_("Failed to update WLAN configuration for {}").format(ssid), duration=10, type="error")
+        finally:
+            _set_wlan_action_in_progress(False)
+            ui.modal_remove()
 
     @reactive.effect
     @reactive.event(input.btn_modal_cancel)
@@ -2386,6 +2406,77 @@ def server(input, output, session):
             "delta_to_last_prey_detection": 0.0,
         }
     )
+    live_view_warning_html = reactive.Value("")
+    live_view_warning_dismissed = reactive.Value(False)
+    live_view_warning_signature = reactive.Value("")
+
+    @reactive.effect
+    def update_live_view_warning_html():
+        # Keep warning rendering independent from live image rendering.
+        __ = live_view_refresh_nonce.get()
+
+        refresh_s = float(CONFIG.get('LIVE_VIEW_REFRESH_INTERVAL', 2.0) or 2.0)
+        refresh_s = max(0.25, refresh_s)
+
+        warning_html = ""
+        warning_signature = ""
+        if (not is_remote_mode()) and CONFIG.get("CAMERA_SOURCE") == "ip_camera":
+            try:
+                res = model_handler.get_camera_resolution()
+                if res and isinstance(res, (tuple, list)) and len(res) == 2:
+                    width, height = int(res[0]), int(res[1])
+                    if width > 0 and height > 0 and (width * height > 1280 * 720):
+                        warning_signature = f"ip_camera:{width}x{height}"
+                        warning_html = str(
+                            ui.div(
+                                ui.div(
+                                    icon_svg("triangle-exclamation", margin_left="0", margin_right="0.2em"),
+                                    _("Warning") + ": "
+                                    + _("Your IP camera resolution is higher than recommended (max. 1280x720).")
+                                    + " "
+                                    + _(
+                                        "Current: {width}x{height}. This may have negative effects on performance."
+                                    ).format(width=width, height=height),
+                                    class_="generic-container warning-container",
+                                ),
+                                style_="text-align: center;",
+                            )
+                        )
+            except Exception as e:
+                logging.error(f"Failed to check IP camera resolution for warning: {e}")
+
+        # Reset dismiss state when the warning context changes (e.g. resolution changed).
+        try:
+            prev_signature = live_view_warning_signature.get()
+        except Exception:
+            prev_signature = ""
+        if prev_signature != warning_signature:
+            live_view_warning_signature.set(warning_signature)
+            live_view_warning_dismissed.set(False)
+
+        # Respect user dismissal while warning context stays unchanged.
+        if warning_html and bool(live_view_warning_dismissed.get()):
+            warning_html = ""
+
+        try:
+            prev_warning_html = live_view_warning_html.get()
+            if prev_warning_html != warning_html:
+                # Log only on state changes to avoid log spam.
+                if warning_html:
+                    logging.info("[LIVE_VIEW] IP camera resolution warning enabled.")
+                elif prev_warning_html:
+                    logging.info("[LIVE_VIEW] IP camera resolution warning cleared.")
+                live_view_warning_html.set(warning_html)
+        except Exception:
+            live_view_warning_html.set(warning_html)
+
+        reactive.invalidate_later(refresh_s)
+
+    @reactive.Effect
+    @reactive.event(input.btn_dismiss_live_view_warning)
+    def dismiss_live_view_warning():
+        live_view_warning_dismissed.set(True)
+        live_view_warning_html.set("")
 
     def show_user_notifications():
         user_notifications = UserNotifications.get_all()
@@ -3184,14 +3275,7 @@ def server(input, output, session):
 
     @render.ui
     def live_view_warning():
-        # Warning is tied to camera resolution; update it on the image cadence.
-        __ = live_view_refresh_nonce.get()
-        refresh_s = float(CONFIG.get('LIVE_VIEW_REFRESH_INTERVAL', 2.0) or 2.0)
-        refresh_s = max(0.1, refresh_s)
-
-        result = ui.HTML(getattr(live_view_image, '_last_warning_html', '') or '')
-        reactive.invalidate_later(refresh_s)
-        return result
+        return ui.HTML(live_view_warning_html.get() or '')
 
     @render.ui
     def live_view_image():
@@ -3213,7 +3297,6 @@ def server(input, output, session):
             live_view_image.visible_frame_hash = None
             live_view_image.preload_frame_jpg = None
             live_view_image.preload_frame_hash = None
-            live_view_image._last_warning_html = ""
             live_view_image.last_camera_key = None
             live_view_image._last_aspect_set = (4, 3)
 
@@ -3242,41 +3325,9 @@ def server(input, output, session):
             live_view_image.visible_frame_hash = None
             live_view_image.preload_frame_jpg = None
             live_view_image.preload_frame_hash = None
-            live_view_image._last_warning_html = ""
             live_view_image.last_ar_w = 4
             live_view_image.last_ar_h = 3
             _set_aspect(4, 3)
-
-        # Check for IP camera resolution warning (a bit expensive; keep it on image cadence).
-        warning_html = ""
-        if CONFIG.get("CAMERA_SOURCE") == "ip_camera":
-            try:
-                res = model_handler.get_camera_resolution()
-                if res and isinstance(res, (tuple, list)) and len(res) == 2:
-                    width, height = res
-                    if width > 0 and height > 0:
-                        live_view_image.last_ar_w = int(width)
-                        live_view_image.last_ar_h = int(height)
-                        _set_aspect(live_view_image.last_ar_w, live_view_image.last_ar_h)
-                    if width * height > 1280 * 720:
-                        warning_html = str(
-                            ui.div(
-                                ui.div(
-                                    icon_svg("triangle-exclamation", margin_left="0", margin_right="0.2em"),
-                                    _("Warning") + ": "
-                                    + _("Your IP camera resolution is higher than recommended (max. 1280x720).")
-                                    + " "
-                                    + _(
-                                        "Current: {width}x{height}. This may have negative effects on performance."
-                                    ).format(width=width, height=height),
-                                    class_="generic-container warning-container",
-                                ),
-                                style_="text-align: center;",
-                            )
-                        )
-            except Exception as e:
-                logging.error(f"Failed to check IP camera resolution: {e}")
-        live_view_image._last_warning_html = warning_html
 
         try:
             if getattr(live_view_image, 'preload_frame_jpg', None) is not None:
@@ -4001,6 +4052,7 @@ def server(input, output, session):
     def ui_live_view():
         live_view = ui.card(
             ui.output_ui("live_view_aspect_style"),
+            ui.output_ui("live_view_warning_panel"),
             ui.div(
                 ui.output_ui("live_view_image"),
                 ui.output_ui("live_view_overlay_clock"),
@@ -4008,12 +4060,30 @@ def server(input, output, session):
                 class_="live-view-stage",
             ),
             ui.output_ui("live_view_overlay_status"),
-            ui.output_ui("live_view_warning"),
             full_screen=False,
             class_="image-container live-view-card"
         )
         return ui.div(
             live_view,
+        )
+
+    @render.ui
+    def live_view_warning_panel():
+        # Dedicated, stable warning slot outside image processing/render path.
+        html = live_view_warning_html.get() or ""
+        if not html:
+            return ui.HTML("")
+        return ui.div(
+            ui.HTML(html),
+            ui.div(
+                ui.input_action_button(
+                    "btn_dismiss_live_view_warning",
+                    _("Dismiss"),
+                    class_="btn btn-sm btn-outline-secondary",
+                ),
+                class_="live-view-warning-dismiss",
+            ),
+            class_="live-view-warning-panel",
         )
     
     @output
@@ -5849,6 +5919,111 @@ def server(input, output, session):
                             ),
                             id="ip_camera_warning",
                         ),
+                        ui.hr(),
+                        ui.div(
+                            ui.tags.button(
+                                ui.tags.span(
+                                    "\u25b6",
+                                    class_="toggle-chevron",
+                                    style_="display:inline-block; transition:transform .2s;",
+                                ),
+                                " ",
+                                _("Advanced IP camera settings"),
+                                type="button",
+                                class_="btn btn-link p-0 info-toggle-btn",
+                                style_="text-decoration:none;",
+                                **{
+                                    "data-bs-toggle": "collapse",
+                                    "data-bs-target": "#ip_camera_pipeline_settings_body",
+                                    "aria-expanded": "false",
+                                    "aria-controls": "ip_camera_pipeline_settings_body",
+                                },
+                            ),
+                            ui.div(
+                                ui.div(
+                                    ui.br(),
+                                    ui.row(
+                                        ui.column(
+                                            12,
+                                            ui.input_switch(
+                                                "btnEnableIpCameraDecodeScalePipeline",
+                                                _("Downscale IP camera stream"),
+                                                CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False),
+                                            ),
+                                        ),
+                                        ui.column(
+                                            12,
+                                            ui.markdown(
+                                                _("If enabled, the IP camera stream is downscaled before frames reach Kittyhack.")
+                                                + "  \n"
+                                                + _("This can reduce CPU load and improve inference FPS for high-resolution streams.")
+                                            ),
+                                            style_="color: grey;",
+                                        ),
+                                    ),
+                                    ui.row(
+                                        ui.column(
+                                            12,
+                                            ui.input_select(
+                                                "ip_camera_target_resolution",
+                                                _("Target resolution for IP camera stream"),
+                                                {
+                                                    "480x320": "320p (480x320)",
+                                                    "640x360": "360p (640x360)",
+                                                    "640x480": "480p 4:3 (640x480)",
+                                                    "854x480": "480p 16:9 (854x480)",
+                                                    "960x540": "540p (960x540)",
+                                                    "1024x576": "576p (1024x576)",
+                                                    "1280x720": "720p (1280x720)",
+                                                },
+                                                selected=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360'),
+                                                width="100%",
+                                            ),
+                                        ),
+                                        ui.column(
+                                            12,
+                                            ui.markdown(
+                                                _("Recommendation: choose `640x360` or `1280x720` for best performance/quality tradeoff.")
+                                            ),
+                                            style_="color: grey;",
+                                        ),
+                                    ),
+                                    ui.row(
+                                        ui.column(
+                                            12,
+                                            ui.input_select(
+                                                "ip_camera_pipeline_fps_limit",
+                                                _("IP camera FPS limit"),
+                                                {
+                                                    "5": "5 FPS",
+                                                    "10": "10 FPS",
+                                                    "15": "15 FPS",
+                                                    "20": "20 FPS",
+                                                    "25": "25 FPS",
+                                                    "0": _("Unlimited"),
+                                                },
+                                                selected=str(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10)),
+                                                width="100%",
+                                            ),
+                                        ),
+                                        ui.column(
+                                            12,
+                                            ui.markdown(
+                                                _("Default is `10 FPS`. Set to `Unlimited` to disable FPS limiting in the downscale pipeline (may cause higher CPU load).")
+                                            ),
+                                            style_="color: grey;",
+                                        ),
+                                    ),
+                                ),
+                                id="ip_camera_pipeline_settings_body",
+                                class_="collapse info-toggle-body",
+                                style_="margin-top:6px;",
+                            ),
+                            id="ip_camera_pipeline_settings",
+                            class_="kh-info-toggle",
+                            style_="margin-top: 0.75rem;",
+                        ),
+                        ui.br(),
                         full_screen=False,
                         class_="generic-container align-left",
                         style_="padding-left: 1rem !important; padding-right: 1rem !important;",
@@ -6503,26 +6678,32 @@ def server(input, output, session):
                             ui.column(4, ui.input_select("txtLoglevel", "Loglevel", {"DEBUG": "DEBUG", "INFO": "INFO", "WARN": "WARN", "ERROR": "ERROR", "CRITICAL": "CRITICAL"}, selected=CONFIG['LOGLEVEL'])),
                             ui.column(8, ui.markdown(_("`INFO` is the default log level and should be used in normal operation. `DEBUG` should only be used if it is really necessary!")), style_="color: grey;"),
                         ),
-                        ui.hr(),
-                        ui.row(
-                            ui.column(12, ui.input_switch("btnUseAllCoresForImageProcessing", _("Use all CPU cores for image processing"), CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'])),
-                            ui.column(
-                                12,
-                                ui.markdown(
-                                    _("If this is enabled, all CPU cores will be used for image processing. This results in a faster analysis of the pictures, and therefore a maybe a bit faster prey detection.")
-                                ), style="color: grey;",
-                            ),
-                            ui.column(
-                                12,
-                                ui.markdown(
-                                    f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
-                                    + _("**WARNING**: It is NOT recommended to enable this feature! Several users have reported that this option causes reboots or system freezes.") +
-                                    _("If you encounter the same issue, it's strongly recommended to disable this setting.")
-                                ), style_="color: #e74a3b; padding: 10px; border: 1px solid #e74a3b; border-radius: 5px; margin: 20px; width: 90%;"
-                            ),
-                            ui.column( 12, ui.markdown("> " + _("NOTE: This setting requires a restart of the kittyflap to take effect.")), style_="color: grey;"),
+                        (
+                            ui.TagList(
+                                ui.hr(),
+                                ui.row(
+                                    ui.column(12, ui.input_switch("btnUseAllCoresForImageProcessing", _("Use all CPU cores for image processing"), CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'])),
+                                    ui.column(
+                                        12,
+                                        ui.markdown(
+                                            _("If this is enabled, all CPU cores will be used for image processing. This results in a faster analysis of the pictures, and therefore a maybe a bit faster prey detection.")
+                                        ), style="color: grey;",
+                                    ),
+                                    ui.column(
+                                        12,
+                                        ui.markdown(
+                                            f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
+                                            + _("**WARNING**: It is NOT recommended to enable this feature! Several users have reported that this option causes reboots or system freezes.") +
+                                            _("If you encounter the same issue, it's strongly recommended to disable this setting.")
+                                        ), style_="color: #e74a3b; padding: 10px; border: 1px solid #e74a3b; border-radius: 5px; margin: 20px; width: 90%;"
+                                    ),
+                                    ui.column( 12, ui.markdown("> " + _("NOTE: This setting requires a restart of the kittyflap to take effect.")), style_="color: grey;"),
+                                ),
+                                ui.hr(),
+                            )
+                            if not is_remote_mode()
+                            else ui.hr()
                         ),
-                        ui.hr(),
                         ui.row(
                             ui.column(
                                 12,
@@ -6699,7 +6880,10 @@ def server(input, output, session):
 
         camera_settings_changed = (
             CONFIG.get('CAMERA_SOURCE') != input.camera_source() or
-            CONFIG.get('IP_CAMERA_URL') != input.ip_camera_url()
+            CONFIG.get('IP_CAMERA_URL') != input.ip_camera_url() or
+            CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False) != input.btnEnableIpCameraDecodeScalePipeline() or
+            CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360') != input.ip_camera_target_resolution() or
+            int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10) != int(input.ip_camera_pipeline_fps_limit())
         )
 
         # Check the time ranges for allowed to exit
@@ -6781,6 +6965,17 @@ def server(input, output, session):
                 )
                 return
 
+        if input.btnEnableIpCameraDecodeScalePipeline():
+            ffmpeg_ok = _ensure_ffmpeg_installed()
+            if not ffmpeg_ok:
+                ui.notification_show(
+                    _("FFmpeg is required for the decode+scale pipeline but could not be installed automatically.") + "\n" +
+                    _("Please install `ffmpeg` manually and try again. Changes were not saved."),
+                    duration=12,
+                    type="error",
+                )
+                return
+
         # override the variable with the data from the configuration page
         language_changed = CONFIG['LANGUAGE'] != input.txtLanguage()
         rfid_state_changed = CONFIG['DISABLE_RFID_READER'] != input.btnDisableRfidReader()
@@ -6792,7 +6987,10 @@ def server(input, output, session):
             selected_model_changed = True
         else:
             selected_model_changed = False
-        img_processing_cores_changed = CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] != input.btnUseAllCoresForImageProcessing()
+        if is_remote_mode():
+            img_processing_cores_changed = False
+        else:
+            img_processing_cores_changed = CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] != input.btnUseAllCoresForImageProcessing()
 
         # Update the configuration dictionary with the new values
         CONFIG['LANGUAGE'] = input.txtLanguage()
@@ -6834,7 +7032,10 @@ def server(input, output, session):
         CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'] = int(input.sldLockAfterPreyDetect())
         CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID'] = int(input.numMaxPicturesPerEventWithRfid())
         CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID'] = int(input.numMaxPicturesPerEventWithoutRfid())
-        CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = input.btnUseAllCoresForImageProcessing()
+        if is_remote_mode():
+            CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = True
+        else:
+            CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = input.btnUseAllCoresForImageProcessing()
         CONFIG['ALLOWED_TO_EXIT_RANGE1'] = input.btnAllowedToExitRange1()
         CONFIG['ALLOWED_TO_EXIT_RANGE1_FROM'] = input.txtAllowedToExitRange1From()
         CONFIG['ALLOWED_TO_EXIT_RANGE1_TO'] = input.txtAllowedToExitRange1To()
@@ -6846,6 +7047,12 @@ def server(input, output, session):
         CONFIG['ALLOWED_TO_EXIT_RANGE3_TO'] = input.txtAllowedToExitRange3To()
         CONFIG['CAMERA_SOURCE'] = input.camera_source()
         CONFIG['IP_CAMERA_URL'] = input.ip_camera_url()
+        CONFIG['ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE'] = input.btnEnableIpCameraDecodeScalePipeline()
+        CONFIG['IP_CAMERA_TARGET_RESOLUTION'] = input.ip_camera_target_resolution()
+        try:
+            CONFIG['IP_CAMERA_PIPELINE_FPS_LIMIT'] = int(input.ip_camera_pipeline_fps_limit())
+        except Exception:
+            CONFIG['IP_CAMERA_PIPELINE_FPS_LIMIT'] = 10
 
         if camera_settings_changed:
             # Ensure live view reacts immediately (do not keep showing an old frame).
@@ -7044,8 +7251,7 @@ def server(input, output, session):
     @reactive.effect
     @reactive.event(input.btn_wlan_save)
     def wlan_save():
-        global user_wlan_action_in_progress
-        user_wlan_action_in_progress = True
+        _set_wlan_action_in_progress(True)
         ssid = input.txtWlanSSID()
         password = input.txtWlanPassword()
         priority = input.numWlanPriority()
@@ -7061,14 +7267,16 @@ def server(input, output, session):
                 footer=None
             )
         )
-        success = manage_and_switch_wlan(ssid, password, priority, password_changed)
-        user_wlan_action_in_progress = False
-        if success:
-            ui.notification_show(_("WLAN configuration for {} updated successfully.").format(ssid), duration=5, type="message")
-            reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
-        else:
-            ui.notification_show(_("Failed to update WLAN configuration for {}").format(ssid), duration=10, type="error")
-        ui.modal_remove()
+        try:
+            success = manage_and_switch_wlan(ssid, password, priority, password_changed)
+            if success:
+                ui.notification_show(_("WLAN configuration for {} updated successfully.").format(ssid), duration=5, type="message")
+                reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
+            else:
+                ui.notification_show(_("Failed to update WLAN configuration for {}").format(ssid), duration=10, type="error")
+        finally:
+            _set_wlan_action_in_progress(False)
+            ui.modal_remove()
 
     @output
     @render.ui

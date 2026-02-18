@@ -1138,6 +1138,9 @@ class ModelHandler:
         # Store the last used camera config to detect changes
         last_camera_source = CONFIG['CAMERA_SOURCE']
         last_ip_camera_url = CONFIG['IP_CAMERA_URL']
+        last_enable_ip_camera_decode_scale_pipeline = CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False)
+        last_ip_camera_target_resolution = CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360')
+        last_ip_camera_pipeline_fps_limit = int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10)
 
         # Check if the model is a YOLO model
         if self.model == "tflite":
@@ -1186,7 +1189,13 @@ class ModelHandler:
             freq = cv2.getTickFrequency()
 
             # Initialize video stream
-            videostream = VideoStream(source=CONFIG['CAMERA_SOURCE'], ip_camera_url=CONFIG['IP_CAMERA_URL']).start()
+            videostream = VideoStream(
+                source=CONFIG['CAMERA_SOURCE'],
+                ip_camera_url=CONFIG['IP_CAMERA_URL'],
+                use_ip_camera_decode_scale_pipeline=CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False),
+                ip_camera_target_resolution=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360'),
+                ip_camera_pipeline_fps_limit=int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10),
+            ).start()
             logging.info(f"[CAMERA] Starting video stream...")
 
             # Wait for the camera to warm up
@@ -1216,12 +1225,26 @@ class ModelHandler:
                 # --- Detect camera config changes and re-init videostream if needed ---
                 current_camera_source = CONFIG['CAMERA_SOURCE']
                 current_ip_camera_url = CONFIG['IP_CAMERA_URL']
-                if (current_camera_source != last_camera_source) or (current_ip_camera_url != last_ip_camera_url):
+                current_enable_ip_camera_decode_scale_pipeline = CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False)
+                current_ip_camera_target_resolution = CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360')
+                current_ip_camera_pipeline_fps_limit = int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10)
+                if (
+                    (current_camera_source != last_camera_source)
+                    or (current_ip_camera_url != last_ip_camera_url)
+                    or (current_enable_ip_camera_decode_scale_pipeline != last_enable_ip_camera_decode_scale_pipeline)
+                    or (current_ip_camera_target_resolution != last_ip_camera_target_resolution)
+                    or (current_ip_camera_pipeline_fps_limit != last_ip_camera_pipeline_fps_limit)
+                ):
                     tm.sleep(0.2)
-                    logging.info(f"[MODEL] Detected change in CAMERA_SOURCE or IP_CAMERA_URL. Reinitializing videostream...")
+                    logging.info(
+                        "[MODEL] Detected change in camera stream settings. Reinitializing videostream..."
+                    )
                     self.reinit_videostream()
                     last_camera_source = current_camera_source
                     last_ip_camera_url = current_ip_camera_url
+                    last_enable_ip_camera_decode_scale_pipeline = current_enable_ip_camera_decode_scale_pipeline
+                    last_ip_camera_target_resolution = current_ip_camera_target_resolution
+                    last_ip_camera_pipeline_fps_limit = current_ip_camera_pipeline_fps_limit
                     # Wait for the new stream to warm up
                     frame = None
                     stream_start_time = tm.time()
@@ -1406,7 +1429,10 @@ class ModelHandler:
         # Start a new videostream with the latest config values
         videostream = VideoStream(
             source=CONFIG['CAMERA_SOURCE'],
-            ip_camera_url=CONFIG['IP_CAMERA_URL']
+            ip_camera_url=CONFIG['IP_CAMERA_URL'],
+            use_ip_camera_decode_scale_pipeline=CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False),
+            ip_camera_target_resolution=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360'),
+            ip_camera_pipeline_fps_limit=int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10),
         ).start()
         if CONFIG['CAMERA_SOURCE'] == "internal":
             logging.info(f"[MODEL] Re-initialized videostream with internal camera source.")

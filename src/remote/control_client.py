@@ -189,9 +189,18 @@ class RemoteControlClient:
         except Exception as e:
             logging.error(f"[REMOTE_CTRL] Client thread crashed: {e}")
 
+    def _set_disconnected_state(self) -> None:
+        self._connected.clear()
+        self._ready_for_use.clear()
+        self._control_acquired = False
+        self._ws = None
+
     async def _main(self) -> None:
         timeout_s = float(CONFIG.get("REMOTE_CONTROL_TIMEOUT") or 10.0)
         backoff = 1.0
+        # We expect frequent state frames from target (~10Hz). If no frame arrives
+        # for this period, treat the link as stale and reconnect proactively.
+        no_rx_timeout_s = max(6.0, float(timeout_s) + 3.0)
 
         while not sigterm_monitor.stop_now:
             url = self._ws_url()
@@ -229,6 +238,7 @@ class RemoteControlClient:
 
                     self._control_acquired = True
                     self._ready_for_use.set()
+                    self._last_rx = time.time()
                     logging.info("[REMOTE_CTRL] Control acquired.")
 
                     # trigger sync if needed (best-effort)
@@ -245,6 +255,13 @@ class RemoteControlClient:
                                 break
                             last_ping = now
 
+                        # Connection may stay half-open on WLAN loss for several minutes.
+                        # If no data arrived for too long, force reconnect so UI status updates.
+                        if (now - float(self._last_rx or 0.0)) > no_rx_timeout_s:
+                            raise RuntimeError(
+                                f"stale remote link (no data for {int(now - float(self._last_rx or 0.0))}s)"
+                            )
+
                         try:
                             msg = await asyncio.wait_for(ws.recv(), timeout=1.0)
                         except asyncio.TimeoutError:
@@ -258,13 +275,13 @@ class RemoteControlClient:
                             await self._handle_json(msg)
 
             except Exception as e:
-                self._connected.clear()
-                self._ready_for_use.clear()
-                self._control_acquired = False
-                self._ws = None
+                self._set_disconnected_state()
                 logging.warning(f"[REMOTE_CTRL] Connection lost: {e}")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2.0, 30.0)
+            finally:
+                # Also clear state on clean websocket close (no exception path).
+                self._set_disconnected_state()
 
     async def _handle_json(self, raw: str) -> None:
         try:

@@ -34,10 +34,15 @@ class ControlState:
         self.controller_id: str | None = None
         self.controller_host: str | None = None
         self.control_timeout_s: float = float(CONFIG.get("REMOTE_CONTROL_TIMEOUT") or 10.0)
+        # Monotonic timestamp of the last message seen from controller.
+        # IMPORTANT: Use monotonic clock so NTP/RTC wall-clock jumps cannot
+        # trigger false controller timeouts after cold boot.
         self.last_seen: float = 0.0
 
         # If the controller disconnects, we delay restarting kittyhack on the target device.
         # This prevents unwanted start/stop cycles when the remote UI service restarts.
+        # Monotonic deadline when kittyhack should be started again after
+        # controller disconnect timeout window.
         self.pending_kittyhack_start_at: float = 0.0
 
         self.pir: Pir | None = None
@@ -92,6 +97,50 @@ def _delete_remote_control_marker() -> bool:
 def _remote_control_marker_exists() -> bool:
     try:
         return os.path.exists(_remote_control_marker_path())
+    except Exception:
+        return False
+
+
+def _wlan_action_marker_path() -> str:
+    # Marker written by server.py while user-triggered WLAN actions are in progress.
+    return os.path.join(kittyhack_root(), ".wlan-action-in-progress")
+
+
+def _is_wlan_action_in_progress(max_age_s: float = 180.0) -> bool:
+    """Return True if an intentional WLAN reconfiguration is currently ongoing.
+
+    Stale markers are auto-cleaned to avoid permanently suppressing the watchdog
+    after crashes.
+    """
+    marker = _wlan_action_marker_path()
+    try:
+        if not os.path.exists(marker):
+            return False
+
+        now = time.time()
+        ts = 0.0
+        try:
+            with open(marker, "r", encoding="utf-8") as f:
+                ts = float((f.read() or "").strip() or 0.0)
+        except Exception:
+            ts = 0.0
+
+        if ts <= 0.0:
+            try:
+                ts = float(os.path.getmtime(marker))
+            except Exception:
+                ts = now
+
+        age = max(0.0, now - ts)
+        if age > float(max_age_s):
+            try:
+                os.remove(marker)
+                logging.warning(f"[WLAN WATCHDOG] Removed stale WLAN action marker (age={age:.1f}s).")
+            except Exception:
+                pass
+            return False
+
+        return True
     except Exception:
         return False
 
@@ -240,7 +289,7 @@ async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.Strea
             pass
 
         # Drain headers
-        for _ in range(50):
+        for __ in range(50):
             line = await reader.readline()
             if not line or line in (b"\r\n", b"\n"):
                 break
@@ -433,7 +482,7 @@ async def _release_control(reason: str):
 
     # If we are waiting for a possible reconnect, keep the info page on port 80
     # and do not start kittyhack yet.
-    if STATE.pending_kittyhack_start_at and time.time() < float(STATE.pending_kittyhack_start_at or 0.0):
+    if STATE.pending_kittyhack_start_at and time.monotonic() < float(STATE.pending_kittyhack_start_at or 0.0):
         return
 
     STATE.pending_kittyhack_start_at = 0.0
@@ -458,7 +507,7 @@ async def _take_control(ws: WebSocketServerProtocol, client_id: str, timeout_s: 
     STATE.controller = ws
     STATE.controller_id = client_id
     STATE.control_timeout_s = float(timeout_s or STATE.control_timeout_s)
-    STATE.last_seen = time.time()
+    STATE.last_seen = time.monotonic()
     # Cancel any delayed kittyhack start from a previous disconnect.
     STATE.pending_kittyhack_start_at = 0.0
 
@@ -536,7 +585,7 @@ async def _handle_sync_request(ws: WebSocketServerProtocol):
         arc = os.path.relpath(src, base)
         items.append((src, arc))
 
-    await ws.send(json.dumps({"type": "sync_begin", "ok": True, "items": [a for _, a in items]}))
+    await ws.send(json.dumps({"type": "sync_begin", "ok": True, "items": [a for __, a in items]}))
 
     try:
         import queue
@@ -566,7 +615,7 @@ async def _handle_sync_request(ws: WebSocketServerProtocol):
                     for src, arc in items:
                         tf.add(src, arcname=arc)
                         # prevent watchdog timeout during potentially long archive creation
-                        STATE.last_seen = time.time()
+                        STATE.last_seen = time.monotonic()
                 chunk_queue.put(None)
             except Exception as e:
                 chunk_queue.put(e)
@@ -590,7 +639,7 @@ async def _handle_sync_request(ws: WebSocketServerProtocol):
             else:
                 await ws.send(chunk)
             # prevent watchdog timeout during potentially long transfer
-            STATE.last_seen = time.time()
+            STATE.last_seen = time.monotonic()
 
         # End marker (empty chunk)
         if first:
@@ -609,7 +658,7 @@ async def _handle_sync_request(ws: WebSocketServerProtocol):
 async def _handler(ws: WebSocketServerProtocol):
     try:
         async for msg in ws:
-            STATE.last_seen = time.time()
+            STATE.last_seen = time.monotonic()
 
             if isinstance(msg, (bytes, bytearray)):
                 continue
@@ -662,16 +711,16 @@ async def _handler(ws: WebSocketServerProtocol):
             # configured timeout to allow the controller to reconnect (e.g. during
             # remote UI service restart).
             try:
-                STATE.pending_kittyhack_start_at = time.time() + float(STATE.control_timeout_s or 10.0)
+                STATE.pending_kittyhack_start_at = time.monotonic() + float(STATE.control_timeout_s or 10.0)
             except Exception:
-                STATE.pending_kittyhack_start_at = time.time() + 10.0
+                STATE.pending_kittyhack_start_at = time.monotonic() + 10.0
             await _release_control("controller disconnected")
 
 
 async def _watchdog():
     while not sigterm_monitor.stop_now:
         await asyncio.sleep(0.5)
-        now = time.time()
+        now = time.monotonic()
 
         # If a controller disconnected recently, start kittyhack only after the timeout.
         if (not STATE.is_controlled()) and STATE.pending_kittyhack_start_at and (now >= float(STATE.pending_kittyhack_start_at or 0.0)):
@@ -723,14 +772,23 @@ async def _boot_wait_supervisor():
 
 async def _wlan_watchdog_loop():
     # Run on target device, independent from kittyhack.service.
-    # If kittyhack_control is running, server.py will skip its own watchdog.
     wlan_disconnect_counter = 0
     wlan_reconnect_attempted = False
-
+    last_skip_log_ts = 0.0
     while not sigterm_monitor.stop_now:
         await asyncio.sleep(5.0)
 
         if not bool(CONFIG.get("WLAN_WATCHDOG_ENABLED", True)):
+            wlan_disconnect_counter = 0
+            wlan_reconnect_attempted = False
+            continue
+
+        # Pause watchdog actions during user-triggered WLAN reconfiguration from WebUI.
+        if _is_wlan_action_in_progress():
+            now = time.time()
+            if (now - float(last_skip_log_ts or 0.0)) >= 30.0:
+                logging.info("[WLAN WATCHDOG] User WLAN action in progress; skipping watchdog checks.")
+                last_skip_log_ts = now
             wlan_disconnect_counter = 0
             wlan_reconnect_attempted = False
             continue
@@ -786,7 +844,7 @@ async def _wlan_watchdog_loop():
 
                 # Wait briefly for reconnection
                 ok = False
-                for _ in range(10):
+                for __ in range(10):
                     await asyncio.sleep(1.0)
                     try:
                         wc = get_wlan_connections()
@@ -812,8 +870,6 @@ async def _wlan_watchdog_loop():
                 pass
             return
         
-        logging.info(f"[WLAN WATCHDOG] Current WLAN connections: {wlan_connections}")
-
 
 async def main():
     configure_logging(CONFIG.get("LOGLEVEL", "INFO"))
@@ -821,6 +877,15 @@ async def main():
     if is_remote_mode():
         logging.error("[CONTROL] Refusing to start: kittyhack_control must not run in remote-mode.")
         return
+
+    # Align WLAN runtime settings with server.py startup behavior.
+    try:
+        logging.info(f"Setting WLAN TX Power to {CONFIG['WLAN_TX_POWER']} dBm...")
+        systemcmd(["iwconfig", "wlan0", "txpower", f"{CONFIG['WLAN_TX_POWER']}"] , CONFIG['SIMULATE_KITTYFLAP'])
+        logging.info("Disabling WiFi power saving mode...")
+        systemcmd(["iw", "dev", "wlan0", "set", "power_save", "off"], CONFIG['SIMULATE_KITTYFLAP'])
+    except Exception as e:
+        logging.warning(f"[CONTROL] Failed to apply WLAN runtime settings: {e}")
 
     # Enforce target-mode boot semantics: kittyhack_control supervises kittyhack startup.
     # Best-effort: prevent kittyhack.service from auto-starting on subsequent boots.

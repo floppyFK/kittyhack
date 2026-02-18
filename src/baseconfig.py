@@ -45,8 +45,6 @@ _REMOTE_ONLY_SETTINGS: dict[str, tuple[str, str]] = {
     "REMOTE_CONTROL_PORT": ("remote_control_port", "int"),
     "REMOTE_CONTROL_TIMEOUT": ("remote_control_timeout", "float"),
     "REMOTE_SYNC_ON_FIRST_CONNECT": ("remote_sync_on_first_connect", "bool"),
-    "REMOTE_SYNC_INCLUDE_PICTURES": ("remote_sync_include_pictures", "bool"),
-    "REMOTE_SYNC_INCLUDE_MODELS": ("remote_sync_include_models", "bool"),
     "REMOTE_INFERENCE_MAX_FPS": ("remote_inference_max_fps", "float"),
 }
 
@@ -117,8 +115,6 @@ def read_remote_config_values() -> dict:
         "remote_control_port": int(CONFIG.get("REMOTE_CONTROL_PORT", 8888) or 8888),
         "remote_control_timeout": float(CONFIG.get("REMOTE_CONTROL_TIMEOUT", 30.0) or 30.0),
         "remote_sync_on_first_connect": bool(CONFIG.get("REMOTE_SYNC_ON_FIRST_CONNECT", True)),
-        "remote_sync_include_pictures": bool(CONFIG.get("REMOTE_SYNC_INCLUDE_PICTURES", True)),
-        "remote_sync_include_models": bool(CONFIG.get("REMOTE_SYNC_INCLUDE_MODELS", True)),
     }
     remote_cfg_path = _remote_configfile_path()
     if not os.path.exists(remote_cfg_path):
@@ -136,12 +132,6 @@ def read_remote_config_values() -> dict:
             "remote_control_timeout": section.getfloat("remote_control_timeout", fallback=defaults["remote_control_timeout"]),
             "remote_sync_on_first_connect": section.getboolean(
                 "remote_sync_on_first_connect", fallback=defaults["remote_sync_on_first_connect"]
-            ),
-            "remote_sync_include_pictures": section.getboolean(
-                "remote_sync_include_pictures", fallback=defaults["remote_sync_include_pictures"]
-            ),
-            "remote_sync_include_models": section.getboolean(
-                "remote_sync_include_models", fallback=defaults["remote_sync_include_models"]
             ),
         }
     except Exception as e:
@@ -246,6 +236,9 @@ DEFAULT_CONFIG = {
         "use_camera_for_motion_detection": False,
         "camera_source": "internal", # can be "internal" or "ip_camera"
         "ip_camera_url": "",
+        "enable_ip_camera_decode_scale_pipeline": False,
+        "ip_camera_target_resolution": "640x360",
+        "ip_camera_pipeline_fps_limit": 10,
         "mqtt_device_id": "",
         "mqtt_broker_address": "",
         "mqtt_broker_port": 1883,
@@ -267,8 +260,6 @@ DEFAULT_CONFIG = {
         # Target-mode boot behavior: if remote control was used once, the target may wait for a remote reconnect.
         "remote_wait_after_reboot_timeout": 30.0,
         "remote_sync_on_first_connect": True,
-        "remote_sync_include_pictures": True,
-        "remote_sync_include_models": True,
         "remote_inference_max_fps": 10.0,
     }
 }
@@ -498,6 +489,18 @@ def load_config():
         "USE_CAMERA_FOR_MOTION_DETECTION": safe_bool("USE_CAMERA_FOR_MOTION_DETECTION", d.get('use_camera_for_motion_detection', False)),
         "CAMERA_SOURCE": safe_str("CAMERA_SOURCE", d['camera_source']),
         "IP_CAMERA_URL": safe_str("IP_CAMERA_URL", d.get('ip_camera_url', "")),
+        "ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE": safe_bool(
+            "ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE",
+            d.get('enable_ip_camera_decode_scale_pipeline', False),
+        ),
+        "IP_CAMERA_TARGET_RESOLUTION": safe_str(
+            "IP_CAMERA_TARGET_RESOLUTION",
+            d.get('ip_camera_target_resolution', "640x360"),
+        ),
+        "IP_CAMERA_PIPELINE_FPS_LIMIT": safe_int(
+            "IP_CAMERA_PIPELINE_FPS_LIMIT",
+            int(d.get('ip_camera_pipeline_fps_limit', 10)),
+        ),
         "MQTT_DEVICE_ID": safe_str("MQTT_DEVICE_ID", d['mqtt_device_id']),
         "MQTT_BROKER_ADDRESS": safe_str("MQTT_BROKER_ADDRESS", d['mqtt_broker_address']),
         "MQTT_BROKER_PORT": safe_int("MQTT_BROKER_PORT", int(d['mqtt_broker_port'])),
@@ -521,8 +524,6 @@ def load_config():
             float(d.get('remote_wait_after_reboot_timeout', 30.0)),
         ),
         "REMOTE_SYNC_ON_FIRST_CONNECT": safe_bool("REMOTE_SYNC_ON_FIRST_CONNECT", d.get('remote_sync_on_first_connect', True)),
-        "REMOTE_SYNC_INCLUDE_PICTURES": safe_bool("REMOTE_SYNC_INCLUDE_PICTURES", d.get('remote_sync_include_pictures', True)),
-        "REMOTE_SYNC_INCLUDE_MODELS": safe_bool("REMOTE_SYNC_INCLUDE_MODELS", d.get('remote_sync_include_models', True)),
         "REMOTE_INFERENCE_MAX_FPS": safe_float("REMOTE_INFERENCE_MAX_FPS", float(d.get('remote_inference_max_fps', 10.0))),
     }
 
@@ -657,6 +658,9 @@ def save_config():
     settings['use_camera_for_motion_detection'] = CONFIG['USE_CAMERA_FOR_MOTION_DETECTION']
     settings['camera_source'] = CONFIG['CAMERA_SOURCE']
     settings['ip_camera_url'] = CONFIG['IP_CAMERA_URL']
+    settings['enable_ip_camera_decode_scale_pipeline'] = CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False)
+    settings['ip_camera_target_resolution'] = CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360')
+    settings['ip_camera_pipeline_fps_limit'] = int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10)
     settings['mqtt_device_id'] = CONFIG['MQTT_DEVICE_ID']
     settings['mqtt_broker_address'] = CONFIG['MQTT_BROKER_ADDRESS']
     settings['mqtt_broker_port'] = CONFIG['MQTT_BROKER_PORT']

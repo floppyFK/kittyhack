@@ -2,6 +2,7 @@ import threading
 import time as tm
 import logging
 import multiprocessing
+from datetime import datetime, timezone
 from threading import Lock
 from src.baseconfig import AllowedToEnter, AllowedToExit, CONFIG, set_language
 from src.mode import is_remote_mode
@@ -413,10 +414,40 @@ def backend_main(simulate_kittyflap = False):
             return cat_rfid_name_dict.get(rfid_tag, f"{_('Unknown RFID')}: {rfid_tag}")
         else:
             return _("No RFID found")
+
+    # Periodically persist effective FPS into the active YOLO model metadata.
+    last_fps_metadata_write_tm = 0.0
+    last_written_effective_fps: float | None = None
         
     while not sigterm_monitor.stop_now:
         try:
             tm.sleep(0.1)  # sleep to reduce CPU load
+
+            # Persist effective FPS into info.json for the active YOLO model while running.
+            try:
+                if model_handler.get_run_state() and (not (CONFIG.get('TFLITE_MODEL_VERSION') or '').strip()):
+                    active_yolo_id = (CONFIG.get('YOLO_MODEL') or '').strip()
+                    now = tm.time()
+                    if active_yolo_id and (now - last_fps_metadata_write_tm) >= 60.0:
+                        effective_fps, fps_tm = model_handler.get_effective_fps_snapshot()
+                        # Write only if we have a reasonably fresh measurement.
+                        if effective_fps is not None and fps_tm and (now - float(fps_tm)) <= 180.0:
+                            if (
+                                last_written_effective_fps is None
+                                or abs(float(effective_fps) - float(last_written_effective_fps)) >= 0.2
+                                or (now - last_fps_metadata_write_tm) >= 600.0
+                            ):
+                                YoloModel.update_model_metadata(
+                                    active_yolo_id,
+                                    {
+                                        "EFFECTIVE_FPS": round(float(effective_fps), 2),
+                                        "EFFECTIVE_FPS_UPDATED_AT_UTC": datetime.now(timezone.utc).isoformat(),
+                                    },
+                                )
+                                last_written_effective_fps = float(effective_fps)
+                                last_fps_metadata_write_tm = now
+            except Exception as e:
+                logging.debug(f"[BACKEND] Failed to persist effective FPS to model info.json: {e}")
 
             # Decide if the camera or the PIR should be used for motion detection
             use_camera_for_motion = CONFIG['USE_CAMERA_FOR_MOTION_DETECTION']

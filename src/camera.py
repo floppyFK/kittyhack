@@ -11,10 +11,9 @@ import shlex
 import threading
 import logging
 import time as tm
-import os
-import shutil
 from typing import List, Optional
 from src.baseconfig import CONFIG
+from src.system import ensure_ffmpeg_installed
 class VideoStream:
     """Camera object that controls video streaming from the Picamera or an IP camera"""
 
@@ -70,59 +69,6 @@ class VideoStream:
             return (width, height)
         except Exception:
             return default_resolution
-
-    def _ensure_ffmpeg_installed(self) -> bool:
-        """Ensure ffmpeg is available. Try to install it on Debian-based systems if missing."""
-        if shutil.which("ffmpeg"):
-            return True
-
-        logging.warning("[CAMERA] ffmpeg not found. Attempting to install it...")
-
-        apt_update_cmd = ["apt-get", "update"]
-        apt_install_cmd = ["apt-get", "install", "-y", "ffmpeg"]
-
-        if os.geteuid() != 0:
-            if shutil.which("sudo"):
-                apt_update_cmd = ["sudo", *apt_update_cmd]
-                apt_install_cmd = ["sudo", *apt_install_cmd]
-            else:
-                logging.error("[CAMERA] ffmpeg is missing and sudo is not available for installation.")
-                return False
-
-        try:
-            update_proc = subprocess.run(
-                apt_update_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=300,
-                check=False,
-            )
-            if update_proc.returncode != 0:
-                logging.error(f"[CAMERA] Failed to update package index for ffmpeg install: {update_proc.stderr.strip()}")
-                return False
-
-            install_proc = subprocess.run(
-                apt_install_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=900,
-                check=False,
-            )
-            if install_proc.returncode != 0:
-                logging.error(f"[CAMERA] Failed to install ffmpeg: {install_proc.stderr.strip()}")
-                return False
-        except Exception as e:
-            logging.error(f"[CAMERA] Error while installing ffmpeg: {e}")
-            return False
-
-        installed = shutil.which("ffmpeg") is not None
-        if installed:
-            logging.info("[CAMERA] ffmpeg installed successfully.")
-        else:
-            logging.error("[CAMERA] ffmpeg installation command finished, but ffmpeg is still unavailable.")
-        return installed
 
     def _normalized_pipeline_fps_limit(self) -> int:
         """Normalize the configured pipeline FPS limit. 0 means unlimited."""
@@ -296,7 +242,7 @@ class VideoStream:
 
                 # Optional ffmpeg decode+scale pipeline for IP streams
                 if self.use_ip_camera_decode_scale_pipeline:
-                    if not self._ensure_ffmpeg_installed():
+                    if not ensure_ffmpeg_installed():
                         logging.error("[CAMERA] FFmpeg decode+scale pipeline enabled, but ffmpeg is unavailable.")
                         self.camera_state = self.STATE_ERROR
                         if self.stopped:

@@ -210,7 +210,6 @@ DEFAULT_CONFIG = {
         "group_pictures_to_events": True,
         "tflite_model_version": "original_kittyflap_model_v2",
         "lock_duration_after_prey_detection": 300,
-        "last_read_changelogs": "v1.0.0",
         "max_pictures_per_event_with_rfid": 100,
         "max_pictures_per_event_without_rfid": 30,
         "use_all_cores_for_image_processing": False,
@@ -463,7 +462,6 @@ def load_config():
         "GROUP_PICTURES_TO_EVENTS": safe_bool("GROUP_PICTURES_TO_EVENTS", d['group_pictures_to_events']),
         "TFLITE_MODEL_VERSION": safe_str("TFLITE_MODEL_VERSION", d['tflite_model_version']),
         "LOCK_DURATION_AFTER_PREY_DETECTION": safe_int("LOCK_DURATION_AFTER_PREY_DETECTION", int(d['lock_duration_after_prey_detection'])),
-        "LAST_READ_CHANGELOGS": safe_str("LAST_READ_CHANGELOGS", d['last_read_changelogs']),
         "MAX_PICTURES_PER_EVENT_WITH_RFID": safe_int("MAX_PICTURES_PER_EVENT_WITH_RFID", int(d['max_pictures_per_event_with_rfid'])),
         "MAX_PICTURES_PER_EVENT_WITHOUT_RFID": safe_int("MAX_PICTURES_PER_EVENT_WITHOUT_RFID", int(d['max_pictures_per_event_without_rfid'])),
         "USE_ALL_CORES_FOR_IMAGE_PROCESSING": safe_bool("USE_ALL_CORES_FOR_IMAGE_PROCESSING", d['use_all_cores_for_image_processing']),
@@ -631,7 +629,6 @@ def save_config():
     settings['group_pictures_to_events'] = CONFIG['GROUP_PICTURES_TO_EVENTS']
     settings['tflite_model_version'] = CONFIG['TFLITE_MODEL_VERSION']
     settings['lock_duration_after_prey_detection'] = CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION']
-    settings['last_read_changelogs'] = CONFIG['LAST_READ_CHANGELOGS']
     settings['max_pictures_per_event_with_rfid'] = CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID']
     settings['max_pictures_per_event_without_rfid'] = CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID']
     settings['use_all_cores_for_image_processing'] = CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']

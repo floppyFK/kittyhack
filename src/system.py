@@ -1,4 +1,6 @@
 from enum import Enum
+import fcntl
+import json
 import logging
 import subprocess
 import os
@@ -6,6 +8,7 @@ import shutil
 import re
 import sys
 import requests
+import threading
 import time as tm
 
 from src.baseconfig import CONFIG, set_language
@@ -1403,6 +1406,10 @@ class I2C:
 
 class Gpio:
     BASE_PATH = "/sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/"
+    SAFETY_DELAY_S = 1.0
+    SAFETY_LOCK_FILE = "/tmp/kittyhack_gpio_safety.lock"
+    SAFETY_STATE_FILE = "/tmp/kittyhack_gpio_safety_state.json"
+    _safety_thread_lock = threading.Lock()
 
     def __init__(self, base_path=BASE_PATH):
         self.base_path = base_path
@@ -1439,16 +1446,65 @@ class Gpio:
 
         # Set default value if direction is 'out'
         if gpio_direction == "out":
-            value_path = os.path.join(self.base_path, f"gpio{gpio_number}", "value")
-            try:
-                with open(value_path, "w") as value_file:
-                    value_file.write("0")
-            except IOError as e:
-                logging.error(f"Error setting default value for GPIO{gpio_number}: {e}")
+            if not self.set(gpio_number, 0):
                 return False
 
         logging.info(f"GPIO{gpio_number} configured successfully as {gpio_direction}")
         return True
+
+    def _read_last_write_ts(self) -> float:
+        try:
+            with open(self.SAFETY_STATE_FILE, "r", encoding="utf-8") as state_file:
+                data = json.load(state_file)
+                return float(data.get("last_write_ts", 0.0) or 0.0)
+        except Exception:
+            return 0.0
+
+    def _write_last_write_ts(self, gpio_number: int, value: int) -> None:
+        try:
+            payload = {
+                "last_write_ts": tm.time(),
+                "last_gpio": int(gpio_number),
+                "last_value": int(value),
+            }
+            tmp_path = f"{self.SAFETY_STATE_FILE}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as state_file:
+                json.dump(payload, state_file)
+            os.replace(tmp_path, self.SAFETY_STATE_FILE)
+        except Exception as e:
+            logging.warning(f"[GPIO] Failed to persist GPIO safety timestamp: {e}")
+
+    def _set_raw(self, gpio_number, value):
+        value_path = os.path.join(self.base_path, f"gpio{gpio_number}", "value")
+        try:
+            with open(value_path, "w") as value_file:
+                value_file.write(str(value))
+        except IOError as e:
+            logging.error(f"Error setting value for GPIO{gpio_number}: {e}")
+            return False
+
+        logging.debug(f"GPIO{gpio_number} set to {value}")
+        return True
+
+    def _set_with_safety_delay(self, gpio_number, value):
+        os.makedirs(os.path.dirname(self.SAFETY_LOCK_FILE), exist_ok=True)
+        with open(self.SAFETY_LOCK_FILE, "a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                with self._safety_thread_lock:
+                    now = tm.time()
+                    last_ts = self._read_last_write_ts()
+                    wait_s = max(0.0, float(self.SAFETY_DELAY_S) - (now - last_ts))
+                    if wait_s > 0.0:
+                        logging.warning(f"[GPIO] Enforcing safety delay of {wait_s:.3f}s before GPIO{gpio_number} write.")
+                        tm.sleep(wait_s)
+
+                    ok = self._set_raw(gpio_number, value)
+                    if ok:
+                        self._write_last_write_ts(int(gpio_number), int(value))
+                    return ok
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
 
     def set(self, gpio_number, value):
         """
@@ -1461,16 +1517,7 @@ class Gpio:
         Returns:
             bool: True if the operation is successful, False otherwise.
         """
-        value_path = os.path.join(self.base_path, f"gpio{gpio_number}", "value")
-        try:
-            with open(value_path, "w") as value_file:
-                value_file.write(str(value))
-        except IOError as e:
-            logging.error(f"Error setting value for GPIO{gpio_number}: {e}")
-            return False
-
-        logging.debug(f"GPIO{gpio_number} set to {value}")
-        return True
+        return self._set_with_safety_delay(gpio_number, value)
 
     def get(self, gpio_number):
         """

@@ -44,6 +44,8 @@ class ControlState:
         # Monotonic deadline when kittyhack should be started again after
         # controller disconnect timeout window.
         self.pending_kittyhack_start_at: float = 0.0
+        self.enforce_stop_interval_s: float = float(CONFIG.get("REMOTE_ENFORCE_STOP_INTERVAL") or 5.0)
+        self.next_enforce_stop_at: float = 0.0
 
         self.pir: Pir | None = None
         self.magnets: Magnets | None = None
@@ -479,6 +481,7 @@ async def _release_control(reason: str):
     STATE.last_seen = 0.0
     STATE._pir_stop_event = None
     STATE.sync_in_progress = False
+    STATE.next_enforce_stop_at = 0.0
 
     # If we are waiting for a possible reconnect, keep the info page on port 80
     # and do not start kittyhack yet.
@@ -508,6 +511,7 @@ async def _take_control(ws: WebSocketServerProtocol, client_id: str, timeout_s: 
     STATE.controller_id = client_id
     STATE.control_timeout_s = float(timeout_s or STATE.control_timeout_s)
     STATE.last_seen = time.monotonic()
+    STATE.next_enforce_stop_at = 0.0
     # Cancel any delayed kittyhack start from a previous disconnect.
     STATE.pending_kittyhack_start_at = 0.0
 
@@ -721,6 +725,20 @@ async def _watchdog():
     while not sigterm_monitor.stop_now:
         await asyncio.sleep(0.5)
         now = time.monotonic()
+
+        # While remote-controlled, enforce that kittyhack.service stays stopped.
+        if STATE.is_controlled() and now >= float(STATE.next_enforce_stop_at or 0.0):
+            try:
+                interval_s = max(0.5, min(30.0, float(STATE.enforce_stop_interval_s or 3.0)))
+            except Exception:
+                interval_s = 3.0
+            STATE.next_enforce_stop_at = now + interval_s
+            try:
+                if is_service_running("kittyhack", log_output=False):
+                    logging.warning("[CONTROL] kittyhack.service is active during remote control. Stopping it.")
+                    systemctl("stop", "kittyhack")
+            except Exception as e:
+                logging.error(f"[CONTROL] Failed to enforce kittyhack stop while controlled: {e}")
 
         # If a controller disconnected recently, start kittyhack only after the timeout.
         if (not STATE.is_controlled()) and STATE.pending_kittyhack_start_at and (now >= float(STATE.pending_kittyhack_start_at or 0.0)):

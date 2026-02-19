@@ -8,3 +8,4 @@ sync-to-kittyflap.sh
 *.code-workspace
 notifications.json
 ignore_*
+.vscode/settings.json

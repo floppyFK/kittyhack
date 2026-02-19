@@ -958,6 +958,15 @@ def btn_yolo_modify():
         class_="btn-icon-square btn-vertical-margin",
     )
 
+@module.ui
+def btn_yolo_activate():
+    return ui.input_action_button(
+        id=f"btn_yolo_activate",
+        label="",
+        icon=icon_svg("check", margin_left="0", margin_right="0"),
+        class_="btn-icon-square btn-outline-secondary btn-vertical-margin",
+    )
+
 @module.server
 def show_event_server(input, output, session, block_id: int):
 
@@ -2447,6 +2456,48 @@ def manage_yolo_model_server(input, output, session, unique_id: str):
         else:
             ui.notification_show(_("Failed to delete Model {}").format(input.txtModelName()), duration=10, type="error")
         ui.modal_remove()
+
+
+@module.server
+def activate_yolo_model_server(input, output, session, unique_id: str):
+    @reactive.effect
+    @reactive.event(input.btn_yolo_activate)
+    def on_activate_yolo_model():
+        global model_handler
+
+        if not (unique_id or "").strip():
+            ui.notification_show(_("This model cannot be selected because it has no unique ID."), duration=8, type="error")
+            return
+
+        if CONFIG.get('YOLO_MODEL') == unique_id and not CONFIG.get('TFLITE_MODEL_VERSION'):
+            ui.notification_show(_("This model is already active."), duration=5, type="message")
+            return
+
+        model_path = YoloModel.get_model_path(unique_id)
+        if not model_path:
+            ui.notification_show(_("The selected model was not found on disk."), duration=8, type="error")
+            reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+            reload_trigger_config.set(reload_trigger_config.get() + 1)
+            return
+
+        CONFIG['YOLO_MODEL'] = unique_id
+        CONFIG['TFLITE_MODEL_VERSION'] = ""
+        update_single_config_parameter("YOLO_MODEL")
+        update_single_config_parameter("TFLITE_MODEL_VERSION")
+
+        reload_ok, active_model_handler = reload_model_handler_runtime()
+        if reload_ok:
+            model_handler = active_model_handler
+            ui.notification_show(_("Model switched successfully."), duration=6, type="message")
+        else:
+            ui.notification_show(
+                _("Model was selected, but live reload failed. Please reboot to apply the change."),
+                duration=10,
+                type="warning",
+            )
+
+        reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+        reload_trigger_config.set(reload_trigger_config.get() + 1)
 
 #######################################################################
 # The main server application
@@ -5516,8 +5567,24 @@ def server(input, output, session):
             for model in available_models:
                 unique_btn_id = hashlib.md5(os.urandom(16)).hexdigest()
                 unique_model_id = model['unique_id']
+                is_active_model = (
+                    (CONFIG.get('YOLO_MODEL') == unique_model_id) and
+                    (not (CONFIG.get('TFLITE_MODEL_VERSION') or '').strip())
+                )
+
+                model['status'] = (
+                    ui.span(_("Active"), class_="badge text-bg-success")
+                    if is_active_model
+                    else ""
+                )
 
                 model['actions'] = ui.div(
+                    ui.tooltip(
+                        btn_yolo_activate(f"btn_yolo_activate_{unique_btn_id}"),
+                        _("Use this model now"),
+                        id=f"tooltip_yolo_activate_{unique_btn_id}",
+                        options={"trigger": "hover"},
+                    ),
                     ui.tooltip(
                         btn_yolo_modify(f"btn_yolo_modify_{unique_btn_id}"),
                         _("Modify or delete this model"),
@@ -5526,12 +5593,13 @@ def server(input, output, session):
                     ),
                 )
                 # Add new event listeners for the buttons
+                activate_yolo_model_server(f"btn_yolo_activate_{unique_btn_id}", unique_model_id)
                 manage_yolo_model_server(f"btn_yolo_modify_{unique_btn_id}", unique_model_id)
 
             # Create a pandas DataFrame from the available models
             df = pd.DataFrame(available_models)
-            df = df[['display_name', 'creation_date', 'actions']]  # Select only the columns we want to display
-            df.columns = [_('Name'), _('Creation date'), ""]  # Rename columns for display
+            df = df[['display_name', 'creation_date', 'status', 'actions']]  # Select only the columns we want to display
+            df.columns = [_('Name'), _('Creation date'), _('Status'), ""]  # Rename columns for display
 
             return (
                 df.style.set_table_attributes('class="dataframe shiny-table table w-auto table_models_overview"')

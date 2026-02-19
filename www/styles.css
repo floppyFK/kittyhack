@@ -1015,11 +1015,13 @@ html[data-bs-theme="dark"] .date-separator-row td {
 
 .kh-model-name {
     font-weight: 600;
+    text-align: left;
 }
 
 .kh-model-sub {
     font-size: 0.85em;
     color: var(--bs-secondary-color);
+    text-align: left;
 }
 
 .table_models_overview th:first-child,
@@ -1034,6 +1036,10 @@ html[data-bs-theme="dark"] .date-separator-row td {
     /* Specs column */
     width: 35%;
     min-width: 140px;
+}
+
+.table_models_overview .kh-model-specs-col {
+    text-align: center;
 }
 
 .table_models_overview th:last-child,
@@ -1069,6 +1075,10 @@ html[data-bs-theme="dark"] .date-separator-row td {
     .table_models_overview td:last-child {
         padding-left: 0.25rem;
         padding-right: 0.25rem;
+    }
+
+    .table_models_overview .kh-model-specs-col {
+        display: none;
     }
 }
 

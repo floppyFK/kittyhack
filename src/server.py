@@ -317,15 +317,6 @@ if not git_version or git_version == "unknown":
         version_from_changelog = True
         logging.warning(f"Using version from changelog files: {git_version}")
 
-# Fresh/corrupt-recovered config.ini should not trigger startup changelog popups.
-if CONFIG_CREATED_AT_STARTUP and CONFIG.get('LAST_READ_CHANGELOGS') != git_version:
-    CONFIG['LAST_READ_CHANGELOGS'] = git_version
-    try:
-        update_single_config_parameter("LAST_READ_CHANGELOGS")
-    except Exception as e:
-        logging.warning(f"Failed to initialize LAST_READ_CHANGELOGS for fresh config: {e}")
-
-
 remote_setup_required = remote_setup_required()
 backend_thread = None
 background_task_started = False
@@ -493,8 +484,6 @@ if os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
             os.remove(CONFIG['KITTYHACK_DATABASE_PATH'])
 else:
     logging.warning(f"Database '{CONFIG['KITTYHACK_DATABASE_PATH']}' not found. This is probably the first start of the application.")
-    CONFIG['LAST_READ_CHANGELOGS'] = git_version
-    update_single_config_parameter("LAST_READ_CHANGELOGS")
 
 # Check, if the kittyhack database file exists. If not, create it.
 if not os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
@@ -3083,35 +3072,6 @@ def server(input, output, session):
         else:
             additional_info = ""
         ui.notification_show(_("Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{}).").format(free_disk_space, additional_info), duration=20, type="warning")
-
-    # Show changelogs, if the version was updated
-    state = get_update_progress()
-    if (
-        not (state.get("result") == "reboot_dialog" or state.get("in_progress") is True)
-        and not (is_remote_mode() and remote_setup_required)
-    ):
-        changelog_text = get_changelogs(after_version=CONFIG['LAST_READ_CHANGELOGS'], language=CONFIG['LANGUAGE'])
-        if changelog_text:
-            ui.modal_show(
-                ui.modal(
-                    ui.div(
-                        ui.markdown(
-                            f"{icon_svg('circle-check', margin_left='-0.1em')} "
-                            + _("Update to version `{}` was successful!").format(git_version)
-                            + "\n\n---------\n\n"
-                            + _("**NOTE**: You can find the changelogs in the `INFO` section.")
-                            ),
-                    ),
-                    title=_("Update"),
-                    easy_close=True,
-                    size="m",
-                    footer=ui.div(
-                        ui.input_action_button("btn_modal_cancel", _("Close")),
-                    )
-                )
-            )
-            CONFIG['LAST_READ_CHANGELOGS'] = git_version
-            update_single_config_parameter("LAST_READ_CHANGELOGS")
     
     # Add new WLAN dialog
     def wlan_add_dialog():

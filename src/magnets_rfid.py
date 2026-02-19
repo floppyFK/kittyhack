@@ -55,6 +55,7 @@ class HardwareCommandQueue:
             
         self.command_queue = Queue()
         self.queue_lock = threading.Lock()
+        self.execution_lock = threading.Lock()
         self.last_command_time = tm.time() - MAG_RFID_CMD_DELAY  # Allow immediate first command
         self.control_thread = None
         self._initialized = True
@@ -74,22 +75,34 @@ class HardwareCommandQueue:
         sigterm_monitor.register_task()
 
         while not sigterm_monitor.stop_now:
-            if not self.command_queue.empty():
-                current_time = tm.time()
-                if current_time - self.last_command_time < MAG_RFID_CMD_DELAY:
-                    delay = MAG_RFID_CMD_DELAY - (current_time - self.last_command_time)
-                    logging.info(f"[HW_QUEUE] Waiting {delay:.1f} seconds before processing next command.")
-                    tm.sleep(delay)
+            processed = False
+            with self.execution_lock:
+                command = None
+                if self.queue_lock.acquire(timeout=1):
+                    try:
+                        if not self.command_queue.empty():
+                            command = self.command_queue.get()
+                    finally:
+                        self.queue_lock.release()
 
-                command = self.command_queue.get()
-                cmd_type, func, args = command
-                try:
-                    func(*args)
-                    logging.info(f"[HW_QUEUE] Executed {cmd_type} command.")
-                except Exception as e:
-                    logging.error(f"[HW_QUEUE] Error executing {cmd_type} command: {e}")
-                self.last_command_time = tm.time()
-            tm.sleep(0.05)
+                if command is not None:
+                    current_time = tm.time()
+                    if current_time - self.last_command_time < MAG_RFID_CMD_DELAY:
+                        delay = MAG_RFID_CMD_DELAY - (current_time - self.last_command_time)
+                        logging.info(f"[HW_QUEUE] Waiting {delay:.1f} seconds before processing next command.")
+                        tm.sleep(delay)
+
+                    cmd_type, func, args = command
+                    try:
+                        func(*args)
+                        logging.info(f"[HW_QUEUE] Executed {cmd_type} command.")
+                    except Exception as e:
+                        logging.error(f"[HW_QUEUE] Error executing {cmd_type} command: {e}")
+                    self.last_command_time = tm.time()
+                    processed = True
+
+            if not processed:
+                tm.sleep(0.05)
 
         # When stop_now is detected, wait briefly for final commands to be enqueued
         logging.info("[HW_QUEUE] Shutdown detected. Waiting 3 seconds for final commands to be enqueued...")
@@ -100,21 +113,32 @@ class HardwareCommandQueue:
             cmd_count = self.command_queue.qsize()
             logging.info(f"[HW_QUEUE] Processing {cmd_count} remaining commands before shutdown...")
             
-            while not self.command_queue.empty():
-                current_time = tm.time()
-                if current_time - self.last_command_time < MAG_RFID_CMD_DELAY:
-                    delay = MAG_RFID_CMD_DELAY - (current_time - self.last_command_time)
-                    logging.info(f"[HW_QUEUE] Waiting {delay:.1f} seconds before processing shutdown command.")
-                    tm.sleep(delay)
-                    
-                command = self.command_queue.get()
-                cmd_type, func, args = command
-                try:
-                    func(*args)
-                    logging.info(f"[HW_QUEUE] Executed {cmd_type} shutdown command.")
-                except Exception as e:
-                    logging.error(f"[HW_QUEUE] Error executing {cmd_type} shutdown command: {e}")
-                self.last_command_time = tm.time()
+            while True:
+                with self.execution_lock:
+                    command = None
+                    if self.queue_lock.acquire(timeout=1):
+                        try:
+                            if not self.command_queue.empty():
+                                command = self.command_queue.get()
+                        finally:
+                            self.queue_lock.release()
+
+                    if command is None:
+                        break
+
+                    current_time = tm.time()
+                    if current_time - self.last_command_time < MAG_RFID_CMD_DELAY:
+                        delay = MAG_RFID_CMD_DELAY - (current_time - self.last_command_time)
+                        logging.info(f"[HW_QUEUE] Waiting {delay:.1f} seconds before processing shutdown command.")
+                        tm.sleep(delay)
+
+                    cmd_type, func, args = command
+                    try:
+                        func(*args)
+                        logging.info(f"[HW_QUEUE] Executed {cmd_type} shutdown command.")
+                    except Exception as e:
+                        logging.error(f"[HW_QUEUE] Error executing {cmd_type} shutdown command: {e}")
+                    self.last_command_time = tm.time()
 
         logging.info("[HW_QUEUE] Stopped command queue thread.")
         sigterm_monitor.signal_task_done()
@@ -150,10 +174,11 @@ class HardwareCommandQueue:
         """
         Empties the command queue.
         """
-        with self.queue_lock:
-            while not self.command_queue.empty():
-                self.command_queue.get()
-            logging.info("[HW_QUEUE] Command queue emptied.")
+        with self.execution_lock:
+            with self.queue_lock:
+                while not self.command_queue.empty():
+                    self.command_queue.get()
+                logging.info("[HW_QUEUE] Command queue emptied.")
 
 class MagnetController:
     def __init__(self):
@@ -366,43 +391,46 @@ class Magnets:
         Checks for remaining commands in the command queue and empties it to return magnets to idle state.
         """
         try:
-            # Empty the shared queue
-            self.command_queue.empty_queue()
-            
-            # Get the current time to calculate delays
-            current_time = tm.time()
-            
-            # Check if we need to respect a delay from the last hardware command
-            if current_time - self.command_queue.last_command_time < MAG_RFID_CMD_DELAY:
-                delay = MAG_RFID_CMD_DELAY - (current_time - self.command_queue.last_command_time)
-                logging.info(f"[MAGNETS] Waiting {delay:.1f} seconds before locking directions after emptying queue.")
-                tm.sleep(delay)
-                    
-            if self.get_outside_state():
-                if shutdown:
-                    logging.info("[MAGNETS] Shutdown detected! Locking outside direction.")
-                else:
-                    logging.info("[MAGNETS] Emptying queue! Locking outside direction.")
-                # Directly call _lock_outside without queuing to ensure immediate action during shutdown
-                self._lock_outside()
-                
-                # Update the last command time to track this hardware operation
-                self.command_queue.last_command_time = tm.time()
-                
-                # Ensure delay between locking outside and inside if both are needed
+            with self.command_queue.execution_lock:
+                with self.command_queue.queue_lock:
+                    while not self.command_queue.command_queue.empty():
+                        self.command_queue.command_queue.get()
+                    logging.info("[MAGNETS] Command queue emptied.")
+
+                # Get the current time to calculate delays
+                current_time = tm.time()
+
+                # Check if we need to respect a delay from the last hardware command
+                if current_time - self.command_queue.last_command_time < MAG_RFID_CMD_DELAY:
+                    delay = MAG_RFID_CMD_DELAY - (current_time - self.command_queue.last_command_time)
+                    logging.info(f"[MAGNETS] Waiting {delay:.1f} seconds before locking directions after emptying queue.")
+                    tm.sleep(delay)
+
+                if self.get_outside_state():
+                    if shutdown:
+                        logging.info("[MAGNETS] Shutdown detected! Locking outside direction.")
+                    else:
+                        logging.info("[MAGNETS] Emptying queue! Locking outside direction.")
+                    # Directly call _lock_outside without queuing to ensure immediate action during shutdown
+                    self._lock_outside()
+
+                    # Update the last command time to track this hardware operation
+                    self.command_queue.last_command_time = tm.time()
+
+                    # Ensure delay between locking outside and inside if both are needed
+                    if self.get_inside_state():
+                        tm.sleep(MAG_RFID_CMD_DELAY)
+
                 if self.get_inside_state():
-                    tm.sleep(MAG_RFID_CMD_DELAY)
-                
-            if self.get_inside_state():
-                if shutdown:
-                    logging.info("[MAGNETS] Shutdown detected! Locking inside direction.")
-                else:
-                    logging.info("[MAGNETS] Emptying queue! Locking inside direction.")
-                # Directly call _lock_inside without queuing to ensure immediate action during shutdown
-                self._lock_inside()
-                
-                # Update the last command time for this hardware operation
-                self.command_queue.last_command_time = tm.time()
+                    if shutdown:
+                        logging.info("[MAGNETS] Shutdown detected! Locking inside direction.")
+                    else:
+                        logging.info("[MAGNETS] Emptying queue! Locking inside direction.")
+                    # Directly call _lock_inside without queuing to ensure immediate action during shutdown
+                    self._lock_inside()
+
+                    # Update the last command time for this hardware operation
+                    self.command_queue.last_command_time = tm.time()
         except Exception as e:
             logging.error(f"[MAGNETS] Error emptying queue: {e}")
 

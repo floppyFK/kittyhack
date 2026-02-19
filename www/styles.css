@@ -1008,26 +1008,68 @@ html[data-bs-theme="dark"] .date-separator-row td {
     overflow-wrap: break-word !important;
 }
 
+.table_models_overview th,
+.table_models_overview td {
+    vertical-align: middle;
+}
+
+.kh-model-name {
+    font-weight: 600;
+}
+
+.kh-model-sub {
+    font-size: 0.85em;
+    color: var(--bs-secondary-color);
+}
+
 .table_models_overview th:first-child,
 .table_models_overview td:first-child {
     /* Name column */
-    max-width: 70%;
-    width: 70%;
+    width: 55%;
+    min-width: 160px;
 }
 
 .table_models_overview th:nth-child(2),
 .table_models_overview td:nth-child(2) {
-    /* Date column */
-    min-width: 110px;
+    /* Specs column */
+    width: 35%;
+    min-width: 140px;
 }
 
 .table_models_overview th:last-child,
 .table_models_overview td:last-child {
     /* Action button column */
-    width: 55px;
-    min-width: 55px;
-    max-width: 55px;
+    width: 96px;
+    min-width: 96px;
+    max-width: 96px;
     text-align: center;
+}
+
+@media (max-width: 576px) {
+    .table_models_overview th:first-child,
+    .table_models_overview td:first-child,
+    .table_models_overview th:nth-child(2),
+    .table_models_overview td:nth-child(2) {
+        min-width: 0;
+        width: auto;
+    }
+
+    .table_models_overview th:last-child,
+    .table_models_overview td:last-child {
+        width: 80px;
+        min-width: 80px;
+        max-width: 80px;
+    }
+
+    .table_models_overview th:nth-child(2) {
+        /* Keep header compact on mobile */
+        width: auto;
+    }
+
+    .table_models_overview td:last-child {
+        padding-left: 0.25rem;
+        padding-right: 0.25rem;
+    }
 }
 
 .release_notes {

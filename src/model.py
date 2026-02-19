@@ -680,6 +680,16 @@ class YoloModel:
             if os.path.isdir(model_path):
                 model_name = dir_name
                 model_image_size = 320
+                yolo_variant = "yolov8n.pt"
+                effective_fps: float | None = None
+                effective_fps_updated_at_utc: str | None = None
+
+                # Fallback creation date: filesystem time
+                try:
+                    creation_time = os.path.getctime(model_path)
+                    creation_date = datetime.fromtimestamp(creation_time, get_timezone()).strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    creation_date = ""
                 
                 # Try to read model_name, timestamp and unique_id from info.json if it exists
                 info_json_path = os.path.join(model_path, "info.json")
@@ -701,6 +711,46 @@ class YoloModel:
                                 or 320
                             )
                             model_image_size = YoloModel._normalize_model_image_size(raw_image_size)
+
+                            # YOLO model variant / base model name (if available)
+                            raw_variant = (
+                                info_data.get('YOLO_MODEL_VARIANT')
+                                or info_data.get('yolo_model_variant')
+                                or ""
+                            )
+                            raw_pretrained = (
+                                info_data.get('PRETRAINED_MODEL')
+                                or info_data.get('pretrained_model')
+                                or ""
+                            )
+                            if isinstance(raw_pretrained, str) and raw_pretrained.strip():
+                                yolo_variant = raw_pretrained.strip()
+                            else:
+                                variant = str(raw_variant or "").strip().lower()
+                                if variant in {"n", "s", "m", "l", "x"}:
+                                    yolo_variant = f"yolov8{variant}.pt"
+                                else:
+                                    yolo_variant = "yolov8n.pt"
+
+                            # Effective FPS (if available)
+                            raw_fps = (
+                                info_data.get('EFFECTIVE_FPS')
+                                or info_data.get('effective_fps')
+                                or info_data.get('fps')
+                            )
+                            try:
+                                if raw_fps is not None and str(raw_fps).strip() != "":
+                                    effective_fps = float(raw_fps)
+                            except Exception:
+                                effective_fps = None
+
+                            raw_fps_updated = (
+                                info_data.get('EFFECTIVE_FPS_UPDATED_AT_UTC')
+                                or info_data.get('effective_fps_updated_at_utc')
+                            )
+                            if isinstance(raw_fps_updated, str) and raw_fps_updated.strip():
+                                effective_fps_updated_at_utc = raw_fps_updated.strip()
+
                             # Read the creation date from info.json
                             try:
                                 # Parse timestamp from info.json
@@ -708,9 +758,6 @@ class YoloModel:
                                 creation_date = timestamp.astimezone(get_timezone()).strftime("%Y-%m-%d %H:%M:%S")
                             except (ValueError, TypeError) as e:
                                 logging.warning(f"[MODEL] Invalid TIMESTAMP_UTC format for {dir_name}: {e}")
-                                # Fallback to file creation time
-                                creation_time = os.path.getctime(model_path)
-                                creation_date = datetime.fromtimestamp(creation_time, get_timezone()).strftime("%Y-%m-%d %H:%M:%S")
                             
                     except Exception as e:
                         logging.error(f"[MODEL] Could not parse info.json for {dir_name}: {e}")
@@ -721,9 +768,55 @@ class YoloModel:
                     'creation_date': creation_date,
                     'unique_id': unique_id,
                     'full_display_name': f"{model_name} ({creation_date})",
-                    'model_image_size': model_image_size
+                    'model_image_size': model_image_size,
+                    'yolo_variant': yolo_variant,
+                    'effective_fps': effective_fps,
+                    'effective_fps_updated_at_utc': effective_fps_updated_at_utc,
                 })
         return model_list
+
+    @staticmethod
+    def update_model_metadata(unique_id: str, updates: dict[str, Any]) -> bool:
+        """Merge `updates` into the model's info.json (atomic best-effort).
+
+        This is intended for runtime metrics like effective FPS.
+        """
+        try:
+            model_path = YoloModel.get_model_path(unique_id)
+            if not model_path:
+                return False
+
+            info_json_path = os.path.join(model_path, "info.json")
+            current: dict[str, Any] = {}
+            if os.path.exists(info_json_path):
+                try:
+                    with open(info_json_path, "r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                        if isinstance(loaded, dict):
+                            current = loaded
+                except Exception:
+                    current = {}
+            else:
+                # Create minimal metadata if missing
+                current = {
+                    "JOB_ID": unique_id,
+                    "MODEL_NAME": os.path.basename(model_path),
+                }
+
+            if not isinstance(updates, dict):
+                return False
+
+            current.update(updates)
+            try:
+                _atomic_write_json(info_json_path, current)
+            except Exception:
+                # Fallback to non-atomic write if atomic fails (e.g. FS limitations)
+                with open(info_json_path, "w", encoding="utf-8") as f:
+                    json.dump(current, f, indent=2)
+            return True
+        except Exception as e:
+            logging.error(f"[MODEL] Failed to update metadata for model {unique_id}: {e}")
+            return False
     
     @staticmethod
     def get_model_path(unique_id):
@@ -844,6 +937,11 @@ class ModelHandler:
         self.num_threads = num_threads
         self.cat_names = [cat_name.lower() for cat_name in get_cat_names_list(CONFIG['KITTYHACK_DATABASE_PATH'])]
         self._stop_requested = threading.Event()
+
+        self._fps_lock = threading.Lock()
+        self._last_effective_fps: float | None = None
+        self._last_avg_inference_fps: float | None = None
+        self._last_fps_update_tm: float = 0.0
 
         # Load labels early so the model loop cannot crash depending on whether a UI client
         # accessed the camera API during startup.
@@ -1320,32 +1418,43 @@ class ModelHandler:
                     t2 = cv2.getTickCount()
                     time1 = (t2 - t1) / freq
                     frame_rate_calc = 1 / time1
-                    if CONFIG.get('USE_CAMERA_FOR_MOTION_DETECTION', False):
-                        # Log every 60 seconds: average FPS and frame count
-                        if not hasattr(self, '_last_model_log_time'):
-                            self._last_model_log_time = tm.time()
-                            self._frame_count_since_log = 0
-                            self._fps_sum_since_log = 0.0
 
-                        self._frame_count_since_log += 1
-                        self._fps_sum_since_log += frame_rate_calc
-                        now = tm.time()
-                        if now - self._last_model_log_time >= 60:
-                            interval_s = max(0.001, float(now - self._last_model_log_time))
-                            effective_fps = float(self._frame_count_since_log) / interval_s if self._frame_count_since_log > 0 else 0.0
-                            avg_inference_fps = (
-                                self._fps_sum_since_log / self._frame_count_since_log
-                                if self._frame_count_since_log > 0
-                                else 0.0
-                            )
+                    # Track effective FPS (frames actually processed over time) independent of motion mode.
+                    if not hasattr(self, '_last_model_log_time'):
+                        self._last_model_log_time = tm.time()
+                        self._frame_count_since_log = 0
+                        self._fps_sum_since_log = 0.0
+                    self._frame_count_since_log += 1
+                    self._fps_sum_since_log += float(frame_rate_calc)
+
+                    now = tm.time()
+                    if now - self._last_model_log_time >= 60:
+                        interval_s = max(0.001, float(now - self._last_model_log_time))
+                        effective_processing_fps = (
+                            float(self._frame_count_since_log) / interval_s
+                            if self._frame_count_since_log > 0
+                            else 0.0
+                        )
+                        avg_inference_fps = (
+                            self._fps_sum_since_log / self._frame_count_since_log
+                            if self._frame_count_since_log > 0
+                            else 0.0
+                        )
+                        with self._fps_lock:
+                            self._last_effective_fps = float(effective_processing_fps)
+                            self._last_avg_inference_fps = float(avg_inference_fps)
+                            self._last_fps_update_tm = float(now)
+
+                        if CONFIG.get('USE_CAMERA_FOR_MOTION_DETECTION', False):
                             logging.info(
                                 f"[MODEL] Model processing: {self._frame_count_since_log} frames in last {interval_s:.0f}s, "
-                                f"effective FPS: {effective_fps:.2f}, avg inference FPS: {avg_inference_fps:.2f}"
+                                f"effective FPS: {effective_processing_fps:.2f}, avg inference FPS: {avg_inference_fps:.2f}"
                             )
-                            self._last_model_log_time = now
-                            self._frame_count_since_log = 0
-                            self._fps_sum_since_log = 0.0
-                    else:
+
+                        self._last_model_log_time = now
+                        self._frame_count_since_log = 0
+                        self._fps_sum_since_log = 0.0
+                    elif not CONFIG.get('USE_CAMERA_FOR_MOTION_DETECTION', False):
                         logging.debug(f"[MODEL] Model processing time: {time1:.2f} sec, Frame Rate: {frame_rate_calc:.2f} fps")
 
                     # Set first_run to False after processing the first frame
@@ -1413,6 +1522,14 @@ class ModelHandler:
         # Update the list of the cat names
         self.cat_names = [cat_name.lower() for cat_name in get_cat_names_list(CONFIG['KITTYHACK_DATABASE_PATH'])]
         self.paused = False
+
+    def get_effective_fps_snapshot(self) -> tuple[float | None, float]:
+        """Return (effective_fps, last_update_time_s).
+
+        The timestamp is based on `time.time()` (seconds since epoch).
+        """
+        with self._fps_lock:
+            return self._last_effective_fps, float(self._last_fps_update_tm)
 
     def reinit_videostream(self):
         """

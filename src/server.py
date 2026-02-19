@@ -5559,26 +5559,47 @@ def server(input, output, session):
         )
         return ui_ai_training
     
-    @render.table
+    @render.ui
     @reactive.event(reload_trigger_ai, ignore_none=True)
     def manage_yolo_models_table():
+        # Keep the table reasonably fresh while the AI tab is open.
+        reactive.invalidate_later(60)
+
         try:
-            available_models = YoloModel.get_model_list()
+            available_models = YoloModel.get_model_list() or []
+            if not available_models:
+                return ui.div(_("Nothing here yet. Please train a model first."), class_="text-muted small")
+
+            rows = []
             for model in available_models:
                 unique_btn_id = hashlib.md5(os.urandom(16)).hexdigest()
-                unique_model_id = model['unique_id']
+                unique_model_id = model.get('unique_id')
+                if not unique_model_id:
+                    continue
+
                 is_active_model = (
                     (CONFIG.get('YOLO_MODEL') == unique_model_id) and
                     (not (CONFIG.get('TFLITE_MODEL_VERSION') or '').strip())
                 )
 
-                model['status'] = (
+                badge = (
                     ui.span(_("Active"), class_="badge text-bg-success")
                     if is_active_model
-                    else ""
+                    else ui.span("", class_="")
                 )
 
-                model['actions'] = ui.div(
+                fps = model.get('effective_fps', None)
+                fps_text = "—"
+                try:
+                    if fps is not None:
+                        fps_text = f"{float(fps):.1f}"
+                except Exception:
+                    fps_text = "—"
+
+                model_image_size = model.get('model_image_size', 320) or 320
+                yolo_variant = (model.get('yolo_variant') or 'yolov8n.pt').strip() or 'yolov8n.pt'
+
+                actions = ui.div(
                     ui.tooltip(
                         btn_yolo_activate(f"btn_yolo_activate_{unique_btn_id}"),
                         _("Use this model now"),
@@ -5591,25 +5612,51 @@ def server(input, output, session):
                         id=f"tooltip_yolo_modify_{unique_btn_id}",
                         options={"trigger": "hover"},
                     ),
+                    class_="d-flex gap-1 justify-content-end",
                 )
-                # Add new event listeners for the buttons
+
+                # Register event listeners for the buttons
                 activate_yolo_model_server(f"btn_yolo_activate_{unique_btn_id}", unique_model_id)
                 manage_yolo_model_server(f"btn_yolo_modify_{unique_btn_id}", unique_model_id)
 
-            # Create a pandas DataFrame from the available models
-            df = pd.DataFrame(available_models)
-            df = df[['display_name', 'creation_date', 'status', 'actions']]  # Select only the columns we want to display
-            df.columns = [_('Name'), _('Creation date'), _('Status'), ""]  # Rename columns for display
+                name_cell = ui.div(
+                    ui.div(
+                        ui.span(model.get('display_name', ''), class_="kh-model-name"),
+                        badge,
+                        class_="d-flex justify-content-between align-items-start gap-2",
+                    ),
+                    ui.div(model.get('creation_date', ''), class_="kh-model-sub"),
+                )
 
-            return (
-                df.style.set_table_attributes('class="dataframe shiny-table table w-auto table_models_overview"')
-                .hide(axis="index")
+                specs_cell = ui.div(
+                    ui.div(f"{yolo_variant} · {int(model_image_size)}px", class_="kh-model-sub"),
+                    ui.div(f"FPS: {fps_text}", class_="kh-model-sub"),
+                )
+
+                rows.append(
+                    ui.tags.tr(
+                        ui.tags.td(name_cell),
+                        ui.tags.td(specs_cell, class_="kh-model-specs"),
+                        ui.tags.td(actions, class_="kh-model-actions"),
+                    )
+                )
+
+            table = ui.tags.table(
+                ui.tags.thead(
+                    ui.tags.tr(
+                        ui.tags.th(_("Name")),
+                        ui.tags.th(_("Model")),
+                        ui.tags.th(""),
+                    )
+                ),
+                ui.tags.tbody(*rows),
+                class_="table table-sm align-middle table_models_overview",
             )
-        except Exception as e:
-            # Return an empty DataFrame with an error message
-            return pd.DataFrame({
-                'INFO': [_('Nothing here yet. Please train a model first.')]
-            })
+
+            return ui.div(table, class_="table-responsive")
+
+        except Exception:
+            return ui.div(_("Nothing here yet. Please train a model first."), class_="text-muted small")
     
     @reactive.Effect
     @reactive.event(input.btn_reload_model_training_status)

@@ -5582,12 +5582,6 @@ def server(input, output, session):
                     (not (CONFIG.get('TFLITE_MODEL_VERSION') or '').strip())
                 )
 
-                badge = (
-                    ui.span(_("Active"), class_="badge text-bg-success")
-                    if is_active_model
-                    else ui.span("", class_="")
-                )
-
                 fps = model.get('effective_fps', None)
                 fps_text = "—"
                 try:
@@ -5598,6 +5592,56 @@ def server(input, output, session):
 
                 model_image_size = model.get('model_image_size', 320) or 320
                 yolo_variant = (model.get('yolo_variant') or 'yolov8n.pt').strip() or 'yolov8n.pt'
+
+                variant_letter = "N"
+                variant_title = _("YOLO v8 Nano")
+                variant_match = re.search(r"yolov\d+\s*([nslmx])", yolo_variant.lower())
+                if variant_match:
+                    v = variant_match.group(1)
+                    variant_map = {
+                        "n": ("N", _("YOLO v8 Nano")),
+                        "s": ("S", _("YOLO v8 Small")),
+                        "m": ("M", _("YOLO v8 Medium")),
+                        "l": ("L", _("YOLO v8 Large")),
+                        "x": ("X", _("YOLO v8 Extra Large")),
+                    }
+                    variant_letter, variant_title = variant_map.get(v, (v.upper(), _("YOLO v8 model")))
+
+                def build_badges(id_suffix: str):
+                    _badges = [
+                        ui.tooltip(
+                            ui.span(variant_letter, class_="badge text-bg-secondary"),
+                            variant_title,
+                            id=f"tooltip_yolo_variant_{unique_btn_id}_{id_suffix}",
+                            options={"trigger": "hover"},
+                        ),
+                        ui.tooltip(
+                            ui.span(str(int(model_image_size)), class_="badge text-bg-secondary"),
+                            _("Model image size: {}px").format(int(model_image_size)),
+                            id=f"tooltip_yolo_img_size_{unique_btn_id}_{id_suffix}",
+                            options={"trigger": "hover"},
+                        ),
+                        ui.tooltip(
+                            ui.span(f"{fps_text} FPS", class_="badge text-bg-secondary"),
+                            _("Average FPS with this model"),
+                            id=f"tooltip_yolo_fps_{unique_btn_id}_{id_suffix}",
+                            options={"trigger": "hover"},
+                        ),
+                    ]
+                    if is_active_model:
+                        _badges.insert(
+                            0,
+                            ui.tooltip(
+                                ui.span(_("Active"), class_="badge text-bg-success"),
+                                _("Currently active model"),
+                                id=f"tooltip_yolo_active_{unique_btn_id}_{id_suffix}",
+                                options={"trigger": "hover"},
+                            ),
+                        )
+                    return _badges
+
+                badges_desktop = build_badges("desktop")
+                badges_mobile = build_badges("mobile")
 
                 actions = ui.div(
                     ui.tooltip(
@@ -5622,33 +5666,25 @@ def server(input, output, session):
                 name_cell = ui.div(
                     ui.div(
                         ui.span(model.get('display_name', ''), class_="kh-model-name"),
-                        badge,
-                        class_="d-flex justify-content-between align-items-start gap-2",
+                        class_="d-flex align-items-start gap-2",
                     ),
                     ui.div(model.get('creation_date', ''), class_="kh-model-sub"),
+                    ui.div(*badges_mobile, class_="d-flex d-sm-none flex-wrap gap-1 mt-1"),
                 )
 
                 specs_cell = ui.div(
-                    ui.div(f"{yolo_variant} · {int(model_image_size)}px", class_="kh-model-sub"),
-                    ui.div(f"FPS: {fps_text}", class_="kh-model-sub"),
+                    ui.div(*badges_desktop, class_="d-none d-sm-flex flex-wrap gap-1 justify-content-center"),
                 )
 
                 rows.append(
                     ui.tags.tr(
                         ui.tags.td(name_cell),
-                        ui.tags.td(specs_cell, class_="kh-model-specs"),
+                        ui.tags.td(specs_cell, class_="kh-model-specs kh-model-specs-col"),
                         ui.tags.td(actions, class_="kh-model-actions"),
                     )
                 )
 
             table = ui.tags.table(
-                ui.tags.thead(
-                    ui.tags.tr(
-                        ui.tags.th(_("Name")),
-                        ui.tags.th(_("Model")),
-                        ui.tags.th(""),
-                    )
-                ),
                 ui.tags.tbody(*rows),
                 class_="table table-sm align-middle table_models_overview",
             )

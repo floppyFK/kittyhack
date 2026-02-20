@@ -826,7 +826,7 @@ async def _take_control(ws: WebSocketServerProtocol, client_id: str, timeout_s: 
     return True
 
 
-async def _handle_sync_request(ws: WebSocketServerProtocol):
+async def _handle_sync_request(ws: WebSocketServerProtocol, include_labelstudio: bool = False):
     STATE.sync_in_progress = True
     # Safety: ensure target kittyhack service is stopped before we package/sync files.
     # This avoids copying data while files may still be modified by the running service.
@@ -859,6 +859,22 @@ async def _handle_sync_request(ws: WebSocketServerProtocol):
     if os.path.exists(src):
         arc = os.path.relpath(src, base)
         items.append((src, arc))
+
+    # Optional: Label Studio user data (only if present on target and requested).
+    # These paths must be restored at the identical absolute location on the remote-mode device.
+    if include_labelstudio:
+        for src in (
+            "/root/.config/label-studio",
+            "/root/.local/share/label-studio",
+        ):
+            try:
+                if os.path.exists(src):
+                    # Encode as path relative to '/', so the receiver can extract to '/'
+                    # and end up with /root/... on disk.
+                    arc = src[1:] if src.startswith("/") else src
+                    items.append((src, arc))
+            except Exception:
+                pass
 
     await ws.send(json.dumps({"type": "sync_begin", "ok": True, "items": [a for __, a in items]}))
 
@@ -975,7 +991,8 @@ async def _handler(ws: WebSocketServerProtocol):
                 continue
 
             if t == "sync_request":
-                await _handle_sync_request(ws)
+                include_labelstudio = bool(data.get("include_labelstudio", False))
+                await _handle_sync_request(ws, include_labelstudio=include_labelstudio)
                 continue
 
     except Exception:

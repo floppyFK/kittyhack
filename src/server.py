@@ -2673,6 +2673,11 @@ def server(input, output, session):
                         _("Sync on first connect"),
                         values["remote_sync_on_first_connect"]
                     ),
+                    ui.input_switch(
+                        "remote_sync_labelstudio",
+                        _("Sync Label Studio user data"),
+                        values.get("remote_sync_labelstudio", True),
+                    ),
                 ),
                 title=_("Remote-mode setup"),
                 easy_close=False,
@@ -2971,6 +2976,7 @@ def server(input, output, session):
             timeout = 30.0
 
         sync_first = bool(input.remote_sync_on_first_connect())
+        sync_labelstudio = bool(input.remote_sync_labelstudio())
         remote_cfg_path = os.path.join(kittyhack_root(), "config.remote.ini")
         parser = configparser.ConfigParser()
         parser["Settings"] = {
@@ -2978,6 +2984,7 @@ def server(input, output, session):
             "remote_control_port": str(port),
             "remote_control_timeout": str(timeout),
             "remote_sync_on_first_connect": str(sync_first),
+            "remote_sync_labelstudio": str(sync_labelstudio),
         }
         try:
             with open(remote_cfg_path, "w", encoding="utf-8") as f:
@@ -2990,6 +2997,7 @@ def server(input, output, session):
         CONFIG["REMOTE_CONTROL_PORT"] = port
         CONFIG["REMOTE_CONTROL_TIMEOUT"] = timeout
         CONFIG["REMOTE_SYNC_ON_FIRST_CONNECT"] = sync_first
+        CONFIG["REMOTE_SYNC_LABELSTUDIO"] = sync_labelstudio
 
         if sync_first:
             # Start sync (non-blocking). Progress is shown in a non-closable modal and

@@ -63,12 +63,12 @@ class Magnets:
         self._client.queue_magnet_command(command)
 
     def check_queued(self, command: str):
-        # We don't have target queue introspection yet. Keep behavior simple.
-        return False
+        return self._client.is_magnet_command_pending(command)
 
     def empty_queue(self, shutdown: bool = False):
-        # Best-effort: do nothing. Target queue is responsible for safe sequencing.
-        return
+        # Remote target queue is not directly introspectable/cancelable.
+        # Clear local pending intents so backend logic can issue the next action cleanly.
+        self._client.clear_pending_magnet_commands()
 
 
 class RfidRunState:

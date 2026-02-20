@@ -45,6 +45,7 @@ _REMOTE_ONLY_SETTINGS: dict[str, tuple[str, str]] = {
     "REMOTE_CONTROL_PORT": ("remote_control_port", "int"),
     "REMOTE_CONTROL_TIMEOUT": ("remote_control_timeout", "float"),
     "REMOTE_SYNC_ON_FIRST_CONNECT": ("remote_sync_on_first_connect", "bool"),
+    "REMOTE_SYNC_LABELSTUDIO": ("remote_sync_labelstudio", "bool"),
     "REMOTE_INFERENCE_MAX_FPS": ("remote_inference_max_fps", "float"),
 }
 
@@ -115,6 +116,7 @@ def read_remote_config_values() -> dict:
         "remote_control_port": int(CONFIG.get("REMOTE_CONTROL_PORT", 8888) or 8888),
         "remote_control_timeout": float(CONFIG.get("REMOTE_CONTROL_TIMEOUT", 30.0) or 30.0),
         "remote_sync_on_first_connect": bool(CONFIG.get("REMOTE_SYNC_ON_FIRST_CONNECT", True)),
+        "remote_sync_labelstudio": bool(CONFIG.get("REMOTE_SYNC_LABELSTUDIO", True)),
     }
     remote_cfg_path = _remote_configfile_path()
     if not os.path.exists(remote_cfg_path):
@@ -132,6 +134,9 @@ def read_remote_config_values() -> dict:
             "remote_control_timeout": section.getfloat("remote_control_timeout", fallback=defaults["remote_control_timeout"]),
             "remote_sync_on_first_connect": section.getboolean(
                 "remote_sync_on_first_connect", fallback=defaults["remote_sync_on_first_connect"]
+            ),
+            "remote_sync_labelstudio": section.getboolean(
+                "remote_sync_labelstudio", fallback=defaults["remote_sync_labelstudio"]
             ),
         }
     except Exception as e:
@@ -259,6 +264,7 @@ DEFAULT_CONFIG = {
         # Target-mode boot behavior: if remote control was used once, the target may wait for a remote reconnect.
         "remote_wait_after_reboot_timeout": 30.0,
         "remote_sync_on_first_connect": True,
+        "remote_sync_labelstudio": True,
         "remote_inference_max_fps": 10.0,
     }
 }
@@ -522,6 +528,7 @@ def load_config():
             float(d.get('remote_wait_after_reboot_timeout', 30.0)),
         ),
         "REMOTE_SYNC_ON_FIRST_CONNECT": safe_bool("REMOTE_SYNC_ON_FIRST_CONNECT", d.get('remote_sync_on_first_connect', True)),
+        "REMOTE_SYNC_LABELSTUDIO": safe_bool("REMOTE_SYNC_LABELSTUDIO", d.get('remote_sync_labelstudio', True)),
         "REMOTE_INFERENCE_MAX_FPS": safe_float("REMOTE_INFERENCE_MAX_FPS", float(d.get('remote_inference_max_fps', 10.0))),
     }
 

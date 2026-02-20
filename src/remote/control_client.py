@@ -166,6 +166,8 @@ class RemoteControlClient:
         self._send_async(
             {
                 "type": "sync_request",
+                # Optional: include Label Studio user data (if present on target).
+                "include_labelstudio": bool(CONFIG.get("REMOTE_SYNC_LABELSTUDIO", True)),
             }
         )
         return True
@@ -402,7 +404,19 @@ class RemoteControlClient:
                 self._sync_tmp_path = None
 
                 with tarfile.open(tmp_path, "r:gz") as tf:
-                    tf.extractall(path=install_base())
+                    base = install_base()
+                    # Some synced paths must land outside install_base (absolute target paths).
+                    # We encode those as paths relative to '/', e.g. 'root/.config/label-studio/...'.
+                    ls_prefixes = (
+                        "root/.config/label-studio",
+                        "root/.local/share/label-studio",
+                    )
+                    for member in tf:
+                        name = str(getattr(member, "name", "") or "")
+                        if name.startswith(ls_prefixes):
+                            tf.extract(member, path="/")
+                        else:
+                            tf.extract(member, path=base)
 
                 os.makedirs(models_yolo_root(), exist_ok=True)
                 os.makedirs(pictures_root(), exist_ok=True)

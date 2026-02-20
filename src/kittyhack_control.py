@@ -3,6 +3,7 @@ import html
 import json
 import logging
 import os
+import threading
 import time
 from typing import Any
 
@@ -23,6 +24,8 @@ from src.system import (
 )
 from src.paths import install_base, kittyhack_root, pictures_root, models_yolo_root
 from src.mode import is_remote_mode
+
+from src.camera import VideoStream
 
 
 # Prepare gettext for translations based on the configured language (mainly for consistent logs)
@@ -72,6 +75,57 @@ class ControlState:
 
 
 STATE = ControlState()
+
+
+_internal_cam_lock = threading.Lock()
+_internal_cam_stream: VideoStream | None = None
+_internal_cam_last_error: str = ""
+
+
+def _ensure_internal_camera_stream() -> tuple[bool, str]:
+    """Start (if needed) the target's internal camera stream for MJPEG relay.
+
+    This is only used while `kittyhack_control` is active on the target device.
+    The remote device will consume the stream via HTTP MJPEG (e.g. http://<target>/video).
+    """
+    global _internal_cam_stream, _internal_cam_last_error
+
+    if str(CONFIG.get("CAMERA_SOURCE") or "").strip().lower() != "internal":
+        return False, "internal camera relay disabled (CAMERA_SOURCE != internal)"
+
+    with _internal_cam_lock:
+        if _internal_cam_stream is not None and not getattr(_internal_cam_stream, "stopped", False):
+            return True, ""
+
+        try:
+            # Keep it conservative: small resolution + modest FPS.
+            # Remote inference can still upscale/downscale on its side if needed.
+            _internal_cam_stream = VideoStream(
+                resolution=(640, 360),
+                framerate=10,
+                jpeg_quality=75,
+                source="internal",
+            ).start()
+            _internal_cam_last_error = ""
+            logging.info("[CONTROL] Internal camera relay started for /video.")
+            return True, ""
+        except Exception as e:
+            _internal_cam_stream = None
+            _internal_cam_last_error = str(e)
+            logging.warning(f"[CONTROL] Failed to start internal camera relay: {e}")
+            return False, _internal_cam_last_error
+
+
+def _internal_camera_latest_frame() -> Any:
+    """Return the latest decoded BGR frame from the internal camera stream (or None)."""
+    with _internal_cam_lock:
+        stream = _internal_cam_stream
+    if stream is None:
+        return None
+    try:
+        return stream.read()
+    except Exception:
+        return None
 
 
 def _remote_control_marker_path() -> str:
@@ -422,6 +476,96 @@ async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.Strea
             line = await reader.readline()
             if not line or line in (b"\r\n", b"\n"):
                 break
+
+        # MJPEG relay for the internal camera (target device)
+        if path.startswith("/video"):
+            if method != "GET":
+                body = b"Method Not Allowed"
+                headers = (
+                    "HTTP/1.1 405 Method Not Allowed\r\n"
+                    "Content-Type: text/plain; charset=utf-8\r\n"
+                    f"Content-Length: {len(body)}\r\n"
+                    "Cache-Control: no-store\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                ).encode("utf-8")
+                writer.write(headers)
+                writer.write(body)
+                await writer.drain()
+                return
+
+            ok, reason = _ensure_internal_camera_stream()
+            if not ok:
+                body = (reason or "Internal camera relay unavailable").encode("utf-8")
+                headers = (
+                    "HTTP/1.1 404 Not Found\r\n"
+                    "Content-Type: text/plain; charset=utf-8\r\n"
+                    f"Content-Length: {len(body)}\r\n"
+                    "Cache-Control: no-store\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                ).encode("utf-8")
+                writer.write(headers)
+                writer.write(body)
+                await writer.drain()
+                return
+
+            boundary = "frame"
+            headers = (
+                "HTTP/1.1 200 OK\r\n"
+                f"Content-Type: multipart/x-mixed-replace; boundary={boundary}\r\n"
+                "Cache-Control: no-store\r\n"
+                "Pragma: no-cache\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode("utf-8")
+            writer.write(headers)
+            await writer.drain()
+
+            # Stream forever (until the client disconnects or process exits).
+            # Keep encoding work local to this handler so multiple clients can connect.
+            import cv2  # local import to keep startup lightweight
+
+            last_sent_at = 0.0
+            min_interval_s = 0.09  # ~11 fps cap for safety
+            while not sigterm_monitor.stop_now:
+                try:
+                    now = time.time()
+                    if now - last_sent_at < min_interval_s:
+                        await asyncio.sleep(0.02)
+                        continue
+
+                    frame = _internal_camera_latest_frame()
+                    if frame is None:
+                        await asyncio.sleep(0.05)
+                        continue
+
+                    # Offload encoding so we don't block the info-page HTTP server.
+                    ok_enc, buf = await asyncio.to_thread(
+                        cv2.imencode,
+                        ".jpg",
+                        frame,
+                        [cv2.IMWRITE_JPEG_QUALITY, 75],
+                    )
+                    if not ok_enc:
+                        await asyncio.sleep(0.05)
+                        continue
+
+                    jpg = buf.tobytes()
+                    part = (
+                        f"--{boundary}\r\n"
+                        "Content-Type: image/jpeg\r\n"
+                        f"Content-Length: {len(jpg)}\r\n"
+                        "\r\n"
+                    ).encode("utf-8") + jpg + b"\r\n"
+
+                    writer.write(part)
+                    await writer.drain()
+                    last_sent_at = now
+                except Exception:
+                    # Client likely disconnected.
+                    break
+            return
 
         # Simple API for boot-wait UI
         if path.startswith("/api/status"):

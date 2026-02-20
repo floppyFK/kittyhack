@@ -2888,6 +2888,38 @@ def server(input, output, session):
                 ui.notification_show(_("Failed to reload synced config.ini: {}.").format(e), duration=12, type="error")
                 return
 
+            # If the synced config was from a target device with an internal camera, force the remote device
+            # to use the target's MJPEG relay endpoint.
+            try:
+                if bool(CONFIG.get("REMOTE_SYNC_ON_FIRST_CONNECT", True)):
+                    cam_src = str(CONFIG.get("CAMERA_SOURCE") or "").strip().lower()
+                    if cam_src == "internal":
+                        host = str(CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
+                        if host:
+                            if host.startswith("http://") or host.startswith("https://"):
+                                base = host
+                            else:
+                                base = f"http://{host}"
+                            video_url = base.rstrip("/") + "/video"
+
+                            logging.warning(
+                                "[REMOTE_MODE] Synced config.ini had CAMERA_SOURCE=internal; forcing ip_camera with URL: %s",
+                                video_url,
+                            )
+                            CONFIG["CAMERA_SOURCE"] = "ip_camera"
+                            CONFIG["IP_CAMERA_URL"] = video_url
+                            try:
+                                update_single_config_parameter("CAMERA_SOURCE")
+                                update_single_config_parameter("IP_CAMERA_URL")
+                            except Exception:
+                                pass
+                        else:
+                            logging.warning(
+                                "[REMOTE_MODE] Synced config.ini had CAMERA_SOURCE=internal, but REMOTE_TARGET_HOST is empty; leaving config unchanged."
+                            )
+            except Exception as e:
+                logging.warning(f"[REMOTE_MODE] Post-sync camera-source rewrite failed: {e}")
+
             # Trigger immediate UI refresh after synced DB/config are applied.
             try:
                 reload_trigger_photos.set(reload_trigger_photos.get() + 1)

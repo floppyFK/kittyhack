@@ -80,37 +80,66 @@ STATE = ControlState()
 _internal_cam_lock = threading.Lock()
 _internal_cam_stream: VideoStream | None = None
 _internal_cam_last_error: str = ""
+_internal_cam_stream_source: str = ""
+_internal_cam_stream_url: str = ""
 
 
 def _ensure_internal_camera_stream() -> tuple[bool, str]:
-    """Start (if needed) the target's internal camera stream for MJPEG relay.
+    """Start (if needed) the target camera stream for MJPEG relay.
 
     This is only used while `kittyhack_control` is active on the target device.
     The remote device will consume the stream via HTTP MJPEG (e.g. http://<target>/video).
     """
-    global _internal_cam_stream, _internal_cam_last_error
+    global _internal_cam_stream, _internal_cam_last_error, _internal_cam_stream_source, _internal_cam_stream_url
 
-    if str(CONFIG.get("CAMERA_SOURCE") or "").strip().lower() != "internal":
-        return False, "internal camera relay disabled (CAMERA_SOURCE != internal)"
+    stream_source = str(CONFIG.get("CAMERA_SOURCE") or "internal").strip().lower() or "internal"
+    stream_url = str(CONFIG.get("IP_CAMERA_URL") or "").strip()
+
+    if stream_source == "ip_camera" and not stream_url:
+        return False, "camera relay unavailable (CAMERA_SOURCE=ip_camera but IP_CAMERA_URL is empty)"
 
     with _internal_cam_lock:
-        if _internal_cam_stream is not None and not getattr(_internal_cam_stream, "stopped", False):
+        if (
+            _internal_cam_stream is not None
+            and not getattr(_internal_cam_stream, "stopped", False)
+            and _internal_cam_stream_source == stream_source
+            and _internal_cam_stream_url == stream_url
+        ):
             return True, ""
 
+        if _internal_cam_stream is not None:
+            try:
+                _internal_cam_stream.stop()
+            except Exception:
+                pass
+            _internal_cam_stream = None
+            _internal_cam_stream_source = ""
+            _internal_cam_stream_url = ""
+
         try:
-            # Keep it conservative: small resolution + modest FPS.
-            # Remote inference can still upscale/downscale on its side if needed.
+            # Keep it conservative when using internal camera.
             _internal_cam_stream = VideoStream(
-                resolution=(640, 360),
+                resolution=(800, 600),
                 framerate=10,
                 jpeg_quality=75,
-                source="internal",
+                source=stream_source,
+                ip_camera_url=stream_url,
+                use_ip_camera_decode_scale_pipeline=CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False),
+                ip_camera_target_resolution=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360'),
+                ip_camera_pipeline_fps_limit=int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10),
             ).start()
+            _internal_cam_stream_source = stream_source
+            _internal_cam_stream_url = stream_url
             _internal_cam_last_error = ""
-            logging.info("[CONTROL] Internal camera relay started for /video.")
+            if stream_source == "internal":
+                logging.info("[CONTROL] Internal camera relay started for /video.")
+            else:
+                logging.info(f"[CONTROL] Camera relay started for /video from configured IP camera source: {stream_url}")
             return True, ""
         except Exception as e:
             _internal_cam_stream = None
+            _internal_cam_stream_source = ""
+            _internal_cam_stream_url = ""
             _internal_cam_last_error = str(e)
             logging.warning(f"[CONTROL] Failed to start internal camera relay: {e}")
             return False, _internal_cam_last_error

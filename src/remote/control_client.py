@@ -41,6 +41,7 @@ class RemoteControlClient:
         self._control_acquired = False
         self._client_id = f"remote_{int(time.time())}"
         self._missing_target_host_logged = False
+        self._pending_magnet_commands: set[str] = set()
 
         self._sync_tmp_path: str | None = None
         self._sync_started_at: float = 0.0
@@ -85,7 +86,25 @@ class RemoteControlClient:
         return self._ready_for_use.wait(timeout=timeout)
 
     def queue_magnet_command(self, command: str) -> None:
-        self._send_async({"type": "magnet", "command": command})
+        cmd = str(command or "").strip()
+        if cmd not in {"unlock_inside", "lock_inside", "unlock_outside", "lock_outside"}:
+            return
+
+        with self._lock:
+            if cmd in self._pending_magnet_commands:
+                return
+            self._pending_magnet_commands.add(cmd)
+
+        self._send_async({"type": "magnet", "command": cmd})
+
+    def is_magnet_command_pending(self, command: str) -> bool:
+        cmd = str(command or "").strip()
+        with self._lock:
+            return cmd in self._pending_magnet_commands
+
+    def clear_pending_magnet_commands(self) -> None:
+        with self._lock:
+            self._pending_magnet_commands.clear()
 
     def set_rfid_field(self, enabled: bool) -> None:
         self._send_async({"type": "rfid", "field": bool(enabled)})
@@ -194,6 +213,8 @@ class RemoteControlClient:
         self._ready_for_use.clear()
         self._control_acquired = False
         self._ws = None
+        with self._lock:
+            self._pending_magnet_commands.clear()
 
     async def _main(self) -> None:
         timeout_s = float(CONFIG.get("REMOTE_CONTROL_TIMEOUT") or 10.0)
@@ -299,6 +320,17 @@ class RemoteControlClient:
                 self._states.lock_inside_unlocked = bool(data.get("lock_inside_unlocked", self._states.lock_inside_unlocked))
                 self._states.lock_outside_unlocked = bool(data.get("lock_outside_unlocked", self._states.lock_outside_unlocked))
                 self._states.rfid_field = bool(data.get("rfid_field", self._states.rfid_field))
+
+                # Resolve local pending magnet commands once target state reflects them.
+                if self._states.lock_inside_unlocked:
+                    self._pending_magnet_commands.discard("unlock_inside")
+                else:
+                    self._pending_magnet_commands.discard("lock_inside")
+
+                if self._states.lock_outside_unlocked:
+                    self._pending_magnet_commands.discard("unlock_outside")
+                else:
+                    self._pending_magnet_commands.discard("lock_outside")
 
                 tag = data.get("rfid_tag")
                 ts = data.get("rfid_timestamp")

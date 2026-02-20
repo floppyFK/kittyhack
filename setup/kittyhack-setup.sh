@@ -48,6 +48,12 @@ FAIL_COUNT=0
 
 INSTALL_LEGACY_KITTYHACK=1
 
+# Optional: install a specific git ref (tag/commit) instead of the latest tagged release.
+KITTYHACK_VERSION_REF=""
+
+# Optional: uninstall mode
+DO_UNINSTALL=false
+
 # Function to check if a service is active
 is_service_active() {
     systemctl is-active --quiet "$1"
@@ -512,6 +518,8 @@ install_remote_mode() {
 
     echo -e "${CYAN}--- REMOTE MODE INSTALL: Summary ---${NC}"
     if [ "$LANGUAGE" == "de" ]; then
+        echo -e "HINWEIS: Die Installation erfordert Root-Rechte. Es wird dringend empfohlen, sie auf einem separaten System zu installieren, das ausschließlich als Kittyhack Remote-Controller dient."
+        echo -e ""
         echo -e "Systemanforderungen:"
         echo -e "  - Debian (oder Derivat, z.B. Ubuntu)"
         echo -e "  - Möglichst ein sauberes System oder eine VM"
@@ -524,6 +532,8 @@ install_remote_mode() {
         echo -e "Zusatzlich: Es wird ein Python 3.11 Virtualenv erstellt und die Abhangigkeiten aus requirements_remote.txt installiert."
         read -r -p "Mit diesen Installationen fortfahren? (y/N): " CONFIRM_REMOTE_MODE
     else
+        echo -e "NOTE: The installation requires root rights. It is strongly recommended to install it on an separate system, which acts only as a kittyhack remote controller."
+        echo -e ""
         echo -e "System requirements:"
         echo -e "  - Debian (or derivative, e.g. Ubuntu)"
         echo -e "  - Ideally a clean system or VM"
@@ -680,7 +690,14 @@ install_kittyhack() {
 
     if $USE_LOCAL_SOURCES; then
         GIT_TAG=""
-        echo -e "${GREY}Skipping release checkout because local sources are used.${NC}"
+        if [[ -n "$KITTYHACK_VERSION_REF" ]]; then
+            echo -e "${YELLOW}--version was set to '${KITTYHACK_VERSION_REF}', but local sources are used; skipping git checkout.${NC}"
+        else
+            echo -e "${GREY}Skipping release checkout because local sources are used.${NC}"
+        fi
+    elif [[ -n "$KITTYHACK_VERSION_REF" ]]; then
+        GIT_TAG="$KITTYHACK_VERSION_REF"
+        echo -e "${GREY}Using requested version ref: ${GIT_TAG}${NC}"
     elif [ $INSTALL_LEGACY_KITTYHACK -eq 0 ]; then
         echo -e "${GREY}Fetching latest release...${NC}"
         # Try up to 5 times to get the latest tag
@@ -709,8 +726,8 @@ install_kittyhack() {
 
     if [[ -n "$GIT_TAG" && $USE_LOCAL_SOURCES == false ]]; then
         echo -e "${GREY}Checking out ${GIT_TAG}...${NC}"
-        git -C "${KITTYHACK_INSTALL_DIR}" fetch --tags --quiet
-        git -C "${KITTYHACK_INSTALL_DIR}" checkout ${GIT_TAG} --quiet
+        git -C "${KITTYHACK_INSTALL_DIR}" fetch --all --tags --quiet || true
+        git -C "${KITTYHACK_INSTALL_DIR}" checkout "${GIT_TAG}" --quiet
         if [[ $? -eq 0 ]]; then
             echo -e "${GREEN}Repository updated to ${GIT_TAG}${NC}"
         else
@@ -862,6 +879,95 @@ EOF
     systemctl list-units --type=service --all > "${LOGPATH}/systemd-services_after_kittyhack_setup.log"
 }
 
+uninstall_kittyhack() {
+    local REMOVE_DIR="/root/kittyhack"
+    local wd=""
+
+    # Best-effort: detect install directory from unit before removing it
+    if command -v systemctl >/dev/null 2>&1; then
+        wd=$(systemctl show -p WorkingDirectory --value kittyhack.service 2>/dev/null || true)
+    fi
+    if [[ -z "$wd" && -f /etc/systemd/system/kittyhack.service ]]; then
+        wd=$(grep -E '^WorkingDirectory=' /etc/systemd/system/kittyhack.service | head -n1 | cut -d= -f2-)
+    fi
+    if [[ -n "$wd" ]]; then
+        REMOVE_DIR="$wd"
+    fi
+
+    echo -e "${CYAN}--- UNINSTALL: Stop and disable services ---${NC}"
+    systemctl stop kittyhack_control.service 2>/dev/null || true
+    systemctl stop kittyhack.service 2>/dev/null || true
+    systemctl stop kwork.service 2>/dev/null || true
+
+    systemctl disable kittyhack_control.service 2>/dev/null || true
+    systemctl disable kittyhack.service 2>/dev/null || true
+    systemctl disable kwork.service 2>/dev/null || true
+
+    echo -e "${CYAN}--- UNINSTALL: Remove systemd unit files ---${NC}"
+    rm -f /etc/systemd/system/kittyhack_control.service
+    rm -f /etc/systemd/system/kittyhack.service
+    rm -f /etc/systemd/system/kwork.service
+    systemctl daemon-reload
+
+    echo -e "${CYAN}--- UNINSTALL: Remove files ---${NC}"
+    if [[ -d "$REMOVE_DIR" ]]; then
+        if [[ "$REMOVE_DIR" == "/" || "$REMOVE_DIR" == "/root" || -z "$REMOVE_DIR" ]]; then
+            echo -e "${YELLOW}Refusing to remove suspicious directory: '$REMOVE_DIR'.${NC}"
+        elif [[ "$REMOVE_DIR" != "/root/kittyhack" ]]; then
+            echo -e "${YELLOW}Detected install directory: ${REMOVE_DIR}${NC}"
+            read -r -p "Remove this directory as well? (y/N): " CONFIRM_RM
+            case "${CONFIRM_RM,,}" in
+                y|yes|j|ja)
+                    rm -rf "$REMOVE_DIR"
+                    ;;
+                *)
+                    echo -e "${GREY}Keeping ${REMOVE_DIR}.${NC}"
+                    ;;
+            esac
+        else
+            rm -rf "$REMOVE_DIR"
+        fi
+    else
+        echo -e "${GREY}Install directory not found (${REMOVE_DIR}). Skipping file removal.${NC}"
+    fi
+
+    # Optional: remove trained models and saved pictures (common locations on the target)
+    for extra_dir in "/root/models" "/root/pictures"; do
+        if [[ -d "$extra_dir" ]]; then
+            local prompt
+            if [ "$LANGUAGE" == "de" ]; then
+                if [[ "$extra_dir" == "/root/models" ]]; then
+                    prompt="Ordner mit trainierten YOLO Modellen entfernen (${extra_dir})? (y/N): "
+                else
+                    prompt="Ordner mit gespeicherten Bildern entfernen (${extra_dir})? (y/N): "
+                fi
+            else
+                if [[ "$extra_dir" == "/root/models" ]]; then
+                    prompt="Remove trained YOLO models folder (${extra_dir})? (y/N): "
+                else
+                    prompt="Remove saved pictures folder (${extra_dir})? (y/N): "
+                fi
+            fi
+
+            read -r -p "$prompt" CONFIRM_EXTRA
+            case "${CONFIRM_EXTRA,,}" in
+                y|yes|j|ja)
+                    if [[ "$extra_dir" == "/" || "$extra_dir" == "/root" || -z "$extra_dir" ]]; then
+                        echo -e "${YELLOW}Refusing to remove suspicious directory: '$extra_dir'.${NC}"
+                    else
+                        rm -rf "$extra_dir"
+                    fi
+                    ;;
+                *)
+                    echo -e "${GREY}Keeping ${extra_dir}.${NC}"
+                    ;;
+            esac
+        fi
+    done
+
+    echo -e "${GREEN}Uninstall complete.${NC}"
+}
+
 reinstall_camera_drivers() {
     echo -e "${CYAN}--- CAMERA DRIVER REINSTALL ---${NC}"
     # Download and install camera drivers
@@ -913,11 +1019,13 @@ KITTYHACK_INSTALL_DIR="/root/kittyhack"
 
 print_usage() {
     cat << EOF
-Usage: $(basename "$0") [en|de] [--use-local-sources] [--sources-dir=/path] [--lang=en|de]
+Usage: $(basename "$0") [en|de] [--use-local-sources] [--sources-dir=/path] [--lang=en|de] [--version=<tag-or-commit>] [--uninstall]
 
   --use-local-sources   Use the current repo folder (no git clone).
   --sources-dir=/path   Use a specific local repo folder (implies --use-local-sources).
   --lang=en|de          Set UI language.
+    --version=<ref>       Install a specific git ref (tag/commit) instead of the latest release tag.
+    --uninstall           Uninstall kittyhack (stops/removes systemd services; optionally removes files).
 EOF
 }
 
@@ -925,12 +1033,18 @@ EOF
 LANGUAGE="en"
 for arg in "$@"; do
     case "$arg" in
+        --uninstall)
+            DO_UNINSTALL=true
+            ;;
         --use-local-sources)
             USE_LOCAL_SOURCES=true
             ;;
         --sources-dir=*)
             USE_LOCAL_SOURCES=true
             KITTYHACK_ROOT=$(realpath "${arg#*=}")
+            ;;
+        --version=*)
+            KITTYHACK_VERSION_REF="${arg#*=}"
             ;;
         --lang=*)
             LANGUAGE="${arg#*=}"
@@ -944,6 +1058,11 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+if $DO_UNINSTALL; then
+    uninstall_kittyhack
+    exit 0
+fi
 
 # If local sources are used, default install dir to that folder.
 if $USE_LOCAL_SOURCES; then
@@ -1076,6 +1195,9 @@ EOF
         echo -e ""
         echo -e "${GREY}--- Remote-Mode (beliebiger Linux-PC) ---${NC}"
         echo -e "(${BLUE}${FMTBOLD}4${FMTDEF}${NC}) Installation als Remote-Control (remote-mode) auf einem separaten System"
+        echo -e ""
+        echo -e "${GREY}--- Sonstiges ---${NC}"
+        echo -e "(${BLUE}${FMTBOLD}5${FMTDEF}${NC}) Kittyhack deinstallieren"
         echo -e "(${BLUE}${FMTBOLD}b${FMTDEF}${NC})eenden"
     else
         echo -e "${CYAN}Please choose the desired option:${NC}"
@@ -1086,6 +1208,9 @@ EOF
         echo -e ""
         echo -e "${GREY}--- Remote mode (any Linux PC) ---${NC}"
         echo -e "(${BLUE}${FMTBOLD}4${FMTDEF}${NC}) Install as remote-control (remote-mode) on a dedicated system"
+        echo -e ""
+        echo -e "${GREY}--- Other ---${NC}"
+        echo -e "(${BLUE}${FMTBOLD}5${FMTDEF}${NC}) Uninstall Kittyhack"
         echo -e "(${BLUE}${FMTBOLD}q${FMTDEF}${NC})uit"
     fi
     read -r MODE
@@ -1115,15 +1240,20 @@ EOF
             install_remote_mode
             break
             ;;
+        5)
+            echo -e "${CYAN}Uninstalling Kittyhack...${NC}"
+            uninstall_kittyhack
+            exit 0
+            ;;
         q|b)
             echo -e "${YELLOW}Quitting installation.${NC}"
             exit 0
             ;;
         *)
             if [ "$LANGUAGE" == "de" ]; then
-                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2', '3', '4' oder 'b' eingeben.${NC}\n"
+                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2', '3', '4', '5' oder 'b' eingeben.${NC}\n"
             else
-                ERRMSG="${RED}Invalid choice. Please enter '1', '2', '3', '4' or 'q'.${NC}\n"
+                ERRMSG="${RED}Invalid choice. Please enter '1', '2', '3', '4', '5' or 'q'.${NC}\n"
             fi
             MODE=""
             ;;

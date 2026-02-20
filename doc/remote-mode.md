@@ -82,6 +82,8 @@ sudo systemctl status kittyhack_control
 ### 2) Install remote-mode on the remote Linux PC/VM
 Run the setup script on the remote system and choose the **remote-mode** option.
 
+NOTE: The installation requires root rights. It is strongly recommended to install it on an separate system, which acts only as a kittyhack remote controller.
+
 ### 3) First start: remote-mode setup in the Web UI
 When remote-mode starts the first time, you have to configure the remote (Kittyflap) IP address.
 

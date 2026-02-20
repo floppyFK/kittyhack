@@ -2668,17 +2668,6 @@ def server(input, output, session):
                         value=values["remote_target_host"],
                         width="100%"
                     ),
-                    ui.input_numeric(
-                        "remote_control_timeout",
-                        _("Remote control timeout (seconds)"),
-                        value=values["remote_control_timeout"],
-                        min=1,
-                        max=120,
-                        step=1
-                    ),
-                    ui.help_text(
-                        _("Defines how long the client waits for control and sync responses before a reconnect/timeout is triggered.")
-                    ),
                     ui.input_switch(
                         "remote_sync_on_first_connect",
                         _("Sync on first connect"),
@@ -2943,12 +2932,11 @@ def server(input, output, session):
             return
         port = 8888
         try:
-            timeout = float(input.remote_control_timeout() or 0)
+            timeout = float(read_remote_config_values().get("remote_control_timeout", 30.0) or 30.0)
         except Exception:
-            timeout = 0.0
+            timeout = 30.0
         if timeout <= 0:
-            ui.notification_show(_("Remote control timeout must be greater than 0."), duration=8, type="error")
-            return
+            timeout = 30.0
 
         sync_first = bool(input.remote_sync_on_first_connect())
         remote_cfg_path = os.path.join(kittyhack_root(), "config.remote.ini")
@@ -6907,25 +6895,13 @@ def server(input, output, session):
                                 ui.column(
                                     12,
                                     ui.markdown(
-                                        _(
-                                            "Target-mode only: If the device has been controlled remotely before, it will wait this long for a remote-control takeover after reboot before starting Kittyhack locally."
-                                        )
+                                        _("If the Kittyflap has been controlled remotely before, it will wait this long for a remote-control takeover after reboot before starting Kittyhack locally.")
                                     ),
                                     style_="color: grey;",
                                 ),
                             )
                             if not is_remote_mode()
-                            else ui.row(
-                                ui.column(
-                                    12,
-                                    ui.markdown(
-                                        _(
-                                            "Wait-for-remote-after-reboot is a target-device setting and cannot be configured in remote-mode UI."
-                                        )
-                                    ),
-                                    style_="color: grey;",
-                                )
-                            )
+                            else ui.HTML(""),
                         ),
                         ui.hr(),
                         ui.row(

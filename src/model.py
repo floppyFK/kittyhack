@@ -33,6 +33,38 @@ _ = set_language(CONFIG['LANGUAGE'])
 _MODEL_DL_STATE_PATH = "/tmp/kittyhack_model_download_state.json"
 
 
+def _remote_internal_proxy_url() -> str | None:
+    """Return implicit target MJPEG URL for remote-mode internal camera selection."""
+    if not is_remote_mode():
+        return None
+
+    camera_source = str(CONFIG.get("CAMERA_SOURCE") or "").strip().lower()
+    if camera_source != "internal":
+        return None
+
+    host = str(CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
+    if not host:
+        return None
+
+    if host.startswith("http://") or host.startswith("https://"):
+        base = host
+    else:
+        base = f"http://{host}"
+    return base.rstrip("/") + "/video"
+
+
+def _effective_camera_stream_config() -> tuple[str, str]:
+    """Resolve runtime stream source/url from current CONFIG.
+
+    In remote-mode with CAMERA_SOURCE=internal, stream from target MJPEG relay
+    (`http://REMOTE_TARGET_HOST/video`) while keeping config unchanged.
+    """
+    proxy_url = _remote_internal_proxy_url()
+    if proxy_url:
+        return "ip_camera", proxy_url
+    return str(CONFIG.get("CAMERA_SOURCE") or "internal"), str(CONFIG.get("IP_CAMERA_URL") or "")
+
+
 def _atomic_write_json(path: str, data: dict[str, Any]) -> None:
     tmp = f"{path}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -1237,9 +1269,8 @@ class ModelHandler:
 
         self.load_model()
 
-        # Store the last used camera config to detect changes
-        last_camera_source = CONFIG['CAMERA_SOURCE']
-        last_ip_camera_url = CONFIG['IP_CAMERA_URL']
+        # Store the last used effective camera config to detect changes
+        last_camera_source, last_ip_camera_url = _effective_camera_stream_config()
         last_enable_ip_camera_decode_scale_pipeline = CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False)
         last_ip_camera_target_resolution = CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360')
         last_ip_camera_pipeline_fps_limit = int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10)
@@ -1291,9 +1322,16 @@ class ModelHandler:
             freq = cv2.getTickFrequency()
 
             # Initialize video stream
+            effective_camera_source, effective_ip_camera_url = _effective_camera_stream_config()
+            if is_remote_mode() and str(CONFIG.get('CAMERA_SOURCE') or '').strip().lower() == 'internal':
+                if effective_camera_source == 'ip_camera' and effective_ip_camera_url:
+                    logging.info(f"[CAMERA] Remote-mode implicit internal camera mapping active: {effective_ip_camera_url}")
+                else:
+                    logging.warning("[CAMERA] Remote-mode internal camera selected, but REMOTE_TARGET_HOST is empty. Falling back to local internal source.")
+
             videostream = VideoStream(
-                source=CONFIG['CAMERA_SOURCE'],
-                ip_camera_url=CONFIG['IP_CAMERA_URL'],
+                source=effective_camera_source,
+                ip_camera_url=effective_ip_camera_url,
                 use_ip_camera_decode_scale_pipeline=CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False),
                 ip_camera_target_resolution=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360'),
                 ip_camera_pipeline_fps_limit=int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10),
@@ -1325,8 +1363,7 @@ class ModelHandler:
             
             while not sigterm_monitor.stop_now and not self._stop_requested.is_set():
                 # --- Detect camera config changes and re-init videostream if needed ---
-                current_camera_source = CONFIG['CAMERA_SOURCE']
-                current_ip_camera_url = CONFIG['IP_CAMERA_URL']
+                current_camera_source, current_ip_camera_url = _effective_camera_stream_config()
                 current_enable_ip_camera_decode_scale_pipeline = CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False)
                 current_ip_camera_target_resolution = CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360')
                 current_ip_camera_pipeline_fps_limit = int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10)
@@ -1557,18 +1594,21 @@ class ModelHandler:
             except Exception as e:
                 logging.warning(f"[MODEL] Error stopping previous videostream: {e}")
 
-        # Start a new videostream with the latest config values
+        # Start a new videostream with the latest/effective config values
+        effective_camera_source, effective_ip_camera_url = _effective_camera_stream_config()
         videostream = VideoStream(
-            source=CONFIG['CAMERA_SOURCE'],
-            ip_camera_url=CONFIG['IP_CAMERA_URL'],
+            source=effective_camera_source,
+            ip_camera_url=effective_ip_camera_url,
             use_ip_camera_decode_scale_pipeline=CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False),
             ip_camera_target_resolution=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360'),
             ip_camera_pipeline_fps_limit=int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10),
         ).start()
-        if CONFIG['CAMERA_SOURCE'] == "internal":
+        if is_remote_mode() and str(CONFIG.get('CAMERA_SOURCE') or '').strip().lower() == 'internal' and effective_camera_source == 'ip_camera':
+            logging.info(f"[MODEL] Re-initialized videostream with implicit remote MJPEG relay source: {effective_ip_camera_url}.")
+        elif CONFIG['CAMERA_SOURCE'] == "internal":
             logging.info(f"[MODEL] Re-initialized videostream with internal camera source.")
         else:
-            logging.info(f"[MODEL] Re-initialized videostream with external camera source: {CONFIG['IP_CAMERA_URL']}.")
+            logging.info(f"[MODEL] Re-initialized videostream with external camera source: {effective_ip_camera_url}.")
 
     def set_videostream_buffer_size(self, new_size: int):
         """

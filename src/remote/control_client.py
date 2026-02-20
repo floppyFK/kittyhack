@@ -10,6 +10,7 @@ from typing import Any
 import websockets
 
 from src.baseconfig import CONFIG
+from src.clock import monotonic_time
 from src.helper import sigterm_monitor
 
 
@@ -53,8 +54,11 @@ class RemoteControlClient:
             "ok": None,
             "reason": "",
             "requested_at": 0.0,
+            "requested_at_mono": 0.0,
             "started_at": 0.0,
+            "started_at_mono": 0.0,
             "finished_at": 0.0,
+            "finished_at_mono": 0.0,
             "bytes_received": 0,
             "items": [],
         }
@@ -149,8 +153,11 @@ class RemoteControlClient:
                     "ok": None,
                     "reason": "",
                     "requested_at": time.time(),
+                    "requested_at_mono": monotonic_time(),
                     "started_at": 0.0,
+                    "started_at_mono": 0.0,
                     "finished_at": 0.0,
+                    "finished_at_mono": 0.0,
                     "bytes_received": 0,
                     "items": [],
                 }
@@ -182,6 +189,7 @@ class RemoteControlClient:
                     "ok": False,
                     "reason": reason,
                     "finished_at": time.time(),
+                    "finished_at_mono": monotonic_time(),
                 }
             )
             self._sync_done_event.set()
@@ -350,7 +358,9 @@ class RemoteControlClient:
                 self._sync_status["ok"] = None
                 self._sync_status["reason"] = ""
                 self._sync_status["started_at"] = time.time()
+                self._sync_status["started_at_mono"] = monotonic_time()
                 self._sync_status["finished_at"] = 0.0
+                self._sync_status["finished_at_mono"] = 0.0
                 self._sync_status["bytes_received"] = 0
                 self._sync_status["items"] = list(data.get("items") or [])
             return
@@ -363,12 +373,14 @@ class RemoteControlClient:
                     # Keep a local extraction failure state; do not overwrite with remote sync_end success.
                     self._sync_status["in_progress"] = False
                     self._sync_status["finished_at"] = time.time()
+                    self._sync_status["finished_at_mono"] = monotonic_time()
                     self._sync_done_event.set()
                     return
                 self._sync_status["in_progress"] = False
                 self._sync_status["ok"] = ok
                 self._sync_status["reason"] = reason
                 self._sync_status["finished_at"] = time.time()
+                self._sync_status["finished_at_mono"] = monotonic_time()
             self._sync_done_event.set()
             return
 
@@ -413,6 +425,7 @@ class RemoteControlClient:
                     self._sync_status["ok"] = True
                     self._sync_status["reason"] = ""
                     self._sync_status["finished_at"] = time.time()
+                    self._sync_status["finished_at_mono"] = monotonic_time()
                 self._sync_done_event.set()
                 return
 
@@ -440,6 +453,7 @@ class RemoteControlClient:
                 self._sync_status["ok"] = False
                 self._sync_status["reason"] = str(e)
                 self._sync_status["finished_at"] = time.time()
+                self._sync_status["finished_at_mono"] = monotonic_time()
             self._sync_done_event.set()
 
     def _send_async(self, msg: dict[str, Any]) -> None:

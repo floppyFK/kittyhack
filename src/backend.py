@@ -4,6 +4,7 @@ import logging
 import multiprocessing
 from datetime import datetime, timezone
 from threading import Lock
+from src.clock import monotonic_time, wall_time
 from src.baseconfig import AllowedToEnter, AllowedToExit, CONFIG, set_language
 from src.mode import is_remote_mode
 from src.database import *
@@ -258,8 +259,12 @@ def init_mqtt_client(magnets_instance=None, motion_outside=0, motion_inside=0):
                 
                 # Determine prey detection state
                 prey_detected_state = False
-                if hasattr(backend_main, 'prey_detection_tm'):
-                    prey_detected_state = (tm.time() - backend_main.prey_detection_tm) <= CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION']
+                try:
+                    prey_mono = float(getattr(backend_main, "prey_detection_mono", 0.0) or 0.0)
+                    if prey_mono > 0.0:
+                        prey_detected_state = (monotonic_time() - prey_mono) <= float(CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'])
+                except Exception:
+                    prey_detected_state = False
                 
                 mqtt_publisher = StatePublisher(
                     mqtt_client,
@@ -320,6 +325,7 @@ def backend_main(simulate_kittyflap = False):
     tag_id_valid = False
     tag_id_from_video = None
     tag_timestamp = 0.0
+    tag_seen_mono = 0.0
     motion_outside = 0
     motion_inside = 0
     motion_outside_raw = 0
@@ -334,6 +340,16 @@ def backend_main(simulate_kittyflap = False):
     first_motion_outside_tm = 0.0
     first_motion_inside_tm = 0.0
     first_motion_inside_raw_tm = 0.0
+    # Monotonic counterparts for all duration/timeout logic.
+    motion_outside_mono = 0.0
+    motion_inside_mono = 0.0
+    motion_inside_raw_mono = 0.0
+    last_motion_outside_mono = 0.0
+    last_motion_inside_mono = 0.0
+    last_motion_inside_raw_mono = 0.0
+    first_motion_outside_mono = 0.0
+    first_motion_inside_mono = 0.0
+    first_motion_inside_raw_mono = 0.0
     motion_block_id = 0
     ids_with_mouse = []
     ids_of_current_motion_block = []
@@ -349,6 +365,7 @@ def backend_main(simulate_kittyflap = False):
     inside_manually_unlocked = False
     inside_manually_locked_tm = 0.0
     backend_main.prey_detection_tm = 0.0
+    backend_main.prey_detection_mono = 0.0
     additional_verdict_infos = []
     previous_use_camera_for_motion = None
     exit_in_progress = False
@@ -402,11 +419,13 @@ def backend_main(simulate_kittyflap = False):
             int: The possibly modified current motion state, ensuring the PIR remains active for an additional configurable seconds 
             if the conditions are met.
         """
+        # Use monotonic time so system clock changes don't affect the workaround window.
+        now_mono = monotonic_time()
         if ( (current_motion_state == 0) and 
                 (last_motion_state == 1) and
-                ((tm.time() - current_motion_timestamp) < delay) ):
+                ((now_mono - current_motion_timestamp) < delay) ):
             current_motion_state = 1
-            logging.debug(f"[BACKEND] Lazy cat workaround: Keep the PIR active for {delay-(tm.time()-current_motion_timestamp):.1f} seconds.")
+            logging.debug(f"[BACKEND] Lazy cat workaround: Keep the PIR active for {delay-(now_mono-current_motion_timestamp):.1f} seconds.")
         return current_motion_state
     
     def get_cat_name(rfid_tag):
@@ -416,7 +435,7 @@ def backend_main(simulate_kittyflap = False):
             return _("No RFID found")
 
     # Periodically persist effective FPS into the active YOLO model metadata.
-    last_fps_metadata_write_tm = 0.0
+    last_fps_metadata_write_mono = 0.0
     last_written_effective_fps: float | None = None
         
     while not sigterm_monitor.stop_now:
@@ -427,15 +446,16 @@ def backend_main(simulate_kittyflap = False):
             try:
                 if model_handler.get_run_state() and (not (CONFIG.get('TFLITE_MODEL_VERSION') or '').strip()):
                     active_yolo_id = (CONFIG.get('YOLO_MODEL') or '').strip()
-                    now = tm.time()
-                    if active_yolo_id and (now - last_fps_metadata_write_tm) >= 60.0:
+                    now_mono = monotonic_time()
+                    now_wall = wall_time()
+                    if active_yolo_id and (now_mono - last_fps_metadata_write_mono) >= 60.0:
                         effective_fps, fps_tm = model_handler.get_effective_fps_snapshot()
                         # Write only if we have a reasonably fresh measurement.
-                        if effective_fps is not None and fps_tm and (now - float(fps_tm)) <= 180.0:
+                        if effective_fps is not None and fps_tm and (now_wall - float(fps_tm)) <= 180.0:
                             if (
                                 last_written_effective_fps is None
                                 or abs(float(effective_fps) - float(last_written_effective_fps)) >= 0.2
-                                or (now - last_fps_metadata_write_tm) >= 600.0
+                                or (now_mono - last_fps_metadata_write_mono) >= 600.0
                             ):
                                 YoloModel.update_model_metadata(
                                     active_yolo_id,
@@ -445,7 +465,7 @@ def backend_main(simulate_kittyflap = False):
                                     },
                                 )
                                 last_written_effective_fps = float(effective_fps)
-                                last_fps_metadata_write_tm = now
+                                last_fps_metadata_write_mono = now_mono
             except Exception as e:
                 logging.debug(f"[BACKEND] Failed to persist effective FPS to model info.json: {e}")
 
@@ -478,8 +498,7 @@ def backend_main(simulate_kittyflap = False):
 
             if use_camera_for_motion:
                 # Decide if motion occured currently. Look up to 5 seconds into the past for images with cats
-                min_ts = tm.time() - 5.0
-                cat_imgs = image_buffer.get_filtered_ids(min_timestamp=min_ts, min_own_cat_probability=CONFIG['CAT_THRESHOLD'])
+                cat_imgs = image_buffer.get_filtered_ids_recent(seconds=5.0, min_own_cat_probability=CONFIG['CAT_THRESHOLD'])
                 motion_outside = 1 if len(cat_imgs) > 0 else 0
                 # Motion raw does not exist for the camera, so we set it to the same value as motion_outside
                 motion_outside_raw = motion_outside
@@ -490,23 +509,23 @@ def backend_main(simulate_kittyflap = False):
 
             # Update the motion timestamps
             if motion_outside == 1:
-                motion_outside_tm = tm.time()
+                motion_outside_mono = monotonic_time()
             if motion_inside == 1:
-                motion_inside_tm = tm.time()
+                motion_inside_mono = monotonic_time()
             if motion_inside_raw == 1:
-                motion_inside_raw_tm = tm.time()
+                motion_inside_raw_mono = monotonic_time()
 
             if use_camera_for_motion:
                 # If we use the camera for motion detection, keep the outside motion-indicator longer active, since normally
                 # no motion is detected anymore by the camera, when the cat is very close to the flap.
-                motion_outside = lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm, LAZY_CAT_DELAY_CAM_MOTION)
+                motion_outside = lazy_cat_workaround(motion_outside, last_outside, motion_outside_mono, LAZY_CAT_DELAY_CAM_MOTION)
             else:
                 # Since the PIR tracks motion in a wider area (and even directly in front of the flap), we do not need to keep
                 # the motion active as long as with the camera motion detection
-                motion_outside = lazy_cat_workaround(motion_outside, last_outside, motion_outside_tm, LAZY_CAT_DELAY_PIR_MOTION)
+                motion_outside = lazy_cat_workaround(motion_outside, last_outside, motion_outside_mono, LAZY_CAT_DELAY_PIR_MOTION)
             
-            motion_inside = lazy_cat_workaround(motion_inside, last_inside, motion_inside_tm, LAZY_CAT_DELAY_PIR_MOTION)
-            motion_inside_raw = lazy_cat_workaround(motion_inside_raw, last_inside_raw, motion_inside_raw_tm, LAZY_CAT_DELAY_PIR_MOTION)
+            motion_inside = lazy_cat_workaround(motion_inside, last_inside, motion_inside_mono, LAZY_CAT_DELAY_PIR_MOTION)
+            motion_inside_raw = lazy_cat_workaround(motion_inside_raw, last_inside_raw, motion_inside_raw_mono, LAZY_CAT_DELAY_PIR_MOTION)
 
             # Update the shared motion state
             with motion_state_lock:
@@ -515,6 +534,11 @@ def backend_main(simulate_kittyflap = False):
 
             previous_tag_id = tag_id
             tag_id, tag_timestamp = rfid.get_tag()
+
+            # Track last-seen time for the currently active RFID tag using monotonic time.
+            if tag_id is not None:
+                if tag_seen_mono == 0.0 or tag_id != previous_tag_id:
+                    tag_seen_mono = monotonic_time()
 
             # Check if the RFID reader is still running. Otherwise restart it.
             if rfid.get_run_state() == RfidRunState.stopped:
@@ -531,7 +555,8 @@ def backend_main(simulate_kittyflap = False):
                         tm.sleep(0.5)
                 unlock_inside_decision_made = False
                 tag_id_valid = False
-                last_motion_outside_tm = tm.time()
+                last_motion_outside_tm = wall_time()
+                last_motion_outside_mono = monotonic_time()
                 logging.info(f"[BACKEND] {motion_source}-based motion detection: Motion stopped OUTSIDE (Block ID: '{motion_block_id}')")
                 # Reset exit flag on block end
                 exit_in_progress = False
@@ -539,8 +564,8 @@ def backend_main(simulate_kittyflap = False):
                     magnets.queue_command("lock_inside")
 
                 # Decide if the cat went in or out:
-                if first_motion_inside_raw_tm == 0.0 or (first_motion_outside_tm - first_motion_inside_raw_tm) > 60.0:
-                    if unlock_inside_tm > first_motion_outside_tm and tag_id is not None:
+                if first_motion_inside_raw_mono == 0.0 or (first_motion_outside_mono - first_motion_inside_raw_mono) > 60.0:
+                    if unlock_inside_tm > first_motion_outside_mono and tag_id is not None:
                         logging.info("[BACKEND] Motion event conclusion: No motion inside detected but the inside was unlocked. Cat went probably to the inside (PIR interference issue).")
                         event_type = EventType.CAT_WENT_PROBABLY_INSIDE
                     elif mouse_check_conditions["no_mouse_detected"]:
@@ -549,7 +574,7 @@ def backend_main(simulate_kittyflap = False):
                     else:
                         logging.info("[BACKEND] Motion event conclusion: Motion outside with mouse detected and entry blocked.")
                         event_type = EventType.MOTION_OUTSIDE_WITH_MOUSE
-                elif first_motion_outside_tm < first_motion_inside_raw_tm:
+                elif first_motion_outside_mono < first_motion_inside_raw_mono:
                     if mouse_check_conditions["no_mouse_detected"]:
                         logging.info("[BACKEND] Motion event conclusion: Cat went inside.")
                         event_type = EventType.CAT_WENT_INSIDE
@@ -620,6 +645,9 @@ def backend_main(simulate_kittyflap = False):
                 first_motion_outside_tm = 0.0
                 first_motion_inside_tm = 0.0
                 first_motion_inside_raw_tm = 0.0
+                first_motion_outside_mono = 0.0
+                first_motion_inside_mono = 0.0
+                first_motion_inside_raw_mono = 0.0
 
                 # Publish the event to MQTT
                 if mqtt_publisher:
@@ -637,11 +665,11 @@ def backend_main(simulate_kittyflap = False):
                     logging.info("[BACKEND] Forget the tag ID from the RFID reader.")
 
             if last_inside_raw == 1 and motion_inside_raw == 0: # Inside motion stopped (raw)
-                last_motion_inside_raw_tm = motion_inside_raw_tm
+                last_motion_inside_raw_mono = motion_inside_raw_mono
                 logging.debug(f"[BACKEND] Motion stopped INSIDE (raw)")
             
             if last_inside == 1 and motion_inside == 0: # Inside motion stopped
-                last_motion_inside_tm = motion_inside_tm
+                last_motion_inside_mono = motion_inside_mono
                 logging.info(f"[BACKEND] Motion stopped INSIDE")
                 # Publish the inside motion state to MQTT
                 if mqtt_publisher:
@@ -659,10 +687,12 @@ def backend_main(simulate_kittyflap = False):
                 motion_block_id += 1
                 # If we use the camera for motion detection, set the first motion timestamp a bit earlier to avoid missing the first motion
                 if use_camera_for_motion:
-                    first_motion_outside_tm = tm.time() - 0.5
+                    first_motion_outside_tm = wall_time() - 0.5
+                    first_motion_outside_mono = monotonic_time() - 0.5
                     additional_log_info = f"| configured cat detection threshold: {CONFIG['CAT_THRESHOLD']} "
                 else:
-                    first_motion_outside_tm = tm.time()
+                    first_motion_outside_tm = wall_time()
+                    first_motion_outside_mono = monotonic_time()
                     model_handler.resume()
                     additional_log_info = ""
                 logging.info(f"[BACKEND] {motion_source}-based motion detection: Motion detected OUTSIDE {additional_log_info}(Block ID: {motion_block_id})")
@@ -675,13 +705,15 @@ def backend_main(simulate_kittyflap = False):
             
             if last_inside_raw == 0 and motion_inside_raw == 1: # Inside motion detected
                 logging.debug("[BACKEND] Motion detected INSIDE (raw)")
-                first_motion_inside_raw_tm = tm.time()
+                first_motion_inside_raw_tm = wall_time()
+                first_motion_inside_raw_mono = monotonic_time()
 
             if last_inside == 0 and motion_inside == 1: # Inside motion detected
                 logging.info("[BACKEND] Motion detected INSIDE")
                 cat_settings_map = get_cat_settings_map(CONFIG['KITTYHACK_DATABASE_PATH'])
                 logging.info(f"[BACKEND] cat_settings_map: {cat_settings_map}")
-                first_motion_inside_tm = tm.time()
+                first_motion_inside_tm = wall_time()
+                first_motion_inside_mono = monotonic_time()
                 # Determine if exit is allowed globally and per-cat (if identifiable and configured per-cat)
                 per_cat_exit_allowed = False
                 try:
@@ -719,7 +751,7 @@ def backend_main(simulate_kittyflap = False):
                             logging.info("[BACKEND] Allow cats to exit.")
                             if magnets.check_queued("unlock_outside") == False:
                                 magnets.queue_command("unlock_outside")
-                                unlock_outside_tm = tm.time()
+                                unlock_outside_tm = monotonic_time()
                                 # Mark this motion block as exit
                                 exit_in_progress = True
                     else:
@@ -731,8 +763,8 @@ def backend_main(simulate_kittyflap = False):
 
             # Turn off the RFID reader if no motion outside and inside
             if ( (motion_outside == 0) and (motion_inside == 0) and
-                ((tm.time() - last_motion_outside_tm) > RFID_READER_OFF_DELAY) and
-                ((tm.time() - last_motion_inside_tm) > RFID_READER_OFF_DELAY) ):
+                ((monotonic_time() - last_motion_outside_mono) > RFID_READER_OFF_DELAY) and
+                ((monotonic_time() - last_motion_inside_mono) > RFID_READER_OFF_DELAY) ):
                 if rfid.get_field():
                     logging.info(f"[BACKEND] No motion outside since {RFID_READER_OFF_DELAY} seconds after the last motion. Stopping RFID reader.")
                     rfid.set_field(False)
@@ -740,7 +772,7 @@ def backend_main(simulate_kittyflap = False):
             # Close the magnet to the outside after the timeout
             if ( (motion_inside == 0) and
                 (magnets.get_outside_state() == True) and
-                ((tm.time() - last_motion_inside_tm) > OPEN_OUTSIDE_TIMEOUT) and
+                ((monotonic_time() - last_motion_inside_mono) > OPEN_OUTSIDE_TIMEOUT) and
                 (magnets.check_queued("lock_outside") == False) ):
                     magnets.queue_command("lock_outside")
 
@@ -795,7 +827,7 @@ def backend_main(simulate_kittyflap = False):
                                 logging.info("[BACKEND] Allow cats to exit (per-cat: RFID tag detected).")
                                 if magnets.check_queued("unlock_outside") == False:
                                     magnets.queue_command("unlock_outside")
-                                    unlock_outside_tm = tm.time()
+                                    unlock_outside_tm = monotonic_time()
                                     # Mark this motion block as exit
                                     exit_in_progress = True
                             else:
@@ -859,15 +891,17 @@ def backend_main(simulate_kittyflap = False):
 
             # Forget the tag after the tag timeout and no motion outside:
             if ( (tag_id is not None) and 
-                (tm.time() > (tag_timestamp+TAG_TIMEOUT)) and
+                (tag_seen_mono > 0.0) and
+                (monotonic_time() > (tag_seen_mono + TAG_TIMEOUT)) and
                 (motion_outside == 0) ):
                 rfid.set_tag(None, 0.0)
+                tag_seen_mono = 0.0
                 logging.info("[BACKEND] Tag timeout reached. Forget the tag.")
 
-            if image_buffer.size() > 0 and first_motion_outside_tm > 0.0:
+            if image_buffer.size() > 0 and first_motion_outside_mono > 0.0:
                 # Process all elements in the buffer
-                ids_of_current_motion_block = image_buffer.get_filtered_ids(min_timestamp=first_motion_outside_tm)
-                ids_with_mouse = image_buffer.get_filtered_ids(min_timestamp=first_motion_outside_tm, min_mouse_probability=CONFIG['MOUSE_THRESHOLD'])
+                ids_of_current_motion_block = image_buffer.get_filtered_ids_mono(min_timestamp_mono=first_motion_outside_mono)
+                ids_with_mouse = image_buffer.get_filtered_ids_mono(min_timestamp_mono=first_motion_outside_mono, min_mouse_probability=CONFIG['MOUSE_THRESHOLD'])
             else:
                 ids_of_current_motion_block = []
                 ids_with_mouse = []
@@ -894,8 +928,8 @@ def backend_main(simulate_kittyflap = False):
 
             analysis_elapsed_s = 0.0
             try:
-                if first_motion_outside_tm > 0.0:
-                    analysis_elapsed_s = max(0.0, tm.time() - float(first_motion_outside_tm))
+                if first_motion_outside_mono > 0.0:
+                    analysis_elapsed_s = max(0.0, monotonic_time() - float(first_motion_outside_mono))
             except Exception:
                 analysis_elapsed_s = 0.0
 
@@ -915,7 +949,7 @@ def backend_main(simulate_kittyflap = False):
             # detected a few seconds earlier by the camera.
             no_prey_within_timeout_effective = (
                 True if per_cat_prey_detection_disabled
-                else (tm.time() - backend_main.prey_detection_tm) > CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION']
+                else (monotonic_time() - float(getattr(backend_main, "prey_detection_mono", 0.0) or 0.0)) > float(CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'])
             )
 
             unlock_inside_conditions = {
@@ -926,7 +960,7 @@ def backend_main(simulate_kittyflap = False):
                 "outside_locked": magnets.get_outside_state() == False,
                 "no_unlock_queued": magnets.check_queued("unlock_inside") == False,
                 "no_prey_within_timeout": no_prey_within_timeout_effective,
-                "not_manually_locked": inside_manually_locked_tm == 0.0 or (tm.time() - inside_manually_locked_tm) > MAX_UNLOCK_TIME
+                "not_manually_locked": inside_manually_locked_tm == 0.0 or (monotonic_time() - inside_manually_locked_tm) > MAX_UNLOCK_TIME
             }
 
             if not hasattr(backend_main, "previous_mouse_check_conditions"):
@@ -938,8 +972,11 @@ def backend_main(simulate_kittyflap = False):
                 
                 # If the prey detection is enabled, check if this is the first iteration with detected prey
                 if mouse_check == False and mouse_check_conditions["no_mouse_detected"] == False and backend_main.previous_mouse_check_conditions["no_mouse_detected"] == True:
-                    backend_main.prey_detection_tm = tm.time()
-                    logging.info(f"[BACKEND] Detected prey in the images. Set the timestamp for prey detection to {backend_main.prey_detection_tm}.")
+                    backend_main.prey_detection_mono = monotonic_time()
+                    backend_main.prey_detection_tm = wall_time()
+                    logging.info(
+                        f"[BACKEND] Detected prey in the images. Set prey detection times (mono={backend_main.prey_detection_mono}, wall={backend_main.prey_detection_tm})."
+                    )
 
                 if backend_main.previous_mouse_check_conditions != mouse_check_conditions:
                     logging.info(f"[BACKEND] Mouse check conditions: {mouse_check_conditions}")
@@ -976,7 +1013,7 @@ def backend_main(simulate_kittyflap = False):
                 else:
                     magnets.empty_queue()
                     magnets.queue_command("unlock_inside")
-                    unlock_inside_tm = tm.time()
+                    unlock_inside_tm = monotonic_time()
                     if manual_door_override['unlock_inside']:
                         inside_manually_unlocked = True
                         flag = str(EventType.MANUALLY_UNLOCKED)
@@ -995,7 +1032,7 @@ def backend_main(simulate_kittyflap = False):
                     logging.info("[BACKEND] Manual override: Opening outside door")
                     magnets.empty_queue()
                     magnets.queue_command("unlock_outside")
-                    unlock_outside_tm = tm.time()
+                    unlock_outside_tm = monotonic_time()
                 
                 manual_door_override['unlock_outside'] = False
 
@@ -1006,7 +1043,7 @@ def backend_main(simulate_kittyflap = False):
                 else:
                     logging.info("[BACKEND] Manual override: Inside door is already locked.")
                 inside_manually_unlocked = False
-                inside_manually_locked_tm = tm.time()  # Set the timestamp when manually locked
+                inside_manually_locked_tm = monotonic_time()  # Set the timestamp when manually locked
                 manual_door_override['lock_inside'] = False
                 flag = str(EventType.MANUALLY_LOCKED)
                 if flag not in additional_verdict_infos:
@@ -1014,7 +1051,7 @@ def backend_main(simulate_kittyflap = False):
                     logging.info(f"[BACKEND] Added verdict info '{flag}' due to manual inside lock.")
                 
             # Check if maximum unlock time is exceeded
-            if magnets.get_inside_state() and (tm.time() - unlock_inside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_inside") == False:
+            if magnets.get_inside_state() and (monotonic_time() - unlock_inside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_inside") == False:
                 logging.warning("[BACKEND] Maximum unlock time exceeded for inside door. Forcing lock.")
                 magnets.queue_command("lock_inside")
                 if inside_manually_unlocked:
@@ -1024,7 +1061,7 @@ def backend_main(simulate_kittyflap = False):
                      additional_verdict_infos.append(flag)
                      logging.info(f"[BACKEND] Added verdict info '{flag}' due to maximum inside unlock time exceeded.")
                 
-            if magnets.get_outside_state() and (tm.time() - unlock_outside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_outside") == False:
+            if magnets.get_outside_state() and (monotonic_time() - unlock_outside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_outside") == False:
                 logging.warning("[BACKEND] Maximum unlock time exceeded for outside door. Forcing lock.")
                 magnets.queue_command("lock_outside")
                 

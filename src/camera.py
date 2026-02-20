@@ -123,7 +123,8 @@ class VideoStream:
 
     def _monitor_journal_for_h264_errors(self, threshold=5, interval=20):
         error_count = 0
-        last_reset = tm.time()
+        # Use monotonic time for intervals so system clock changes don't affect resets.
+        last_reset = tm.monotonic()
         pattern = re.compile(r"\[h264 @.*error while decoding MB")
         proc = subprocess.Popen(
             ["journalctl", "-u", "kittyhack.service", "-f", "-p", "info"],
@@ -147,9 +148,9 @@ class VideoStream:
                         logging.warning("[CAMERA] Too many H264 errors detected, but automatic IP camera reconnect is disabled by configuration.")
                     error_count = 0
                     last_reset = tm.time()
-            if tm.time() - last_reset > interval:
+            if tm.monotonic() - last_reset > interval:
                 error_count = 0
-                last_reset = tm.time()
+                last_reset = tm.monotonic()
         proc.terminate()
 
     def _trigger_ip_camera_reconnect(self):
@@ -490,10 +491,14 @@ class DetectedObject:
 
 class ImageBufferElement:
     def __init__(self, id: int, block_id: int, timestamp: float, original_image: bytes | None, modified_image: bytes | None, 
-                 mouse_probability: float, no_mouse_probability: float, own_cat_probability: float, tag_id: str = "", detected_objects: List[DetectedObject] = None):
+                 mouse_probability: float, no_mouse_probability: float, own_cat_probability: float, tag_id: str = "", detected_objects: List[DetectedObject] = None,
+                 timestamp_mono: float | None = None):
         self.id = id
         self.block_id = block_id
+        # Wall-clock timestamp (epoch seconds). Used for persistence / DB correlation.
         self.timestamp = timestamp
+        # Monotonic timestamp (seconds since boot). Used for all duration/timeout logic.
+        self.timestamp_mono = float(timestamp_mono) if timestamp_mono is not None else float(tm.monotonic())
         self.original_image = original_image
         self.modified_image = modified_image
         self.mouse_probability = mouse_probability
@@ -503,7 +508,7 @@ class ImageBufferElement:
         self.detected_objects = detected_objects
 
     def __repr__(self):
-        return (f"ImageBufferElement(id={self.id}, block_id={self.block_id}, timestamp={self.timestamp}, mouse_probability={self.mouse_probability}, "
+        return (f"ImageBufferElement(id={self.id}, block_id={self.block_id}, timestamp={self.timestamp}, timestamp_mono={self.timestamp_mono}, mouse_probability={self.mouse_probability}, "
                 f"no_mouse_probability={self.no_mouse_probability}, own_cat_probability={self.own_cat_probability}, tag_id={self.tag_id}, detected_objects={self.detected_objects})")
 
 class ImageBuffer:
@@ -515,7 +520,8 @@ class ImageBuffer:
         self._next_id = 0
 
     def append(self, timestamp: float, original_image: bytes | None, modified_image: bytes | None, 
-               mouse_probability: float, no_mouse_probability: float, own_cat_probability: float, detected_objects: List[DetectedObject] = None):
+               mouse_probability: float, no_mouse_probability: float, own_cat_probability: float, detected_objects: List[DetectedObject] = None,
+               timestamp_mono: float | None = None):
         """
         Append a new element to the buffer.
         """
@@ -533,7 +539,18 @@ class ImageBuffer:
             self._buffer.pop(0)
             self._discarded_count += 1
 
-        element = ImageBufferElement(self._next_id, 0, timestamp, original_image, modified_image, mouse_probability, no_mouse_probability, own_cat_probability, detected_objects=detected_objects)
+        element = ImageBufferElement(
+            self._next_id,
+            0,
+            timestamp,
+            original_image,
+            modified_image,
+            mouse_probability,
+            no_mouse_probability,
+            own_cat_probability,
+            detected_objects=detected_objects,
+            timestamp_mono=timestamp_mono,
+        )
         self._buffer.append(element)
 
         self._appended_count += 1
@@ -674,6 +691,51 @@ class ImageBuffer:
                 (min_mouse_probability <= element.mouse_probability <= max_mouse_probability) and 
                 (min_no_mouse_probability <= element.no_mouse_probability <= max_no_mouse_probability) and
                 (min_own_cat_probability <= element.own_cat_probability <= max_own_cat_probability)]
+
+    def get_filtered_ids_mono(self, min_timestamp_mono=0.0,
+                              max_timestamp_mono=float('inf'),
+                              min_mouse_probability=0.0,
+                              max_mouse_probability=100.0,
+                              min_no_mouse_probability=0.0,
+                              max_no_mouse_probability=100.0,
+                              min_own_cat_probability=0.0,
+                              max_own_cat_probability=100.0) -> List[int]:
+        """Like get_filtered_ids, but filters by monotonic timestamps.
+
+        This is the preferred API for backend motion/timeout logic.
+        """
+        return [
+            element.id
+            for element in self._buffer
+            if (min_timestamp_mono <= float(getattr(element, "timestamp_mono", 0.0) or 0.0) <= max_timestamp_mono)
+            and (min_mouse_probability <= element.mouse_probability <= max_mouse_probability)
+            and (min_no_mouse_probability <= element.no_mouse_probability <= max_no_mouse_probability)
+            and (min_own_cat_probability <= element.own_cat_probability <= max_own_cat_probability)
+        ]
+
+    def get_filtered_ids_recent(self, seconds: float,
+                                min_mouse_probability=0.0,
+                                max_mouse_probability=100.0,
+                                min_no_mouse_probability=0.0,
+                                max_no_mouse_probability=100.0,
+                                min_own_cat_probability=0.0,
+                                max_own_cat_probability=100.0) -> List[int]:
+        """Return IDs of elements within the last N seconds (monotonic)."""
+        try:
+            now = float(tm.monotonic())
+        except Exception:
+            now = 0.0
+        min_ts = now - float(seconds or 0.0)
+        return self.get_filtered_ids_mono(
+            min_timestamp_mono=min_ts,
+            max_timestamp_mono=float('inf'),
+            min_mouse_probability=min_mouse_probability,
+            max_mouse_probability=max_mouse_probability,
+            min_no_mouse_probability=min_no_mouse_probability,
+            max_no_mouse_probability=max_no_mouse_probability,
+            min_own_cat_probability=min_own_cat_probability,
+            max_own_cat_probability=max_own_cat_probability,
+        )
     
     def update_block_id(self, id: int, block_id: int) -> bool:
         """

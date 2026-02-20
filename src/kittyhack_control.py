@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import logging
 import os
@@ -160,38 +161,138 @@ def _remote_ui_url() -> str | None:
     return f"http://{host}/"
 
 
+def _ui_language() -> str:
+    """Return UI language for the standalone info pages.
+
+    Driven by config.ini [Settings] language via CONFIG['LANGUAGE'].
+    Supported: de/en. Fallback: en.
+    """
+    lang = str(CONFIG.get("LANGUAGE") or "en").strip().lower()
+    if lang.startswith("de"):
+        return "de"
+    if lang.startswith("en"):
+        return "en"
+    return "en"
+
+
+def _page_text() -> dict[str, str]:
+    lang = _ui_language()
+    texts: dict[str, dict[str, str]] = {
+        "en": {
+            "title_remote": "Kittyhack Remote Control",
+            "title_startup": "Kittyhack Startup",
+            "h_remote": "Kittyhack is in remote-control mode",
+            "h_wait": "Waiting for remote connection",
+            "remote_active": "Remote control active",
+            "remote_ui": "Remote UI",
+            "remote_ui_unknown": "unknown (controller IP not available yet)",
+            "p_remote": (
+                "This device is currently controlled via <code>kittyhack_control</code>. "
+                "The normal Kittyhack UI on this device is stopped while control is active."
+            ),
+            "p_wait": "This Kittyflap is configured to wait for a remote-control connection after reboot.",
+            "autostart_in": "Autostart Kittyhack in",
+            "btn_skip": "Skip wait (start Kittyhack now)",
+            "btn_disable": "Disable wait after reboot",
+            "yes": "YES",
+            "no": "NO",
+            "st_remote_active": "remote control active",
+            "st_remote_connected": "A remote controller is connected.",
+            "st_starting": "starting...",
+            "st_starting_msg": "Kittyhack is starting.",
+            "st_remote_attempt": "remote attempt detected",
+            "st_remote_attempt_msg": "Remote control attempt detected. Waiting for controller...",
+            "seconds_suffix": " s",
+        },
+        "de": {
+            "title_remote": "Kittyhack Fernsteuerung",
+            "title_startup": "Kittyhack Start",
+            "h_remote": "Kittyhack läuft im Fernsteuerungsmodus",
+            "h_wait": "Warten auf Fernverbindung",
+            "remote_active": "Fernsteuerung aktiv",
+            "remote_ui": "Remote-UI",
+            "remote_ui_unknown": "unbekannt (Controller-IP noch nicht verfügbar)",
+            "p_remote": (
+                "Dieses Gerät wird aktuell über <code>kittyhack_control</code> ferngesteuert. "
+                "Die normale Kittyhack-UI auf diesem Gerät ist während der Fernsteuerung gestoppt."
+            ),
+            "p_wait": "Diese Kittyflap ist so konfiguriert, dass sie nach einem Neustart auf eine Fernsteuerungsverbindung wartet.",
+            "autostart_in": "Kittyhack automatisch starten in",
+            "btn_skip": "Wartezeit überspringen (Kittyhack jetzt starten)",
+            "btn_disable": "Warten nach Neustart deaktivieren",
+            "yes": "JA",
+            "no": "NEIN",
+            "st_remote_active": "Fernsteuerung aktiv",
+            "st_remote_connected": "Ein Remote-Controller ist verbunden.",
+            "st_starting": "wird gestartet...",
+            "st_starting_msg": "Kittyhack startet.",
+            "st_remote_attempt": "Remote-Versuch erkannt",
+            "st_remote_attempt_msg": "Fernsteuerungsversuch erkannt. Warte auf Controller...",
+            "seconds_suffix": " s",
+        },
+    }
+    return texts.get(lang, texts["en"])
+
+
 def _build_info_page_html() -> str:
+    t = _page_text()
+    lang = _ui_language()
     remote_url = _remote_ui_url()
     if remote_url:
-        remote_link = f"<p>Remote UI: <a href=\"{remote_url}\">{remote_url}</a></p>"
+        safe_url = html.escape(remote_url, quote=True)
+        remote_link = (
+            f"<div class=\"kv\"><div class=\"k\">{t['remote_ui']}</div>"
+            f"<div class=\"v\"><a class=\"link\" href=\"{safe_url}\">{safe_url}</a></div></div>"
+        )
     else:
-        remote_link = "<p>Remote UI: unknown (controller IP not available yet)</p>"
+        remote_link = (
+            f"<div class=\"kv\"><div class=\"k\">{t['remote_ui']}</div>"
+            f"<div class=\"v muted\">{t['remote_ui_unknown']}</div></div>"
+        )
 
-    controlled = "YES" if STATE.is_controlled() else "NO"
-    controller = STATE.controller_id or "unknown"
+    controlled = t["yes"] if STATE.is_controlled() else t["no"]
 
     return (
         "<!doctype html>\n"
-        "<html lang=\"en\">\n"
+        f"<html lang=\"{lang}\">\n"
         "<head>\n"
         "  <meta charset=\"utf-8\">\n"
         "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-        "  <title>Kittyhack Remote Control</title>\n"
+        f"  <title>{t['title_remote']}</title>\n"
+        "  <meta name=\"color-scheme\" content=\"light dark\">\n"
         "  <style>\n"
-        "    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;"
-        "         margin:2rem;max-width:55rem;line-height:1.5;}\n"
-        "    .card{border:1px solid #ddd;border-radius:12px;padding:1.25rem;}\n"
-        "    code{background:#f6f8fa;padding:.15rem .35rem;border-radius:6px;}\n"
+        "    :root{--bg:#f6f7fb;--bg2:#eef2ff;--card:#ffffff;--text:#0b1220;--muted:#5b6475;"
+        "          --border:rgba(15,23,42,.14);--shadow:0 12px 30px rgba(15,23,42,.10);--accent:#2563eb;}\n"
+        "    @media (prefers-color-scheme: dark){\n"
+        "      :root{--bg:#0b1020;--bg2:#111a33;--card:#0f172a;--text:#e5e7eb;--muted:#9aa3b2;"
+        "            --border:rgba(226,232,240,.14);--shadow:0 18px 40px rgba(0,0,0,.35);--accent:#60a5fa;}\n"
+        "    }\n"
+        "    *{box-sizing:border-box;}\n"
+        "    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;"
+        "         line-height:1.55;background:radial-gradient(1200px 700px at 15% 0%,var(--bg2),var(--bg));color:var(--text);}\n"
+        "    .wrap{max-width:860px;margin:0 auto;padding:28px 18px 44px;}\n"
+        "    .card{background:var(--card);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow);padding:22px 20px;}\n"
+        "    h1{font-size:1.55rem;letter-spacing:-.02em;margin:0 0 14px;}\n"
+        "    p{margin:.45rem 0;}\n"
+        "    code{background:rgba(148,163,184,.18);padding:.12rem .36rem;border-radius:8px;}\n"
+        "    .kv{display:flex;gap:14px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--border);}\n"
+        "    .kv:first-of-type{border-top:none;padding-top:0;}\n"
+        "    .k{min-width:210px;color:var(--muted);font-size:.95rem;}\n"
+        "    .v{font-weight:600;}\n"
+        "    .muted{color:var(--muted);font-weight:500;}\n"
+        "    .link{color:var(--accent);text-decoration:none;}\n"
+        "    .link:hover{text-decoration:underline;}\n"
+        "    .footer{margin-top:14px;color:var(--muted);font-size:.92rem;}\n"
         "  </style>\n"
         "</head>\n"
         "<body>\n"
-        "  <h1>Kittyhack is in remote-control mode</h1>\n"
-        "  <div class=\"card\">\n"
-        f"    <p><strong>Controlled:</strong> {controlled}</p>\n"
-        f"    <p><strong>Controller ID:</strong> <code>{controller}</code></p>\n"
-        f"    {remote_link}\n"
-        "    <p>This device is currently controlled via <code>kittyhack_control</code> (WebSocket port 8888)."
-        "       The normal Kittyhack UI on this device is stopped while control is active.</p>\n"
+        "  <div class=\"wrap\">\n"
+        f"    <h1>{t['h_remote']}</h1>\n"
+        "    <div class=\"card\">\n"
+        f"      <div class=\"kv\"><div class=\"k\">{t['remote_active']}</div><div class=\"v\">{controlled}</div></div>\n"
+        f"      {remote_link}\n"
+        f"      <p class=\"footer\">{t['p_remote']}</p>\n"
+        "    </div>\n"
         "  </div>\n"
         "</body>\n"
         "</html>\n"
@@ -200,37 +301,63 @@ def _build_info_page_html() -> str:
 
 def _build_boot_wait_page_html() -> str:
     # Minimal standalone UI: countdown + skip + disable.
+    t = _page_text()
+    lang = _ui_language()
+    js_i18n = {
+        "remote_active": t["st_remote_active"],
+        "remote_connected": t["st_remote_connected"],
+        "starting": t["st_starting"],
+        "starting_msg": t["st_starting_msg"],
+        "remote_attempt": t["st_remote_attempt"],
+        "remote_attempt_msg": t["st_remote_attempt_msg"],
+        "seconds_suffix": t["seconds_suffix"],
+    }
     return (
         "<!doctype html>\n"
-        "<html lang=\"en\">\n"
+        f"<html lang=\"{lang}\">\n"
         "<head>\n"
         "  <meta charset=\"utf-8\">\n"
         "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-        "  <title>Kittyhack Startup</title>\n"
+        f"  <title>{t['title_startup']}</title>\n"
+        "  <meta name=\"color-scheme\" content=\"light dark\">\n"
         "  <style>\n"
-        "    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;"
-        "         margin:2rem;max-width:55rem;line-height:1.5;}\n"
-        "    .card{border:1px solid #ddd;border-radius:12px;padding:1.25rem;}\n"
-        "    .row{display:flex;gap:.75rem;flex-wrap:wrap;margin-top:1rem;}\n"
-        "    button{padding:.6rem .9rem;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer;}\n"
-        "    button.primary{border-color:#999;font-weight:600;}\n"
-        "    button:disabled{opacity:.6;cursor:not-allowed;}\n"
-        "    code{background:#f6f8fa;padding:.15rem .35rem;border-radius:6px;}\n"
-        "    .muted{color:#666;}\n"
+        "    :root{--bg:#f6f7fb;--bg2:#eef2ff;--card:#ffffff;--text:#0b1220;--muted:#5b6475;"
+        "          --border:rgba(15,23,42,.14);--shadow:0 12px 30px rgba(15,23,42,.10);--accent:#2563eb;}\n"
+        "    @media (prefers-color-scheme: dark){\n"
+        "      :root{--bg:#0b1020;--bg2:#111a33;--card:#0f172a;--text:#e5e7eb;--muted:#9aa3b2;"
+        "            --border:rgba(226,232,240,.14);--shadow:0 18px 40px rgba(0,0,0,.35);--accent:#60a5fa;}\n"
+        "    }\n"
+        "    *{box-sizing:border-box;}\n"
+        "    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;"
+        "         line-height:1.55;background:radial-gradient(1200px 700px at 15% 0%,var(--bg2),var(--bg));color:var(--text);}\n"
+        "    .wrap{max-width:860px;margin:0 auto;padding:28px 18px 44px;}\n"
+        "    .card{background:var(--card);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow);padding:22px 20px;}\n"
+        "    h1{font-size:1.55rem;letter-spacing:-.02em;margin:0 0 14px;}\n"
+        "    p{margin:.45rem 0;}\n"
+        "    .row{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:14px;}\n"
+        "    button{padding:.72rem .95rem;border-radius:12px;border:1px solid var(--border);background:rgba(148,163,184,.12);color:var(--text);cursor:pointer;}\n"
+        "    button.primary{background:var(--accent);border-color:transparent;color:#fff;font-weight:700;}\n"
+        "    button:disabled{opacity:.55;cursor:not-allowed;}\n"
+        "    code{background:rgba(148,163,184,.18);padding:.12rem .36rem;border-radius:8px;}\n"
+        "    .muted{color:var(--muted);}\n"
+        "    .mono{font-variant-numeric:tabular-nums;}\n"
         "  </style>\n"
         "</head>\n"
         "<body>\n"
-        "  <h1>Waiting for remote connection</h1>\n"
-        "  <div class=\"card\">\n"
-        "    <p>This Kittyflap is configured to wait for a remote-control connection after reboot.</p>\n"
-        "    <p><strong>Autostart Kittyhack in:</strong> <span id=\"countdown\">...</span></p>\n"
-        "    <p class=\"muted\" id=\"status\"></p>\n"
-        "    <div class=\"row\">\n"
-        "      <button class=\"primary\" id=\"btnSkip\">Skip wait (start Kittyhack now)</button>\n"
-        "      <button id=\"btnDisable\">Disable wait after reboot</button>\n"
+        "  <div class=\"wrap\">\n"
+        f"    <h1>{t['h_wait']}</h1>\n"
+        "    <div class=\"card\">\n"
+        f"      <p>{t['p_wait']}</p>\n"
+        f"      <p><strong>{t['autostart_in']}:</strong> <span class=\"mono\" id=\"countdown\">...</span></p>\n"
+        "      <p class=\"muted\" id=\"status\" aria-live=\"polite\"></p>\n"
+        "      <div class=\"row\">\n"
+        f"        <button class=\"primary\" id=\"btnSkip\">{t['btn_skip']}</button>\n"
+        f"        <button id=\"btnDisable\">{t['btn_disable']}</button>\n"
+        "      </div>\n"
         "    </div>\n"
         "  </div>\n"
         "  <script>\n"
+        f"    const I18N = {json.dumps(js_i18n, ensure_ascii=False)};\n"
         "    async function post(path){\n"
         "      try{ await fetch(path,{method:'POST'});}catch(e){}\n"
         "    }\n"
@@ -241,24 +368,24 @@ def _build_boot_wait_page_html() -> str:
         "        const cd = document.getElementById('countdown');\n"
         "        const msg = document.getElementById('status');\n"
         "        if(st.controlled){\n"
-        "          cd.textContent = 'remote control active';\n"
-        "          msg.textContent = 'A remote controller is connected.';\n"
+        "          cd.textContent = I18N.remote_active;\n"
+        "          msg.textContent = I18N.remote_connected;\n"
         "          document.getElementById('btnSkip').disabled = true;\n"
         "          document.getElementById('btnDisable').disabled = true;\n"
         "          return;\n"
         "        }\n"
         "        if(!st.boot_wait_active){\n"
-        "          cd.textContent = 'starting...';\n"
-        "          msg.textContent = 'Kittyhack is starting.';\n"
+        "          cd.textContent = I18N.starting;\n"
+        "          msg.textContent = I18N.starting_msg;\n"
         "          document.getElementById('btnSkip').disabled = true;\n"
         "          document.getElementById('btnDisable').disabled = true;\n"
         "          return;\n"
         "        }\n"
         "        if(st.boot_wait_takeover_attempted){\n"
-        "          cd.textContent = 'remote attempt detected';\n"
-        "          msg.textContent = 'Remote control attempt detected. Waiting for controller...';\n"
+        "          cd.textContent = I18N.remote_attempt;\n"
+        "          msg.textContent = I18N.remote_attempt_msg;\n"
         "        }else{\n"
-        "          cd.textContent = Math.max(0, Math.ceil(st.boot_wait_remaining_s)) + ' s';\n"
+        "          cd.textContent = Math.max(0, Math.ceil(st.boot_wait_remaining_s)) + I18N.seconds_suffix;\n"
         "          msg.textContent = '';\n"
         "        }\n"
         "      }catch(e){}\n"

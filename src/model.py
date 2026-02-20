@@ -1371,6 +1371,10 @@ class ModelHandler:
                 if frame is not None:
                     # Run the CPU intensive model inference only if not paused
                     timestamp = tm.time()
+                    try:
+                        timestamp_mono = tm.monotonic()
+                    except Exception:
+                        timestamp_mono = None
 
                     if self.model == "tflite":
                         own_cat_probability = 0 # Not supported in the original Kittyflap TFLite models
@@ -1412,7 +1416,8 @@ class ModelHandler:
                     
                     if not first_run:
                         image_buffer.append(timestamp, self.encode_jpg_image(frame), None, 
-                                            mouse_probability, no_mouse_probability, own_cat_probability, detected_objects=detected_objects)
+                                            mouse_probability, no_mouse_probability, own_cat_probability, detected_objects=detected_objects,
+                                            timestamp_mono=timestamp_mono)
 
                     # Calculate framerate
                     t2 = cv2.getTickCount()

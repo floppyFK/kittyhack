@@ -1452,18 +1452,67 @@ class Gpio:
         logging.info(f"GPIO{gpio_number} configured successfully as {gpio_direction}")
         return True
 
-    def _read_last_write_ts(self) -> float:
+    def _get_boot_id(self) -> str | None:
+        """Return a stable boot identifier for the current Linux boot.
+
+        This allows us to discard persisted monotonic timestamps from a previous
+        boot, where the monotonic clock has reset.
+        """
+        for path in ("/proc/sys/kernel/random/boot_id",):
+            try:
+                if os.path.exists(path):
+                    with open(path, "r", encoding="utf-8") as f:
+                        boot_id = (f.read() or "").strip()
+                        return boot_id or None
+            except Exception:
+                continue
+        return None
+
+    def _read_last_write_mono(self) -> float:
+        """Read last write timestamp in monotonic seconds.
+
+        Returns 0.0 if no state exists.
+        """
         try:
             with open(self.SAFETY_STATE_FILE, "r", encoding="utf-8") as state_file:
-                data = json.load(state_file)
-                return float(data.get("last_write_ts", 0.0) or 0.0)
+                data = json.load(state_file) or {}
+
+            # If this state file is from a previous boot, ignore it.
+            try:
+                stored_boot = data.get("boot_id")
+                current_boot = self._get_boot_id()
+                if stored_boot and current_boot and stored_boot != current_boot:
+                    return 0.0
+            except Exception:
+                pass
+
+            last_mono = data.get("last_write_mono")
+            if last_mono is not None:
+                return float(last_mono or 0.0)
+
+            return 0.0
         except Exception:
             return 0.0
 
-    def _write_last_write_ts(self, gpio_number: int, value: int) -> None:
+    def _write_last_write_state(self, gpio_number: int, value: int) -> None:
+        try:
+            now_mono = tm.monotonic()
+        except Exception:
+            now_mono = 0.0
+
+        try:
+            now_wall = tm.time()
+        except Exception:
+            now_wall = 0.0
+
         try:
             payload = {
-                "last_write_ts": tm.time(),
+                # Monotonic value used for safety delay computation.
+                "last_write_mono": float(now_mono),
+                # Boot ID prevents cross-boot monotonic mix-ups.
+                "boot_id": self._get_boot_id(),
+                # Kept for debugging/telemetry only (do not use for delay logic).
+                "last_write_ts": float(now_wall),
                 "last_gpio": int(gpio_number),
                 "last_value": int(value),
             }
@@ -1492,8 +1541,10 @@ class Gpio:
             fcntl.flock(lock_file, fcntl.LOCK_EX)
             try:
                 with self._safety_thread_lock:
-                    now = tm.time()
-                    last_ts = self._read_last_write_ts()
+                    # Use monotonic time so NTP/DST/timezone changes cannot
+                    # shorten or skip the safety delay.
+                    now = tm.monotonic()
+                    last_ts = self._read_last_write_mono()
                     wait_s = max(0.0, float(self.SAFETY_DELAY_S) - (now - last_ts))
                     if wait_s > 0.0:
                         logging.warning(f"[GPIO] Enforcing safety delay of {wait_s:.3f}s before GPIO{gpio_number} write.")
@@ -1501,7 +1552,7 @@ class Gpio:
 
                     ok = self._set_raw(gpio_number, value)
                     if ok:
-                        self._write_last_write_ts(int(gpio_number), int(value))
+                        self._write_last_write_state(int(gpio_number), int(value))
                     return ok
             finally:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)

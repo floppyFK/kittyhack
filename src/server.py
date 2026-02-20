@@ -3,6 +3,7 @@ import configparser
 import pandas as pd
 from datetime import datetime, timedelta
 import time as tm
+from src.clock import monotonic_time
 from shiny import render, ui, reactive, module
 from shiny.types import FileInfo
 import logging
@@ -652,19 +653,19 @@ def start_background_task():
     sigterm_monitor.register_task()
 
     def run_periodically():
-        last_periodic_jobs_run = tm.time() # Start the first periodic jobs in PERIODIC_JOBS_INTERVAL seconds
+        last_periodic_jobs_run_mono = monotonic_time()  # Start the first periodic jobs in PERIODIC_JOBS_INTERVAL seconds
 
         # Model training status check cadence (seconds)
-        last_model_training_check = tm.time() - 120  # allow immediate first check after boot
+        last_model_training_check_mono = monotonic_time() - 120  # allow immediate first check after boot
 
         # --- Added migration control state ---
-        migration_last_ts = tm.time() - 5  # allow immediate first run
+        migration_last_mono = monotonic_time() - 5  # allow immediate first run
         migration_in_progress = False
         migration_batch_size = 200
         global ids_with_original_blob  # reuse list defined at startup
 
         # --- APT updates cadence state (24h) ---
-        last_apt_update_ts = tm.time() - 86400  # allow immediate first check on boot
+        last_apt_update_mono = monotonic_time() - 86400  # allow immediate first check on boot
 
         while not sigterm_monitor.stop_now:
             # --- Background legacy image migration (every >=5s) ---
@@ -672,7 +673,7 @@ def start_background_task():
             try:
                 if (not migration_in_progress
                     and ids_with_original_blob
-                    and (tm.time() - migration_last_ts) >= 5):
+                    and (monotonic_time() - migration_last_mono) >= 5):
                     migration_in_progress = True
                     batch = ids_with_original_blob[:migration_batch_size]
                     logging.info(f"[BG_MIGRATION] Starting migration batch of {len(batch)} IDs (remaining total: {len(ids_with_original_blob)})")
@@ -695,17 +696,17 @@ def start_background_task():
                             logging.info("[BG_MIGRATION] All legacy image blobs migrated successfully.")
                     else:
                         logging.warning(f"[BG_MIGRATION] Batch migration failed: {result.message}")
-                    migration_last_ts = tm.time()
+                    migration_last_mono = monotonic_time()
                     migration_in_progress = False
             except Exception as e:
                 logging.error(f"[BG_MIGRATION] Unexpected migration error: {e}")
                 migration_in_progress = False
-                migration_last_ts = tm.time()
+                migration_last_mono = monotonic_time()
 
             # --- Model training status polling (every 120s, only if a training is active) ---
-            now = tm.time()
-            if (now - last_model_training_check) >= 120:
-                last_model_training_check = now
+            now_mono = monotonic_time()
+            if (now_mono - last_model_training_check_mono) >= 120:
+                last_model_training_check_mono = now_mono
                 try:
                     if is_valid_uuid4(CONFIG.get("MODEL_TRAINING", "")):
                         # Important: do not emit UI notifications from the background thread.
@@ -715,15 +716,15 @@ def start_background_task():
 
             # --- Main periodic jobs (every PERIODIC_JOBS_INTERVAL seconds) ---
             # Periodically check that the kwork and manager services are NOT running anymore
-            now = tm.time()
-            if now - last_periodic_jobs_run >= CONFIG['PERIODIC_JOBS_INTERVAL']:
-                last_periodic_jobs_run = now
+            now_mono = monotonic_time()
+            if now_mono - last_periodic_jobs_run_mono >= CONFIG['PERIODIC_JOBS_INTERVAL']:
+                last_periodic_jobs_run_mono = now_mono
                 check_and_stop_kittyflap_services(CONFIG['SIMULATE_KITTYFLAP'])
                 immediate_bg_task("background task")
 
                 # --- Base-system APT updates (once per 24h, only at night between 2:00 and 4:00) ---
                 try:
-                    hours_since_last_apt = (tm.time() - last_apt_update_ts) / 3600.0
+                    hours_since_last_apt = (monotonic_time() - last_apt_update_mono) / 3600.0
                     current_time = datetime.now()
                     in_night_window = 2 <= current_time.hour < 4
 
@@ -736,10 +737,10 @@ def start_background_task():
                             else:
                                 logging.error(f"[APT] Upgrade failed: {msg}")
                             # Update timestamp regardless to avoid retry storms
-                            last_apt_update_ts = tm.time()
+                            last_apt_update_mono = monotonic_time()
                 except Exception as e:
                     logging.error(f"[APT] Unexpected error in periodic APT update: {e}")
-                    last_apt_update_ts = tm.time()
+                    last_apt_update_mono = monotonic_time()
 
                 # Cleanup the events table
                 cleanup_deleted_events(CONFIG['KITTYHACK_DATABASE_PATH'])
@@ -1060,7 +1061,7 @@ def show_event_server(input, output, session, block_id: int):
             frame_tick.set(int(frame_tick.get()) + 1)
         except Exception:
             # last-resort fallback
-            frame_tick.set(tm.time())
+            frame_tick.set(monotonic_time())
 
     @render.ui
     def event_nav_controls():
@@ -2850,15 +2851,30 @@ def server(input, output, session):
             timeout_s = 10.0
         connect_timeout = max(20.0, min(120.0, float(timeout_s or 10.0) * 4.0))
         sync_timeout = max(180.0, float(timeout_s or 10.0) * 120.0)
-        now = tm.time()
         try:
             requested_at = float(st.get("requested_at") or 0.0)
             started_at = float(st.get("started_at") or 0.0)
+            requested_at_mono = float(st.get("requested_at_mono") or 0.0)
+            started_at_mono = float(st.get("started_at_mono") or 0.0)
         except Exception:
             requested_at = 0.0
             started_at = 0.0
-        age = max(0.0, now - requested_at) if requested_at else 0.0
-        sync_age = max(0.0, now - started_at) if started_at else 0.0
+            requested_at_mono = 0.0
+            started_at_mono = 0.0
+
+        if requested_at_mono:
+            now_mono = monotonic_time()
+            age = max(0.0, now_mono - requested_at_mono)
+        else:
+            now_wall = tm.time()
+            age = max(0.0, now_wall - requested_at) if requested_at else 0.0
+
+        if started_at_mono:
+            now_mono = monotonic_time()
+            sync_age = max(0.0, now_mono - started_at_mono)
+        else:
+            now_wall = tm.time()
+            sync_age = max(0.0, now_wall - started_at) if started_at else 0.0
 
         if requested and ok is None and not in_progress and age > connect_timeout:
             show_remote_initial_sync_modal(error_reason=_("Could not connect to the remote Kittyflap."))
@@ -3196,7 +3212,7 @@ def server(input, output, session):
                 if not remote_ready:
                     _set_live_status_if_changed({"ok": False, "remote_waiting": True})
 
-                    now = tm.time()
+                    now = monotonic_time()
                     last_log = getattr(update_live_status, "_last_remote_not_ready_log", 0.0)
                     if (now - float(last_log or 0.0)) > 10.0:
                         logging.info("[LIVE_STATUS] Remote control not connected yet; skipping live status update.")
@@ -3222,7 +3238,7 @@ def server(input, output, session):
                 # During boot the backend (and thus Magnets.init()) may not be ready yet.
                 _set_live_status_if_changed({"ok": False, "remote_waiting": False})
 
-                now = tm.time()
+                now = monotonic_time()
                 last_log = getattr(update_live_status, "_last_hw_not_ready_log", 0.0)
                 if (now - float(last_log or 0.0)) > 10.0:
                     logging.info("[LIVE_STATUS] Hardware not yet initialized; skipping live status update.")
@@ -3253,9 +3269,10 @@ def server(input, output, session):
                 outside_motion_state = motion_state["outside"]
                 inside_motion_state = motion_state["inside"]
 
-            if hasattr(backend_main, "prey_detection_tm"):
-                delta_to_last_prey_detection = tm.time() - float(backend_main.prey_detection_tm)
-                time_until_release = CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'] - delta_to_last_prey_detection
+            prey_detection_mono = float(getattr(backend_main, "prey_detection_mono", 0.0) or 0.0)
+            if prey_detection_mono > 0.0:
+                delta_to_last_prey_detection = monotonic_time() - prey_detection_mono
+                time_until_release = float(CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION']) - delta_to_last_prey_detection
                 forced_lock_due_prey = time_until_release > 0
             else:
                 delta_to_last_prey_detection = 0
@@ -3298,7 +3315,7 @@ def server(input, output, session):
                 pass
         except Exception as e:
             # Throttle errors here; during boot transient None/IO errors can happen.
-            now = tm.time()
+            now = monotonic_time()
             last_log = getattr(update_live_status, "_last_error_log", 0.0)
             if (now - float(last_log or 0.0)) > 10.0:
                 logging.exception("Failed to update live status: %s", e)
@@ -3332,7 +3349,7 @@ def server(input, output, session):
 
         if not hasattr(live_view_image, "last_frame_hash"):
             live_view_image.last_frame_hash = None
-            live_view_image.last_change_time = tm.time()
+            live_view_image.last_change_time = monotonic_time()
             live_view_image.last_ar_w = 4
             live_view_image.last_ar_h = 3
             live_view_image.visible_frame_jpg = None
@@ -3362,7 +3379,7 @@ def server(input, output, session):
             # Camera config changed: never show an old buffered frame.
             live_view_image.last_camera_key = camera_key
             live_view_image.last_frame_hash = None
-            live_view_image.last_change_time = tm.time()
+            live_view_image.last_change_time = monotonic_time()
             live_view_image.visible_frame_jpg = None
             live_view_image.visible_frame_hash = None
             live_view_image.preload_frame_jpg = None
@@ -3421,13 +3438,13 @@ def server(input, output, session):
                         pass
 
                     if frame_hash != live_view_image.last_frame_hash:
-                        live_view_image.last_change_time = tm.time()
+                        live_view_image.last_change_time = monotonic_time()
                         live_view_image.last_frame_hash = frame_hash
                         live_view_image.preload_frame_jpg = frame_jpg
                         live_view_image.preload_frame_hash = frame_hash
 
                     if (
-                        tm.time() - live_view_image.last_change_time > 5
+                        monotonic_time() - live_view_image.last_change_time > 5
                         and CONFIG.get("CAMERA_SOURCE") == "ip_camera"
                     ):
                         img_html = (
@@ -4230,6 +4247,7 @@ def server(input, output, session):
     def on_action_reset_prey_cooldown():
         logging.info(f"[SERVER] Resetting prey cooldown now")
         backend_main.prey_detection_tm = 0.0
+        backend_main.prey_detection_mono = 0.0
 
     # Add a delayed-load flag for the Last Events table
     last_events_ready = reactive.Value(False)
@@ -5811,19 +5829,19 @@ def server(input, output, session):
         
         # Wait up to 10 seconds for the process to stop
         max_wait_time = 10  # seconds
-        start_time = tm.time()
+        start_time = monotonic_time()
         
         with ui.Progress(min=0, max=100) as p:
             p.set(message=_("Stopping Label Studio..."), detail=_("Please wait..."))
             
-            while tm.time() - start_time < max_wait_time:
+            while monotonic_time() - start_time < max_wait_time:
                 if not get_labelstudio_status():
                     ui.notification_show(_("Label Studio stopped successfully."), duration=5, type="message")
                     reload_trigger_ai.set(reload_trigger_ai.get() + 1)
                     return
                 
                 # Update progress
-                progress_percent = int(((tm.time() - start_time) / max_wait_time) * 100)
+                progress_percent = int(((monotonic_time() - start_time) / max_wait_time) * 100)
                 p.set(progress_percent)
                 tm.sleep(0.5)
         
@@ -5839,12 +5857,12 @@ def server(input, output, session):
         # Wait up to 300 seconds for the process to start
         # The first start may take a lot longer, so we set a higher timeout
         max_wait_time = 300  # seconds
-        start_time = tm.time()
+        start_time = monotonic_time()
         
         with ui.Progress(min=0, max=100) as p:
             p.set(message=_("Starting Label Studio..."), detail=_("Please wait...") + " " + _("(The first start of Label Studio may take several minutes!)"))
             
-            while tm.time() - start_time < max_wait_time:
+            while monotonic_time() - start_time < max_wait_time:
                 # Check if service is running and the web server is responding on port 8080
                 if get_labelstudio_status():
                     if is_port_open(8080):
@@ -5853,7 +5871,7 @@ def server(input, output, session):
                         return
                 
                 # Update progress
-                progress_percent = int(((tm.time() - start_time) / max_wait_time) * 100)
+                progress_percent = int(((monotonic_time() - start_time) / max_wait_time) * 100)
                 p.set(progress_percent)
                 tm.sleep(0.5)
         

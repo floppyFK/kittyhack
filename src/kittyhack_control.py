@@ -21,6 +21,7 @@ from src.system import (
     switch_wlan_connection,
     systemcmd,
     is_service_running,
+    update_kittyhack,
 )
 from src.paths import install_base, kittyhack_root, pictures_root, models_yolo_root
 from src.mode import is_remote_mode
@@ -975,6 +976,41 @@ async def _handle_sync_request(ws: WebSocketServerProtocol, include_labelstudio:
         STATE.sync_in_progress = False
 
 
+async def _handle_update_request(ws: WebSocketServerProtocol, latest_version: str = "", current_version: str = ""):
+    """Run kittyhack update on target device and report begin/end status."""
+    STATE.sync_in_progress = True
+    try:
+        await ws.send(json.dumps({"type": "update_begin", "ok": True}))
+    except Exception:
+        STATE.sync_in_progress = False
+        return
+
+    try:
+        ok, reason = await asyncio.to_thread(
+            update_kittyhack,
+            None,
+            latest_version or None,
+            current_version or None,
+        )
+        await ws.send(json.dumps({"type": "update_end", "ok": bool(ok), "reason": str(reason or "")}))
+    except Exception as e:
+        logging.error(f"[CONTROL] Target update failed: {e}")
+        try:
+            await ws.send(json.dumps({"type": "update_end", "ok": False, "reason": str(e)}))
+        except Exception:
+            pass
+    finally:
+        STATE.sync_in_progress = False
+
+
+async def _reboot_later(delay_s: float = 0.2) -> None:
+    await asyncio.sleep(max(0.0, float(delay_s)))
+    try:
+        systemcmd(["/sbin/reboot"], bool(CONFIG.get("SIMULATE_KITTYFLAP")))
+    except Exception:
+        pass
+
+
 async def _handler(ws: WebSocketServerProtocol):
     try:
         async for msg in ws:
@@ -1022,6 +1058,20 @@ async def _handler(ws: WebSocketServerProtocol):
             if t == "sync_request":
                 include_labelstudio = bool(data.get("include_labelstudio", False))
                 await _handle_sync_request(ws, include_labelstudio=include_labelstudio)
+                continue
+
+            if t == "update_request":
+                latest_version = str(data.get("latest_version") or "")
+                current_version = str(data.get("current_version") or "")
+                await _handle_update_request(ws, latest_version=latest_version, current_version=current_version)
+                continue
+
+            if t == "reboot_request":
+                try:
+                    await ws.send(json.dumps({"type": "reboot_ack", "ok": True}))
+                except Exception:
+                    pass
+                asyncio.create_task(_reboot_later(0.2))
                 continue
 
     except Exception:

@@ -4595,8 +4595,42 @@ def server(input, output, session):
         state = get_update_progress()
         if state["result"] == "ok" or state["result"] == "reboot_dialog":
             set_update_progress(in_progress=False, result=None)
+
+        if is_remote_mode():
+            try:
+                from src.remote.control_client import RemoteControlClient
+
+                client = RemoteControlClient.instance()
+                client.ensure_started()
+                if not client.wait_until_ready(timeout=5.0):
+                    ui.notification_show(
+                        _("Remote target is not connected. Cannot reboot both devices right now."),
+                        duration=10,
+                        type="error",
+                    )
+                    return
+
+                if not client.request_target_reboot(timeout=5.0):
+                    ui.notification_show(
+                        _("Failed to trigger reboot on target device. Please check remote connection and try again."),
+                        duration=10,
+                        type="error",
+                    )
+                    return
+            except Exception as e:
+                logging.error(f"[REMOTE_MODE] Failed to trigger target reboot: {e}")
+                ui.notification_show(
+                    _("Failed to trigger reboot on target device: {}.").format(e),
+                    duration=12,
+                    type="error",
+                )
+                return
+
         ui.modal_remove()
-        ui.modal_show(ui.modal(_("Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reload the page after the restart."), title=_("Restart Kittyflap"), footer=None))
+        reboot_message = _("Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reload the page after the restart.")
+        if is_remote_mode():
+            reboot_message = _("Both devices are rebooting now... This may take 1 or 2 minutes. Please reconnect and reload the page afterwards.")
+        ui.modal_show(ui.modal(reboot_message, title=_("Restart Kittyflap"), footer=None))
         systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
 
     @reactive.Effect
@@ -8249,7 +8283,7 @@ def server(input, output, session):
         set_update_progress(
             in_progress=True,
             step=1,
-            max_steps=8,
+            max_steps=9 if is_remote_mode() else 8,
             message=_("Starting update..."),
             detail="",
             result=None,
@@ -8258,11 +8292,92 @@ def server(input, output, session):
 
         # Start the update in a background thread so the UI can update immediately
         def run_update():
+            remote_mode_active = bool(is_remote_mode())
+
+            def _set_error_and_stop(message: str):
+                logging.error(f"Kittyhack update failed: {message}")
+                set_update_progress(result="error", in_progress=False, error_msg=message)
+
+            if remote_mode_active:
+                try:
+                    from src.remote.control_client import RemoteControlClient
+
+                    set_update_progress(
+                        in_progress=True,
+                        step=1,
+                        max_steps=9,
+                        message=_("Updating connected target device..."),
+                        detail=_("Preparing remote update..."),
+                        result=None,
+                        error_msg="",
+                    )
+
+                    client = RemoteControlClient.instance()
+                    client.ensure_started()
+                    if not client.wait_until_ready(timeout=20.0):
+                        _set_error_and_stop(_("Remote target is not connected."))
+                        return
+
+                    client.start_target_update(latest_version=latest_version, current_version=current_version)
+                    target_update_started_at = monotonic_time()
+
+                    while True:
+                        if not client.wait_until_ready(timeout=0):
+                            _set_error_and_stop(_("Connection to target device was lost during update."))
+                            return
+
+                        if (monotonic_time() - float(target_update_started_at or 0.0)) > 3600.0:
+                            _set_error_and_stop(_("Timed out while waiting for target device update."))
+                            return
+
+                        status = client.get_target_update_status()
+                        if status.get("ok") is False:
+                            reason = str(status.get("reason") or _("Unknown target update error."))
+                            _set_error_and_stop(_("Target device update failed: {}.").format(reason))
+                            return
+                        if status.get("ok") is True:
+                            set_update_progress(
+                                in_progress=True,
+                                step=1,
+                                max_steps=9,
+                                message=_("Connected target device updated."),
+                                detail=_("Starting update on this device..."),
+                                result=None,
+                                error_msg="",
+                            )
+                            break
+
+                        if status.get("in_progress"):
+                            detail = _("Target update is running...")
+                        elif status.get("requested"):
+                            detail = _("Waiting for target update to start...")
+                        else:
+                            detail = _("Waiting for remote target response...")
+
+                        set_update_progress(
+                            in_progress=True,
+                            step=1,
+                            max_steps=9,
+                            message=_("Updating connected target device..."),
+                            detail=detail,
+                            result=None,
+                            error_msg="",
+                        )
+                        tm.sleep(1.0)
+                except Exception as e:
+                    _set_error_and_stop(_("Failed to run target update: {}.").format(e))
+                    return
+
             def progress_callback(step, message, detail):
+                mapped_step = int(step)
+                mapped_max_steps = 8
+                if remote_mode_active:
+                    mapped_step = max(1, min(9, int(step) + 1))
+                    mapped_max_steps = 9
                 set_update_progress(
                     in_progress=True,
-                    step=step,
-                    max_steps=8,
+                    step=mapped_step,
+                    max_steps=mapped_max_steps,
                     message=message,
                     detail=detail,
                     result=None,

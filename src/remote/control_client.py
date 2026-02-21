@@ -63,6 +63,23 @@ class RemoteControlClient:
             "items": [],
         }
 
+        self._target_update_done_event = threading.Event()
+        self._target_update_status_lock = threading.Lock()
+        self._target_update_status: dict[str, Any] = {
+            "requested": False,
+            "in_progress": False,
+            "ok": None,
+            "reason": "",
+            "requested_at": 0.0,
+            "requested_at_mono": 0.0,
+            "started_at": 0.0,
+            "started_at_mono": 0.0,
+            "finished_at": 0.0,
+            "finished_at_mono": 0.0,
+        }
+        self._target_reboot_ack_event = threading.Event()
+        self._target_reboot_ack_ok = False
+
     @classmethod
     def instance(cls) -> "RemoteControlClient":
         if cls._instance is None:
@@ -179,6 +196,47 @@ class RemoteControlClient:
     def wait_for_sync_completion(self, timeout: float = 300.0) -> bool:
         return self._sync_done_event.wait(timeout=timeout)
 
+    def start_target_update(self, latest_version: str, current_version: str) -> bool:
+        with self._target_update_status_lock:
+            self._target_update_done_event.clear()
+            self._target_update_status.update(
+                {
+                    "requested": True,
+                    "in_progress": False,
+                    "ok": None,
+                    "reason": "",
+                    "requested_at": time.time(),
+                    "requested_at_mono": monotonic_time(),
+                    "started_at": 0.0,
+                    "started_at_mono": 0.0,
+                    "finished_at": 0.0,
+                    "finished_at_mono": 0.0,
+                }
+            )
+
+        self._send_async(
+            {
+                "type": "update_request",
+                "latest_version": str(latest_version or ""),
+                "current_version": str(current_version or ""),
+            }
+        )
+        return True
+
+    def get_target_update_status(self) -> dict[str, Any]:
+        with self._target_update_status_lock:
+            return dict(self._target_update_status)
+
+    def wait_for_target_update_completion(self, timeout: float = 1800.0) -> bool:
+        return self._target_update_done_event.wait(timeout=timeout)
+
+    def request_target_reboot(self, timeout: float = 5.0) -> bool:
+        self._target_reboot_ack_event.clear()
+        self._target_reboot_ack_ok = False
+        self._send_async({"type": "reboot_request"})
+        got_ack = self._target_reboot_ack_event.wait(timeout=max(0.0, float(timeout or 0.0)))
+        return bool(got_ack and self._target_reboot_ack_ok)
+
     def abort_initial_sync(self, reason: str = "aborted by user") -> None:
         tmp_path = None
         with self._sync_status_lock:
@@ -223,6 +281,7 @@ class RemoteControlClient:
         self._ready_for_use.clear()
         self._control_acquired = False
         self._ws = None
+        self._target_reboot_ack_event.set()
         with self._lock:
             self._pending_magnet_commands.clear()
 
@@ -384,6 +443,34 @@ class RemoteControlClient:
                 self._sync_status["finished_at"] = time.time()
                 self._sync_status["finished_at_mono"] = monotonic_time()
             self._sync_done_event.set()
+            return
+
+        elif t == "update_begin":
+            with self._target_update_status_lock:
+                self._target_update_status["in_progress"] = True
+                self._target_update_status["ok"] = None
+                self._target_update_status["reason"] = ""
+                self._target_update_status["started_at"] = time.time()
+                self._target_update_status["started_at_mono"] = monotonic_time()
+                self._target_update_status["finished_at"] = 0.0
+                self._target_update_status["finished_at_mono"] = 0.0
+            return
+
+        elif t == "update_end":
+            ok = bool(data.get("ok", False))
+            reason = str(data.get("reason") or "")
+            with self._target_update_status_lock:
+                self._target_update_status["in_progress"] = False
+                self._target_update_status["ok"] = ok
+                self._target_update_status["reason"] = reason
+                self._target_update_status["finished_at"] = time.time()
+                self._target_update_status["finished_at_mono"] = monotonic_time()
+            self._target_update_done_event.set()
+            return
+
+        elif t == "reboot_ack":
+            self._target_reboot_ack_ok = bool(data.get("ok", False))
+            self._target_reboot_ack_event.set()
             return
 
     async def _handle_binary(self, payload: bytes) -> None:

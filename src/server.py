@@ -4626,60 +4626,41 @@ def server(input, output, session):
             set_update_progress(in_progress=False, result=None)
 
         if is_remote_mode():
+            # Fast path: do not block local reboot for long reconnect waits.
+            # Trigger target reboot best-effort using quick websocket/http attempts.
+            reboot_ack = False
+            target_host = str(CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
+
             try:
                 from src.remote.control_client import RemoteControlClient
 
                 client = RemoteControlClient.instance()
                 client.ensure_started()
-                target_host = str(CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
-
-                def _try_http_target_reboot() -> bool:
-                    if not target_host:
-                        return False
-                    try:
-                        req = urllib_request.Request(
-                            f"http://{target_host}/api/reboot",
-                            data=b"",
-                            method="POST",
-                        )
-                        with urllib_request.urlopen(req, timeout=3.0) as resp:
-                            return int(getattr(resp, "status", 200) or 200) < 300
-                    except urllib_error.URLError:
-                        return False
-                    except Exception:
-                        return False
-
-                reboot_ack = False
-                if client.wait_until_ready(timeout=20.0):
-                    for _attempt in range(3):
-                        if client.request_target_reboot(timeout=5.0):
-                            reboot_ack = True
-                            break
-                        tm.sleep(0.5)
-
-                # Fallback path: if control websocket is not yet back, try target control HTTP API.
-                if not reboot_ack:
-                    reboot_ack = _try_http_target_reboot()
-
-                if not reboot_ack:
-                    ui.notification_show(
-                        _("Failed to trigger reboot on target device. Please check remote connection and try again."),
-                        duration=10,
-                        type="error",
-                    )
-                    return
+                # Only use immediate readiness check (no long wait).
+                if client.wait_until_ready(timeout=0.0):
+                    reboot_ack = bool(client.request_target_reboot(timeout=1.0))
             except Exception as e:
-                logging.error(f"[REMOTE_MODE] Failed to trigger target reboot: {e}")
-                ui.notification_show(
-                    _("Failed to trigger reboot on target device: {}.").format(e),
-                    duration=12,
-                    type="error",
-                )
-                return
+                logging.warning(f"[REMOTE_MODE] Quick websocket target reboot trigger failed: {e}")
 
-            # Give the target a short grace period to execute its reboot command
-            # before rebooting the remote-mode device itself.
-            tm.sleep(1.0)
+            if (not reboot_ack) and target_host:
+                try:
+                    req = urllib_request.Request(
+                        f"http://{target_host}/api/reboot",
+                        data=b"",
+                        method="POST",
+                    )
+                    with urllib_request.urlopen(req, timeout=1.0) as resp:
+                        reboot_ack = int(getattr(resp, "status", 200) or 200) < 300
+                except urllib_error.URLError:
+                    reboot_ack = False
+                except Exception:
+                    reboot_ack = False
+
+            if not reboot_ack:
+                logging.warning("[REMOTE_MODE] Target reboot trigger not confirmed; proceeding with local reboot immediately.")
+
+            # Tiny grace so the target reboot request can be sent before this process exits.
+            tm.sleep(0.2)
 
         ui.modal_remove()
         reboot_message = _("Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reload the page after the restart.")

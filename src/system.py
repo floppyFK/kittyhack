@@ -628,7 +628,14 @@ def get_labelstudio_status():
     except subprocess.CalledProcessError:
         return False
 
-def update_kittyhack(progress_callback=None, latest_version=None, current_version=None):
+def update_kittyhack(
+    progress_callback=None,
+    latest_version=None,
+    current_version=None,
+    *,
+    halt_backend_first: bool = True,
+    defer_service_updates: bool = False,
+):
     """
     Update Kittyhack to the latest version, reporting progress via callback.
 
@@ -748,16 +755,17 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
         except Exception:
             pass
 
-    # Step 0: Stop the backend process
-    if progress_callback:
-        progress_callback(0, "Stopping backend process", "")
-    try:
-        from src.helper import sigterm_monitor
-        import time as tm
-        sigterm_monitor.halt_backend()
-        tm.sleep(1.0)
-    except Exception as e:
-        logging.error(f"Failed to stop backend process: {e}")
+    # Step 0: Stop backend process (only for local kittyhack.service updates).
+    if halt_backend_first:
+        if progress_callback:
+            progress_callback(0, "Stopping backend process", "")
+        try:
+            from src.helper import sigterm_monitor
+            import time as tm
+            sigterm_monitor.halt_backend()
+            tm.sleep(1.0)
+        except Exception as e:
+            logging.error(f"Failed to stop backend process: {e}")
 
     requirements_path = os.path.join(kittyhack_root(), "requirements.txt")
     venv_activate = os.path.join(kittyhack_root(), ".venv", "bin", "activate")
@@ -800,20 +808,27 @@ def update_kittyhack(progress_callback=None, latest_version=None, current_versio
             _run_step(5, "Updating python dependencies", pip_install_cmd)
             did_update_deps = True
 
-        # 6
-        if progress_callback:
-            progress_callback(6, "Updating systemd service file", "")
-        logging.info("Updating systemd service file")
-        _install_kittyhack_service_file()
-        _install_kittyhack_control_service_file()
-        # 7
-        _run_step(7, "Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"])
+        # 6-8 (service/unit changes) can be deferred when update is executed from
+        # kittyhack_control on the target device to avoid self-restart during update.
+        if defer_service_updates:
+            if progress_callback:
+                progress_callback(6, "Deferring systemd service updates until reboot", "")
+            logging.info("Deferring systemd service/unit updates until reboot")
+        else:
+            # 6
+            if progress_callback:
+                progress_callback(6, "Updating systemd service file", "")
+            logging.info("Updating systemd service file")
+            _install_kittyhack_service_file()
+            _install_kittyhack_control_service_file()
+            # 7
+            _run_step(7, "Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"])
 
-        # 8
-        if progress_callback:
-            progress_callback(8, "Updating systemd enable/disable state", "")
-        logging.info("Updating systemd enable/disable state")
-        _apply_target_boot_service_semantics()
+            # 8
+            if progress_callback:
+                progress_callback(8, "Updating systemd enable/disable state", "")
+            logging.info("Updating systemd enable/disable state")
+            _apply_target_boot_service_semantics()
     except Exception as e:
         logging.error(f"Update step failed: {e}")
         # Rollback logic

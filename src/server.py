@@ -8446,6 +8446,7 @@ def server(input, output, session):
                     reconnect_grace_s = 120.0
                     had_in_progress_state = False
                     had_disconnect_during_target_update = False
+                    first_disconnect_at = 0.0
 
                     while True:
                         if (monotonic_time() - float(target_update_started_at or 0.0)) > 3600.0:
@@ -8478,6 +8479,8 @@ def server(input, output, session):
                             # transient and wait for reconnection within a grace window.
                             elapsed = monotonic_time() - float(target_update_started_at or 0.0)
                             had_disconnect_during_target_update = True
+                            if first_disconnect_at <= 0.0:
+                                first_disconnect_at = monotonic_time()
                             set_update_progress(
                                 in_progress=True,
                                 step=1,
@@ -8492,6 +8495,31 @@ def server(input, output, session):
                                 return
                             tm.sleep(1.0)
                             continue
+
+                        # If we had a disconnect after dispatching update_request and the connection has
+                        # now recovered, the target might already be updated even if update_end was lost.
+                        # Verify by version and finish instead of waiting forever in "in progress".
+                        if had_disconnect_during_target_update and bool(status.get("in_progress")):
+                            since_disconnect = (
+                                monotonic_time() - first_disconnect_at
+                                if first_disconnect_at > 0.0
+                                else 0.0
+                            )
+                            if since_disconnect >= 3.0:
+                                info = client.request_target_version(timeout=1.0) or client.get_target_version_info()
+                                target_git_version = str((info or {}).get("git_version") or "").strip()
+                                if target_git_version and target_git_version not in ("unknown",):
+                                    if str(target_git_version) == str(latest_version):
+                                        set_update_progress(
+                                            in_progress=True,
+                                            step=1,
+                                            max_steps=(9 if update_local else 1),
+                                            message=_("Connected target device updated."),
+                                            detail=(_("Starting update on this device...") if update_local else _("Update finished.")),
+                                            result=None,
+                                            error_msg="",
+                                        )
+                                        break
 
                         if status.get("in_progress"):
                             detail = _("Target update is running...")

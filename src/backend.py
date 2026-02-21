@@ -373,11 +373,6 @@ def backend_main(simulate_kittyflap = False):
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
 
-    # Start the camera/model thread
-    logging.info("[BACKEND] Start the camera...")
-    if not _start_model_thread(start_paused=True):
-        logging.error("[BACKEND] Could not start model thread at backend startup.")
-
     # Initialize PIRs, Magnets and RFID
     pir = Pir(simulate_kittyflap=simulate_kittyflap)
     pir.init()
@@ -387,6 +382,13 @@ def backend_main(simulate_kittyflap = False):
         rfid = Rfid(simulate_kittyflap=simulate_kittyflap)
     magnets = Magnets(simulate_kittyflap=simulate_kittyflap)
     magnets.init()
+
+    # Start the camera/model thread.
+    # In remote-mode this intentionally happens after remote-control client init,
+    # so the MJPEG relay is already reachable when VideoStream is created.
+    logging.info("[BACKEND] Start the camera...")
+    if not _start_model_thread(start_paused=True):
+        logging.error("[BACKEND] Could not start model thread at backend startup.")
     
     logging.info("[BACKEND] Wait for the sensors to stabilize...")
     tm.sleep(5.0)
@@ -437,6 +439,10 @@ def backend_main(simulate_kittyflap = False):
     # Periodically persist effective FPS into the active YOLO model metadata.
     last_fps_metadata_write_mono = 0.0
     last_written_effective_fps: float | None = None
+    # Auto-recovery for rare post-boot degraded inference states.
+    low_fps_window_count = 0
+    last_low_fps_check_mono = 0.0
+    last_auto_model_recover_mono = 0.0
         
     while not sigterm_monitor.stop_now:
         try:
@@ -468,6 +474,53 @@ def backend_main(simulate_kittyflap = False):
                                 last_fps_metadata_write_mono = now_mono
             except Exception as e:
                 logging.debug(f"[BACKEND] Failed to persist effective FPS to model info.json: {e}")
+
+            # In remote-mode, recover automatically if inference gets stuck at very low FPS for sustained periods.
+            try:
+                if (
+                    is_remote_mode()
+                    and model_handler.get_run_state()
+                    and (not (CONFIG.get('TFLITE_MODEL_VERSION') or '').strip())
+                ):
+                    now_mono = monotonic_time()
+                    now_wall = wall_time()
+                    if (now_mono - last_low_fps_check_mono) >= 60.0:
+                        eff_fps, avg_inf_fps, fps_tm = model_handler.get_fps_metrics_snapshot()
+                        fps_fresh = bool(fps_tm) and ((now_wall - float(fps_tm)) <= 180.0)
+
+                        unhealthy = bool(
+                            fps_fresh
+                            and (eff_fps is not None)
+                            and (avg_inf_fps is not None)
+                            and (float(eff_fps) < 1.0)
+                            and (float(avg_inf_fps) < 1.0)
+                        )
+
+                        if unhealthy:
+                            low_fps_window_count += 1
+                        else:
+                            low_fps_window_count = 0
+
+                        if (
+                            low_fps_window_count >= 2
+                            and (now_mono - last_auto_model_recover_mono) >= 300.0
+                        ):
+                            logging.warning(
+                                "[BACKEND] Detected sustained low inference throughput "
+                                f"(effective={float(eff_fps):.2f} FPS, avg inference={float(avg_inf_fps):.2f} FPS). "
+                                "Reloading model runtime automatically."
+                            )
+                            ok, _ = reload_model_handler_runtime()
+                            if ok:
+                                logging.info("[BACKEND] Automatic model runtime reload completed.")
+                            else:
+                                logging.warning("[BACKEND] Automatic model runtime reload failed.")
+                            last_auto_model_recover_mono = now_mono
+                            low_fps_window_count = 0
+
+                        last_low_fps_check_mono = now_mono
+            except Exception as e:
+                logging.debug(f"[BACKEND] Low-FPS auto-recovery check failed: {e}")
 
             # Decide if the camera or the PIR should be used for motion detection
             use_camera_for_motion = CONFIG['USE_CAMERA_FOR_MOTION_DETECTION']

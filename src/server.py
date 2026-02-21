@@ -8473,26 +8473,25 @@ def server(input, output, session):
                             break
 
                         if not client.wait_until_ready(timeout=0):
+                            # After dispatching update_request, an immediate disconnect is expected on some
+                            # targets while kittyhack_control updates/restarts services. Treat this as
+                            # transient and wait for reconnection within a grace window.
                             elapsed = monotonic_time() - float(target_update_started_at or 0.0)
-                            if (had_in_progress_state or bool(status.get("requested"))) and elapsed >= 3.0:
-                                had_disconnect_during_target_update = True
-                                set_update_progress(
-                                    in_progress=True,
-                                    step=1,
-                                    max_steps=(9 if update_local else 1),
-                                    message=_("Updating connected target device..."),
-                                    detail=_("Connection lost while target is restarting/reconnecting. Waiting..."),
-                                    result=None,
-                                    error_msg="",
-                                )
-                                if elapsed >= reconnect_grace_s:
-                                    _set_error_and_stop(_("Connection to target device did not recover in time after update restart."))
-                                    return
-                                tm.sleep(1.0)
-                                continue
-
-                            _set_error_and_stop(_("Connection to target device was lost during update."))
-                            return
+                            had_disconnect_during_target_update = True
+                            set_update_progress(
+                                in_progress=True,
+                                step=1,
+                                max_steps=(9 if update_local else 1),
+                                message=_("Updating connected target device..."),
+                                detail=_("Connection lost while target is restarting/reconnecting. Waiting..."),
+                                result=None,
+                                error_msg="",
+                            )
+                            if elapsed >= reconnect_grace_s:
+                                _set_error_and_stop(_("Connection to target device did not recover in time after update restart."))
+                                return
+                            tm.sleep(1.0)
+                            continue
 
                         if status.get("in_progress"):
                             detail = _("Target update is running...")

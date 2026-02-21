@@ -1127,10 +1127,13 @@ async def _handle_update_request(ws: WebSocketServerProtocol, latest_version: st
 
     try:
         ok, reason = await asyncio.to_thread(
-            update_kittyhack,
-            None,
-            latest_version or None,
-            current_version or None,
+            lambda: update_kittyhack(
+                None,
+                latest_version or None,
+                current_version or None,
+                halt_backend_first=False,
+                defer_service_updates=True,
+            )
         )
         try:
             await ws.send(json.dumps({"type": "update_end", "ok": bool(ok), "reason": str(reason or "")}))

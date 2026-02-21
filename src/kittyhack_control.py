@@ -63,6 +63,10 @@ class ControlState:
 
         self.http_server: asyncio.base_events.Server | None = None
         self.sync_in_progress: bool = False
+        # True after a successful remote-triggered update on target.
+        # While set, kittyhack must NOT auto-start on controller timeout/disconnect;
+        # only an explicit reboot or explicit local start action may proceed.
+        self.hold_start_until_reboot: bool = False
 
         # Boot wait behavior (target-mode only)
         self.boot_wait_active: bool = False
@@ -726,6 +730,7 @@ async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.Strea
                 "marker_exists": bool(_remote_control_marker_exists()),
                 "pending_start_active": pending_active,
                 "pending_start_remaining_s": max(0.0, float(STATE.pending_kittyhack_start_at or 0.0) - now_mono) if pending_active else 0.0,
+                "hold_start_until_reboot": bool(STATE.hold_start_until_reboot),
                 "kittyhack_running": bool(is_service_running("kittyhack", log_output=False)),
             }
             body = json.dumps(st).encode("utf-8")
@@ -837,6 +842,7 @@ async def _start_kittyhack_from_control(reason: str) -> None:
     try:
         STATE.boot_wait_active = False
         STATE.boot_wait_deadline_ts = 0.0
+        STATE.hold_start_until_reboot = False
         _stop_internal_camera_stream()
         await _stop_info_http_server()
     except Exception:
@@ -922,6 +928,11 @@ async def _release_control(reason: str):
     STATE._pir_stop_event = None
     STATE.sync_in_progress = False
     STATE.next_enforce_stop_at = 0.0
+
+    # After successful remote-triggered update, hold until explicit reboot/start.
+    if STATE.hold_start_until_reboot:
+        STATE.pending_kittyhack_start_at = 0.0
+        return
 
     # If we are waiting for a possible reconnect, keep the info page on port 80
     # and do not start kittyhack yet.
@@ -1135,6 +1146,9 @@ async def _handle_update_request(ws: WebSocketServerProtocol, latest_version: st
                 defer_service_updates=True,
             )
         )
+        if bool(ok):
+            STATE.hold_start_until_reboot = True
+            STATE.pending_kittyhack_start_at = 0.0
         try:
             await ws.send(json.dumps({"type": "update_end", "ok": bool(ok), "reason": str(reason or "")}))
         except Exception as e:
@@ -1287,6 +1301,9 @@ async def _watchdog():
 
         # If a controller disconnected recently, start kittyhack only after the timeout.
         if (not STATE.is_controlled()) and STATE.pending_kittyhack_start_at and (now >= float(STATE.pending_kittyhack_start_at or 0.0)):
+            if STATE.hold_start_until_reboot:
+                STATE.pending_kittyhack_start_at = 0.0
+                continue
             await _release_control("controller timeout")
             continue
 

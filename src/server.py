@@ -7995,7 +7995,7 @@ def server(input, output, session):
                     ui.br(),
                     ui.markdown(
                         "**" + _("Current Version") + ":** `" + git_version + "`" + "  \n"
-                        + ("**" + _("Target Device Version") + ":** `" + target_git_version + "`" + "  \n" if is_remote_mode() else "")
+                        + ("**" + _("Current Version on Kittyflap") + ":** `" + target_git_version + "`" + "  \n" if is_remote_mode() else "")
                         + "**" + _("Latest Version") + ":** `" + latest_version + "`"
                     ),
                     (
@@ -8445,6 +8445,7 @@ def server(input, output, session):
                     target_update_started_at = monotonic_time()
                     reconnect_grace_s = 120.0
                     had_in_progress_state = False
+                    had_disconnect_during_target_update = False
 
                     while True:
                         if (monotonic_time() - float(target_update_started_at or 0.0)) > 3600.0:
@@ -8473,7 +8474,8 @@ def server(input, output, session):
 
                         if not client.wait_until_ready(timeout=0):
                             elapsed = monotonic_time() - float(target_update_started_at or 0.0)
-                            if had_in_progress_state and elapsed >= 5.0:
+                            if (had_in_progress_state or bool(status.get("requested"))) and elapsed >= 3.0:
+                                had_disconnect_during_target_update = True
                                 set_update_progress(
                                     in_progress=True,
                                     step=1,
@@ -8484,8 +8486,8 @@ def server(input, output, session):
                                     error_msg="",
                                 )
                                 if elapsed >= reconnect_grace_s:
-                                    logging.warning("[UPDATE] Target update connection did not return within grace period; continuing without hard failure.")
-                                    break
+                                    _set_error_and_stop(_("Connection to target device did not recover in time after update restart."))
+                                    return
                                 tm.sleep(1.0)
                                 continue
 
@@ -8509,6 +8511,34 @@ def server(input, output, session):
                             error_msg="",
                         )
                         tm.sleep(1.0)
+
+                    # If the websocket was dropped during target update, verify the target version
+                    # after reconnect instead of treating this as a hard failure.
+                    if had_disconnect_during_target_update:
+                        try:
+                            verify_deadline = monotonic_time() + 20.0
+                            target_git_version = ""
+                            while monotonic_time() < verify_deadline:
+                                if not client.wait_until_ready(timeout=1.0):
+                                    continue
+                                info = client.request_target_version(timeout=1.5) or client.get_target_version_info()
+                                target_git_version = str((info or {}).get("git_version") or "").strip()
+                                if target_git_version:
+                                    break
+                            if target_git_version and target_git_version not in ("unknown",):
+                                if str(target_git_version) != str(latest_version):
+                                    _set_error_and_stop(
+                                        _("Target device reconnected, but version is still {} instead of {}.").format(
+                                            target_git_version,
+                                            latest_version,
+                                        )
+                                    )
+                                    return
+                                logging.info(f"[UPDATE] Target update verified after reconnect (version {target_git_version}).")
+                            else:
+                                logging.warning("[UPDATE] Could not verify target version after reconnect. Continuing.")
+                        except Exception as e:
+                            logging.warning(f"[UPDATE] Post-update target version verification failed: {e}")
                 except Exception as e:
                     _set_error_and_stop(_("Failed to run target update: {}.").format(e))
                     return

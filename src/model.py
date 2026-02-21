@@ -1573,6 +1573,15 @@ class ModelHandler:
         with self._fps_lock:
             return self._last_effective_fps, float(self._last_fps_update_tm)
 
+    def get_fps_metrics_snapshot(self) -> tuple[float | None, float | None, float]:
+        """Return (effective_fps, avg_inference_fps, last_update_time_s)."""
+        with self._fps_lock:
+            return (
+                self._last_effective_fps,
+                self._last_avg_inference_fps,
+                float(self._last_fps_update_tm),
+            )
+
     def reinit_videostream(self):
         """
         Re-initialize the videostream if CAMERA_SOURCE or IP_CAMERA_URL has changed.

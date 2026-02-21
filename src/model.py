@@ -65,6 +65,18 @@ def _effective_camera_stream_config() -> tuple[str, str]:
     return str(CONFIG.get("CAMERA_SOURCE") or "internal"), str(CONFIG.get("IP_CAMERA_URL") or "")
 
 
+def _is_remote_internal_proxy_stream(source: str, url: str) -> bool:
+    """True if runtime stream is the implicit remote internal-camera MJPEG relay."""
+    if not is_remote_mode():
+        return False
+    if str(CONFIG.get("CAMERA_SOURCE") or "").strip().lower() != "internal":
+        return False
+    if str(source or "").strip().lower() != "ip_camera":
+        return False
+    u = str(url or "").strip().lower()
+    return bool(u) and u.endswith("/video")
+
+
 def _atomic_write_json(path: str, data: dict[str, Any]) -> None:
     tmp = f"{path}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -1329,10 +1341,16 @@ class ModelHandler:
                 else:
                     logging.warning("[CAMERA] Remote-mode internal camera selected, but REMOTE_TARGET_HOST is empty. Falling back to local internal source.")
 
+            use_decode_scale_pipeline = bool(CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False))
+            if _is_remote_internal_proxy_stream(effective_camera_source, effective_ip_camera_url):
+                # Keep original target-side aspect ratio for implicit /video relay streams.
+                # This avoids forcing 16:9 output (e.g. 640x360) for native 4:3 sources.
+                use_decode_scale_pipeline = False
+
             videostream = VideoStream(
                 source=effective_camera_source,
                 ip_camera_url=effective_ip_camera_url,
-                use_ip_camera_decode_scale_pipeline=CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False),
+                use_ip_camera_decode_scale_pipeline=use_decode_scale_pipeline,
                 ip_camera_target_resolution=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360'),
                 ip_camera_pipeline_fps_limit=int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10),
             ).start()
@@ -1361,6 +1379,12 @@ class ModelHandler:
             # Flag to ensure we run at least one inference to initialize the model
             first_run = True
             
+            # Recovery watchdog for rare camera handover races (e.g. remote-control takeover timeout).
+            no_frame_reinit_after_s = 8.0
+            no_frame_reinit_cooldown_s = 10.0
+            last_good_frame_ts = tm.time()
+            last_no_frame_reinit_ts = 0.0
+
             while not sigterm_monitor.stop_now and not self._stop_requested.is_set():
                 # --- Detect camera config changes and re-init videostream if needed ---
                 current_camera_source, current_ip_camera_url = _effective_camera_stream_config()
@@ -1406,6 +1430,7 @@ class ModelHandler:
                     frame = videostream.read_oldest()
 
                 if frame is not None:
+                    last_good_frame_ts = tm.time()
                     # Run the CPU intensive model inference only if not paused
                     timestamp = tm.time()
                     try:
@@ -1508,6 +1533,42 @@ class ModelHandler:
                     if current_time - self.last_log_time > 10:
                         logging.warning("[CAMERA] No frame received!")
                         self.last_log_time = current_time
+
+                    # Auto-recover if stream got stuck after startup/handover.
+                    if (
+                        (current_time - last_good_frame_ts) >= no_frame_reinit_after_s
+                        and (current_time - last_no_frame_reinit_ts) >= no_frame_reinit_cooldown_s
+                    ):
+                        logging.warning(
+                            "[CAMERA] No frames for %.1fs. Reinitializing videostream...",
+                            float(current_time - last_good_frame_ts),
+                        )
+                        try:
+                            self.reinit_videostream()
+                            last_no_frame_reinit_ts = current_time
+
+                            # Warm-up probe after reinit
+                            probe_deadline = tm.time() + 10.0
+                            probe_frame = None
+                            while (
+                                probe_frame is None
+                                and tm.time() < probe_deadline
+                                and not sigterm_monitor.stop_now
+                                and not self._stop_requested.is_set()
+                            ):
+                                probe_frame = videostream.read_oldest() if videostream is not None else None
+                                if probe_frame is None:
+                                    tm.sleep(0.1)
+
+                            if probe_frame is not None:
+                                frame = probe_frame
+                                last_good_frame_ts = tm.time()
+                                logging.info("[CAMERA] Videostream recovered after no-frame reinit.")
+                            else:
+                                logging.warning("[CAMERA] Videostream reinit did not recover frames yet.")
+                        except Exception as e:
+                            last_no_frame_reinit_ts = current_time
+                            logging.warning(f"[CAMERA] Videostream reinit after no-frame period failed: {e}")
             
                 # To avoid intensive CPU load, wait here until we reached the desired framerate
                 elapsed_time = (cv2.getTickCount() - t1) / freq
@@ -1605,10 +1666,15 @@ class ModelHandler:
 
         # Start a new videostream with the latest/effective config values
         effective_camera_source, effective_ip_camera_url = _effective_camera_stream_config()
+        use_decode_scale_pipeline = bool(CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False))
+        if _is_remote_internal_proxy_stream(effective_camera_source, effective_ip_camera_url):
+            # Preserve source aspect ratio for remote target /video relay.
+            use_decode_scale_pipeline = False
+
         videostream = VideoStream(
             source=effective_camera_source,
             ip_camera_url=effective_ip_camera_url,
-            use_ip_camera_decode_scale_pipeline=CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False),
+            use_ip_camera_decode_scale_pipeline=use_decode_scale_pipeline,
             ip_camera_target_resolution=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360'),
             ip_camera_pipeline_fps_limit=int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10),
         ).start()

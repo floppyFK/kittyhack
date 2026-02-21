@@ -126,7 +126,7 @@ def _ensure_internal_camera_stream() -> tuple[bool, str]:
                 source=stream_source,
                 ip_camera_url=stream_url,
                 use_ip_camera_decode_scale_pipeline=CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False),
-                ip_camera_target_resolution=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360'),
+                ip_camera_target_resolution=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '800x600'),
                 ip_camera_pipeline_fps_limit=int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10),
             ).start()
             _internal_cam_stream_source = stream_source
@@ -156,6 +156,20 @@ def _internal_camera_latest_frame() -> Any:
         return stream.read()
     except Exception:
         return None
+
+
+def _stop_internal_camera_stream() -> None:
+    """Stop and clear the optional MJPEG relay camera stream."""
+    global _internal_cam_stream, _internal_cam_stream_source, _internal_cam_stream_url
+    with _internal_cam_lock:
+        if _internal_cam_stream is not None:
+            try:
+                _internal_cam_stream.stop()
+            except Exception:
+                pass
+        _internal_cam_stream = None
+        _internal_cam_stream_source = ""
+        _internal_cam_stream_url = ""
 
 
 def _remote_control_marker_path() -> str:
@@ -287,6 +301,11 @@ def _page_text() -> dict[str, str]:
             "st_remote_attempt": "remote attempt detected",
             "st_remote_attempt_msg": "Remote control attempt detected. Waiting for controller...",
             "seconds_suffix": " s",
+            "pending_start": "Autostart Kittyhack in",
+            "btn_reboot": "Reboot device",
+            "pending_msg": "Remote controller disconnected. Waiting for timeout before local Kittyhack starts.",
+            "pending_idle": "No pending timeout.",
+            "rebooting": "Rebooting...",
         },
         "de": {
             "title_remote": "Kittyhack Fernsteuerung",
@@ -313,6 +332,11 @@ def _page_text() -> dict[str, str]:
             "st_remote_attempt": "Remote-Versuch erkannt",
             "st_remote_attempt_msg": "Fernsteuerungsversuch erkannt. Warte auf Controller...",
             "seconds_suffix": " s",
+            "pending_start": "Kittyhack automatisch starten in",
+            "btn_reboot": "Gerät neu starten",
+            "pending_msg": "Remote-Controller getrennt. Warte auf Timeout, bevor lokales Kittyhack startet.",
+            "pending_idle": "Kein ausstehender Timeout.",
+            "rebooting": "Neustart...",
         },
     }
     return texts.get(lang, texts["en"])
@@ -335,6 +359,13 @@ def _build_info_page_html() -> str:
         )
 
     controlled = t["yes"] if STATE.is_controlled() else t["no"]
+    js_i18n = {
+        "seconds_suffix": t["seconds_suffix"],
+        "pending_start": t["pending_start"],
+        "pending_msg": t["pending_msg"],
+        "pending_idle": t["pending_idle"],
+        "rebooting": t["rebooting"],
+    }
 
     return (
         "<!doctype html>\n"
@@ -353,7 +384,8 @@ def _build_info_page_html() -> str:
         "    }\n"
         "    *{box-sizing:border-box;}\n"
         "    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;"
-        "         line-height:1.55;background:radial-gradient(1200px 700px at 15% 0%,var(--bg2),var(--bg));color:var(--text);}\n"
+        "         line-height:1.55;background:radial-gradient(1200px 700px at 15% 0%,var(--bg2),var(--bg));"
+        "         background-repeat:no-repeat;background-size:cover;background-attachment:fixed;color:var(--text);min-height:100svh;}\n"
         "    .wrap{max-width:860px;margin:0 auto;padding:28px 18px 44px;}\n"
         "    .card{background:var(--card);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow);padding:22px 20px;}\n"
         "    h1{font-size:1.55rem;letter-spacing:-.02em;margin:0 0 14px;}\n"
@@ -363,10 +395,19 @@ def _build_info_page_html() -> str:
         "    .kv:first-of-type{border-top:none;padding-top:0;}\n"
         "    .k{min-width:210px;color:var(--muted);font-size:.95rem;}\n"
         "    .v{font-weight:600;}\n"
+        "    .v,.link{overflow-wrap:anywhere;word-break:break-word;}\n"
         "    .muted{color:var(--muted);font-weight:500;}\n"
         "    .link{color:var(--accent);text-decoration:none;}\n"
         "    .link:hover{text-decoration:underline;}\n"
+        "    .row{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:14px;}\n"
+        "    button{padding:.72rem .95rem;border-radius:12px;border:1px solid var(--border);background:rgba(148,163,184,.12);color:var(--text);cursor:pointer;}\n"
+        "    button.primary{background:var(--accent);border-color:transparent;color:#fff;font-weight:700;}\n"
+        "    button:disabled{opacity:.55;cursor:not-allowed;}\n"
         "    .footer{margin-top:14px;color:var(--muted);font-size:.92rem;}\n"
+        "    @media (max-width:700px){\n"
+        "      .kv{flex-direction:column;gap:4px;}\n"
+        "      .k{min-width:0;}\n"
+        "    }\n"
         "  </style>\n"
         "</head>\n"
         "<body>\n"
@@ -375,9 +416,66 @@ def _build_info_page_html() -> str:
         "    <div class=\"card\">\n"
         f"      <div class=\"kv\"><div class=\"k\">{t['remote_active']}</div><div class=\"v\">{controlled}</div></div>\n"
         f"      {remote_link}\n"
+        f"      <div class=\"kv\"><div class=\"k\" id=\"pending_label\">{t['pending_start']}</div><div class=\"v mono\" id=\"pending_countdown\">-</div></div>\n"
+        "      <p class=\"muted\" id=\"pending_status\"></p>\n"
+        "      <div class=\"row\">\n"
+        f"        <button class=\"primary\" id=\"btnSkip\">{t['btn_skip']}</button>\n"
+        f"        <button id=\"btnReboot\">{t['btn_reboot']}</button>\n"
+        "      </div>\n"
         f"      <p class=\"footer\">{t['p_remote']}</p>\n"
         "    </div>\n"
         "  </div>\n"
+        "  <script>\n"
+        f"    const I18N = {json.dumps(js_i18n, ensure_ascii=False)};\n"
+        "    let _khPollErrCount = 0;\n"
+        "    async function post(path){\n"
+        "      try{ await fetch(path,{method:'POST'}); }catch(e){}\n"
+        "    }\n"
+        "    async function poll(){\n"
+        "      try{\n"
+        "        const r = await fetch('/api/status',{cache:'no-store'});\n"
+        "        if(!r.ok){ throw new Error('status_http_' + r.status); }\n"
+        "        const st = await r.json();\n"
+        "        _khPollErrCount = 0;\n"
+        "        const cd = document.getElementById('pending_countdown');\n"
+        "        const msg = document.getElementById('pending_status');\n"
+        "        const skip = document.getElementById('btnSkip');\n"
+        "        if(st && st.controlled){\n"
+        "          cd.textContent = '-';\n"
+        "          msg.textContent = '';\n"
+        "          skip.disabled = true;\n"
+        "          return;\n"
+        "        }\n"
+        "        if(st && st.pending_start_active){\n"
+        "          const s = Math.max(0, Math.ceil(st.pending_start_remaining_s || 0));\n"
+        "          cd.textContent = s + I18N.seconds_suffix;\n"
+        "          msg.textContent = I18N.pending_msg;\n"
+        "          skip.disabled = false;\n"
+        "        }else{\n"
+        "          cd.textContent = '-';\n"
+        "          msg.textContent = I18N.pending_idle;\n"
+        "          skip.disabled = true;\n"
+        "        }\n"
+        "        if(st && st.kittyhack_running){\n"
+        "          setTimeout(()=>{ window.location.reload(); }, 1200);\n"
+        "        }\n"
+        "      }catch(e){\n"
+        "        _khPollErrCount += 1;\n"
+        "        if(_khPollErrCount >= 2){\n"
+        "          setTimeout(()=>{ window.location.reload(); }, 400);\n"
+        "        }\n"
+        "      }\n"
+        "    }\n"
+        "    document.getElementById('btnSkip').addEventListener('click',()=>post('/api/skip'));\n"
+        "    document.getElementById('btnReboot').addEventListener('click',()=>{\n"
+        "      const b=document.getElementById('btnReboot');\n"
+        "      b.disabled=true;\n"
+        "      b.textContent=I18N.rebooting;\n"
+        "      post('/api/reboot');\n"
+        "    });\n"
+        "    poll();\n"
+        "    setInterval(poll,1000);\n"
+        "  </script>\n"
         "</body>\n"
         "</html>\n"
     )
@@ -395,6 +493,7 @@ def _build_boot_wait_page_html() -> str:
         "remote_attempt": t["st_remote_attempt"],
         "remote_attempt_msg": t["st_remote_attempt_msg"],
         "seconds_suffix": t["seconds_suffix"],
+        "rebooting": t["rebooting"],
     }
     return (
         "<!doctype html>\n"
@@ -413,7 +512,8 @@ def _build_boot_wait_page_html() -> str:
         "    }\n"
         "    *{box-sizing:border-box;}\n"
         "    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;"
-        "         line-height:1.55;background:radial-gradient(1200px 700px at 15% 0%,var(--bg2),var(--bg));color:var(--text);}\n"
+        "         line-height:1.55;background:radial-gradient(1200px 700px at 15% 0%,var(--bg2),var(--bg));"
+        "         background-repeat:no-repeat;background-size:cover;background-attachment:fixed;color:var(--text);min-height:100svh;}\n"
         "    .wrap{max-width:860px;margin:0 auto;padding:28px 18px 44px;}\n"
         "    .card{background:var(--card);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow);padding:22px 20px;}\n"
         "    h1{font-size:1.55rem;letter-spacing:-.02em;margin:0 0 14px;}\n"
@@ -437,18 +537,22 @@ def _build_boot_wait_page_html() -> str:
         "      <div class=\"row\">\n"
         f"        <button class=\"primary\" id=\"btnSkip\">{t['btn_skip']}</button>\n"
         f"        <button id=\"btnDisable\">{t['btn_disable']}</button>\n"
+        f"        <button id=\"btnReboot\">{t['btn_reboot']}</button>\n"
         "      </div>\n"
         "    </div>\n"
         "  </div>\n"
         "  <script>\n"
         f"    const I18N = {json.dumps(js_i18n, ensure_ascii=False)};\n"
+        "    let _khPollErrCount = 0;\n"
         "    async function post(path){\n"
         "      try{ await fetch(path,{method:'POST'});}catch(e){}\n"
         "    }\n"
         "    async function poll(){\n"
         "      try{\n"
         "        const r = await fetch('/api/status',{cache:'no-store'});\n"
+        "        if(!r.ok){ throw new Error('status_http_' + r.status); }\n"
         "        const st = await r.json();\n"
+        "        _khPollErrCount = 0;\n"
         "        const cd = document.getElementById('countdown');\n"
         "        const msg = document.getElementById('status');\n"
         "        if(st.controlled){\n"
@@ -463,6 +567,8 @@ def _build_boot_wait_page_html() -> str:
         "          msg.textContent = I18N.starting_msg;\n"
         "          document.getElementById('btnSkip').disabled = true;\n"
         "          document.getElementById('btnDisable').disabled = true;\n"
+        "          document.getElementById('btnReboot').disabled = true;\n"
+        "          setTimeout(()=>{ window.location.reload(); }, 1500);\n"
         "          return;\n"
         "        }\n"
         "        if(st.boot_wait_takeover_attempted){\n"
@@ -472,10 +578,21 @@ def _build_boot_wait_page_html() -> str:
         "          cd.textContent = Math.max(0, Math.ceil(st.boot_wait_remaining_s)) + I18N.seconds_suffix;\n"
         "          msg.textContent = '';\n"
         "        }\n"
-        "      }catch(e){}\n"
+        "      }catch(e){\n"
+        "        _khPollErrCount += 1;\n"
+        "        if(_khPollErrCount >= 2){\n"
+        "          setTimeout(()=>{ window.location.reload(); }, 400);\n"
+        "        }\n"
+        "      }\n"
         "    }\n"
         "    document.getElementById('btnSkip').addEventListener('click',()=>post('/api/skip'));\n"
         "    document.getElementById('btnDisable').addEventListener('click',()=>post('/api/disable_wait'));\n"
+        "    document.getElementById('btnReboot').addEventListener('click',()=>{\n"
+        "      const b=document.getElementById('btnReboot');\n"
+        "      b.disabled=true;\n"
+        "      b.textContent=I18N.rebooting;\n"
+        "      post('/api/reboot');\n"
+        "    });\n"
         "    poll();\n"
         "    setInterval(poll,1000);\n"
         "  </script>\n"
@@ -599,12 +716,17 @@ async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.Strea
 
         # Simple API for boot-wait UI
         if path.startswith("/api/status"):
+            now_mono = time.monotonic()
+            pending_active = bool((not STATE.is_controlled()) and STATE.pending_kittyhack_start_at and (now_mono < float(STATE.pending_kittyhack_start_at or 0.0)))
             st = {
                 "controlled": bool(STATE.is_controlled()),
                 "boot_wait_active": bool(STATE.boot_wait_active),
                 "boot_wait_takeover_attempted": bool(STATE.boot_wait_takeover_attempted),
                 "boot_wait_remaining_s": max(0.0, float(STATE.boot_wait_deadline_ts or 0.0) - time.time()) if STATE.boot_wait_active else 0.0,
                 "marker_exists": bool(_remote_control_marker_exists()),
+                "pending_start_active": pending_active,
+                "pending_start_remaining_s": max(0.0, float(STATE.pending_kittyhack_start_at or 0.0) - now_mono) if pending_active else 0.0,
+                "kittyhack_running": bool(is_service_running("kittyhack", log_output=False)),
             }
             body = json.dumps(st).encode("utf-8")
             headers = (
@@ -633,6 +755,22 @@ async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.Strea
             # Delete marker and start kittyhack immediately
             _delete_remote_control_marker()
             asyncio.create_task(_start_kittyhack_from_control(reason="user disable wait"))
+            body = b"OK"
+            headers = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/plain; charset=utf-8\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Cache-Control: no-store\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode("utf-8")
+
+        elif path.startswith("/api/reboot") and method == "POST":
+            try:
+                await ws_send_safe_broadcast_reboot_notice()
+            except Exception:
+                pass
+            asyncio.create_task(_reboot_later(0.2))
             body = b"OK"
             headers = (
                 "HTTP/1.1 200 OK\r\n"
@@ -699,6 +837,7 @@ async def _start_kittyhack_from_control(reason: str) -> None:
     try:
         STATE.boot_wait_active = False
         STATE.boot_wait_deadline_ts = 0.0
+        _stop_internal_camera_stream()
         await _stop_info_http_server()
     except Exception:
         pass
@@ -792,6 +931,7 @@ async def _release_control(reason: str):
     STATE.pending_kittyhack_start_at = 0.0
 
     # Give port 80 back to kittyhack before restarting it
+    _stop_internal_camera_stream()
     await _stop_info_http_server()
 
     # Start kittyhack again
@@ -1007,6 +1147,16 @@ async def _reboot_later(delay_s: float = 0.2) -> None:
     await asyncio.sleep(max(0.0, float(delay_s)))
     try:
         systemcmd(["/sbin/reboot"], bool(CONFIG.get("SIMULATE_KITTYFLAP")))
+    except Exception:
+        pass
+
+
+async def ws_send_safe_broadcast_reboot_notice() -> None:
+    """Best effort: notify active remote controller that target will reboot."""
+    try:
+        ws = STATE.controller
+        if ws is not None:
+            await ws.send(json.dumps({"type": "reboot_ack", "ok": True, "reason": "local_ui"}))
     except Exception:
         pass
 

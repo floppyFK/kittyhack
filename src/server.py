@@ -7776,6 +7776,31 @@ def server(input, output, session):
     @render.ui
     @reactive.event(reload_trigger_info, ignore_none=True)
     def ui_info():
+        target_git_version = "unknown"
+        remote_target_connected = False
+        if is_remote_mode():
+            try:
+                from src.remote.control_client import RemoteControlClient
+
+                client = RemoteControlClient.instance()
+                client.ensure_started()
+                remote_target_connected = bool(client.wait_until_ready(timeout=0))
+                info = client.request_target_version(timeout=0.6) if remote_target_connected else None
+                if not info:
+                    info = client.get_target_version_info()
+                if info and str(info.get("git_version") or "").strip():
+                    target_git_version = str(info.get("git_version") or "unknown")
+            except Exception:
+                target_git_version = "unknown"
+
+        versions_mismatch = bool(
+            is_remote_mode()
+            and remote_target_connected
+            and target_git_version not in ("", "unknown")
+            and git_version not in ("", "unknown")
+            and str(target_git_version) != str(git_version)
+        )
+
         # Check if the current version is different from the latest version
         latest_version = CONFIG['LATEST_VERSION']
         if latest_version == "unknown":
@@ -7787,6 +7812,21 @@ def server(input, output, session):
                     style_="text-align: center;"
                 )
             )
+
+            if versions_mismatch and git_repo_available:
+                ui_update_kittyhack = ui_update_kittyhack, ui.hr(), ui.div(
+                    ui.markdown(
+                        _("Remote/target version mismatch detected.")
+                        + " "
+                        + _("You can update only one side to match versions before running a full update.")
+                    ),
+                    ui.div(
+                        ui.input_task_button("update_target_kittyhack", _("Update target device only"), icon=icon_svg("download"), class_="btn-primary"),
+                        ui.br(),
+                        ui.input_task_button("update_remote_kittyhack", _("Update this device only"), icon=icon_svg("download"), class_="btn-default"),
+                        style_="text-align: center;"
+                    ),
+                )
         elif git_version != latest_version:
             release_notes_block = None
             try:
@@ -7820,6 +7860,21 @@ def server(input, output, session):
                     ui.help_text(_("The update will end with a reboot of the Kittyflap.")),
                     ui.markdown(_("Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to see what's new in the latest version.")),
                 )
+
+                if versions_mismatch:
+                    ui_update_kittyhack = ui_update_kittyhack, ui.hr(), ui.div(
+                        ui.markdown(
+                            _("Remote/target version mismatch detected.")
+                            + " "
+                            + _("Use one of the buttons below if you want to update only one device.")
+                        ),
+                        ui.div(
+                            ui.input_task_button("update_target_kittyhack", _("Update target device only"), icon=icon_svg("download"), class_="btn-primary"),
+                            ui.br(),
+                            ui.input_task_button("update_remote_kittyhack", _("Update this device only"), icon=icon_svg("download"), class_="btn-default"),
+                            style_="text-align: center;"
+                        ),
+                    )
             else:
                 ui_update_kittyhack = ui_update_kittyhack, ui.div(
                     ui.markdown(
@@ -7859,6 +7914,20 @@ def server(input, output, session):
         
         else:
             ui_update_kittyhack = ui.markdown(_("You are already using the latest version of Kittyhack."))
+            if versions_mismatch and git_repo_available:
+                ui_update_kittyhack = ui_update_kittyhack, ui.hr(), ui.div(
+                    ui.markdown(
+                        _("Remote/target version mismatch detected.")
+                        + " "
+                        + _("Use one of the buttons below to align the versions.")
+                    ),
+                    ui.div(
+                        ui.input_task_button("update_target_kittyhack", _("Update target device only"), icon=icon_svg("download"), class_="btn-primary"),
+                        ui.br(),
+                        ui.input_task_button("update_remote_kittyhack", _("Update this device only"), icon=icon_svg("download"), class_="btn-default"),
+                        style_="text-align: center;"
+                    ),
+                )
 
         # Check if the original kittyflap database file still exists
         kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
@@ -7924,8 +7993,22 @@ def server(input, output, session):
                 ui.card(
                     ui.card_header(ui.h4(_("Version Information"), style_="text-align: center;")),
                     ui.br(),
-                    ui.markdown("**" + _("Current Version") + ":** `" + git_version + "`" + "  \n" \
-                                "**" + _("Latest Version") + ":** `" + latest_version + "`"),
+                    ui.markdown(
+                        "**" + _("Current Version") + ":** `" + git_version + "`" + "  \n"
+                        + ("**" + _("Target Device Version") + ":** `" + target_git_version + "`" + "  \n" if is_remote_mode() else "")
+                        + "**" + _("Latest Version") + ":** `" + latest_version + "`"
+                    ),
+                    (
+                        ui.div(
+                            ui.markdown(
+                                f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
+                                + _("Remote/target versions are different. This can cause confusing update behavior.")
+                            ),
+                            class_="generic-container warning-container",
+                        )
+                        if versions_mismatch
+                        else ui.HTML("")
+                    ),
                     ui_update_kittyhack,
                     ui.br(),
                     ui.h5("Changelogs"),
@@ -8293,9 +8376,7 @@ def server(input, output, session):
             logging.error(f"[RESTORE_CFG] Failed to restore configuration: {e}")
             ui.notification_show(_("Failed to restore configuration: {}").format(e), duration=12, type="error")
 
-    @reactive.Effect
-    @reactive.event(input.update_kittyhack)
-    def update_kittyhack_process():
+    def _start_update_process(update_target: bool, update_local: bool):
         latest_version = CONFIG['LATEST_VERSION']
         current_version = git_version
 
@@ -8307,10 +8388,25 @@ def server(input, output, session):
             )
             return
 
+        if is_remote_mode() and not (update_target or update_local):
+            ui.notification_show(_("Nothing to update."), duration=8, type="warning")
+            return
+
+        if (not is_remote_mode()) and update_target:
+            ui.notification_show(_("Target-only update is only available in remote-mode."), duration=8, type="error")
+            return
+
+        if is_remote_mode() and update_target and update_local:
+            initial_max_steps = 9
+        elif update_local:
+            initial_max_steps = 8
+        else:
+            initial_max_steps = 1
+
         set_update_progress(
             in_progress=True,
             step=1,
-            max_steps=9 if is_remote_mode() else 8,
+            max_steps=initial_max_steps,
             message=_("Starting update..."),
             detail="",
             result=None,
@@ -8325,14 +8421,14 @@ def server(input, output, session):
                 logging.error(f"Kittyhack update failed: {message}")
                 set_update_progress(result="error", in_progress=False, error_msg=message)
 
-            if remote_mode_active:
+            if remote_mode_active and update_target:
                 try:
                     from src.remote.control_client import RemoteControlClient
 
                     set_update_progress(
                         in_progress=True,
                         step=1,
-                        max_steps=9,
+                        max_steps=(9 if update_local else 1),
                         message=_("Updating connected target device..."),
                         detail=_("Preparing remote update..."),
                         result=None,
@@ -8347,17 +8443,18 @@ def server(input, output, session):
 
                     client.start_target_update(latest_version=latest_version, current_version=current_version)
                     target_update_started_at = monotonic_time()
+                    reconnect_grace_s = 120.0
+                    had_in_progress_state = False
 
                     while True:
-                        if not client.wait_until_ready(timeout=0):
-                            _set_error_and_stop(_("Connection to target device was lost during update."))
-                            return
-
                         if (monotonic_time() - float(target_update_started_at or 0.0)) > 3600.0:
                             _set_error_and_stop(_("Timed out while waiting for target device update."))
                             return
 
                         status = client.get_target_update_status()
+                        if bool(status.get("in_progress")):
+                            had_in_progress_state = True
+
                         if status.get("ok") is False:
                             reason = str(status.get("reason") or _("Unknown target update error."))
                             _set_error_and_stop(_("Target device update failed: {}.").format(reason))
@@ -8366,13 +8463,34 @@ def server(input, output, session):
                             set_update_progress(
                                 in_progress=True,
                                 step=1,
-                                max_steps=9,
+                                max_steps=(9 if update_local else 1),
                                 message=_("Connected target device updated."),
-                                detail=_("Starting update on this device..."),
+                                detail=(_("Starting update on this device...") if update_local else _("Update finished.")),
                                 result=None,
                                 error_msg="",
                             )
                             break
+
+                        if not client.wait_until_ready(timeout=0):
+                            elapsed = monotonic_time() - float(target_update_started_at or 0.0)
+                            if had_in_progress_state and elapsed >= 5.0:
+                                set_update_progress(
+                                    in_progress=True,
+                                    step=1,
+                                    max_steps=(9 if update_local else 1),
+                                    message=_("Updating connected target device..."),
+                                    detail=_("Connection lost while target is restarting/reconnecting. Waiting..."),
+                                    result=None,
+                                    error_msg="",
+                                )
+                                if elapsed >= reconnect_grace_s:
+                                    logging.warning("[UPDATE] Target update connection did not return within grace period; continuing without hard failure.")
+                                    break
+                                tm.sleep(1.0)
+                                continue
+
+                            _set_error_and_stop(_("Connection to target device was lost during update."))
+                            return
 
                         if status.get("in_progress"):
                             detail = _("Target update is running...")
@@ -8384,7 +8502,7 @@ def server(input, output, session):
                         set_update_progress(
                             in_progress=True,
                             step=1,
-                            max_steps=9,
+                            max_steps=(9 if update_local else 1),
                             message=_("Updating connected target device..."),
                             detail=detail,
                             result=None,
@@ -8395,10 +8513,14 @@ def server(input, output, session):
                     _set_error_and_stop(_("Failed to run target update: {}.").format(e))
                     return
 
+            if not update_local:
+                set_update_progress(result="ok", in_progress=False)
+                return
+
             def progress_callback(step, message, detail):
                 mapped_step = int(step)
                 mapped_max_steps = 8
-                if remote_mode_active:
+                if remote_mode_active and update_target:
                     mapped_step = max(1, min(9, int(step) + 1))
                     mapped_max_steps = 9
                 set_update_progress(
@@ -8426,6 +8548,23 @@ def server(input, output, session):
 
         # Add some delay here to keep the action button active for a moment until the modal is shown
         tm.sleep(1.0)
+
+    @reactive.Effect
+    @reactive.event(input.update_kittyhack)
+    def update_kittyhack_process():
+        # In remote-mode: target first, then local device.
+        # In target/local mode: local device only.
+        _start_update_process(update_target=bool(is_remote_mode()), update_local=True)
+
+    @reactive.Effect
+    @reactive.event(input.update_target_kittyhack)
+    def update_target_kittyhack_process():
+        _start_update_process(update_target=True, update_local=False)
+
+    @reactive.Effect
+    @reactive.event(input.update_remote_kittyhack)
+    def update_remote_kittyhack_process():
+        _start_update_process(update_target=False, update_local=True)
 
     @output
     @render.text

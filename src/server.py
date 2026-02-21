@@ -23,6 +23,8 @@ import uuid
 import glob
 import shutil
 from typing import List
+from urllib import request as urllib_request
+from urllib import error as urllib_error
 from src.baseconfig import (
     CONFIG,
     CONFIG_CREATED_AT_STARTUP,
@@ -4629,20 +4631,35 @@ def server(input, output, session):
 
                 client = RemoteControlClient.instance()
                 client.ensure_started()
-                if not client.wait_until_ready(timeout=5.0):
-                    ui.notification_show(
-                        _("Remote target is not connected. Cannot reboot both devices right now."),
-                        duration=10,
-                        type="error",
-                    )
-                    return
+                target_host = str(CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
+
+                def _try_http_target_reboot() -> bool:
+                    if not target_host:
+                        return False
+                    try:
+                        req = urllib_request.Request(
+                            f"http://{target_host}/api/reboot",
+                            data=b"",
+                            method="POST",
+                        )
+                        with urllib_request.urlopen(req, timeout=3.0) as resp:
+                            return int(getattr(resp, "status", 200) or 200) < 300
+                    except urllib_error.URLError:
+                        return False
+                    except Exception:
+                        return False
 
                 reboot_ack = False
-                for _attempt in range(3):
-                    if client.request_target_reboot(timeout=5.0):
-                        reboot_ack = True
-                        break
-                    tm.sleep(0.5)
+                if client.wait_until_ready(timeout=20.0):
+                    for _attempt in range(3):
+                        if client.request_target_reboot(timeout=5.0):
+                            reboot_ack = True
+                            break
+                        tm.sleep(0.5)
+
+                # Fallback path: if control websocket is not yet back, try target control HTTP API.
+                if not reboot_ack:
+                    reboot_ack = _try_http_target_reboot()
 
                 if not reboot_ack:
                     ui.notification_show(

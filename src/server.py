@@ -3400,7 +3400,7 @@ def server(input, output, session):
                 else:
                     extra_hint = ''
                     if not is_remote_mode():
-                        extra_hint = '<div>' + _('If this message does not disappear within 30 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>'
+                        extra_hint = '<div>' + _('If this message does not disappear within 60 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>'
                     img_html = (
                         '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
                         '<div></div>'

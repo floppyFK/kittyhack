@@ -1224,6 +1224,26 @@ async def _handler(ws: WebSocketServerProtocol):
                 asyncio.create_task(_reboot_later(0.2))
                 continue
 
+            if t == "version_request":
+                try:
+                    from src.helper import get_git_version
+                    target_git_version = str(get_git_version() or "unknown")
+                except Exception:
+                    target_git_version = "unknown"
+                try:
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "version_info",
+                                "git_version": target_git_version,
+                                "latest_version": str(CONFIG.get("LATEST_VERSION") or "unknown"),
+                            }
+                        )
+                    )
+                except Exception:
+                    pass
+                continue
+
     except Exception:
         pass
     finally:

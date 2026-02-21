@@ -79,6 +79,13 @@ class RemoteControlClient:
         }
         self._target_reboot_ack_event = threading.Event()
         self._target_reboot_ack_ok = False
+        self._target_version_event = threading.Event()
+        self._target_version_lock = threading.Lock()
+        self._target_version_info: dict[str, Any] = {
+            "git_version": "",
+            "latest_version": "",
+            "received_at": 0.0,
+        }
 
     @classmethod
     def instance(cls) -> "RemoteControlClient":
@@ -236,6 +243,25 @@ class RemoteControlClient:
         self._send_async({"type": "reboot_request"})
         got_ack = self._target_reboot_ack_event.wait(timeout=max(0.0, float(timeout or 0.0)))
         return bool(got_ack and self._target_reboot_ack_ok)
+
+    def request_target_version(self, timeout: float = 2.0) -> dict[str, Any] | None:
+        """Request target version info via control channel.
+
+        Returns the latest cached version info if a fresh response arrives within timeout.
+        """
+        if not self.wait_until_ready(timeout=max(0.0, min(3.0, float(timeout or 0.0)))):
+            return None
+
+        self._target_version_event.clear()
+        self._send_async({"type": "version_request"})
+        got = self._target_version_event.wait(timeout=max(0.0, float(timeout or 0.0)))
+        if not got:
+            return None
+        return self.get_target_version_info()
+
+    def get_target_version_info(self) -> dict[str, Any]:
+        with self._target_version_lock:
+            return dict(self._target_version_info)
 
     def abort_initial_sync(self, reason: str = "aborted by user") -> None:
         tmp_path = None
@@ -471,6 +497,16 @@ class RemoteControlClient:
         elif t == "reboot_ack":
             self._target_reboot_ack_ok = bool(data.get("ok", False))
             self._target_reboot_ack_event.set()
+            return
+
+        elif t == "version_info":
+            with self._target_version_lock:
+                self._target_version_info = {
+                    "git_version": str(data.get("git_version") or ""),
+                    "latest_version": str(data.get("latest_version") or ""),
+                    "received_at": time.time(),
+                }
+            self._target_version_event.set()
             return
 
     async def _handle_binary(self, payload: bytes) -> None:

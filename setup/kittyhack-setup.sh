@@ -556,32 +556,97 @@ install_remote_mode() {
             ;;
     esac
 
-    # Use already computed source dir (supports --sources-dir)
-    KITTYHACK_INSTALL_DIR="$KITTYHACK_ROOT"
-    echo -e "${CYAN}Kittyhack path: ${KITTYHACK_ROOT}${NC}"
+    # Determine source/install directory for remote mode.
+    if $USE_LOCAL_SOURCES; then
+        if [[ -z "$KITTYHACK_ROOT" || "$KITTYHACK_ROOT" == "/" ]]; then
+            echo -e "${RED}Invalid local source directory: '${KITTYHACK_ROOT}'. Use --sources-dir=/path/to/kittyhack.${NC}"
+            exit 1
+        fi
+        KITTYHACK_INSTALL_DIR="$KITTYHACK_ROOT"
+        if [[ ! -f "${KITTYHACK_INSTALL_DIR}/requirements_remote.txt" ]]; then
+            echo -e "${RED}Local sources appear invalid: requirements_remote.txt not found in ${KITTYHACK_INSTALL_DIR}.${NC}"
+            exit 1
+        fi
+    else
+        KITTYHACK_INSTALL_DIR="/root/kittyhack"
+        echo -e "${CYAN}--- REMOTE MODE INSTALL: Clone KittyHack repository ---${NC}"
+        if [[ -d "${KITTYHACK_INSTALL_DIR}" ]]; then
+            rm -rf "${KITTYHACK_INSTALL_DIR}"
+        fi
+        if ! git clone https://github.com/floppyFK/kittyhack.git "${KITTYHACK_INSTALL_DIR}" --quiet; then
+            echo -e "${RED}Failed to clone the repository. Please check your internet connection.${NC}"
+            exit 1
+        fi
+
+        local remote_git_ref=""
+        if [[ -n "$KITTYHACK_VERSION_REF" ]]; then
+            remote_git_ref="$KITTYHACK_VERSION_REF"
+            echo -e "${GREY}Using requested version ref: ${remote_git_ref}${NC}"
+        else
+            echo -e "${GREY}Fetching latest release...${NC}"
+            for i in {1..5}; do
+                remote_git_ref=$(curl -sf https://api.github.com/repos/floppyFK/kittyhack/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
+                if [[ -n "$remote_git_ref" ]]; then
+                    break
+                fi
+                remote_git_ref=$(git ls-remote --tags --refs https://github.com/floppyFK/kittyhack.git | tail -n1 | sed 's/.*\///')
+                if [[ -n "$remote_git_ref" ]]; then
+                    break
+                fi
+                sleep 5
+            done
+            if [[ -z "$remote_git_ref" ]]; then
+                remote_git_ref="v2.4.0"
+                echo -e "${YELLOW}Failed to fetch latest version. Using fallback ${remote_git_ref}.${NC}"
+            fi
+        fi
+
+        if [[ -n "$remote_git_ref" ]]; then
+            if ! git -C "${KITTYHACK_INSTALL_DIR}" checkout "$remote_git_ref" --quiet; then
+                echo -e "${RED}Failed to checkout ${remote_git_ref}.${NC}"
+                exit 1
+            fi
+        fi
+    fi
+    echo -e "${CYAN}Kittyhack path: ${KITTYHACK_INSTALL_DIR}${NC}"
 
     echo -e "${CYAN}--- REMOTE MODE INSTALL Step 1: Install system packages ---${NC}"
-    apt-get update
+    if ! apt-get update; then
+        echo -e "${RED}Failed to update apt package lists.${NC}"
+        exit 1
+    fi
     # libgl1 is required by some OpenCV wheels (even in headless/container setups)
-    apt-get install -y python3 python3-venv python3-pip rsync git curl ca-certificates libgl1 libglib2.0-0
+    if ! apt-get install -y python3 python3-venv python3-pip rsync git curl ca-certificates libgl1 libglib2.0-0; then
+        echo -e "${RED}Failed to install required system packages.${NC}"
+        exit 1
+    fi
 
     echo -e "${CYAN}--- REMOTE MODE INSTALL Step 2: Create virtualenv + install Python deps ---${NC}"
-    cd "$KITTYHACK_ROOT" || exit 1
+    cd "$KITTYHACK_INSTALL_DIR" || exit 1
     if ! create_venv_py311 .venv; then
         echo -e "${RED}Failed to create Python 3.11 virtualenv. Aborting.${NC}"
         exit 1
     fi
     source .venv/bin/activate
-    pip install --upgrade pip
-    pip install --timeout 120 --retries 10 -r requirements_remote.txt
+    if ! pip install --upgrade pip; then
+        deactivate 2>/dev/null || true
+        echo -e "${RED}Failed to upgrade pip in virtualenv.${NC}"
+        exit 1
+    fi
+    if ! pip install --timeout 120 --retries 10 -r requirements_remote.txt; then
+        deactivate 2>/dev/null || true
+        echo -e "${RED}Failed to install Python dependencies from requirements_remote.txt.${NC}"
+        exit 1
+    fi
+    deactivate
 
     echo -e "${CYAN}--- REMOTE MODE INSTALL Step 3: Configure remote-mode ---${NC}"
     # Create remote-mode marker file
-    touch "${KITTYHACK_ROOT}/.remote-mode"
+    touch "${KITTYHACK_INSTALL_DIR}/.remote-mode"
 
     # Configure config.ini (best-effort): camera source on remote nodes
-    if [ -f "${KITTYHACK_ROOT}/config.ini" ]; then
-        sed -i "s/^camera_source\s*=\s*.*/camera_source = ip_camera/" "${KITTYHACK_ROOT}/config.ini" || true
+    if [ -f "${KITTYHACK_INSTALL_DIR}/config.ini" ]; then
+        sed -i "s/^camera_source\s*=\s*.*/camera_source = ip_camera/" "${KITTYHACK_INSTALL_DIR}/config.ini" || true
     fi
 
     echo -e "${CYAN}--- REMOTE MODE INSTALL Step 4: Install/enable kittyhack.service ---${NC}"
@@ -593,9 +658,9 @@ After=network.target
 [Service]
 User=root
 Group=root
-WorkingDirectory=${KITTYHACK_ROOT}
-Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${KITTYHACK_ROOT}/.venv/bin"
-ExecStart=${KITTYHACK_ROOT}/.venv/bin/shiny run --host=0.0.0.0 --port=80
+WorkingDirectory=${KITTYHACK_INSTALL_DIR}
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${KITTYHACK_INSTALL_DIR}/.venv/bin"
+ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/shiny run --host=0.0.0.0 --port=80
 Restart=always
 RestartSec=5
 
@@ -609,7 +674,15 @@ EOF
 
     systemctl daemon-reload
     systemctl enable kittyhack.service
-    systemctl restart kittyhack.service
+    if ! systemctl restart kittyhack.service; then
+        echo -e "${RED}Failed to start kittyhack.service.${NC}"
+        exit 1
+    fi
+
+    if ! systemctl is-active --quiet kittyhack.service; then
+        echo -e "${RED}kittyhack.service is not active after restart.${NC}"
+        exit 1
+    fi
 
     echo -e "${GREEN}Remote-mode installation complete.${NC}"
 }
@@ -1008,7 +1081,11 @@ reinstall_camera_drivers() {
 
 # Defaults / CLI flags
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-KITTYHACK_ROOT=$(realpath "${SCRIPT_DIR}/..")
+if [[ -f "${SCRIPT_DIR}/../requirements.txt" && -f "${SCRIPT_DIR}/../requirements_remote.txt" ]]; then
+    KITTYHACK_ROOT=$(realpath "${SCRIPT_DIR}/..")
+else
+    KITTYHACK_ROOT=""
+fi
 
 # When true: do not clone from GitHub, use this repo folder as install source.
 USE_LOCAL_SOURCES=false
@@ -1066,6 +1143,10 @@ fi
 
 # If local sources are used, default install dir to that folder.
 if $USE_LOCAL_SOURCES; then
+    if [[ -z "$KITTYHACK_ROOT" || "$KITTYHACK_ROOT" == "/" ]]; then
+        echo -e "${RED}Local sources requested, but no valid source directory detected. Use --sources-dir=/path/to/kittyhack.${NC}"
+        exit 1
+    fi
     KITTYHACK_INSTALL_DIR="$KITTYHACK_ROOT"
 fi
 
@@ -1220,24 +1301,24 @@ EOF
         1)
             echo -e "${CYAN}Installing the latest version of Kittyhack...${NC}"
             INSTALL_LEGACY_KITTYHACK=0
-            install_full
+            install_full || ((FAIL_COUNT++))
             break
             ;;
         2)
             echo -e "${CYAN}Reinstalling camera drivers...${NC}"
-            reinstall_camera_drivers
+            reinstall_camera_drivers || ((FAIL_COUNT++))
             break
             ;;
         3)
             echo -e "${CYAN}Updating to the latest version of Kittyhack...${NC}"
             INSTALL_LEGACY_KITTYHACK=0
-            install_update
+            install_update || ((FAIL_COUNT++))
             break
             ;;
         4)
             echo -e "${CYAN}Installing Kittyhack in remote-mode...${NC}"
             INSTALL_LEGACY_KITTYHACK=0
-            install_remote_mode
+            install_remote_mode || ((FAIL_COUNT++))
             break
             ;;
         5)

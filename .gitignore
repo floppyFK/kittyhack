@@ -9,3 +9,9 @@ sync-to-kittyflap.sh
 notifications.json
 ignore_*
 .vscode/settings.json
+config.remote.ini
+.remote-mode
+.remote-control-session
+.wlan-action-in-progress
+*.remote_synced
+*.remote_restart_pending

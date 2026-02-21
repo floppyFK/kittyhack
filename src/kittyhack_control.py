@@ -1132,7 +1132,12 @@ async def _handle_update_request(ws: WebSocketServerProtocol, latest_version: st
             latest_version or None,
             current_version or None,
         )
-        await ws.send(json.dumps({"type": "update_end", "ok": bool(ok), "reason": str(reason or "")}))
+        try:
+            await ws.send(json.dumps({"type": "update_end", "ok": bool(ok), "reason": str(reason or "")}))
+        except Exception as e:
+            # Expected in many successful update flows: the control websocket can close
+            # while services are restarted during the update.
+            logging.info(f"[CONTROL] Could not deliver update_end to remote controller (connection closing): {e}")
     except Exception as e:
         logging.error(f"[CONTROL] Target update failed: {e}")
         try:

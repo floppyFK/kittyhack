@@ -3338,6 +3338,7 @@ def server(input, output, session):
         if not hasattr(live_view_image, "last_frame_hash"):
             live_view_image.last_frame_hash = None
             live_view_image.last_change_time = monotonic_time()
+            live_view_image.no_frame_since = None
             live_view_image.last_ar_w = 4
             live_view_image.last_ar_h = 3
             live_view_image.visible_frame_jpg = None
@@ -3372,6 +3373,7 @@ def server(input, output, session):
             live_view_image.visible_frame_hash = None
             live_view_image.preload_frame_jpg = None
             live_view_image.preload_frame_hash = None
+            live_view_image.no_frame_since = None
             live_view_image.last_ar_w = 4
             live_view_image.last_ar_h = 3
             _set_aspect(4, 3)
@@ -3385,21 +3387,45 @@ def server(input, output, session):
 
             frame = model_handler.get_camera_frame()
             if frame is None:
+                if getattr(live_view_image, 'no_frame_since', None) is None:
+                    live_view_image.no_frame_since = monotonic_time()
+                no_frame_elapsed = max(0.0, monotonic_time() - float(live_view_image.no_frame_since or 0.0))
+
                 if CONFIG.get("CAMERA_SOURCE") == "ip_camera":
-                    img_html = (
-                        '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
-                        '<div></div>'
-                        '<div><strong>' + _('Connection to the IP camera failed.') + '</strong></div>'
-                        '<div>' + _("Please check the stream URL and the network connection of your IP camera.") + '</div>'
-                        '<div class="spinner-container"><div class="spinner"></div></div>'
-                        '<div>' + _('If you have just changed the camera settings, please wait a few seconds for the camera to reconnect.') + '</div>'
-                        '<div>' + _('Current status: ') + (str(model_handler.get_camera_state()) if model_handler.get_camera_state() is not None else _('Unknown')) + '</div>'
-                        '<div></div>'
-                        '</div>'
-                    )
+                    cam_state = model_handler.get_camera_state()
+                    cam_state_text = str(cam_state) if cam_state is not None else _('Unknown')
+                    startup_grace_s = 12.0
+
+                    if no_frame_elapsed < startup_grace_s:
+                        img_html = (
+                            '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
+                            '<div></div>'
+                            '<div><strong>' + _('Connecting to the IP camera...') + '</strong></div>'
+                            '<div>' + _('Please wait a few seconds while the stream is initialized.') + '</div>'
+                            '<div class="spinner-container"><div class="spinner"></div></div>'
+                            '<div>' + _('Current status: ') + cam_state_text + '</div>'
+                            '<div></div>'
+                            '</div>'
+                        )
+                    else:
+                        reconnect_hint = ''
+                        if no_frame_elapsed >= 25.0:
+                            reconnect_hint = '<div>' + _('If the stream does not recover, verify the URL, camera network connection, and camera credentials.') + '</div>'
+                        img_html = (
+                            '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
+                            '<div></div>'
+                            '<div><strong>' + _('Connection to the IP camera failed.') + '</strong></div>'
+                            '<div>' + _("Please check the stream URL and the network connection of your IP camera.") + '</div>'
+                            '<div class="spinner-container"><div class="spinner"></div></div>'
+                            '<div>' + _('If you have just changed the camera settings, please wait a few seconds for the camera to reconnect.') + '</div>'
+                            '<div>' + _('Current status: ') + cam_state_text + '</div>'
+                            + reconnect_hint +
+                            '<div></div>'
+                            '</div>'
+                        )
                 else:
                     extra_hint = ''
-                    if not is_remote_mode():
+                    if (not is_remote_mode()) and (no_frame_elapsed >= 25.0):
                         extra_hint = '<div>' + _('If this message does not disappear within 60 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.') + '</div>'
                     img_html = (
                         '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
@@ -3412,6 +3438,7 @@ def server(input, output, session):
                         '</div>'
                     )
             else:
+                live_view_image.no_frame_since = None
                 frame_jpg = model_handler.encode_jpg_image(frame)
                 frame_hash = hashlib.md5(frame_jpg).hexdigest() if frame_jpg else None
 

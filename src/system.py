@@ -702,6 +702,14 @@ def update_kittyhack(
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(content)
 
+    def _remove_kittyhack_control_service_file() -> None:
+        target_path = "/etc/systemd/system/kittyhack_control.service"
+        try:
+            if os.path.exists(target_path):
+                os.remove(target_path)
+        except Exception:
+            pass
+
     def _apply_target_boot_service_semantics() -> None:
         """Best-effort migration of systemd enable/disable state.
 
@@ -718,7 +726,10 @@ def update_kittyhack(
         try:
             # Ensure service files exist before enabling.
             _install_kittyhack_service_file()
-            _install_kittyhack_control_service_file()
+            if is_remote:
+                _remove_kittyhack_control_service_file()
+            else:
+                _install_kittyhack_control_service_file()
         except Exception:
             pass
 
@@ -820,7 +831,14 @@ def update_kittyhack(
                 progress_callback(6, "Updating systemd service file", "")
             logging.info("Updating systemd service file")
             _install_kittyhack_service_file()
-            _install_kittyhack_control_service_file()
+            try:
+                _is_remote_now = bool(is_remote_mode())
+            except Exception:
+                _is_remote_now = False
+            if _is_remote_now:
+                _remove_kittyhack_control_service_file()
+            else:
+                _install_kittyhack_control_service_file()
             # 7
             _run_step(7, "Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"])
 
@@ -839,7 +857,14 @@ def update_kittyhack(
                 if did_update_deps:
                     subprocess.run(pip_install_cmd, check=True)
                 _install_kittyhack_service_file()
-                _install_kittyhack_control_service_file()
+                try:
+                    _is_remote_now = bool(is_remote_mode())
+                except Exception:
+                    _is_remote_now = False
+                if _is_remote_now:
+                    _remove_kittyhack_control_service_file()
+                else:
+                    _install_kittyhack_control_service_file()
                 subprocess.run(["/bin/systemctl", "daemon-reload"], check=True)
                 # Best-effort: keep service enablement consistent even after rollback.
                 try:

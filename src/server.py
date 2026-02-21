@@ -4637,7 +4637,14 @@ def server(input, output, session):
                     )
                     return
 
-                if not client.request_target_reboot(timeout=5.0):
+                reboot_ack = False
+                for _attempt in range(3):
+                    if client.request_target_reboot(timeout=5.0):
+                        reboot_ack = True
+                        break
+                    tm.sleep(0.5)
+
+                if not reboot_ack:
                     ui.notification_show(
                         _("Failed to trigger reboot on target device. Please check remote connection and try again."),
                         duration=10,
@@ -4652,6 +4659,10 @@ def server(input, output, session):
                     type="error",
                 )
                 return
+
+            # Give the target a short grace period to execute its reboot command
+            # before rebooting the remote-mode device itself.
+            tm.sleep(1.0)
 
         ui.modal_remove()
         reboot_message = _("Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reload the page after the restart.")

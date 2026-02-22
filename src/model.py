@@ -53,6 +53,33 @@ def _remote_internal_proxy_url() -> str | None:
     return base.rstrip("/") + "/video"
 
 
+def _remote_control_disconnected() -> bool:
+    """True when remote control is intentionally or effectively disconnected."""
+    if not is_remote_mode():
+        return False
+
+    host = str(CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
+    if not host:
+        return False
+
+    try:
+        from src.remote.control_client import RemoteControlClient
+
+        client = RemoteControlClient.instance()
+        client.ensure_started()
+        if bool(getattr(client, "is_manual_disconnect", lambda: False)()):
+            return True
+
+        ready = bool(client.wait_until_ready(timeout=0))
+        if ready:
+            return False
+
+        had_connection = bool(getattr(client, "had_successful_connection", lambda: False)())
+        return had_connection
+    except Exception:
+        return False
+
+
 def _effective_camera_stream_config() -> tuple[str, str]:
     """Resolve runtime stream source/url from current CONFIG.
 
@@ -61,8 +88,19 @@ def _effective_camera_stream_config() -> tuple[str, str]:
     """
     proxy_url = _remote_internal_proxy_url()
     if proxy_url:
-        return "ip_camera", proxy_url
-    return str(CONFIG.get("CAMERA_SOURCE") or "internal"), str(CONFIG.get("IP_CAMERA_URL") or "")
+        source = "ip_camera"
+        ip_url = proxy_url
+    else:
+        source = str(CONFIG.get("CAMERA_SOURCE") or "internal")
+        ip_url = str(CONFIG.get("IP_CAMERA_URL") or "")
+
+    # In remote-mode: when the control link is disconnected, close any IP camera
+    # stream (including implicit remote /video relay) until reconnected.
+    if is_remote_mode() and str(source or "").strip().lower() == "ip_camera":
+        if _remote_control_disconnected():
+            return "disconnected", ""
+
+    return source, ip_url
 
 
 def _is_remote_internal_proxy_stream(source: str, url: str) -> bool:
@@ -1338,6 +1376,8 @@ class ModelHandler:
             if is_remote_mode() and str(CONFIG.get('CAMERA_SOURCE') or '').strip().lower() == 'internal':
                 if effective_camera_source == 'ip_camera' and effective_ip_camera_url:
                     logging.info(f"[CAMERA] Remote-mode implicit internal camera mapping active: {effective_ip_camera_url}")
+                elif effective_camera_source == 'disconnected':
+                    logging.info("[CAMERA] Remote control disconnected. IP camera stream remains closed until reconnect.")
                 else:
                     logging.warning("[CAMERA] Remote-mode internal camera selected, but REMOTE_TARGET_HOST is empty. Falling back to local internal source.")
 
@@ -1680,6 +1720,8 @@ class ModelHandler:
         ).start()
         if is_remote_mode() and str(CONFIG.get('CAMERA_SOURCE') or '').strip().lower() == 'internal' and effective_camera_source == 'ip_camera':
             logging.info(f"[MODEL] Re-initialized videostream with implicit remote MJPEG relay source: {effective_ip_camera_url}.")
+        elif effective_camera_source == 'disconnected':
+            logging.info("[MODEL] Re-initialized videostream in disconnected mode (IP camera stream closed).")
         elif CONFIG['CAMERA_SOURCE'] == "internal":
             logging.info(f"[MODEL] Re-initialized videostream with internal camera source.")
         else:

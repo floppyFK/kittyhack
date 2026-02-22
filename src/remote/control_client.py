@@ -36,6 +36,7 @@ class RemoteControlClient:
         self._ws: websockets.WebSocketClientProtocol | None = None
         self._connected = threading.Event()
         self._ready_for_use = threading.Event()
+        self._ever_connected = threading.Event()
         self._lock = threading.Lock()
         self._states = RemoteStates()
         self._last_rx = 0.0
@@ -43,6 +44,7 @@ class RemoteControlClient:
         self._client_id = f"remote_{int(time.time())}"
         self._missing_target_host_logged = False
         self._pending_magnet_commands: set[str] = set()
+        self._manual_disconnect = threading.Event()
 
         self._sync_tmp_path: str | None = None
         self._sync_started_at: float = 0.0
@@ -112,6 +114,39 @@ class RemoteControlClient:
 
     def wait_until_ready(self, timeout: float = 30.0) -> bool:
         return self._ready_for_use.wait(timeout=timeout)
+
+    def disconnect(self) -> None:
+        """Manually disconnect and pause automatic reconnect attempts."""
+        self._manual_disconnect.set()
+        self._force_close_ws()
+
+    def reconnect(self) -> None:
+        """Resume automatic reconnect attempts immediately."""
+        self._manual_disconnect.clear()
+        self.ensure_started()
+        self._force_close_ws()
+
+    def is_manual_disconnect(self) -> bool:
+        return self._manual_disconnect.is_set()
+
+    def had_successful_connection(self) -> bool:
+        return self._ever_connected.is_set()
+
+    def _force_close_ws(self) -> None:
+        ws = self._ws
+        loop = self._loop
+        if ws is not None and loop is not None:
+            async def _close_socket() -> None:
+                try:
+                    await ws.close(code=1000, reason="manual_disconnect")
+                except Exception:
+                    pass
+
+            try:
+                asyncio.run_coroutine_threadsafe(_close_socket(), loop)
+            except Exception:
+                pass
+        self._set_disconnected_state()
 
     def queue_magnet_command(self, command: str) -> None:
         cmd = str(command or "").strip()
@@ -319,6 +354,11 @@ class RemoteControlClient:
         no_rx_timeout_s = max(6.0, float(timeout_s) + 3.0)
 
         while not sigterm_monitor.stop_now:
+            if self._manual_disconnect.is_set():
+                self._set_disconnected_state()
+                await asyncio.sleep(0.5)
+                continue
+
             url = self._ws_url()
             if not url:
                 if not self._missing_target_host_logged:
@@ -354,6 +394,7 @@ class RemoteControlClient:
 
                     self._control_acquired = True
                     self._ready_for_use.set()
+                    self._ever_connected.set()
                     self._last_rx = time.time()
                     logging.info("[REMOTE_CTRL] Control acquired.")
 
@@ -392,9 +433,13 @@ class RemoteControlClient:
 
             except Exception as e:
                 self._set_disconnected_state()
-                logging.warning(f"[REMOTE_CTRL] Connection lost: {e}")
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2.0, 30.0)
+                if not self._manual_disconnect.is_set():
+                    logging.warning(f"[REMOTE_CTRL] Connection lost: {e}")
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2.0, 30.0)
+                else:
+                    backoff = 1.0
+                    await asyncio.sleep(0.5)
             finally:
                 # Also clear state on clean websocket close (no exception path).
                 self._set_disconnected_state()

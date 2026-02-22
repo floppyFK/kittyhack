@@ -289,7 +289,7 @@ def _page_text() -> dict[str, str]:
             "remote_ui": "Remote UI",
             "remote_ui_unknown": "unknown (controller IP not available yet)",
             "p_remote": (
-                "This device is currently controlled via <code>kittyhack_control</code>. "
+                "This device is currently controlled remotely. "
                 "The normal Kittyhack UI on this device is stopped while control is active."
             ),
             "p_wait": "This Kittyflap is configured to wait for a remote-control connection after reboot.",
@@ -320,7 +320,7 @@ def _page_text() -> dict[str, str]:
             "remote_ui": "Remote-UI",
             "remote_ui_unknown": "unbekannt (Controller-IP noch nicht verfügbar)",
             "p_remote": (
-                "Dieses Gerät wird aktuell über <code>kittyhack_control</code> ferngesteuert. "
+                "Dieses Gerät wird aktuell ferngesteuert. "
                 "Die normale Kittyhack-UI auf diesem Gerät ist während der Fernsteuerung gestoppt."
             ),
             "p_wait": "Diese Kittyflap ist so konfiguriert, dass sie nach einem Neustart auf eine Fernsteuerungsverbindung wartet.",

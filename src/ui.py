@@ -107,10 +107,14 @@ app_ui = ui.page_fillable(
         *_nav_items,
         title=ui.tags.div(
             {
-                "class": "d-flex align-items-center gap-2 flex-wrap navbar-title-wrap",
+                "class": "d-flex align-items-center gap-2 flex-nowrap navbar-title-wrap",
                 "style": "font-weight: bold;"
             },
             ui.HTML("KITTY " + str(icon_svg("shield-cat")) + "HACK"),
+            ui.tags.span(
+                {"class": "remote-nav-controls-wrapper"},
+                ui.output_ui("ui_remote_connection_badge"),
+            ),
             ui.tags.span(
                 {"class": "theme-toggle-container"},
                 ui.tags.button(

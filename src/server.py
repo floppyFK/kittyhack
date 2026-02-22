@@ -2456,6 +2456,28 @@ def server(input, output, session):
     remote_sync_modal_open = reactive.Value(False)
     remote_restart_modal_open = reactive.Value(False)
     remote_sync_finalized = reactive.Value(False)
+    remote_disconnect_modal_open = reactive.Value(False)
+    remote_connected_once = reactive.Value(False)
+
+    def _remote_connection_state() -> tuple[str, bool, bool]:
+        """Return (host, is_ready, manual_disconnect)."""
+        host = (CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
+        if not host:
+            return "", False, False
+
+        is_ready = False
+        manual_disconnect = False
+        try:
+            from src.remote.control_client import RemoteControlClient
+
+            client = RemoteControlClient.instance()
+            client.ensure_started()
+            manual_disconnect = bool(getattr(client, "is_manual_disconnect", lambda: False)())
+            is_ready = bool(client.wait_until_ready(timeout=0))
+        except Exception:
+            is_ready = False
+            manual_disconnect = False
+        return host, is_ready, manual_disconnect
 
     # Live status for overlay in live view
     live_status = reactive.Value(
@@ -2580,35 +2602,48 @@ def server(input, output, session):
 
         reactive.invalidate_later(1.0)
 
-        host = (CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
+        host, is_ready, manual_disconnect = _remote_connection_state()
         if not host:
-            return ui.tags.span(
+            badge = ui.tags.span(
                 {"class": "badge rounded-pill text-bg-secondary", "title": _("Remote target host not configured")},
                 _("Remote: not configured"),
             )
-
-        try:
-            from src.remote.control_client import RemoteControlClient
-
-            client = RemoteControlClient.instance()
-            client.ensure_started()
-            is_ready = bool(client.wait_until_ready(timeout=0))
-        except Exception:
-            is_ready = False
+            return ui.tags.div({"class": "remote-nav-controls"}, badge)
 
         if is_ready:
-            return ui.tags.span(
+            badge = ui.tags.span(
                 {"class": "badge rounded-pill text-bg-success", "title": _("Connected to Kittyflap") + f": {host}"},
                 _("Remote: connected"),
             )
+            return ui.tags.div(
+                {"class": "remote-nav-controls"},
+                badge,
+                ui.input_action_button("btn_remote_disconnect", _("Disconnect"), class_="btn-sm btn-outline-danger remote-nav-disconnect-btn"),
+            )
+
+        if manual_disconnect:
+            badge = ui.tags.span(
+                {"class": "badge rounded-pill text-bg-secondary", "title": _("Disconnected from Kittyflap") + f": {host}"},
+                _("Remote: disconnected"),
+            )
+            return ui.tags.div(
+                {"class": "remote-nav-controls"},
+                badge,
+                ui.input_action_button("btn_remote_disconnect", _("Disconnect"), class_="btn-sm btn-outline-danger remote-nav-disconnect-btn"),
+            )
 
         # Connecting / reconnecting
-        return ui.tags.span(
+        badge = ui.tags.span(
             {"class": "badge rounded-pill text-bg-warning", "title": _("Connecting to Kittyflap") + f": {host}"},
             ui.tags.span(
                 {"class": "spinner-border spinner-border-sm me-1", "role": "status", "aria-hidden": "true"}
             ),
             _("Remote: connecting"),
+        )
+        return ui.tags.div(
+            {"class": "remote-nav-controls"},
+            badge,
+            ui.input_action_button("btn_remote_disconnect", _("Disconnect"), class_="btn-sm btn-outline-danger remote-nav-disconnect-btn"),
         )
 
     def show_remote_setup_modal():
@@ -2742,6 +2777,35 @@ def server(input, output, session):
             )
         )
 
+    def show_remote_disconnected_modal(host: str, manual_disconnect: bool = False):
+        if str(host).startswith("http://") or str(host).startswith("https://"):
+            target_ui_url = str(host)
+        else:
+            target_ui_url = f"http://{host}"
+
+        headline = _("Connection to Kittyflap is disconnected.")
+        if manual_disconnect:
+            headline = _("Connection to Kittyflap has been disconnected manually.")
+
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.markdown(
+                        headline
+                        + "\n\n"
+                        + _("The Kittyflap can now be controlled directly in its web UI:")
+                        + f"\n{target_ui_url}"
+                    )
+                ),
+                title=_("Remote disconnected"),
+                easy_close=False,
+                footer=ui.div(
+                    ui.input_action_button("btn_remote_reconnect", _("Reconnect"))
+                ),
+                size="lg",
+            )
+        )
+
     if is_remote_mode() and remote_setup_required:
         show_remote_setup_modal()
 
@@ -2753,6 +2817,64 @@ def server(input, output, session):
                 remote_restart_modal_open.set(True)
         except Exception:
             pass
+
+    @reactive.Effect
+    def _remote_disconnect_modal_poller():
+        if not is_remote_mode():
+            return
+
+        reactive.invalidate_later(0.5)
+
+        if bool(remote_setup_active.get()):
+            return
+
+        host, is_ready, manual_disconnect = _remote_connection_state()
+
+        if is_ready:
+            if not bool(remote_connected_once.get()):
+                remote_connected_once.set(True)
+            if bool(remote_disconnect_modal_open.get()):
+                ui.modal_remove()
+                remote_disconnect_modal_open.set(False)
+            return
+
+        should_show = bool(host) and (bool(remote_connected_once.get()) or manual_disconnect)
+        if should_show and not bool(remote_disconnect_modal_open.get()):
+            show_remote_disconnected_modal(host=host, manual_disconnect=manual_disconnect)
+            remote_disconnect_modal_open.set(True)
+
+    @reactive.Effect
+    @reactive.event(input.btn_remote_disconnect)
+    def _remote_disconnect_button_click():
+        if not is_remote_mode():
+            return
+        try:
+            from src.remote.control_client import RemoteControlClient
+
+            client = RemoteControlClient.instance()
+            client.ensure_started()
+            client.disconnect()
+            remote_connected_once.set(True)
+            ui.notification_show(_("Disconnected from Kittyflap."), duration=4, type="message")
+        except Exception as e:
+            ui.notification_show(_("Failed to disconnect from Kittyflap: {}.").format(e), duration=8, type="error")
+
+    @reactive.Effect
+    @reactive.event(input.btn_remote_reconnect)
+    def _remote_reconnect_button_click():
+        if not is_remote_mode():
+            return
+        try:
+            from src.remote.control_client import RemoteControlClient
+
+            client = RemoteControlClient.instance()
+            client.ensure_started()
+            client.reconnect()
+            remote_disconnect_modal_open.set(False)
+            ui.modal_remove()
+            ui.notification_show(_("Reconnecting to Kittyflap, please wait..."), duration=15, type="message")
+        except Exception as e:
+            ui.notification_show(_("Failed to reconnect to Kittyflap: {}.").format(e), duration=8, type="error")
 
     @output
     @render.ui
@@ -3363,6 +3485,14 @@ def server(input, output, session):
             except Exception:
                 return
 
+        def _spinner_html() -> str:
+            # Keep spinner phase continuous across output rerenders.
+            try:
+                phase_s = float(monotonic_time() % 1.0)
+            except Exception:
+                phase_s = 0.0
+            return f'<div class="spinner-container"><div class="spinner" style="animation-delay:-{phase_s:.3f}s;"></div></div>'
+
         camera_key = (CONFIG.get("CAMERA_SOURCE"), CONFIG.get("IP_CAMERA_URL"))
         if live_view_image.last_camera_key is None:
             live_view_image.last_camera_key = camera_key
@@ -3404,7 +3534,7 @@ def server(input, output, session):
                             '<div></div>'
                             '<div><strong>' + _('Connecting to the IP camera...') + '</strong></div>'
                             '<div>' + _('Please wait a few seconds while the stream is initialized.') + '</div>'
-                            '<div class="spinner-container"><div class="spinner"></div></div>'
+                            + _spinner_html() +
                             '<div>' + _('Current status: ') + cam_state_text + '</div>'
                             '<div></div>'
                             '</div>'
@@ -3418,7 +3548,7 @@ def server(input, output, session):
                             '<div></div>'
                             '<div><strong>' + _('Connection to the IP camera failed.') + '</strong></div>'
                             '<div>' + _("Please check the stream URL and the network connection of your IP camera.") + '</div>'
-                            '<div class="spinner-container"><div class="spinner"></div></div>'
+                            + _spinner_html() +
                             '<div>' + _('If you have just changed the camera settings, please wait a few seconds for the camera to reconnect.') + '</div>'
                             '<div>' + _('Current status: ') + cam_state_text + '</div>'
                             + reconnect_hint +
@@ -3434,8 +3564,8 @@ def server(input, output, session):
                         '<div></div>'
                         '<div><strong>' + _('Connection to the camera failed.') + '</strong></div>'
                         '<div>' + _("Please wait...") + '</div>'
-                        '<div class="spinner-container"><div class="spinner"></div></div>'
-                        + extra_hint +
+                        + _spinner_html() +
+                        extra_hint +
                         '<div></div>'
                         '</div>'
                     )
@@ -3469,7 +3599,7 @@ def server(input, output, session):
                             '<div></div>'
                             '<div><strong>' + _('Camera stream appears to be frozen.') + '</strong></div>'
                             '<div>' + _("Please check your external IP camera connection or network settings.") + '</div>'
-                            '<div class="spinner-container"><div class="spinner"></div></div>'
+                            + _spinner_html() +
                             '<div></div>'
                             '</div>'
                         )
@@ -3553,18 +3683,7 @@ def server(input, output, session):
 
         remote_indicator_html = ""
         if is_remote_mode():
-            host = (CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
-
-            is_ready = False
-            if host:
-                try:
-                    from src.remote.control_client import RemoteControlClient
-
-                    client = RemoteControlClient.instance()
-                    client.ensure_started()
-                    is_ready = bool(client.wait_until_ready(timeout=0))
-                except Exception:
-                    is_ready = False
+            host, is_ready, manual_disconnect = _remote_connection_state()
 
             remote_variant = "muted"
             remote_title = _("Remote target host not configured")
@@ -3574,6 +3693,10 @@ def server(input, output, session):
                 remote_variant = "ok"
                 remote_title = _("Connected to Kittyflap") + f": {host}"
                 remote_aria = _("Remote: connected")
+            elif host and manual_disconnect:
+                remote_variant = "muted"
+                remote_title = _("Disconnected from Kittyflap") + f": {host}"
+                remote_aria = _("Remote: disconnected")
             elif host:
                 remote_variant = "blocked"
                 remote_title = _("Connecting to Kittyflap") + f": {host}"
@@ -3581,12 +3704,15 @@ def server(input, output, session):
 
             remote_indicator_html = (
                 '<div class="remote-connection-indicator" '
+                f'aria-label="{remote_aria}">'
+                + '<div class="remote-connection-dot" '
                 f'aria-label="{remote_aria}" title="{remote_title}" data-bs-title="{remote_title}" '
                 'data-bs-toggle="tooltip" data-bs-trigger="hover focus" data-bs-placement="top" tabindex="0">'
                 + (
                     f'<span class="remote-status-chip remote-status-chip--{remote_variant}" '
                     f'role="img" aria-label="{remote_aria}"></span>'
                 )
+                + '</div>'
                 + "</div>"
             )
 

@@ -16,10 +16,18 @@
     font-weight: 600;
     letter-spacing: 0.1px;
     white-space: nowrap;
+    line-height: 1;
+    vertical-align: middle;
+}
+
+.navbar-title-wrap {
+    min-width: 0;
+    max-width: calc(100vw - 5.5rem);
+    overflow: hidden;
 }
 
 /* On desktop, keep the theme toggle on the far right */
-@media (min-width: 992px) {
+@media (min-width: 1400px) {
     .theme-toggle-container {
         position: fixed;
         right: 0.75rem;
@@ -1765,16 +1773,106 @@ html[data-bs-theme="dark"] .btn-default.btn-outline-danger:focus {
     right: 0.10rem;
     bottom: 0.08rem;
     display: inline-flex;
+    gap: 0.22rem;
+    align-items: center;
+    justify-content: flex-end;
+    line-height: 1;
+    pointer-events: auto;
+}
+
+.remote-connection-dot {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     padding: 0.16rem;
-    border: none;
-    background: transparent;
-    box-shadow: none;
-    border-radius: 0;
-    line-height: 1;
     cursor: help;
-    pointer-events: auto;
+}
+
+.remote-nav-controls-wrapper {
+    display: inline-flex;
+    align-items: center;
+}
+
+.theme-toggle-container {
+    display: inline-flex;
+    align-items: center;
+}
+
+.remote-nav-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-weight: 500;
+}
+
+.remote-nav-disconnect-btn {
+    --bs-btn-padding-y: 0.16rem;
+    --bs-btn-padding-x: 0.45rem;
+    --bs-btn-font-size: 0.72rem;
+    --bs-btn-border-radius: 999px;
+    line-height: 1.2;
+    vertical-align: middle;
+}
+
+.remote-nav-controls .badge {
+    margin-bottom: 0;
+}
+
+@media (max-width: 1399.98px) {
+    .navbar-title-wrap {
+        gap: 0.35rem !important;
+        max-width: calc(100vw - 4.8rem);
+    }
+
+    .theme-toggle-container,
+    .remote-nav-controls-wrapper {
+        display: inline-flex;
+        align-items: center;
+    }
+
+    .remote-nav-controls {
+        gap: 0.2rem;
+    }
+
+    .remote-nav-controls .badge {
+        display: none;
+    }
+
+    .remote-nav-disconnect-btn {
+        width: 1.9rem;
+        min-width: 1.9rem;
+        height: 1.9rem;
+        padding: 0 !important;
+        font-size: 0 !important;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .remote-nav-disconnect-btn::before {
+        content: "⏻";
+        font-size: 0.92rem;
+        line-height: 1;
+        font-weight: 700;
+    }
+
+    .theme-toggle-btn {
+        width: 1.9rem;
+        min-width: 1.9rem;
+        height: 1.9rem;
+        padding: 0 !important;
+        font-size: 0 !important;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .theme-toggle-btn::before {
+        content: "◐";
+        font-size: 0.92rem;
+        line-height: 1;
+        font-weight: 700;
+    }
 }
 
 /* Live view: bslib adds fairly large default gaps; tighten spacing for this card */

@@ -2806,6 +2806,24 @@ def server(input, output, session):
             )
         )
 
+    def show_remote_disconnect_confirm_modal():
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.markdown(
+                        _("Do you really want to disconnect from Kittyflap?")
+                    )
+                ),
+                title=_("Disconnect"),
+                easy_close=True,
+                footer=ui.div(
+                    ui.input_action_button("btn_remote_disconnect_cancel", _("Cancel"), class_="btn-secondary"),
+                    ui.input_action_button("btn_remote_disconnect_confirm", _("Disconnect"), class_="btn-danger"),
+                ),
+                size="m",
+            )
+        )
+
     if is_remote_mode() and remote_setup_required:
         show_remote_setup_modal()
 
@@ -2848,6 +2866,20 @@ def server(input, output, session):
     def _remote_disconnect_button_click():
         if not is_remote_mode():
             return
+        show_remote_disconnect_confirm_modal()
+
+    @reactive.Effect
+    @reactive.event(input.btn_remote_disconnect_cancel)
+    def _remote_disconnect_cancel_click():
+        if not is_remote_mode():
+            return
+        ui.modal_remove()
+
+    @reactive.Effect
+    @reactive.event(input.btn_remote_disconnect_confirm)
+    def _remote_disconnect_confirm_click():
+        if not is_remote_mode():
+            return
         try:
             from src.remote.control_client import RemoteControlClient
 
@@ -2855,6 +2887,7 @@ def server(input, output, session):
             client.ensure_started()
             client.disconnect()
             remote_connected_once.set(True)
+            ui.modal_remove()
             ui.notification_show(_("Disconnected from Kittyflap."), duration=4, type="message")
         except Exception as e:
             ui.notification_show(_("Failed to disconnect from Kittyflap: {}.").format(e), duration=8, type="error")
@@ -7182,7 +7215,7 @@ def server(input, output, session):
                 collapsible_section(
                     "remote_mode_documentation",
                     _("Remote-mode guide"),
-                    _("Shows the built-in remote-mode documentation."),
+                    _("Shows the remote-mode documentation."),
                     ui.div(
                         ui.tags.style(
                             """

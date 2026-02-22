@@ -1,44 +1,45 @@
-# Remote mode (remote-control) — Overview
+### Remote mode (remote-control) — Overview
 
 Remote mode is a new, optional feature. It splits Kittyhack across two devices:
 
 - **Kittyflap**: still handles the local hardware (for example sensors, RFID, locks).
 - **Remote device** (separate Linux PC/VM): runs the Web UI and AI inference.
 
-This is useful if you want to reduce load on the Kittyflap.
+This reduces the load on the Kittyflap and - depending on the hardware used - allows for significantly higher frame rates during cat and prey detection.
+In addition, more complex models can be used that are not capable of running on the comparatively low-performance Raspberry Pi 4 inside the Kittyflap.
 
 ---
 
-## Schematics
+#### Schematics
 
-### Architecture (who talks to whom)
+##### Architecture: who talks to whom?
 
 ![Remote-mode architecture](diagrams/remote-mode-architecture.svg)
 
-### Control takeover flow (what happens when the remote connects)
+##### Control takeover flow: what happens when the remote connects
 
 ![Remote-mode control takeover flow](diagrams/remote-mode-control-takeover.svg)
 
-### Connection loss recovery
+##### Connection loss recovery
 
 ![Remote-mode connection loss recovery](diagrams/remote-mode-connection-loss.svg)
 
 ---
 
-## What runs where?
+#### What runs where?
 
-### On the Kittyflap
+##### On the Kittyflap
 - Runs normally by default.
 - When a remote device takes control, the Kittyflap shows an info page instead of the regular UI.
 - If the connection is lost, the Kittyflap automatically takes over again.
 
-### On the remote device
+##### On the remote device
 - Runs the Kittyhack Web UI.
 - Connects to the Kittyflap and controls it remotely.
 
 ---
 
-## Setup
+#### Setup
 
 1. Install/update Kittyhack on the **Kittyflap** as usual.
 2. Install Kittyhack on the **remote device** and choose “remote-mode” in setup.
@@ -54,7 +55,7 @@ Open remote UI in browser:
 
 ---
 
-## Important note about initial sync
+#### Important note about initial sync
 
 During setup, you can transfer data from Kittyflap to the remote device, for example:
 
@@ -69,7 +70,7 @@ A later/manual re-sync is currently **not** available.
 
 ---
 
-## Where is data stored?
+#### Where is data stored?
 
 When Kittyflap is controlled by a remote device:
 
@@ -82,7 +83,7 @@ In short: after longer offline phases, remote device data/settings and Kittyflap
 
 ---
 
-## What happens if the connection is lost?
+#### What happens if the connection is lost?
 
 - Kittyflap releases remote control.
 - Safety actions are completed cleanly.
@@ -91,26 +92,13 @@ In short: after longer offline phases, remote device data/settings and Kittyflap
 
 ---
 
-## Requirements (short)
+#### Software and Hardware Requirements
 
-### Remote device
-- Debian/Ubuntu (or similar)
-- AMD64 (x86_64)
-- at least 2 GB RAM
+##### Remote device
+- Debian or Ubuntu (ideally a system dedicated exclusively to running Kittyhack)
+- AMD64 (x86_64) CPU with at least 4 cores
+- At least 2 GB RAM
 
-### Network
+##### Network
 - The remote device must be able to reach the Kittyflap in your local network.
 - This feature is designed only for a **trusted LAN** (do not expose it to the public internet).
-
----
-
-## Troubleshooting
-
-- **Remote device cannot connect to Kittyflap**
-  - check IP address
-  - check both devices can reach each other
-  - check firewall rules
-
-- **Kittyflap shows an info page instead of normal UI**
-  - this means remote control is active (or was active very recently)
-  - after timeout or disconnect, Kittyflap switches back automatically

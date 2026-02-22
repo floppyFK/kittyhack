@@ -6140,6 +6140,15 @@ def server(input, output, session):
         def logic_svg(name: str) -> str:
             return f"logic/{name}_{lang}.svg"
 
+        remote_mode_doc_name = "remote-mode_de.md" if lang == "de" else "remote-mode.md"
+        remote_mode_doc_path = os.path.join(kittyhack_root(), "doc", remote_mode_doc_name)
+        try:
+            with open(remote_mode_doc_path, "r", encoding="utf-8") as f:
+                remote_mode_doc_markdown = f.read()
+        except Exception as e:
+            logging.warning(f"[CONFIG] Failed to load remote-mode documentation '{remote_mode_doc_path}': {e}")
+            remote_mode_doc_markdown = _("The remote-mode documentation could not be loaded.")
+
         ui_config =  ui.div(
             ui.div(
                 # --- General settings ---
@@ -7164,6 +7173,44 @@ def server(input, output, session):
                         ),
                         ui.br(),
                         full_screen=False,
+                        class_="generic-container align-left",
+                        style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                    ),
+                ),
+
+                # --- Remote-mode documentation ---
+                collapsible_section(
+                    "remote_mode_documentation",
+                    _("Remote-mode guide"),
+                    _("Shows the built-in remote-mode documentation."),
+                    ui.div(
+                        ui.tags.style(
+                            """
+                            #remote_mode_documentation_body .kh-remote-doc img {
+                                max-width: 100% !important;
+                                height: auto !important;
+                                display: block;
+                                margin: 0.5rem auto;
+                            }
+                            #remote_mode_documentation_body .kh-remote-doc svg {
+                                max-width: 100% !important;
+                                height: auto !important;
+                            }
+                            #remote_mode_documentation_body .kh-remote-doc {
+                                overflow-x: auto;
+                            }
+                            """
+                        ),
+                        ui.br(),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.div(
+                                    ui.markdown(remote_mode_doc_markdown),
+                                    class_="kh-remote-doc",
+                                ),
+                            ),
+                        ),
                         class_="generic-container align-left",
                         style_="padding-left: 1rem !important; padding-right: 1rem !important;",
                     ),

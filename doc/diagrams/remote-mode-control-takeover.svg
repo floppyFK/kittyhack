@@ -1,6 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
-  <defs>
-    <style>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="1200"
+   height="700"
+   viewBox="0 0 1200 700"
+   version="1.1"
+   id="svg19"
+   sodipodi:docname="remote-mode-control-takeover.svg"
+   inkscape:version="1.4.3 (0d15f75042, 2025-12-25)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview19"
+     pagecolor="#505050"
+     bordercolor="#eeeeee"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#505050"
+     inkscape:zoom="1.2152135"
+     inkscape:cx="556.6923"
+     inkscape:cy="391.28926"
+     inkscape:window-width="2648"
+     inkscape:window-height="1412"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg19" />
+  <defs
+     id="defs1">
+    <style
+       id="style1">
       .title{font:700 28px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#111;}
       .h{font:700 18px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#111;}
       .t{font:400 16px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#111;}
@@ -11,55 +43,205 @@
       .arrow{stroke:#111;stroke-width:3;fill:none;marker-end:url(#m);} 
       .darrow{stroke:#111;stroke-width:3;fill:none;stroke-dasharray:7 7;marker-end:url(#m);} 
     </style>
-    <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#111" />
+    <marker
+       id="m"
+       viewBox="0 0 10 10"
+       refX="9"
+       refY="5"
+       markerWidth="8"
+       markerHeight="8"
+       orient="auto-start-reverse">
+      <path
+         d="M 0 0 L 10 5 L 0 10 z"
+         fill="#111"
+         id="path1" />
     </marker>
   </defs>
-
-  <text x="40" y="55" class="title">Control takeover flow (remote connects)</text>
-  <text x="40" y="90" class="muted">Target temporarily stops its local UI and exposes hardware to the remote controller.</text>
-
+  <rect
+     x="21.360102"
+     y="17.731678"
+     width="1156.407"
+     height="649.00879"
+     class="lane"
+     id="rect2-5"
+     style="fill:#f7f7f7;stroke:#bbbbbb;stroke-width:3.33202" />
+  <text
+     x="40"
+     y="55"
+     class="title"
+     id="text1">Control takeover flow (remote connects)</text>
+  <text
+     x="40"
+     y="90"
+     class="muted"
+     id="text2">Target temporarily stops its local UI and exposes hardware to the remote controller.</text>
   <!-- Lanes -->
-  <rect x="40" y="130" width="520" height="520" class="lane"/>
-  <rect x="640" y="130" width="520" height="520" class="lane"/>
-  <text x="60" y="165" class="h">Remote system (remote-mode)</text>
-  <text x="660" y="165" class="h">Kittyflap target (target-mode)</text>
-
+  <rect
+     x="40"
+     y="130"
+     width="520"
+     height="520"
+     class="lane"
+     id="rect2" />
+  <rect
+     x="640"
+     y="130"
+     width="520"
+     height="520"
+     class="lane"
+     id="rect3" />
+  <text
+     x="60"
+     y="165"
+     class="h"
+     id="text3"
+     style="font-style:normal;font-variant:normal;font-weight:700;font-stretch:normal;font-size:18px;line-height:normal;font-family:system-ui, 'Segoe UI', Roboto, Arial, sans-serif">Remote system</text>
+  <text
+     x="660"
+     y="165"
+     class="h"
+     id="text4"
+     style="font-style:normal;font-variant:normal;font-weight:700;font-stretch:normal;font-size:18px;line-height:normal;font-family:system-ui, 'Segoe UI', Roboto, Arial, sans-serif">Kittyflap</text>
   <!-- Remote steps -->
-  <rect x="80" y="210" width="440" height="80" class="step"/>
-  <text x="100" y="242" class="t">1) Start Kittyhack UI + backend</text>
-  <text x="100" y="268" class="muted">Browser connects to remote UI (HTTP :80)</text>
-
-  <rect x="80" y="320" width="440" height="90" class="step"/>
-  <text x="100" y="352" class="t">2) Connect to kittyhack_control</text>
-  <text x="100" y="378" class="muted">WebSocket to target :8888</text>
-
-  <rect x="80" y="440" width="440" height="90" class="step"/>
-  <text x="100" y="472" class="t">3) Send take_control + keepalives</text>
-  <text x="100" y="498" class="muted">Ping regularly to avoid timeout</text>
-
-  <rect x="80" y="560" width="440" height="70" class="step"/>
-  <text x="100" y="600" class="t">4) Use remote sensors/actors</text>
-
+  <rect
+     x="80"
+     y="210"
+     width="440"
+     height="80"
+     class="step"
+     id="rect4" />
+  <text
+     x="100"
+     y="242"
+     class="t"
+     id="text5">1) Start Kittyhack UI + backend</text>
+  <text
+     x="100"
+     y="268"
+     class="muted"
+     id="text6"
+     style="font-style:normal;font-variant:normal;font-weight:400;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, 'Segoe UI', Roboto, Arial, sans-serif">Browser connects to remote UI (HTTP)</text>
+  <rect
+     x="80"
+     y="320"
+     width="440"
+     height="90"
+     class="step"
+     id="rect6" />
+  <text
+     x="100"
+     y="352"
+     class="t"
+     id="text7">2) Connect to kittyhack_control</text>
+  <text
+     x="100"
+     y="378"
+     class="muted"
+     id="text8"
+     style="font-style:normal;font-variant:normal;font-weight:400;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, 'Segoe UI', Roboto, Arial, sans-serif">WebSocket to target</text>
+  <rect
+     x="80"
+     y="440"
+     width="440"
+     height="90"
+     class="step"
+     id="rect8" />
+  <text
+     x="100"
+     y="472"
+     class="t"
+     id="text9">3) Send take_control + keepalives</text>
+  <text
+     x="100"
+     y="498"
+     class="muted"
+     id="text10">Ping regularly to avoid timeout</text>
+  <rect
+     x="80"
+     y="560"
+     width="440"
+     height="70"
+     class="step"
+     id="rect10" />
+  <text
+     x="100"
+     y="600"
+     class="t"
+     id="text11">4) Use remote sensors/actors</text>
   <!-- Target steps -->
-  <rect x="680" y="320" width="440" height="90" class="step"/>
-  <text x="700" y="352" class="t">A) Accept controller (if idle)</text>
-  <text x="700" y="378" class="muted">Denies if already controlled</text>
-
-  <rect x="680" y="440" width="440" height="90" class="step"/>
-  <text x="700" y="472" class="t">B) Stop kittyhack.service</text>
-  <text x="700" y="498" class="muted">Serve info page on :80 while controlled</text>
-
-  <rect x="680" y="560" width="440" height="70" class="step"/>
-  <text x="700" y="600" class="t">C) Stream state + execute commands</text>
-
+  <rect
+     x="680"
+     y="320"
+     width="440"
+     height="90"
+     class="step"
+     id="rect11" />
+  <text
+     x="700"
+     y="352"
+     class="t"
+     id="text12">A) Accept controller (if idle)</text>
+  <text
+     x="700"
+     y="378"
+     class="muted"
+     id="text13">Denies if already controlled</text>
+  <rect
+     x="680"
+     y="440"
+     width="440"
+     height="90"
+     class="step"
+     id="rect13" />
+  <text
+     x="700"
+     y="472"
+     class="t"
+     id="text14">B) Stop kittyhack.service</text>
+  <text
+     x="700"
+     y="498"
+     class="muted"
+     id="text15"
+     style="font-style:normal;font-variant:normal;font-weight:400;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, 'Segoe UI', Roboto, Arial, sans-serif">Serve info page while controlled</text>
+  <rect
+     x="680"
+     y="560"
+     width="440"
+     height="70"
+     class="step"
+     id="rect15" />
+  <text
+     x="700"
+     y="600"
+     class="t"
+     id="text16">C) Stream state + execute commands</text>
   <!-- Arrows between lanes -->
-  <path d="M 520 365 C 570 365, 590 365, 640 365" class="arrow"/>
-  <text x="535" y="345" class="muted">take_control</text>
-
-  <path d="M 640 595 C 590 595, 570 595, 520 595" class="darrow"/>
-  <text x="535" y="620" class="muted">state stream</text>
-
-  <path d="M 520 485 C 570 485, 590 485, 640 485" class="darrow"/>
-  <text x="535" y="510" class="muted">keepalive ping</text>
+  <path
+     d="M 520 365 C 570 365, 590 365, 640 365"
+     class="arrow"
+     id="path16" />
+  <text
+     x="535"
+     y="345"
+     class="muted"
+     id="text17">take_control</text>
+  <path
+     d="M 640 595 C 590 595, 570 595, 520 595"
+     class="darrow"
+     id="path17" />
+  <text
+     x="535"
+     y="620"
+     class="muted"
+     id="text18">state stream</text>
+  <path
+     d="M 520 485 C 570 485, 590 485, 640 485"
+     class="darrow"
+     id="path18" />
+  <text
+     x="535"
+     y="510"
+     class="muted"
+     id="text19">keepalive ping</text>
 </svg>

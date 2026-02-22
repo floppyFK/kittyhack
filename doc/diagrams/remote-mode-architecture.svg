@@ -1,6 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640">
-  <defs>
-    <style>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="1200"
+   height="640"
+   viewBox="0 0 1200 640"
+   version="1.1"
+   id="svg25"
+   sodipodi:docname="remote-mode-architecture.svg"
+   inkscape:version="1.4.3 (0d15f75042, 2025-12-25)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview25"
+     pagecolor="#505050"
+     bordercolor="#eeeeee"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#505050"
+     inkscape:zoom="1.3291398"
+     inkscape:cx="595.49793"
+     inkscape:cy="302.82744"
+     inkscape:window-width="2648"
+     inkscape:window-height="1412"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg25" />
+  <defs
+     id="defs1">
+    <style
+       id="style1">
       .title{font:700 28px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#111;}
       .h{font:700 18px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#111;}
       .t{font:400 16px system-ui,Segoe UI,Roboto,Arial,sans-serif;fill:#111;}
@@ -11,63 +43,223 @@
       .darrow{stroke:#111;stroke-width:3;fill:none;stroke-dasharray:8 8;marker-end:url(#m);} 
       .thin{stroke:#111;stroke-width:2;fill:none;marker-end:url(#m);} 
     </style>
-    <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#111" />
+    <marker
+       id="m"
+       viewBox="0 0 10 10"
+       refX="9"
+       refY="5"
+       markerWidth="8"
+       markerHeight="8"
+       orient="auto-start-reverse">
+      <path
+         d="M 0 0 L 10 5 L 0 10 z"
+         fill="#111"
+         id="path1" />
     </marker>
   </defs>
-
-  <text x="40" y="55" class="title">Kittyhack remote-mode — architecture</text>
-  <text x="40" y="90" class="muted">Remote system runs UI + inference. Kittyflap target exposes sensors/actors via WebSocket control service.</text>
-
+  <rect
+     x="17.295404"
+     y="17.118639"
+     width="1164.5688"
+     height="587.10986"
+     class="lane"
+     id="rect2-7"
+     style="fill:#f7f7f7;stroke:#bbbbbb;stroke-width:2.25928" />
+  <text
+     x="40"
+     y="55"
+     class="title"
+     id="text1">Kittyhack remote-mode — architecture</text>
+  <text
+     x="40"
+     y="90"
+     class="muted"
+     id="text2">Remote system runs UI + inference. Kittyflap target exposes sensors/actors via WebSocket control service.</text>
   <!-- LAN lane -->
-  <rect x="30" y="120" width="1140" height="470" class="lane"/>
-  <text x="55" y="155" class="h">Local network (LAN)</text>
-
+  <rect
+     x="30"
+     y="120"
+     width="1140"
+     height="470"
+     class="lane"
+     id="rect2" />
+  <text
+     x="55"
+     y="155"
+     class="h"
+     id="text3">Local network (LAN)</text>
   <!-- Browser -->
-  <rect x="70" y="210" width="260" height="120" class="box"/>
-  <text x="95" y="245" class="h">User browser</text>
-  <text x="95" y="275" class="t">Connects to UI on</text>
-  <text x="95" y="300" class="t">remote system (HTTP)</text>
-
+  <rect
+     x="70"
+     y="210"
+     width="260"
+     height="120"
+     class="box"
+     id="rect3" />
+  <text
+     x="95"
+     y="245"
+     class="h"
+     id="text4">User browser</text>
+  <text
+     x="95"
+     y="275"
+     class="t"
+     id="text5">Connects to UI on</text>
+  <text
+     x="95"
+     y="300"
+     class="t"
+     id="text6">remote system (HTTP)</text>
   <!-- Remote system -->
-  <rect x="420" y="190" width="340" height="210" class="box"/>
-  <text x="445" y="225" class="h">Remote system (remote-mode)</text>
-  <text x="445" y="255" class="t">Kittyhack UI + backend</text>
-  <text x="445" y="280" class="t">Inference / training</text>
-  <text x="445" y="305" class="t">Reads IP camera stream</text>
-  <text x="445" y="330" class="t">Controls target via WebSocket</text>
-
+  <rect
+     x="419.97723"
+     y="189.97722"
+     width="324.61746"
+     height="210.04555"
+     class="box"
+     id="rect6" />
+  <text
+     x="445"
+     y="225"
+     class="h"
+     id="text7"
+     style="font-style:normal;font-variant:normal;font-weight:700;font-stretch:normal;font-size:18px;line-height:normal;font-family:system-ui, 'Segoe UI', Roboto, Arial, sans-serif">Remote system</text>
+  <text
+     x="445"
+     y="255"
+     class="t"
+     id="text8">Kittyhack UI + backend</text>
+  <text
+     x="445"
+     y="280"
+     class="t"
+     id="text9">Inference / training</text>
+  <text
+     x="445"
+     y="305"
+     class="t"
+     id="text10">Reads IP camera stream</text>
+  <text
+     x="445"
+     y="330"
+     class="t"
+     id="text11">Controls target via WebSocket</text>
   <!-- Target -->
-  <rect x="860" y="190" width="290" height="210" class="box"/>
-  <text x="885" y="225" class="h">Kittyflap (target-mode)</text>
-  <text x="885" y="255" class="t">Sensors/actors:</text>
-  <text x="905" y="280" class="t">• PIR</text>
-  <text x="905" y="305" class="t">• RFID</text>
-  <text x="905" y="330" class="t">• Locks (magnets)</text>
-  <text x="885" y="360" class="t">Service: kittyhack_control</text>
-
+  <rect
+     x="875.40137"
+     y="189.97325"
+     width="274.6254"
+     height="210.0535"
+     class="box"
+     id="rect11" />
+  <text
+     x="885"
+     y="225"
+     class="h"
+     id="text12"
+     style="font-style:normal;font-variant:normal;font-weight:700;font-stretch:normal;font-size:18px;line-height:normal;font-family:system-ui, 'Segoe UI', Roboto, Arial, sans-serif">Kittyflap</text>
+  <text
+     x="885"
+     y="255"
+     class="t"
+     id="text13">Sensors/actors:</text>
+  <text
+     x="905"
+     y="280"
+     class="t"
+     id="text14">• PIR</text>
+  <text
+     x="905"
+     y="305"
+     class="t"
+     id="text15">• RFID</text>
+  <text
+     x="905"
+     y="330"
+     class="t"
+     id="text16">• Locks (magnets)</text>
   <!-- IP Camera -->
-  <rect x="420" y="450" width="340" height="110" class="box"/>
-  <text x="445" y="485" class="h">IP camera</text>
-  <text x="445" y="515" class="t">RTSP / HTTP stream</text>
-
+  <rect
+     x="420.03015"
+     y="450.03015"
+     width="361.00595"
+     height="109.9397"
+     class="box"
+     id="rect17" />
+  <text
+     x="445"
+     y="485"
+     class="h"
+     id="text18"
+     style="font-style:normal;font-variant:normal;font-weight:700;font-stretch:normal;font-size:18px;line-height:normal;font-family:system-ui, 'Segoe UI', Roboto, Arial, sans-serif;white-space:pre;inline-size:311.463"
+     xml:space="preserve"><tspan
+       x="445"
+       y="485"
+       id="tspan3">IP camera or internal Kittyflap camera</tspan></text>
+  <text
+     x="445"
+     y="515"
+     class="t"
+     id="text19">RTSP / HTTP stream</text>
   <!-- Arrows -->
-  <path d="M 330 260 C 360 260, 380 260, 420 260" class="arrow"/>
-  <text x="335" y="240" class="muted">HTTP :80</text>
-
-  <path d="M 760 250 C 800 250, 820 250, 860 250" class="arrow"/>
-  <text x="765" y="230" class="muted">WebSocket :8888</text>
-
-  <path d="M 860 310 C 820 310, 800 310, 760 310" class="darrow"/>
-  <text x="765" y="335" class="muted">state stream (PIR/RFID/locks)</text>
-
-  <path d="M 590 450 C 590 420, 590 410, 590 400" class="thin"/>
-  <text x="610" y="425" class="muted">video stream</text>
-
+  <path
+     d="m 330,260 c 29.51145,0 49.18575,0 88.53435,0"
+     class="arrow"
+     id="path19" />
+  <text
+     x="348.16641"
+     y="254.67114"
+     class="muted"
+     id="text20"
+     style="font-style:normal;font-variant:normal;font-weight:400;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, 'Segoe UI', Roboto, Arial, sans-serif">HTTP</text>
+  <path
+     d="m 746.16791,250 c 49.77365,0 74.66047,0 124.43411,0"
+     class="arrow"
+     id="path20" />
+  <text
+     x="765"
+     y="230"
+     class="muted"
+     id="text21"
+     style="font-style:normal;font-variant:normal;font-weight:400;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, 'Segoe UI', Roboto, Arial, sans-serif;white-space:pre;inline-size:72.8695"
+     transform="translate(-0.53200333,14.896093)"
+     xml:space="preserve"><tspan
+       x="765"
+       y="230"
+       id="tspan4">WebSocket</tspan></text>
+  <path
+     d="m 874.89609,310 c -50.39773,0 -75.5966,0 -125.99433,0"
+     class="darrow"
+     id="path21" />
+  <text
+     x="818.97485"
+     y="322.76395"
+     class="muted"
+     id="text22"
+     style="font-style:normal;font-variant:normal;font-weight:400;font-stretch:normal;font-size:14px;line-height:normal;font-family:system-ui, 'Segoe UI', Roboto, Arial, sans-serif;text-align:center;text-anchor:middle"><tspan
+       sodipodi:role="line"
+       id="tspan25"
+       x="818.97485"
+       y="322.76395">state stream</tspan><tspan
+       sodipodi:role="line"
+       id="tspan26"
+       x="818.97485"
+       y="340.26395">(PIR/RFID/locks)</tspan></text>
+  <path
+     d="M 590 450 C 590 420, 590 410, 590 400"
+     class="thin"
+     id="path22" />
+  <text
+     x="610"
+     y="425"
+     class="muted"
+     id="text23">video stream</text>
   <!-- Optional sync note -->
-  <path d="M 760 365 C 805 405, 820 430, 860 470" class="thin"/>
-  <text x="740" y="395" class="muted">optional initial sync</text>
-
   <!-- Footer note -->
-  <text x="55" y="580" class="muted">If the remote disconnects, the target can restart kittyhack.service and operate autonomously again.</text>
+  <text
+     x="55"
+     y="580"
+     class="muted"
+     id="text25">If the remote disconnects, the target can restart kittyhack.service and operate autonomously again.</text>
 </svg>

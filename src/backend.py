@@ -738,6 +738,10 @@ def backend_main(simulate_kittyflap = False):
             # Outside motion detected
             if last_outside == 0 and motion_outside == 1:
                 motion_block_id += 1
+                # Start a fresh verdict-info collection for this motion block.
+                # This prevents stale manual/debug infos from previous idle periods
+                # from being attached to a later unrelated event.
+                additional_verdict_infos = []
                 # If we use the camera for motion detection, set the first motion timestamp a bit earlier to avoid missing the first motion
                 if use_camera_for_motion:
                     first_motion_outside_tm = wall_time() - 0.5
@@ -1069,10 +1073,12 @@ def backend_main(simulate_kittyflap = False):
                     unlock_inside_tm = monotonic_time()
                     if manual_door_override['unlock_inside']:
                         inside_manually_unlocked = True
-                        flag = str(EventType.MANUALLY_UNLOCKED)
-                        if flag not in additional_verdict_infos:
-                            additional_verdict_infos.append(flag)
-                            logging.info(f"[BACKEND] Added verdict info '{flag}' due to manual inside unlock.")
+                        # Only annotate if a real motion event is currently active.
+                        if first_motion_outside_mono > 0.0:
+                            flag = str(EventType.MANUALLY_UNLOCKED)
+                            if flag not in additional_verdict_infos:
+                                additional_verdict_infos.append(flag)
+                                logging.info(f"[BACKEND] Added verdict info '{flag}' due to manual inside unlock.")
                     else:
                         inside_manually_unlocked = False
                 
@@ -1098,10 +1104,12 @@ def backend_main(simulate_kittyflap = False):
                 inside_manually_unlocked = False
                 inside_manually_locked_tm = monotonic_time()  # Set the timestamp when manually locked
                 manual_door_override['lock_inside'] = False
-                flag = str(EventType.MANUALLY_LOCKED)
-                if flag not in additional_verdict_infos:
-                    additional_verdict_infos.append(flag)
-                    logging.info(f"[BACKEND] Added verdict info '{flag}' due to manual inside lock.")
+                # Only annotate if a real motion event is currently active.
+                if first_motion_outside_mono > 0.0:
+                    flag = str(EventType.MANUALLY_LOCKED)
+                    if flag not in additional_verdict_infos:
+                        additional_verdict_infos.append(flag)
+                        logging.info(f"[BACKEND] Added verdict info '{flag}' due to manual inside lock.")
                 
             # Check if maximum unlock time is exceeded
             if magnets.get_inside_state() and (monotonic_time() - unlock_inside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_inside") == False:
@@ -1109,10 +1117,12 @@ def backend_main(simulate_kittyflap = False):
                 magnets.queue_command("lock_inside")
                 if inside_manually_unlocked:
                     inside_manually_unlocked = False
-                flag = str(EventType.MAX_UNLOCK_TIME_EXCEEDED)
-                if flag not in additional_verdict_infos:
-                     additional_verdict_infos.append(flag)
-                     logging.info(f"[BACKEND] Added verdict info '{flag}' due to maximum inside unlock time exceeded.")
+                # Only annotate if a real motion event is currently active.
+                if first_motion_outside_mono > 0.0:
+                    flag = str(EventType.MAX_UNLOCK_TIME_EXCEEDED)
+                    if flag not in additional_verdict_infos:
+                        additional_verdict_infos.append(flag)
+                        logging.info(f"[BACKEND] Added verdict info '{flag}' due to maximum inside unlock time exceeded.")
                 
             if magnets.get_outside_state() and (monotonic_time() - unlock_outside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_outside") == False:
                 logging.warning("[BACKEND] Maximum unlock time exceeded for outside door. Forcing lock.")

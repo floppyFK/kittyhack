@@ -5,6 +5,7 @@ import os
 from src.paths import pictures_thumbnails_dir, pictures_original_dir
 
 path_www = os.path.join(os.path.dirname(__file__), "www")
+path_doc_diagrams = os.path.join(os.path.dirname(__file__), "doc", "diagrams")
 
 # Serve event thumbnails/originals directly from disk to reduce server RAM/CPU load
 # (no base64 embedding for the event modal).
@@ -17,6 +18,7 @@ app = App(
 	static_assets={
 		"/thumb": path_thumbs,
 		"/orig": path_originals,
+		"/diagrams": path_doc_diagrams,
 		"/": path_www,
 	},
 )

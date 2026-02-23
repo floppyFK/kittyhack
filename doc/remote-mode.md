@@ -1,4 +1,4 @@
-### Remote mode (remote-control) — Overview
+### Remote mode (remote-control) - Overview
 
 Remote mode is a new, optional feature. It splits Kittyhack across two devices:
 
@@ -29,9 +29,9 @@ In addition, more complex models can be used that are not capable of running on 
 #### What runs where?
 
 ##### On the Kittyflap
-- Runs normally by default.
+- Kittyhack runs normally by default.
 - When a remote device takes control, the Kittyflap shows an info page instead of the regular UI.
-- If the connection is lost, the Kittyflap automatically takes over again.
+- If the connection is lost, the Kittyflap automatically takes over again as fallback.
 
 ##### On the remote device
 - Runs the Kittyhack Web UI.
@@ -77,9 +77,11 @@ When Kittyflap is controlled by a remote device:
 - new events are saved **only on the remote device**
 - settings changes are saved **only on the remote device**
 
-If the remote device goes offline, Kittyflap takes over locally again — using the settings stored **on the Kittyflap itself**.
+If the remote device goes offline, Kittyflap takes over as **fallback** locally again - using the settings stored **on the Kittyflap itself**.
 
-In short: after longer offline phases, remote device data/settings and Kittyflap data/settings may differ.
+In short: After some time, the remote device and the Kittyflap will differ in their data (events and configuration)!
+
+The remote connection can be terminated via the web UI of the remote device. After that, configuration is once again possible through the Kittyflap’s web UI.
 
 ---
 
@@ -101,4 +103,5 @@ In short: after longer offline phases, remote device data/settings and Kittyflap
 
 ##### Network
 - The remote device must be able to reach the Kittyflap in your local network.
+- The kittyflap must be reachable at port `80` and `8888`
 - This feature is designed only for a **trusted LAN** (do not expose it to the public internet).

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-02-23 20:31+0100\n"
+"POT-Creation-Date: 2026-02-23 22:05+0100\n"
 "PO-Revision-Date: 2024-11-14 20:14+0000\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -68,7 +68,9 @@ msgstr "Das konfigurierte YOLO-Modell wurde beim Start nicht gefunden:"
 
 #: src/server.py:227
 msgid "Kittyhack switched automatically to another available YOLO model:"
-msgstr "Kittyhack hat automatisch zu einem anderen verfügbaren YOLO-Modell gewechselt:"
+msgstr ""
+"Kittyhack hat automatisch zu einem anderen verfügbaren YOLO-Modell "
+"gewechselt:"
 
 #: src/server.py:247
 msgid ""
@@ -269,7 +271,8 @@ msgstr "Fehler beim löschen des Modells {}"
 
 #: src/server.py:2400
 msgid "This model cannot be selected because it has no unique ID."
-msgstr "Dieses Modell kann nicht ausgewählt werden, da es keine eindeutige ID hat."
+msgstr ""
+"Dieses Modell kann nicht ausgewählt werden, da es keine eindeutige ID hat."
 
 #: src/server.py:2404
 msgid "This model is already active."
@@ -277,10 +280,9 @@ msgstr "Dieses Modell ist bereits aktiv."
 
 #: src/server.py:2409
 msgid "The selected model was not found on disk."
-msgstr ""
+msgstr "Das ausgewählte Modell wurde nicht auf der Festplatte gefunden."
 
 #: src/server.py:2422
-
 msgid "Model switched successfully."
 msgstr "Modell erfolgreich gewechselt."
 
@@ -289,8 +291,8 @@ msgid ""
 "Model was selected, but live reload failed. Please reboot to apply the "
 "change."
 msgstr ""
-"Modell wurde ausgewählt, aber Live-Reload ist fehlgeschlagen. Bitte starte neu, "
-"um die Änderung anzuwenden."
+"Modell wurde ausgewählt, aber Live-Reload ist fehlgeschlagen. Bitte starte "
+"neu, um die Änderung anzuwenden."
 
 #: src/server.py:2523
 msgid "Warning"
@@ -356,7 +358,9 @@ msgstr "Remote: wird verbunden"
 
 #: src/server.py:2687
 msgid "Remote-mode setup is required before Kittyhack can start."
-msgstr "Die Einrichtung des Remote-Modus ist erforderlich, bevor Kittyhack gestartet werden kann."
+msgstr ""
+"Die Einrichtung des Remote-Modus ist erforderlich, bevor Kittyhack gestartet "
+"werden kann."
 
 #: src/server.py:2689
 msgid ""
@@ -376,7 +380,9 @@ msgstr ""
 
 #: src/server.py:2693
 msgid "Startup continues after a successful sync and service restart."
-msgstr "Der Startvorgang wird nach einer erfolgreichen Synchronisierung und einem Neustart des Dienstes fortgesetzt."
+msgstr ""
+"Der Startvorgang wird nach einer erfolgreichen Synchronisierung und einem "
+"Neustart des Dienstes fortgesetzt."
 
 #: src/server.py:2697
 msgid "Remote target host IP:"
@@ -422,11 +428,14 @@ msgstr "Die initiale Synchronisierung wurde abgeschlossen."
 msgid ""
 "To fully apply all settings, the Kittyhack service must be restarted now."
 msgstr ""
-"Um alle Einstellungen vollständig anzuwenden, muss der Kittyhack-Dienst jetzt neu gestartet werden."
+"Um alle Einstellungen vollständig anzuwenden, muss der Kittyhack-Dienst "
+"jetzt neu gestartet werden."
 
 #: src/server.py:2769
 msgid "The web interface will be briefly unavailable during the restart."
-msgstr "Die Weboberfläche wird während des Neustarts vorübergehend nicht verfügbar sein."
+msgstr ""
+"Die Weboberfläche wird während des Neustarts vorübergehend nicht verfügbar "
+"sein."
 
 #: src/server.py:2772 src/server.py:4763 src/server.py:7577 src/server.py:8970
 #: src/server.py:8995
@@ -447,7 +456,8 @@ msgstr "Verbindung zu Kittyflap wurde manuell getrennt."
 
 #: src/server.py:2797
 msgid "The Kittyflap can now be controlled directly in its web UI:"
-msgstr "Die Kittyflap kann jetzt direkt in ihrer Weboberfläche gesteuert werden:"
+msgstr ""
+"Die Kittyflap kann jetzt direkt in ihrer Weboberfläche gesteuert werden:"
 
 #: src/server.py:2801
 msgid "Remote disconnected"
@@ -847,8 +857,8 @@ msgid "No cats"
 msgstr "Keine Katzen"
 
 #: src/server.py:4342 src/server.py:4356 src/server.py:6580 src/server.py:6656
-msgid "Individual configuration per cat (Beta)"
-msgstr "Individuelle Konfiguration pro Katze (Beta)"
+msgid "Individual configuration per cat"
+msgstr "Individuelle Konfiguration pro Katze"
 
 #: src/server.py:4352 src/server.py:6652
 msgid "Outside direction:"
@@ -863,13 +873,8 @@ msgid "Do not allow exit"
 msgstr "Ausgang nicht erlauben"
 
 #: src/server.py:4366
-msgid ""
-"The individual configuration per cat can be set in the CATS section. Note "
-"that this is a beta feature and may not work completely reliably."
-msgstr ""
-"Die individuelle Konfiguration pro Katze kann in der KATZEN VERWALTEN "
-"Sektion eingestellt werden. Beachte, dass dies eine Beta-Funktion ist und "
-"möglicherweise nicht vollständig zuverlässig funktioniert."
+msgid "The individual configuration per cat can be set in the CATS section."
+msgstr "Die individuelle Konfiguration pro Katze kann in der KATZEN Sektion eingestellt werden."
 
 #: src/server.py:4381
 msgid "Reset prey cooldown now"
@@ -998,8 +1003,8 @@ msgid ""
 "Both devices are rebooting now... This may take 1 or 2 minutes. Please "
 "reconnect and reload the page afterwards."
 msgstr ""
-"Beide Geräte werden jetzt neu gestartet... Dies kann 1 oder 2 Minuten dauern. "
-"Bitte erneut verbinden und die Seite danach neu laden."
+"Beide Geräte werden jetzt neu gestartet... Dies kann 1 oder 2 Minuten "
+"dauern. Bitte erneut verbinden und die Seite danach neu laden."
 
 #: src/server.py:4836
 msgid "Do you really want to restart the Kittyflap?"
@@ -1450,7 +1455,8 @@ msgid ""
 msgstr ""
 "Basis-Modell (YOLOv8n/s/m/l/x): Größere Varianten sind in der Regel genauer, "
 "laufen aber langsamer und benötigen mehr CPU/RAM. Wähle kleinere Varianten "
-"(z.B. 'n'), wenn dein Gerät Schwierigkeiten hat, in Echtzeit Schritt zu halten."
+"(z.B. 'n'), wenn dein Gerät Schwierigkeiten hat, in Echtzeit Schritt zu "
+"halten."
 
 #: src/server.py:5606
 msgid ""
@@ -1901,8 +1907,8 @@ msgid ""
 "This can reduce CPU load and improve inference FPS for high-resolution "
 "streams."
 msgstr ""
-"Dies kann die CPU-Auslastung reduzieren und die Inferenz-FPS für hochauflösende "
-"Streams verbessern."
+"Dies kann die CPU-Auslastung reduzieren und die Inferenz-FPS für "
+"hochauflösende Streams verbessern."
 
 #: src/server.py:6356
 msgid "Target resolution for IP camera stream"
@@ -2040,16 +2046,16 @@ msgid ""
 "Unlock is only possible if no prey was detected during this initial analysis "
 "window."
 msgstr ""
-"Die Freigabe ist nur möglich, wenn während dieses anfänglichen Analysefensters "
-"keine Beute erkannt wurde."
+"Die Freigabe ist nur möglich, wenn während dieses anfänglichen "
+"Analysefensters keine Beute erkannt wurde."
 
 #: src/server.py:6482
 msgid ""
 "After unlocking: If a later picture reaches the mouse_threshold, the flap is "
 "locked again."
 msgstr ""
-"Nach der Freigabe: Wenn ein späteres Bild den Mausschwellwert erreicht,"
-"wird die Klappe wieder verriegelt."
+"Nach der Freigabe: Wenn ein späteres Bild den Mausschwellwert erreicht,wird "
+"die Klappe wieder verriegelt."
 
 #: src/server.py:6488
 msgid "Lock duration after prey detection (in s)"
@@ -2771,7 +2777,9 @@ msgstr "FPS-Begrenzung für die Inferenz im Remote-Modus"
 
 #: src/server.py:7112
 msgid "Limits the model inference loop to reduce CPU load in remote-mode."
-msgstr "Begrenzt die Modell-Inferenzschleife, um die CPU-Auslastung im Remote-Modus zu reduzieren."
+msgstr ""
+"Begrenzt die Modell-Inferenzschleife, um die CPU-Auslastung im Remote-Modus "
+"zu reduzieren."
 
 #: src/server.py:7114
 msgid "This setting is only configurable in remote-mode."
@@ -2790,9 +2798,9 @@ msgid ""
 "If the Kittyflap has been controlled remotely before, it will wait this long "
 "for a remote-control takeover after reboot before starting Kittyhack locally."
 msgstr ""
-"Wenn die Kittyflap zuvor remote gesteuert wurde, wartet sie nach einem Neustart "
-"so lange auf eine Übernahme der Fernsteuerung, bevor Kittyhack lokal gestartet "
-"wird."
+"Wenn die Kittyflap zuvor remote gesteuert wurde, wartet sie nach einem "
+"Neustart so lange auf eine Übernahme der Fernsteuerung, bevor Kittyhack "
+"lokal gestartet wird."
 
 #: src/server.py:7151
 msgid "IP camera watchdog"
@@ -2900,11 +2908,14 @@ msgid ""
 "FFmpeg is required for the decode+scale pipeline but could not be installed "
 "automatically."
 msgstr ""
-"FFmpeg wird für die Decode+Scale Pipeline benötigt, konnte aber nicht automatisch installiert werden."
+"FFmpeg wird für die Decode+Scale Pipeline benötigt, konnte aber nicht "
+"automatisch installiert werden."
 
 #: src/server.py:7387
 msgid "Please install `ffmpeg` manually and try again. Changes were not saved."
-msgstr "Bitte installiere `ffmpeg` manuell und versuche es erneut. Änderungen wurden nicht gespeichert."
+msgstr ""
+"Bitte installiere `ffmpeg` manuell und versuche es erneut. Änderungen wurden "
+"nicht gespeichert."
 
 #: src/server.py:7524 src/server.py:7532
 msgid "Invalid configuration: "
@@ -2943,7 +2954,9 @@ msgstr "Modelländerung angewendet."
 
 #: src/server.py:7555
 msgid "Model change could not be applied live. A reboot is still required."
-msgstr "Modelländerung konnte nicht live angewendet werden. Ein Neustart ist erforderlich."
+msgstr ""
+"Modelländerung konnte nicht live angewendet werden. Ein Neustart ist "
+"erforderlich."
 
 #: src/server.py:7564
 msgid ""
@@ -3086,8 +3099,8 @@ msgid ""
 "Remote and Kittyflap versions differ (this device: {}, target device: {}). "
 "Please update to match versions."
 msgstr ""
-"Remote- und Kittyflap-Versionen unterscheiden sich (dieses Gerät: {}, Zielgerät: {}). "
-"Bitte aktualisiere Kittyhack, um die Versionen anzugleichen."
+"Remote- und Kittyflap-Versionen unterscheiden sich (dieses Gerät: {}, "
+"Zielgerät: {}). Bitte aktualisiere Kittyhack, um die Versionen anzugleichen."
 
 #: src/server.py:8035
 msgid ""
@@ -3109,7 +3122,8 @@ msgstr "Remote-/Zielversionskonflikt erkannt."
 msgid ""
 "You can update only one side to match versions before running a full update."
 msgstr ""
-"Du kannst nur eine Seite aktualisieren, um die Versionen anzugleichen, bevor du ein vollständiges Update durchführst."
+"Du kannst nur eine Seite aktualisieren, um die Versionen anzugleichen, bevor "
+"du ein vollständiges Update durchführst."
 
 #: src/server.py:8051 src/server.py:8099 src/server.py:8152
 msgid "Update target device only"
@@ -3157,7 +3171,9 @@ msgstr ""
 
 #: src/server.py:8096
 msgid "Use one of the buttons below if you want to update only one device."
-msgstr "Verwende eine der Schaltflächen unten, wenn du nur ein Gerät aktualisieren möchtest."
+msgstr ""
+"Verwende eine der Schaltflächen unten, wenn du nur ein Gerät aktualisieren "
+"möchtest."
 
 #: src/server.py:8108
 msgid ""
@@ -3323,7 +3339,8 @@ msgid ""
 "Remote/target versions are different. This can cause confusing update "
 "behavior."
 msgstr ""
-"Remote- und Kittyflap-Versionen sind unterschiedlich. Dies kann zu fehlverhalten bei Updates führen."
+"Remote- und Kittyflap-Versionen sind unterschiedlich. Dies kann zu "
+"fehlverhalten bei Updates führen."
 
 #: src/server.py:8242
 msgid "Show all Changelogs"
@@ -3593,7 +3610,9 @@ msgstr "Fehler beim Wiederherstellen der Konfiguration: {}"
 msgid ""
 "Automatic update requires a git repository. Please reinstall via git clone "
 "or the setup script."
-msgstr "Automatische Updates erfordern ein git Repository. Bitte erneut über git clone oder das Setup-Skript installieren."
+msgstr ""
+"Automatische Updates erfordern ein git Repository. Bitte erneut über git "
+"clone oder das Setup-Skript installieren."
 
 #: src/server.py:8619
 msgid "Nothing to update."
@@ -3646,12 +3665,16 @@ msgstr "Update abgeschlossen."
 
 #: src/server.py:8716
 msgid "Connection lost while target is restarting/reconnecting. Waiting..."
-msgstr "Verbindung verloren, während die Kittyflap neu startet/neu verbindet. Warte..."
+msgstr ""
+"Verbindung verloren, während die Kittyflap neu startet/neu verbindet. "
+"Warte..."
 
 #: src/server.py:8721
 msgid ""
 "Connection to target device did not recover in time after update restart."
-msgstr "Verbindung zur Kittyflap konnte nach dem Update-Neustart nicht rechtzeitig wiederhergestellt werden."
+msgstr ""
+"Verbindung zur Kittyflap konnte nach dem Update-Neustart nicht rechtzeitig "
+"wiederhergestellt werden."
 
 #: src/server.py:8752
 msgid "Target update is running..."
@@ -3668,7 +3691,9 @@ msgstr "Warte auf Antwort der Kittyflap..."
 #: src/server.py:8785
 #, python-brace-format
 msgid "Target device reconnected, but version is still {} instead of {}."
-msgstr "Kittyflap hat sich wieder verbunden, aber die Version ist immer noch {} statt {}."
+msgstr ""
+"Kittyflap hat sich wieder verbunden, aber die Version ist immer noch {} "
+"statt {}."
 
 #: src/server.py:8797
 #, python-brace-format
@@ -3816,8 +3841,8 @@ msgid ""
 "Model training completed and the new model was downloaded successfully. You "
 "can select it now in the 'Configuration' section."
 msgstr ""
-"Modelltraining abgeschlossen und das neue Modell wurde erfolgreich heruntergeladen. "
-"Du kannst es jetzt im Abschnitt 'Konfiguration' auswählen."
+"Modelltraining abgeschlossen und das neue Modell wurde erfolgreich "
+"heruntergeladen. Du kannst es jetzt im Abschnitt 'Konfiguration' auswählen."
 
 #: src/model.py:613
 msgid "Model download failed"
@@ -3877,7 +3902,8 @@ msgstr "Modelltraining abgeschlossen. Modell heruntergeladen und installiert."
 
 #: src/model.py:685
 msgid "Training completed, but the model download failed."
-msgstr "Modelltraining abgeschlossen, aber der Modell-Download ist fehlgeschlagen."
+msgstr ""
+"Modelltraining abgeschlossen, aber der Modell-Download ist fehlgeschlagen."
 
 #: src/model.py:686
 msgid "The training was aborted. Please try again."
@@ -3965,6 +3991,14 @@ msgstr "Starte Label Studio Update..."
 #: src/system.py:1360
 msgid "Upgrading Label Studio..."
 msgstr "Label Studio wird aktualisiert..."
+
+#~ msgid ""
+#~ "The individual configuration per cat can be set in the CATS section. Note "
+#~ "that this is a beta feature and may not work completely reliably."
+#~ msgstr ""
+#~ "Die individuelle Konfiguration pro Katze kann in der KATZEN VERWALTEN "
+#~ "Sektion eingestellt werden. Beachte, dass dies eine Beta-Funktion ist und "
+#~ "möglicherweise nicht vollständig zuverlässig funktioniert."
 
 #~ msgid "Update to version `{}` was successful!"
 #~ msgstr "Update auf Version `{}` war erfolgreich!"

@@ -4339,7 +4339,7 @@ def server(input, output, session):
                                 AllowedToEnter.ALL_RFIDS.value: _("All cats with a RFID chip"),
                                 AllowedToEnter.KNOWN.value: _("Only registered cats"),
                                 AllowedToEnter.NONE.value: _("No cats"),
-                                AllowedToEnter.CONFIGURE_PER_CAT.value: _("Individual configuration per cat (Beta)"),
+                                AllowedToEnter.CONFIGURE_PER_CAT.value: _("Individual configuration per cat"),
                             },
                             selected=str(CONFIG['ALLOWED_TO_ENTER'].value),
                             width="100%",
@@ -4353,7 +4353,7 @@ def server(input, output, session):
                             choices={
                                 'allow': _("Allow exit"),
                                 'deny': _("Do not allow exit"),
-                                'configure_per_cat': _("Individual configuration per cat (Beta)"),
+                                'configure_per_cat': _("Individual configuration per cat"),
                             },
                             selected=str(CONFIG['ALLOWED_TO_EXIT'].value),
                             width="100%",
@@ -4363,7 +4363,7 @@ def server(input, output, session):
                 ui.div(
                     ui.tooltip(
                         icon_svg("circle-info", margin_left="-0.1em", margin_right="auto"),
-                        _("The individual configuration per cat can be set in the CATS section. Note that this is a beta feature and may not work completely reliably."),
+                        _("The individual configuration per cat can be set in the CATS section."),
                         id="tooltip_configure_per_cat_quick",
                         options={"trigger": "hover click"},
                     ),
@@ -6577,7 +6577,7 @@ def server(input, output, session):
                                     AllowedToEnter.ALL_RFIDS.value: _("All cats with a RFID chip"), 
                                     AllowedToEnter.KNOWN.value: _("Only registered cats"), 
                                     AllowedToEnter.NONE.value: _("No cats"),
-                                    AllowedToEnter.CONFIGURE_PER_CAT.value: _("Individual configuration per cat (Beta)"),
+                                    AllowedToEnter.CONFIGURE_PER_CAT.value: _("Individual configuration per cat"),
                                 },
                                 selected=str(CONFIG['ALLOWED_TO_ENTER'].value),
                                 width="90%",
@@ -6653,7 +6653,7 @@ def server(input, output, session):
                                 {
                                     'allow': _("Allow exit"),
                                     'deny': _("Do not allow exit"),
-                                    'configure_per_cat': _("Individual configuration per cat (Beta)"),
+                                    'configure_per_cat': _("Individual configuration per cat"),
                                 },
                                 selected=str(CONFIG['ALLOWED_TO_EXIT'].value),
                                 width="90%",

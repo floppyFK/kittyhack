@@ -5412,7 +5412,7 @@ def server(input, output, session):
                         ui.column(
                             12,
                             # Inject an HTML button that links to the Label Studio web interface
-                            ui.HTML('<a href="http://{}:8080" target="_blank" class="btn-default">{}</a>'.format(get_current_ip(), _("Open Label Studio"))),
+                            ui.HTML('<a href="http://{}:8080" target="_blank" class="btn btn-default">{}</a>'.format(get_current_ip(), _("Open Label Studio"))),
                             style_="text-align: center;"
                         ),
                         ui.column(

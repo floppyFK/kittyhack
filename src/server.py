@@ -2694,7 +2694,7 @@ def server(input, output, session):
                     ),
                     ui.input_text(
                         "remote_target_host",
-                        _("Remote target host IP:"),
+                        _("Kittyflap IP:"),
                         value=values["remote_target_host"],
                         width="100%"
                     ),

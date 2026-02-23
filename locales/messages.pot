@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-02-23 20:31+0100\n"
+"POT-Creation-Date: 2026-02-23 22:05+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -793,7 +793,7 @@ msgid "No cats"
 msgstr ""
 
 #: src/server.py:4342 src/server.py:4356 src/server.py:6580 src/server.py:6656
-msgid "Individual configuration per cat (Beta)"
+msgid "Individual configuration per cat"
 msgstr ""
 
 #: src/server.py:4352 src/server.py:6652
@@ -809,9 +809,7 @@ msgid "Do not allow exit"
 msgstr ""
 
 #: src/server.py:4366
-msgid ""
-"The individual configuration per cat can be set in the CATS section. Note "
-"that this is a beta feature and may not work completely reliably."
+msgid "The individual configuration per cat can be set in the CATS section."
 msgstr ""
 
 #: src/server.py:4381

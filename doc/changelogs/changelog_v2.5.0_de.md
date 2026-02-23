@@ -16,3 +16,4 @@ Dieses Release bringt Theme-Unterstützung (Hell/Dunkel/Auto), die Möglichkeit 
 - **Performance & RAM**: Ressourcenintensive Schritte wurden von der Katzenklappe in den Webclient verlagert.
 - **UI/UX**: Viele kleine UI-Verbesserungen (Styles, Icons, Tooltips, Dark-Theme-Details).
 - **Konfiguration (Entscheidungszeitpunkt fürs Entriegeln)**: Die Verzögerung bis zur Entscheidung zur Entriegelung wird jetzt in **Sekunden** nach einem Bewegungs-Trigger eingestellt (statt über eine Anzahl von Bildern).
+  ❗ **Achtung:** Dieser Wert wird beim Update auf Basis deiner bisherigen Einstellung für "*"Minimale Anzahl an Bildern vor Entscheidung zur Freigabe*" gesetzt. Bitte prüfe anschließend, ob der Wert für dich weiterhin passend ist.

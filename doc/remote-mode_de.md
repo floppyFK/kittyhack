@@ -1,8 +1,8 @@
-### Remote-Mode (Remote-Control) — Überblick
+### Remote-Mode (Remote-Control) - Überblick
 
 Der Remote-Mode ist ein neues, optionales Feature. Damit kann Kittyhack auf zwei Geräte aufgeteilt werden:
 
-- **Kittyflap**: steuert weiterhin lokal die Hardware (z. B. Sensoren, RFID, Schlösser).
+- **Kittyflap**: steuert weiterhin lokal die Hardware (z. B. Sensoren, RFID, Verriegelungen).
 - **Remote Gerät** (separater Linux-PC/VM): übernimmt Web-UI und KI-Auswertung.
 
 Dadurch wird die Kittyflap entlastet und es können - abhängig von der eingesetzten Hardware - deutlich höhere Bildraten bei der Auswertung von Katze und Beute erreicht werden.
@@ -30,9 +30,9 @@ Zudem lassen sich komplexere Modelle einsetzen, die auf dem vergleichsweise leis
 #### Was läuft wo?
 
 ##### Auf der Kittyflap
-- Läuft normal wie gewohnt.
+- Läuft Kittyhack normal wie gewohnt.
 - Wenn ein Remote Gerät die Steuerung übernimmt, zeigt die Kittyflap eine Info-Seite statt der normalen UI.
-- Fällt die Verbindung aus, übernimmt die Kittyflap wieder selbstständig.
+- Fällt die Verbindung aus, übernimmt die Kittyflap wieder selbstständig als Fallback.
 
 ##### Auf dem Remote Gerät
 - Läuft die Kittyhack-Weboberfläche.
@@ -78,9 +78,11 @@ Wenn die Kittyflap von einem Remote Gerät gesteuert wird:
 - neue Events werden **nur auf dem Remote Gerät** gespeichert
 - Änderungen an Einstellungen werden **nur auf dem Remote Gerät** gespeichert
 
-Wenn das Remote Gerät offline ist, übernimmt die Kittyflap automatisch wieder lokal — dann mit den **lokal auf der Kittyflap gespeicherten Einstellungen**.
+Wenn das Remote Gerät offline ist, übernimmt die Kittyflap als **fallback** automatisch wieder lokal - dann mit den **lokal auf der Kittyflap gespeicherten Einstellungen**.
 
-Kurz gesagt: Remote Gerät und Kittyflap können sich bei längerer Trennung in den Daten unterscheiden.
+Kurz gesagt: Remote-Gerät und Kittyflap werden sich nach einiger Zeit hinsichtlich ihrer Daten (Events und Konfiguration) unterscheiden!
+
+Die Remote-Verbindung kann im Web-UI des Remote-Geräts beendet werden. Anschließend ist die Konfiguration wieder über das Web-UI der Kittyflap möglich.
 
 ---
 
@@ -102,4 +104,5 @@ Kurz gesagt: Remote Gerät und Kittyflap können sich bei längerer Trennung in 
 
 ##### Netzwerk
 - Das Remote Gerät muss die Kittyflap im lokalen Netz erreichen können.
+- Die Kittyflap muss über die Ports `80` und `8888` erreichbar sein.
 - Die Verbindung ist ausschließlich für ein **vertrauenswürdiges LAN** gedacht (nicht ins öffentliche Internet freigeben).

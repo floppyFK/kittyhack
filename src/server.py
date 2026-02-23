@@ -2438,6 +2438,7 @@ def server(input, output, session):
     # Create reactive triggers
     reload_trigger_cats = reactive.Value(0)
     reload_trigger_info = reactive.Value(0)
+    version_mismatch_warning_shown = False
 
     # Hold last uploaded file paths until user confirms restore
     last_uploaded_db_path = reactive.Value(None)
@@ -7991,6 +7992,7 @@ def server(input, output, session):
     @render.ui
     @reactive.event(reload_trigger_info, ignore_none=True)
     def ui_info():
+        nonlocal version_mismatch_warning_shown
         target_git_version = "unknown"
         remote_target_connected = False
         if is_remote_mode():
@@ -8015,6 +8017,16 @@ def server(input, output, session):
             and git_version not in ("", "unknown")
             and str(target_git_version) != str(git_version)
         )
+
+        if versions_mismatch and not version_mismatch_warning_shown:
+            ui.notification_show(
+                _("Remote and Kittyflap versions differ (this device: {}, target device: {}). Please update to match versions.").format(git_version, target_git_version),
+                duration=20,
+                type="warning",
+            )
+            version_mismatch_warning_shown = True
+        elif (not versions_mismatch) and version_mismatch_warning_shown:
+            version_mismatch_warning_shown = False
 
         # Check if the current version is different from the latest version
         latest_version = CONFIG['LATEST_VERSION']

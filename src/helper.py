@@ -998,20 +998,55 @@ def get_current_ip(interface: str = "wlan0") -> str:
     Returns:
         str: The current IP address of the device.
     """
-    try:
-        def get_ip_address(ifname):
+    def _get_ip_address(ifname: str) -> str | None:
+        try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             return socket.inet_ntoa(fcntl.ioctl(
                 s.fileno(),
                 0x8915,  # SIOCGIFADDR
                 struct.pack('256s', ifname[:15].encode('utf-8'))
             )[20:24])
+        except Exception:
+            return None
 
-        ip_address = get_ip_address(interface)
-        return ip_address
-    except Exception as e:
-        logging.error(f"Failed to get the IP address of 'wlan0': {e}")
-        return None
+    # 1) Keep legacy behavior: prefer requested interface (default: wlan0)
+    if interface:
+        ip_address = _get_ip_address(interface)
+        if ip_address:
+            return ip_address
+
+    # 2) Try all available non-loopback interfaces (works for remote-mode hosts)
+    try:
+        for ifname in sorted(os.listdir('/sys/class/net')):
+            if ifname == 'lo':
+                continue
+            ip_address = _get_ip_address(ifname)
+            if ip_address:
+                return ip_address
+    except Exception:
+        pass
+
+    # 3) Routing-based fallback (best effort; no packets are sent)
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip_address = s.getsockname()[0]
+        s.close()
+        if ip_address and ip_address != "0.0.0.0":
+            return ip_address
+    except Exception:
+        pass
+
+    # 4) Hostname fallback
+    try:
+        ip_address = socket.gethostbyname(socket.gethostname())
+        if ip_address and ip_address != "0.0.0.0":
+            return ip_address
+    except Exception:
+        pass
+
+    logging.error("Failed to determine current IP address. Falling back to 127.0.0.1")
+    return "127.0.0.1"
     
 def is_port_open(port, host='localhost'):
     """Check if a port is open on the given host."""

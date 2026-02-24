@@ -83,6 +83,9 @@ class RemoteControlClient:
         }
         self._target_reboot_ack_event = threading.Event()
         self._target_reboot_ack_ok = False
+
+        self._target_shutdown_ack_event = threading.Event()
+        self._target_shutdown_ack_ok = False
         self._target_version_event = threading.Event()
         self._target_version_lock = threading.Lock()
         self._target_version_info: dict[str, Any] = {
@@ -290,6 +293,13 @@ class RemoteControlClient:
         got_ack = self._target_reboot_ack_event.wait(timeout=max(0.0, float(timeout or 0.0)))
         return bool(got_ack and self._target_reboot_ack_ok)
 
+    def request_target_shutdown(self, timeout: float = 5.0) -> bool:
+        self._target_shutdown_ack_event.clear()
+        self._target_shutdown_ack_ok = False
+        self._send_async({"type": "shutdown_request"})
+        got_ack = self._target_shutdown_ack_event.wait(timeout=max(0.0, float(timeout or 0.0)))
+        return bool(got_ack and self._target_shutdown_ack_ok)
+
     def request_target_version(self, timeout: float = 2.0) -> dict[str, Any] | None:
         """Request target version info via control channel.
 
@@ -388,6 +398,7 @@ class RemoteControlClient:
         self._control_acquired = False
         self._ws = None
         self._target_reboot_ack_event.set()
+        self._target_shutdown_ack_event.set()
         with self._lock:
             self._pending_magnet_commands.clear()
 
@@ -587,6 +598,11 @@ class RemoteControlClient:
         elif t == "reboot_ack":
             self._target_reboot_ack_ok = bool(data.get("ok", False))
             self._target_reboot_ack_event.set()
+            return
+
+        elif t == "shutdown_ack":
+            self._target_shutdown_ack_ok = bool(data.get("ok", False))
+            self._target_shutdown_ack_event.set()
             return
 
         elif t == "version_info":

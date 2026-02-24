@@ -4619,25 +4619,67 @@ def server(input, output, session):
             ui.br(),
         ) if not is_remote_mode() else ui.HTML("")
 
+        system_actions_body = None
+        if is_remote_mode():
+            system_actions_body = ui.div(
+                ui.markdown(_("Start tasks/actions on the devices")),
+                ui.br(),
+                ui.h5(_("Kittyflap"), style_="text-align: center;"),
+                ui.markdown(_("Target device actions")),
+                ui.div(
+                    ui.input_action_button("bTargetRebootKittyflap", _("Restart Kittyflap"), class_="btn-default"),
+                    style_="text-align: center;"
+                ),
+                ui.br(),
+                ui.div(
+                    ui.input_action_button("bTargetShutdownKittyflap", _("Shutdown Kittyflap"), class_="btn-default"),
+                    style_="text-align: center;"
+                ),
+                ui.help_text(
+                    _("To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again.")
+                ),
+                ui.hr(),
+                ui.h5(_("This device"), style_="text-align: center;"),
+                ui.markdown(_("Remote-mode device actions")),
+                ui.div(
+                    ui.input_action_button("bRemoteReboot", _("Restart this device"), class_="btn-default"),
+                    style_="text-align: center;"
+                ),
+                ui.br(),
+                ui.div(
+                    ui.input_action_button("bRemoteShutdown", _("Shutdown this device"), class_="btn-default"),
+                    style_="text-align: center;"
+                ),
+                ui.help_text(
+                    _("Shutting down this device will stop remote control and the web interface until it is started again.")
+                ),
+            )
+        else:
+            system_actions_body = ui.div(
+                ui.br(),
+                ui.markdown(_("Start tasks/actions on the Kittyflap")),
+                ui.br(),
+                ui.div(
+                    ui.input_action_button("bRestartKittyflap", _("Restart Kittyflap"), class_="btn-default"),
+                    style_="text-align: center;"
+                ),
+                ui.br(),
+                ui.div(
+                    ui.input_action_button("bShutdownKittyflap", _("Shutdown Kittyflap"), class_="btn-default"),
+                    style_="text-align: center;"
+                ),
+                ui.help_text(
+                    _("To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again.")
+                ),
+            )
+
         return ui.div(
             ui.div(
                 ui.card(
                     ui.card_header(
                         ui.h4(_("Kittyflap System Actions"), style_="text-align: center;"),
                     ),
-                    ui.br(),
-                    ui.markdown(_("Start tasks/actions on the Kittyflap")),
-                    ui.br(),
-                    ui.div(
-                        ui.input_action_button("bRestartKittyflap", _("Restart Kittyflap"), class_="btn-default"),
-                        style_="text-align: center;"
-                    ),
-                    ui.br(),
-                    ui.div(
-                        ui.input_action_button("bShutdownKittyflap", _("Shutdown Kittyflap"), class_="btn-default"),
-                        style_="text-align: center;"
-                    ),
-                    ui.help_text(_("To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again.")),
+                    system_actions_body,
                     camera_driver_action,
                     full_screen=False,
                     class_="generic-container",
@@ -4648,6 +4690,50 @@ def server(input, output, session):
             ui.br(),
             ui.br()
         )
+
+    def _trigger_target_power_action(action: str) -> bool:
+        """Best-effort trigger for target reboot/shutdown (remote-mode only)."""
+        if not is_remote_mode():
+            return False
+
+        act = str(action or "").strip().lower()
+        if act not in {"reboot", "shutdown"}:
+            return False
+
+        target_host = str(CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
+        ok = False
+
+        # Prefer control websocket when available.
+        try:
+            from src.remote.control_client import RemoteControlClient
+
+            client = RemoteControlClient.instance()
+            client.ensure_started()
+            if client.wait_until_ready(timeout=2.0):
+                if act == "reboot":
+                    ok = bool(client.request_target_reboot(timeout=2.0))
+                else:
+                    ok = bool(client.request_target_shutdown(timeout=2.0))
+        except Exception as e:
+            logging.warning(f"[REMOTE_MODE] Target {act} trigger via websocket failed: {e}")
+
+        # Fallback: direct HTTP call to kittyhack_control on target.
+        if (not ok) and target_host:
+            try:
+                endpoint = "reboot" if act == "reboot" else "shutdown"
+                req = urllib_request.Request(
+                    f"http://{target_host}/api/{endpoint}",
+                    data=b"",
+                    method="POST",
+                )
+                with urllib_request.urlopen(req, timeout=2.0) as resp:
+                    ok = int(getattr(resp, "status", 200) or 200) < 300
+            except urllib_error.URLError:
+                ok = False
+            except Exception:
+                ok = False
+
+        return bool(ok)
     
     @reactive.Effect
     @reactive.event(input.reinstall_camera_driver)
@@ -4843,6 +4929,75 @@ def server(input, output, session):
         )
         ui.modal_show(m)
 
+    @reactive.Effect
+    @reactive.event(input.bTargetRebootKittyflap)
+    def on_action_target_reboot_system():
+        if not is_remote_mode():
+            return
+        m = ui.modal(
+            _("Do you really want to restart the Kittyflap?"),
+            title=_("Restart Kittyflap"),
+            easy_close=True,
+            footer=ui.div(
+                ui.input_action_button("btn_modal_reboot_target_ok", _("OK")),
+                ui.input_action_button("btn_modal_cancel", _("Cancel")),
+            ),
+        )
+        ui.modal_show(m)
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_reboot_target_ok)
+    def modal_reboot_target_only():
+        if not is_remote_mode():
+            return
+        ui.modal_remove()
+        ok = _trigger_target_power_action("reboot")
+        if ok:
+            ui.modal_show(
+                ui.modal(
+                    _("Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reconnect and reload the page afterwards."),
+                    title=_("Restart Kittyflap"),
+                    footer=None,
+                )
+            )
+        else:
+            ui.notification_show(
+                _("Failed to trigger Kittyflap reboot. Check the remote connection and REMOTE_TARGET_HOST."),
+                duration=12,
+                type="error",
+            )
+
+    @reactive.Effect
+    @reactive.event(input.bRemoteReboot)
+    def on_action_local_reboot_system():
+        if not is_remote_mode():
+            return
+        m = ui.modal(
+            _("Do you really want to restart this device?"),
+            title=_("Restart this device"),
+            easy_close=True,
+            footer=ui.div(
+                ui.input_action_button("btn_modal_reboot_local_ok", _("OK")),
+                ui.input_action_button("btn_modal_cancel", _("Cancel")),
+            ),
+        )
+        ui.modal_show(m)
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_reboot_local_ok)
+    def modal_reboot_local_only():
+        if not is_remote_mode():
+            return
+        ui.modal_remove()
+        ui.modal_show(
+            ui.modal(
+                _("This device is rebooting now... Please reconnect and reload the page afterwards."),
+                title=_("Restart this device"),
+                footer=None,
+            )
+        )
+        systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
+
     @reactive.effect
     @reactive.event(input.btn_modal_shutdown_ok)
     def modal_shutdown():
@@ -4863,6 +5018,75 @@ def server(input, output, session):
             )
         )
         ui.modal_show(m)
+
+    @reactive.Effect
+    @reactive.event(input.bTargetShutdownKittyflap)
+    def on_action_target_shutdown_system():
+        if not is_remote_mode():
+            return
+        m = ui.modal(
+            _("Do you really want to shut down the Kittyflap?"),
+            title=_("Shutdown Kittyflap"),
+            easy_close=True,
+            footer=ui.div(
+                ui.input_action_button("btn_modal_shutdown_target_ok", _("OK")),
+                ui.input_action_button("btn_modal_cancel", _("Cancel")),
+            ),
+        )
+        ui.modal_show(m)
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_shutdown_target_ok)
+    def modal_shutdown_target_only():
+        if not is_remote_mode():
+            return
+        ui.modal_remove()
+        ok = _trigger_target_power_action("shutdown")
+        if ok:
+            ui.modal_show(
+                ui.modal(
+                    _("Kittyflap is shutting down now... Please wait 30 seconds before unplugging the power."),
+                    title=_("Shutdown Kittyflap"),
+                    footer=None,
+                )
+            )
+        else:
+            ui.notification_show(
+                _("Failed to trigger Kittyflap shutdown. Check the remote connection and REMOTE_TARGET_HOST."),
+                duration=12,
+                type="error",
+            )
+
+    @reactive.Effect
+    @reactive.event(input.bRemoteShutdown)
+    def on_action_local_shutdown_system():
+        if not is_remote_mode():
+            return
+        m = ui.modal(
+            _("Do you really want to shut down this device?"),
+            title=_("Shutdown this device"),
+            easy_close=True,
+            footer=ui.div(
+                ui.input_action_button("btn_modal_shutdown_local_ok", _("OK")),
+                ui.input_action_button("btn_modal_cancel", _("Cancel")),
+            ),
+        )
+        ui.modal_show(m)
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_shutdown_local_ok)
+    def modal_shutdown_local_only():
+        if not is_remote_mode():
+            return
+        ui.modal_remove()
+        ui.modal_show(
+            ui.modal(
+                _("This device is shutting down now..."),
+                title=_("Shutdown this device"),
+                footer=None,
+            )
+        )
+        systemcmd(["/usr/sbin/shutdown", "-H", "now"], CONFIG['SIMULATE_KITTYFLAP'])
 
     @output
     @render.ui

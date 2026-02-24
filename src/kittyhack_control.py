@@ -789,6 +789,25 @@ async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.Strea
                 "\r\n"
             ).encode("utf-8")
 
+        elif path.startswith("/api/shutdown") and method == "POST":
+            try:
+                # Best-effort: notify remote controller that target will shut down.
+                ws = STATE.controller
+                if ws is not None:
+                    await ws.send(json.dumps({"type": "shutdown_ack", "ok": True, "reason": "local_ui"}))
+            except Exception:
+                pass
+            asyncio.create_task(_shutdown_later(0.2))
+            body = b"OK"
+            headers = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/plain; charset=utf-8\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Cache-Control: no-store\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+            ).encode("utf-8")
+
         else:
             # Default pages
             if STATE.boot_wait_active and not STATE.is_controlled():
@@ -1176,6 +1195,14 @@ async def _reboot_later(delay_s: float = 0.2) -> None:
         pass
 
 
+async def _shutdown_later(delay_s: float = 0.2) -> None:
+    await asyncio.sleep(max(0.0, float(delay_s)))
+    try:
+        systemcmd(["/usr/sbin/shutdown", "-H", "now"], bool(CONFIG.get("SIMULATE_KITTYFLAP")))
+    except Exception:
+        pass
+
+
 async def _handle_journal_request(ws: WebSocketServerProtocol, lines: int = 10000) -> None:
     """Return target system journal text for remote diagnostics (best-effort)."""
     try:
@@ -1313,6 +1340,14 @@ async def _handler(ws: WebSocketServerProtocol):
                 except Exception:
                     pass
                 asyncio.create_task(_reboot_later(0.2))
+                continue
+
+            if t == "shutdown_request":
+                try:
+                    await ws.send(json.dumps({"type": "shutdown_ack", "ok": True}))
+                except Exception:
+                    pass
+                asyncio.create_task(_shutdown_later(0.2))
                 continue
 
             if t == "version_request":

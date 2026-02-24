@@ -1,8 +1,11 @@
 import asyncio
+import base64
+import gzip
 import html
 import json
 import logging
 import os
+import subprocess
 import threading
 import time
 from typing import Any
@@ -1173,6 +1176,72 @@ async def _reboot_later(delay_s: float = 0.2) -> None:
         pass
 
 
+async def _handle_journal_request(ws: WebSocketServerProtocol, lines: int = 10000) -> None:
+    """Return target system journal text for remote diagnostics (best-effort)."""
+    try:
+        lines_i = int(lines)
+    except Exception:
+        lines_i = 10000
+    lines_i = max(1000, min(10000, lines_i))
+
+    try:
+        result = await asyncio.to_thread(
+            lambda: subprocess.run(
+                [
+                    "/usr/bin/journalctl",
+                    "-n",
+                    str(lines_i),
+                    "--no-pager",
+                    "--quiet",
+                    "--output=short-iso-precise",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        )
+
+        if result.returncode == 0:
+            journal_text = result.stdout or ""
+            reason = ""
+        else:
+            reason = f"journalctl exited with code {result.returncode}"
+            logging.error(f"[CONTROL] {reason}: {(result.stderr or '').strip()}")
+            journal_text = (result.stdout or "") + "\n\n--- journalctl stderr ---\n\n" + (result.stderr or "")
+    except FileNotFoundError:
+        reason = "journalctl not found on target"
+        journal_text = ""
+    except Exception as e:
+        reason = str(e)
+        journal_text = ""
+
+    # Keep response safely below websocket max_size on remote side (16 MiB).
+    max_bytes = 8 * 1024 * 1024
+    encoded = (journal_text or "").encode("utf-8", errors="replace")
+    truncated = False
+    if len(encoded) > max_bytes:
+        encoded = encoded[-max_bytes:]
+        truncated = True
+    text_payload = encoded.decode("utf-8", errors="replace")
+
+    try:
+        compressed_payload = gzip.compress(text_payload.encode("utf-8", errors="replace"), compresslevel=6)
+        payload_b64 = base64.b64encode(compressed_payload).decode("ascii")
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "journal_response",
+                    "ok": bool(len(text_payload) > 0),
+                    "encoding": "gzip+base64",
+                    "text_b64": payload_b64,
+                    "reason": reason,
+                    "truncated": truncated,
+                }
+            )
+        )
+    except Exception as e:
+        logging.error(f"[CONTROL] Failed to send journal response: {e}")
+
+
 async def ws_send_safe_broadcast_reboot_notice() -> None:
     """Best effort: notify active remote controller that target will reboot."""
     try:
@@ -1264,6 +1333,11 @@ async def _handler(ws: WebSocketServerProtocol):
                     )
                 except Exception:
                     pass
+                continue
+
+            if t == "journal_request":
+                requested_lines = int(data.get("lines") or 10000)
+                await _handle_journal_request(ws, lines=requested_lines)
                 continue
 
     except Exception:

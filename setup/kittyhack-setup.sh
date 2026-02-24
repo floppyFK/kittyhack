@@ -125,6 +125,73 @@ enable_service() {
     fi
 }
 
+set_config_language() {
+    local config_file="$1"
+    local lang="en"
+
+    if [[ "$LANGUAGE" == "de" ]]; then
+        lang="de"
+    fi
+
+    if [[ ! -f "$config_file" ]]; then
+        cat > "$config_file" << EOF
+[Settings]
+language = ${lang}
+EOF
+        if [[ $? -eq 0 ]]; then
+            echo -e "${GREEN}Created config.ini and set setup language: language = ${lang}${NC}"
+        else
+            ((FAIL_COUNT++))
+            echo -e "${RED}Failed to create ${config_file}.${NC}"
+        fi
+        return 0
+    fi
+
+    awk -v new_lang="$lang" '
+        BEGIN { in_settings=0; language_set=0; saw_settings=0 }
+
+        /^\[Settings\][[:space:]]*$/ {
+            in_settings=1
+            saw_settings=1
+            print
+            next
+        }
+
+        in_settings && /^\[/ {
+            if (!language_set) {
+                print "language = " new_lang
+                language_set=1
+            }
+            in_settings=0
+        }
+
+        in_settings && /^[[:space:]]*language[[:space:]]*=/ {
+            print "language = " new_lang
+            language_set=1
+            next
+        }
+
+        { print }
+
+        END {
+            if (!saw_settings) {
+                print ""
+                print "[Settings]"
+                print "language = " new_lang
+            } else if (in_settings && !language_set) {
+                print "language = " new_lang
+            }
+        }
+    ' "$config_file" > "${config_file}.tmp" && mv "${config_file}.tmp" "$config_file"
+
+    if [[ $? -eq 0 ]]; then
+        echo -e "${GREEN}Configured setup language in config.ini: language = ${lang}${NC}"
+    else
+        ((FAIL_COUNT++))
+        echo -e "${RED}Failed to update language in ${config_file}.${NC}"
+    fi
+}
+
 # Write the kwork service file
 write_kwork_service() {
     cat << EOF > /etc/systemd/system/kwork.service
@@ -648,6 +715,7 @@ install_remote_mode() {
     if [ -f "${KITTYHACK_INSTALL_DIR}/config.ini" ]; then
         sed -i "s/^camera_source\s*=\s*.*/camera_source = ip_camera/" "${KITTYHACK_INSTALL_DIR}/config.ini" || true
     fi
+    set_config_language "${KITTYHACK_INSTALL_DIR}/config.ini"
 
     echo -e "${CYAN}--- REMOTE MODE INSTALL Step 4: Install/enable kittyhack.service ---${NC}"
     cat << EOF > /etc/systemd/system/kittyhack.service
@@ -822,6 +890,9 @@ install_kittyhack() {
     if [ -f /tmp/kittyhack.db.bak ]; then
         cp /tmp/kittyhack.db.bak "${KITTYHACK_INSTALL_DIR}/kittyhack.db" && rm -f /tmp/kittyhack.db.bak
     fi
+
+    # Set configured UI language in config.ini based on setup language.
+    set_config_language "${KITTYHACK_INSTALL_DIR}/config.ini"
 
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 2: Set up Python virtual environment ---${NC}"
     if ! create_venv_py311 "${KITTYHACK_INSTALL_DIR}/.venv"; then

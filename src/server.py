@@ -7842,11 +7842,50 @@ def server(input, output, session):
                 logging.error(f"Failed to write journal file {journal_file_path}: {e}")
                 # continue — zip will be created without the journal
 
+            # If this instance runs in remote-mode, also try to fetch the target-mode journal.
+            target_journal_file_path = os.path.join(temp_dir, "journalctl_target.log")
+            if is_remote_mode():
+                try:
+                    from src.remote.control_client import RemoteControlClient
+
+                    client = RemoteControlClient.instance()
+                    client.ensure_started()
+                    response = client.request_target_journal(lines=10000, timeout=20.0)
+
+                    if response is None:
+                        target_journal_text = "ERROR: Failed to fetch target journal (remote control not connected or timeout)."
+                    else:
+                        target_journal_text = str(response.get("text") or "")
+                        reason = str(response.get("reason") or "").strip()
+                        truncated = bool(response.get("truncated", False))
+
+                        if not bool(response.get("ok", False)) and not target_journal_text:
+                            target_journal_text = f"ERROR: Target journal request failed. {reason}"
+
+                        if truncated:
+                            target_journal_text += "\n\n--- NOTE ---\nTarget journal output was truncated to the newest 8 MiB."
+                        if reason and bool(response.get("ok", False)):
+                            target_journal_text += f"\n\n--- NOTE ---\n{reason}"
+
+                    with open(target_journal_file_path, "w", encoding="utf-8") as tjf:
+                        tjf.write(target_journal_text or "No target journal output captured.")
+                except Exception as e:
+                    logging.error(f"Failed to fetch/write target journal: {e}")
+                    try:
+                        with open(target_journal_file_path, "w", encoding="utf-8") as tjf:
+                            tjf.write(f"ERROR: Failed to fetch target journal: {e}")
+                    except Exception:
+                        pass
+
             # Create a zip file with compression and include only the journal and sanitized config + setup logs
             with zipfile.ZipFile(zip_file_path, 'w', compression=zipfile.ZIP_DEFLATED) as z:
                 # Add the journalctl export
                 if os.path.exists(journal_file_path):
                     z.write(journal_file_path, arcname="journalctl.log")
+
+                # Add target-mode journal when available (remote-mode only).
+                if os.path.exists(target_journal_file_path):
+                    z.write(target_journal_file_path, arcname="journalctl_target.log")
                 
                 # Add a sanitized version of config.ini to the zip file
                 sanitized_config_path = os.path.join(temp_dir, "config_sanitized.ini")
@@ -8145,11 +8184,10 @@ def server(input, output, session):
                 ui_update_kittyhack = ui_update_kittyhack, ui.hr(), ui.div(
                     ui.markdown(
                         _("Remote/target version mismatch detected.")
-                        + " "
-                        + _("Use one of the buttons below to align the versions.")
                     ),
                     ui.div(
-                        ui.input_task_button("update_target_kittyhack", _("Update target device only"), icon=icon_svg("download"), class_="btn-primary"),
+                        ui.input_task_button("update_target_kittyhack", _("Update target device only"), icon=icon_svg("download"), class_="btn-default"),
+                        ui.br(),
                         ui.br(),
                         ui.input_task_button("update_remote_kittyhack", _("Update this device only"), icon=icon_svg("download"), class_="btn-default"),
                         style_="text-align: center;"
@@ -8229,7 +8267,7 @@ def server(input, output, session):
                         ui.div(
                             ui.markdown(
                                 f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
-                                + _("Remote/target versions are different. This can cause confusing update behavior.")
+                                + _("The remote and Kittyflap versions differ. This may lead to malfunction during operation.")
                             ),
                             class_="generic-container warning-container",
                         )

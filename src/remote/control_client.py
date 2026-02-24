@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import gzip
 import json
 import logging
 import os
@@ -86,6 +88,15 @@ class RemoteControlClient:
         self._target_version_info: dict[str, Any] = {
             "git_version": "",
             "latest_version": "",
+            "received_at": 0.0,
+        }
+        self._target_journal_event = threading.Event()
+        self._target_journal_lock = threading.Lock()
+        self._target_journal_response: dict[str, Any] = {
+            "ok": False,
+            "text": "",
+            "reason": "",
+            "truncated": False,
             "received_at": 0.0,
         }
 
@@ -297,6 +308,40 @@ class RemoteControlClient:
     def get_target_version_info(self) -> dict[str, Any]:
         with self._target_version_lock:
             return dict(self._target_version_info)
+
+    def request_target_journal(self, lines: int = 10000, timeout: float = 15.0) -> dict[str, Any] | None:
+        """Request target journal text via control channel.
+
+        Returns response dict on success (or remote failure), None on timeout/not-ready.
+        """
+        if not self.wait_until_ready(timeout=max(0.0, min(3.0, float(timeout or 0.0)))):
+            return None
+
+        try:
+            lines_i = int(lines)
+        except Exception:
+            lines_i = 10000
+        lines_i = max(1000, min(10000, lines_i))
+
+        with self._target_journal_lock:
+            self._target_journal_response = {
+                "ok": False,
+                "text": "",
+                "reason": "",
+                "truncated": False,
+                "received_at": 0.0,
+            }
+
+        self._target_journal_event.clear()
+        self._send_async({"type": "journal_request", "lines": lines_i})
+        got = self._target_journal_event.wait(timeout=max(0.0, float(timeout or 0.0)))
+        if not got:
+            return None
+        return self.get_target_journal_response()
+
+    def get_target_journal_response(self) -> dict[str, Any]:
+        with self._target_journal_lock:
+            return dict(self._target_journal_response)
 
     def abort_initial_sync(self, reason: str = "aborted by user") -> None:
         tmp_path = None
@@ -552,6 +597,30 @@ class RemoteControlClient:
                     "received_at": time.time(),
                 }
             self._target_version_event.set()
+            return
+
+        elif t == "journal_response":
+            text_value = ""
+            encoding = str(data.get("encoding") or "").strip().lower()
+            if encoding == "gzip+base64":
+                try:
+                    payload_b64 = str(data.get("text_b64") or "")
+                    compressed = base64.b64decode(payload_b64.encode("ascii"), validate=True)
+                    text_value = gzip.decompress(compressed).decode("utf-8", errors="replace")
+                except Exception as e:
+                    text_value = f"ERROR: Failed to decode compressed target journal payload: {e}"
+            else:
+                text_value = str(data.get("text") or "")
+
+            with self._target_journal_lock:
+                self._target_journal_response = {
+                    "ok": bool(data.get("ok", False)),
+                    "text": text_value,
+                    "reason": str(data.get("reason") or ""),
+                    "truncated": bool(data.get("truncated", False)),
+                    "received_at": time.time(),
+                }
+            self._target_journal_event.set()
             return
 
     async def _handle_binary(self, payload: bytes) -> None:

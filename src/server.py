@@ -8082,12 +8082,13 @@ def server(input, output, session):
             if versions_mismatch and git_repo_available:
                 ui_update_kittyhack = ui_update_kittyhack, ui.hr(), ui.div(
                     ui.markdown(
-                        _("Remote/target version mismatch detected.")
+                        _("Remote-/Kittyflap-version mismatch detected.")
                         + " "
                         + _("You can update only one side to match versions before running a full update.")
                     ),
                     ui.div(
-                        ui.input_task_button("update_target_kittyhack", _("Update target device only"), icon=icon_svg("download"), class_="btn-primary"),
+                        ui.input_task_button("update_target_kittyhack", _("Update target device only"), icon=icon_svg("download"), class_="btn-default"),
+                        ui.br(),
                         ui.br(),
                         ui.input_task_button("update_remote_kittyhack", _("Update this device only"), icon=icon_svg("download"), class_="btn-default"),
                         style_="text-align: center;"
@@ -8130,12 +8131,13 @@ def server(input, output, session):
                 if versions_mismatch:
                     ui_update_kittyhack = ui_update_kittyhack, ui.hr(), ui.div(
                         ui.markdown(
-                            _("Remote/target version mismatch detected.")
+                            _("Remote-/Kittyflap-version mismatch detected.")
                             + " "
                             + _("Use one of the buttons below if you want to update only one device.")
                         ),
                         ui.div(
-                            ui.input_task_button("update_target_kittyhack", _("Update target device only"), icon=icon_svg("download"), class_="btn-primary"),
+                            ui.input_task_button("update_target_kittyhack", _("Update target device only"), icon=icon_svg("download"), class_="btn-default"),
+                            ui.br(),
                             ui.br(),
                             ui.input_task_button("update_remote_kittyhack", _("Update this device only"), icon=icon_svg("download"), class_="btn-default"),
                             style_="text-align: center;"
@@ -8183,7 +8185,7 @@ def server(input, output, session):
             if versions_mismatch and git_repo_available:
                 ui_update_kittyhack = ui_update_kittyhack, ui.hr(), ui.div(
                     ui.markdown(
-                        _("Remote/target version mismatch detected.")
+                        _("Remote-/Kittyflap-version mismatch detected.")
                     ),
                     ui.div(
                         ui.input_task_button("update_target_kittyhack", _("Update target device only"), icon=icon_svg("download"), class_="btn-default"),

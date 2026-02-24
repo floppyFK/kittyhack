@@ -510,7 +510,7 @@ def backend_main(simulate_kittyflap = False):
                                 f"(effective={float(eff_fps):.2f} FPS, avg inference={float(avg_inf_fps):.2f} FPS). "
                                 "Reloading model runtime automatically."
                             )
-                            ok, _ = reload_model_handler_runtime()
+                            ok, __handler = reload_model_handler_runtime()
                             if ok:
                                 logging.info("[BACKEND] Automatic model runtime reload completed.")
                             else:
@@ -1129,7 +1129,8 @@ def backend_main(simulate_kittyflap = False):
                 magnets.queue_command("lock_outside")
                 
         except Exception as e:
-            logging.error(f"[BACKEND] Exception in backend occured: {e}")
+            # Log full traceback to identify the real call site in case of an exception in the backend loop
+            logging.exception(f"[BACKEND] Exception in backend occured: {e}")
 
     # RFID Cleanup on shutdown:
     rfid.stop_read(wait_for_stop=True)

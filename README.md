@@ -1,404 +1,333 @@
 # Kittyhack
 
-### [German version below / Deutsche Version weiter unten!](#deutsch)
+**English** | [Deutsch](#deutsch)
+
+Kittyhack is an open-source replacement for the Kittyflap cloud/app. It lets you keep using your Kittyflap **fully offline** (local network only).
+
+If you find bugs or have ideas, please use the GitHub issue tracker.
 
 ---
 
-Kittyhack is an open-source project that enables offline use of the Kittyflap cat door—completely without internet access. It was created after the manufacturer of Kittyflap filed for bankruptcy, rendering the associated app non-functional.
+## What you can do with Kittyhack
 
-⚠️ **Important Notes**  
-I have no connection to the manufacturer of Kittyflap. This project was developed on my own initiative to continue using my Kittyflap.
+- **Control who may enter/exit** (global rules or **individual rules per cat**)
+- **Prey detection** (on/off) + **per-cat settings** (when enabled)
+- **See events and pictures** (filter by date, cat/prey detection)
+- **Live camera view** + detection overlay
+- **Manage cats** (RFID, name, per-cat settings)
+- **Use external IP cameras** (better angle / night vision compared to the internal camera)
+- **Home Assistant integration** via MQTT
+- **Train your own AI model** (optional) for better detection in your environment
 
-If you find any bugs or have suggestions for improvement, please report them on the GitHub issue tracker.
+### Remote mode (optional)
 
----
+Run the Web UI + AI inference on a separate (more powerful) Linux PC/VM to get **higher inference FPS** and use bigger models.
 
-## Features
-
-Current features:
-- **Toggle prey detection**
-- **Configure thresholds for mouse detection**
-- **Switch entry direction** between "All cats", "All chipped cats", "my cats only" or "no cats"
-- **Block exit direction**
-- **Display captured images** (filterable by date, prey, and cat detection)
-- **Show overlay with detected objects**
-- **Live camera feed**
-- **Manage cats and add new cats**
-- **Show incoming/outgoing Events**
-- **AI Training** Create a custom object detection model for your cat and your environment by using your own images
-- **Support of external IP cameras** for enhanced viewing angles and improved night vision comapred to the internal Kittyflap camera
-- **Home Assistant integration via MQTT**
+See: [doc/remote-mode.md](doc/remote-mode.md)
 
 ---
 
-## Installation
+## Installation (simple)
 
-### Prerequisites
-- Access to the Kittyflap via SSH  
-  You can usually find the Kittyflap's IP address in your router.  
-  - The hostname begins with `kittyflap-`
-  - The MAC address should start with `d8:3a:dd`.
-  ![kittyflap router configuration](doc/kittyflap-hostname.png)
+### What you need
 
-- **Python 3.11** is currently required. On newer systems (e.g. Debian 13 / Python 3.13 by default) the setup script will try to install/provision Python 3.11 automatically (via apt, or `uv` as fallback).
+- SSH access to your Kittyflap (user: `pi`, password: `kittyflap`)
+- A stable WiFi connection during installation (downloads can be a few hundred MB)
+- About **1 GB free space** on the Kittyflap
+- **Python 3.11** is required (the setup script will try to provision it automatically on newer systems)
 
-- Headless/container installs may need OpenCV runtime libraries (`libgl1`, `libglib2.0-0`). The setup script installs them automatically.
+You can usually find the Kittyflap IP address in your router:
 
-### If your Kittyflap hasn't been set up yet
-If you never configured your Kittyflap with the official app, it is preset to a default WiFi network.
-To establish a connection, you need to temporarily adjust your router's WiFi settings.
+- Hostname starts with `kittyflap-`
+- MAC address often starts with `d8:3a:dd`
 
-Use one of these combinations:
+![kittyflap router configuration](doc/kittyflap-hostname.png)
+
+### 1) Connect via SSH
+
+```bash
+ssh pi@<IP-address-of-Kittyflap>
+```
+
+### 2) Run the setup script
+
+```bash
+sudo curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh \
+  && sudo chmod +x /tmp/kittyhack-setup.sh \
+  && sudo /tmp/kittyhack-setup.sh \
+  && sudo rm /tmp/kittyhack-setup.sh
+```
+
+### 3) Open the Web UI
+
+In your browser open:
+
+`http://<IP-address-of-Kittyflap>`
+
+Updates are available in the Web UI (Info section) or by re-running the setup script.
+
+---
+
+<details>
+<summary><strong>Troubleshooting / Advanced (click to expand)</strong></summary>
+
+### If your Kittyflap was never set up with the official app
+
+If Kittyhack has never been installed and the cat flap has never been connected to your own Wi-Fi network, the Kittyflap usually already contains preconfigured Wi-Fi connections. Temporarily change your router WiFi to one of these:
+
 - SSID: `Graewer factory`, Password: `Graewer2023`
 - SSID: `Graewer Factory`, Password: `Graewer2023`
 - SSID: `GEG-Gast`, Password: `GEG-1234`
 
-After changing the router SSID:
+Then:
+
 1. Restart the Kittyflap
-2. Wait until it appears as a client in your router
-3. Connect [via SSH](#ssh_access_en) (User: `pi`, Password: `kittyflap`)
+2. Wait until it shows up in your router
+3. Connect via SSH and run the setup
 
-Now proceed with the installation. You can add your own WLAN configuration later on in the Kittyhack Web interface.
+### If you are low on disk space
 
-### Instructions
-The setup is quite simple:
-<a id="ssh_access_en"></a>
+Check free space:
 
-1. **Establish SSH Access**  
-   Open a terminal (on Windows, for example, with the key combination `[WIN]`+`[R]`, then enter `cmd` and execute) and connect to your Kittyflap via SSH with the following command:
-   ```bash
-   ssh pi@<IP-address-of-Kittyflap>
-   ```
-   Username: `pi`
-   Default password: `kittyflap`  
-   > **NOTE:** You have to enter the password "blindly", as no characters will be displayed while typing.
+```bash
+df -h
+```
 
-2. **Check available disk space**
-   If your cat flap was still active for an extended period after the Kittyflap servers were shut down, the file system might be full.
-   In this case, you need to free up space before installing Kittyhack.
+If `/dev/mmcblk0p2` has less than ~1 GB free, free some space first.
 
-   Check available disk space:
-   ```bash
-   df -h
-   ```
-   For `/dev/mmcblk0p2`, there should be **at least** 1 GB of free space available:  
-   ![free disk space](doc/free-disk-space-example.jpg)
-   
-   #### If less storage space is available, follow these steps - otherwise, proceed with the [Setup Script](#setup_en):
-   
-      1. Stop Kittyflap processes:
-         ```bash
-         sudo systemctl stop kwork
-         sudo systemctl stop manager
-         ```
+Stop old Kittyflap services:
 
-      2. Release magnetic switches:
-         **ATTENTION:** If one of the magnetic switches is still active at this point (i.e., the flap is unlocked), they will not be automatically deactivated until the end of the installation.  
-            Please make sure to deactivate them now with these commands to avoid overloading the electromagnets:
-         ```bash
-         # Export GPIOs
-         echo 525 > /sys/class/gpio/export 2>/dev/null
-         echo 524 > /sys/class/gpio/export 2>/dev/null
-         
-         # Configure GPIO directions
-         echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/direction
-         echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/direction
-         
-         # Set default output values for GPIOs
-         echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/value
-         sleep 1
-         echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/value
-         ```
+```bash
+sudo systemctl stop kwork
+sudo systemctl stop manager
+```
 
-      3. Reduce the size of the swap file (by default, 6GB are reserved for this):
-         ```bash
-         # Turn off and remove the current swapfile
-         sudo swapoff /swapfile
-         sudo rm /swapfile
+If the flap is currently unlocked: disable the magnets (important to avoid overheating):
 
-         # Create a new 2GB swapfile
-         sudo fallocate -l 2G /swapfile
-         sudo chmod 600 /swapfile
-         sudo mkswap /swapfile
-         sudo swapon /swapfile
-         ```
+```bash
+echo 525 > /sys/class/gpio/export 2>/dev/null
+echo 524 > /sys/class/gpio/export 2>/dev/null
 
-         As confirmation, you will receive the size of the new swap file. The result should look something like this:
-         ![free disk space](doc/swap-resize.jpg)
+echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/direction
+echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/direction
 
-      After this, `/dev/mmcblk0p2` should have significantly more free space available.
+echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/value
+sleep 1
+echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/value
+```
 
-<a id="setup_en"></a>
+Reduce swap size (frees space on the root filesystem):
 
-3. **Run the setup script on the Kittyflap**
-    > **IMPORTANT:** Before starting the installation, please ensure that the WiFi connection of the cat flap is stable. During installation, several hundred MB of data will be downloaded!  
-    > Since the antenna is mounted on the outside of the flap, the signal strength can be significantly weakened by e.g. a metal door.  
+```bash
+sudo swapoff /swapfile
+sudo rm /swapfile
 
-    You can check the strength of the WiFi signal with this command:
-    ```bash
-    iwconfig wlan0
-    ```
-    Run the installation:
-   ```bash
-   sudo curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && sudo chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh && sudo rm /tmp/kittyhack-setup.sh
-   ```
-   You can choose between the following options:
-   - **Initial installation**: Performs the complete setup, including stopping and removing unwanted services on the Kittyflap (only to be executed once)
-   - **Reinstall camera drivers**: This will reinstall the necessary device drivers in the system. Only to be executed if there are problems with the camera image. This installation is also possible directly through the web interface.
-   - **Update to the latest version**: If a first-time installation of Kittyhack has already been performed, this option is sufficient to update to the latest version. The existing system configuration will not be changed.
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+```
 
-   That's it!
+### Network / security note
 
-### Access the Kittyhack Web Interface
-Open the Kittyflap's IP address in your browser:
-`http://<IP-address-of-Kittyflap>`
+The Web UI uses plain HTTP. This is generally fine in a **trusted LAN**.
+Do not expose Kittyhack to the public internet. If you need remote access, use a VPN or a reverse proxy.
 
->#### Note
->⚠️ Since the connection is unencrypted, the browser will display a warning. This connection is generally safe within the local network, as long as you don't enable remote access 
-to the Kittyflap via your router. For a secure connection, additional measures like setting up a reverse proxy can be taken.
+</details>
 
->⚠️ To ensure Kittyhack is always reachable at the same IP address, it is recommended to assign a static IP address in your router.
+<details>
+<summary><strong>FAQ (click to expand)</strong></summary>
 
-### Updates
-Updates for Kittyhack are available directly in the WebGUI in the 'Info' section.  
-Alternatively, you can also run the [setup script](#setup_en) again on the Kittyflap to perform an update.
+### My Kittyflap disappears from WiFi after a few hours
 
+This is usually weak WiFi signal (antenna is mounted on the outside of the flap). Move the router closer or improve coverage.
 
-## Remote control
+### Background turns gray / content disappears on my phone
 
-For a more detailed overview (requirements, setup, failure behavior), see [remote-mode.md](doc/remote-mode.md)
+Some phones/tablets suspend network connections in power-save mode. Since v1.5 the page should auto-reload after a disconnect.
+If not, reload the page manually.
 
-Kittyhack can be split into two roles:
+### Night mode / IR filter does not switch
 
-- **Kittyhack**: runs on the Kittyflap hardware and controls sensors/actors (PIR, magnets/locks, RFID).
-- **Remote control**: runs on a more powerful remote system and performs inference + Web-UI, while the Kittyflap exposes sensors/actors.
+The IR filter is controlled by the camera module itself. If it never clicks when you cover it in daylight, the module may be defective.
+See: https://github.com/floppyFK/kittyhack/issues/81
 
-How it works:
+### Too many false prey detections / boxes in wrong places
 
-- The target device runs an always-on service **kittyhack_control** listening on port **8888**.
-- When a remote-mode instance connects, the target stops **kittyhack.service**, waits ~1s, then accepts remote control.
-- If the remote connection is lost (timeout), the target automatically starts **kittyhack.service** again.
+If you still use an original Kittyflap model, results may be poor. Training your own model is recommended.
 
-## FAQ
+EN wiki: https://github.com/floppyFK/kittyhack/wiki/%5BEN%5D-Kittyhack-v2.0-%E2%80%90-Train-own-AI%E2%80%90Models
 
-### My Kittyflap disappears from my WLAN after a few hours
-The WLAN signal is probably too weak because the WLAN antenna is mounted on the outside of the Kittyflap and has to pass therefore an additional wall or door to reach your router.  
-Make sure the distance to the router is not too great. If the WLAN signal is too weak, the Kittyflap will eventually disconnect and will only reconnect after being restarted by 
-unplugging and plugging it back in (I am still investigating why this happens - I am trying to find a solution!).  
+### Constant motion detected outside
 
-### Why does the website background turn gray and the content disappear when I try to switch sections?
-This issue is caused by the power-saving features of smartphones and tablets: When your browser on your smartphone loses focus (for example, when switching to the home screen), the connection to the Kittyhack page is interrupted after a few seconds.  
-By now (since v1.5), the page should automatically reload itself after such a connection loss. If this does not happen, please reload the page manually (e.g., using the refresh gesture).
+You can use the camera image for motion detection instead of the external PIR sensor (requires a good custom model).
+Option: Configuration → Use camera for motion detection.
 
-### I have successfully installed Kittyhack. Shouldn't the night light be activated when it gets too dark?
-The switching to night mode (infrared filter) is handled automatically by the built-in camera module. If you cover the area of the camera module completely with your hand during sufficient daylight, you should hear a faint clicking sound. If you do not hear this click, the switching is probably defective.  
-There have already been some cases where the switching was defective. In this case, the module (Akozon 5MP OV5647) unfortunately has to be replaced.  
-You can find more details in this post: https://github.com/floppyFK/kittyhack/issues/81
-
-### My cat flap recognizes everything as prey - except the actual prey. The detected zones are somewhere random in the image.
-You are probably still using an original object detection model from Kittyflap. These original models are not reliable!  
-It is highly recommended to train your own model. You can find instructions in the [Wiki](https://github.com/floppyFK/kittyhack/wiki/%5BEN%5D-Kittyhack-v2.0-%E2%80%90-Train-own-AI%E2%80%90Models).  
-If you are already using your own model, continue to train and refine it. Also, make sure that only high-quality and meaningful images are included in your datasets.
-
-### I constantly get motion detected outside - what can I do?
-Starting with version 2.1.0, you can use the camera image for motion detection as an alternative to the external PIR sensor.  
-This significantly reduces false triggers, for example by trees or people in the image. However, a well-trained, custom detection model is required for this feature.  
-You can find the option under **Configuration** → **Use camera for motion detection**.
-
+</details>
 
 ---
 
+# Deutsch
 
-# DEUTSCH
+Kittyhack ist ein Open-Source-Ersatz für die Kittyflap-Cloud/App. Damit kannst du deine Kittyflap **komplett offline** (nur im lokalen Netzwerk) weiter nutzen.
 
-Kittyhack ist ein Open-Source-Projekt, das die Offline-Nutzung der Kittyflap-Katzenklappe ermöglicht – ganz ohne Internetzugang. Es wurde ins Leben gerufen, nachdem der Anbieter der Kittyflap Insolvenz angemeldet hat und die zugehörige App nicht mehr funktionierte.
-
-⚠️ **Wichtige Hinweise**
-Ich stehe in keinerlei Verbindung mit dem Hersteller der Kittyflap. Dieses Projekt wurde aus eigenem Antrieb erstellt, um meine eigene Katzenklappe weiterhin nutzen zu können.
-
-Wenn du Bugs findest oder Verbesserungsvorschläge hast, melde sie bitte im Issue Tracker dieses GitHub Projekts.
+Wenn du Bugs findest oder Ideen hast, nutze bitte den GitHub Issue Tracker.
 
 ---
 
-## Funktionsumfang
+## Was Kittyhack kann
 
-Aktuelle Features:
-- **Beuteerkennung ein-/ausschalten**
-- **Schwellwerte für Mauserkennung konfigurieren**
-- **Eingangsrichtung umschalten** zwischen "Alle Katzen", "Alle gechippten Katzen", "nur meine Katzen" oder "keine Katzen"
-- **Ausgangsrichtung blockieren**
-- **Aufgenommene Bilder anzeigen** (filterbar nach Datum, Beute und Katzenerkennung)
-- **Overlay mit erkannten Objekten anzeigen**
-- **Live-Bild der Kamera**
-- **Katzen verwalten und neue Katzen hinzufügen**
-- **Ereignisse von ankommenden/rausgehenden Katzen anzeigen**
-- **"KI" Modell Training** Erstelle ein individuelles Objekterkennungsmodell für deine Katze und deine Umgebung anhand der eigenen Bilder
-- **Support externer IP-Kameras** für bessere Blickwinkel und verbesserte Nachtsicht gegenüber der internen Kittyflap Kamera
-- **Home Assistant Unterstützung via MQTT**
+- **Steuern, wer rein/raus darf** (globale Regeln oder **individuell pro Katze**)
+- **Beuteerkennung** (an/aus) + **pro Katze konfigurierbar** (wenn aktiviert)
+- **Events & Bilder ansehen** (Filter nach Datum, Katze/Beute-Erkennung)
+- **Live-Kamerabild** + Overlay mit erkannten Objekten
+- **Katzen verwalten** (RFID, Name, Einstellungen pro Katze)
+- **Externe IP-Kameras** (besserer Blickwinkel / bessere Nachtsicht als die interne Kamera)
+- **Home Assistant** via MQTT
+- **Eigenes KI-Modell trainieren** (optional) für bessere Ergebnisse in deiner Umgebung
+
+### Remote-Mode (optional)
+
+Weboberfläche + KI-Auswertung auf einem separaten (leistungsfähigeren) Linux-PC/VM ausführen, um **höhere FPS** zu erreichen und größere Modelle zu nutzen.
+
+Siehe: [doc/remote-mode_de.md](doc/remote-mode_de.md)
 
 ---
 
-## Installation
+## Installation (einfach)
 
 ### Voraussetzungen
-- Zugriff auf die Kittyflap per SSH  
-  Die IP-Adresse der Kittyflap kann üblicherweise im Router ausgelesen werden.  
-  - Der Hostname beginnt mit `kittyflap-`
-  - Die MAC-Adresse sollte mit `d8:3a:dd` beginnen.
-  ![kittyflap router configuration](doc/kittyflap-hostname.png)
 
-### Wenn deine Kittyflap noch nicht eingerichtet wurde
-Falls du deine Kittyflap nie mit der offiziellen App konfiguriert hast, ist sie auf ein Standard-WLAN voreingestellt.
-Um eine Verbindung herzustellen, musst du vorübergehend die WLAN-Einstellungen deines Routers anpassen.
+- SSH-Zugriff auf die Kittyflap (User: `pi`, Passwort: `kittyflap`)
+- Stabile WLAN-Verbindung während der Installation (Downloads können mehrere hundert MB sein)
+- Ca. **1 GB freier Speicher** auf der Kittyflap
+- **Python 3.11** wird benötigt (das Setup versucht es auf neueren Systemen automatisch bereitzustellen)
 
-Verwende eine dieser Kombinationen:
+Die IP-Adresse findest du meist im Router:
+
+- Hostname beginnt mit `kittyflap-`
+- MAC-Adresse beginnt häufig mit `d8:3a:dd`
+
+![kittyflap router configuration](doc/kittyflap-hostname.png)
+
+### 1) Per SSH verbinden
+
+```bash
+ssh pi@<IP-Adresse-der-Kittyflap>
+```
+
+### 2) Setup-Script ausführen
+
+```bash
+sudo curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh \
+  && sudo chmod +x /tmp/kittyhack-setup.sh \
+  && sudo /tmp/kittyhack-setup.sh de \
+  && sudo rm /tmp/kittyhack-setup.sh
+```
+
+### 3) Weboberfläche öffnen
+
+Im Browser öffnen:
+
+`http://<IP-Adresse-der-Kittyflap>`
+
+Updates sind in der Weboberfläche (Info-Sektion) möglich oder durch erneutes Ausführen des Setup-Scripts.
+
+---
+
+<details>
+<summary><strong>Probleme / Erweitert (klicken zum Aufklappen)</strong></summary>
+
+### Falls deine Kittyflap nie mit der offiziellen App eingerichtet wurde
+
+Wenn Kittyhack noch nie installiert wurde und die Katzenklappe noch nie mit deinem eigenen WLAN verbunden war, sind auf der Kittyflap in der Regel bereits vorab eingerichtete WLAN-Zugänge vorhanden. Stelle dein Router-WLAN vorübergehend auf eine dieser Kombinationen:
+
 - SSID: `Graewer factory`, Passwort: `Graewer2023`
 - SSID: `Graewer Factory`, Passwort: `Graewer2023`
 - SSID: `GEG-Gast`, Passwort: `GEG-1234`
 
-Nach Änderung der Router-SSID:
-1. Starte die Kittyflap neu
-2. Warte bis sie im Router als Client erscheint
-3. Verbinde dich [per SSH](#ssh_access_de) (Benutzer: `pi`, Passwort: `kittyflap`)
+Dann:
 
-Fahre jetzt mit der Installation fort. Du kannst dein eigenes WLAN später im Web Interface von Kittyhack konfigurieren.
+1. Kittyflap neu starten
+2. Warten, bis sie im Router sichtbar ist
+3. Per SSH verbinden und Setup ausführen
 
-### Anleitung
-Die Installation ist kinderleicht:
-<a id="ssh_access_de"></a>
+### Falls der Speicherplatz knapp ist
 
-1. **SSH-Zugriff herstellen**  
-   Öffne ein Terminal (unter Windows z.B. mit der Tastenkombination `[WIN]`+`[R]`, dann `cmd` eingeben und ausführen) und verbinde dich mit dem folgenden Kommando per SSH zu deiner Kittyflap:
-   ```bash
-   ssh pi@<IP-Adresse-der-Kittyflap>
-   ```
-   Benutzername: `pi`
-   Standardpasswort: `kittyflap`  
-   > **HINWEIS:** Du musst das Passwort "blind" eingeben, da beim Tippen keine Zeichen angezeigt werden.
+Freien Speicher prüfen:
 
-2. **Freien Speicherplatz überprüfen**
-   Falls deine Katzenklappe nach der Abschaltung der Kittyflap-Server noch längere Zeit aktiv war, kann es sein, dass das Dateisystem vollgeschrieben ist.
-   In diesem Fall musst du vor der Installation von Kittyhack erst Platz schaffen.
+```bash
+df -h
+```
 
-   Vorhandenen Speicherplatz überprüfen:
-   ```bash
-   df -h
-   ```
-   Für `/dev/mmcblk0p2` sollte **mindestens** 1 GB freier Speicherplatz zur Verfügung stehen:  
-   ![free disk space](doc/free-disk-space-example.jpg)
-   
-   #### Falls weniger Speicherplatz verfügbar ist, führe folgende Schritte aus - ansonsten fahre fort mit dem [Setup Script](#setup_de):
-   
-      1. Kittyflap-Prozesse stoppen:
-         ```bash
-         sudo systemctl stop kwork
-         sudo systemctl stop manager
-         ```
+Wenn `/dev/mmcblk0p2` weniger als ~1 GB frei hat, zuerst Platz schaffen.
 
-      2. Magnetschalter deaktivieren:
-         **ACHTUNG:** Falls zu diesem Zeitpunkt noch einer der Magnetschalter aktiv ist (also die Klappe entriegelt ist), werden diese bis zum Ende der Installation nicht mehr automatisch deaktiviert.  
-         Bitte deaktiviere sie unbedingt jetzt mit diesen Kommandos, um die Elektromagneten nicht zu überlasten:
-         ```bash
-         # Export GPIOs
-         echo 525 > /sys/class/gpio/export 2>/dev/null
-         echo 524 > /sys/class/gpio/export 2>/dev/null
-         
-         # Configure GPIO directions
-         echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/direction
-         echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/direction
-         
-         # Set default output values for GPIOs
-         echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/value
-         sleep 1
-         echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/value
-         ```
+Alte Kittyflap-Services stoppen:
 
+```bash
+sudo systemctl stop kwork
+sudo systemctl stop manager
+```
 
-      3. Größe der Swap-Datei reduzieren (standardmäßig sind hierfür 6GB reserviert):
-         ```bash
-         # Turn off and remove the current swapfile
-         sudo swapoff /swapfile
-         sudo rm /swapfile
+Falls die Klappe gerade entriegelt ist: Magnete deaktivieren (wichtig, um Überlastung zu vermeiden):
 
-         # Create a new 2GB swapfile
-         sudo fallocate -l 2G /swapfile
-         sudo chmod 600 /swapfile
-         sudo mkswap /swapfile
-         sudo swapon /swapfile
-         ```
+```bash
+echo 525 > /sys/class/gpio/export 2>/dev/null
+echo 524 > /sys/class/gpio/export 2>/dev/null
 
-         Als Bestätigung bekommst du die Größe des neuen Swap-Datei zurückgemeldet. Das Ergebnis sollte etwa so aussehen:
-         ![free disk space](doc/swap-resize.jpg)  
+echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/direction
+echo out > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/direction
 
-      Danach sollte für `/dev/mmcblk0p2` deutlich mehr freier Speicherplatz verfügbar sein.
+echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio525/value
+sleep 1
+echo 0 > /sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/gpio524/value
+```
 
-<a id="setup_de"></a>
+Swap-Datei verkleinern (schafft Platz auf dem Root-Filesystem):
 
-3. **Das Setup Script auf der Kittyflap ausführen**
-   > **WICHTIG:** Bitte stelle vor dem Start der Installation sicher, dass die WLAN-Verbindung der Katzenklappe stabil ist. Während der Installation werden mehrere hundert MB an Daten heruntergeladen!  
-   > Da die Antenne auf der Außenseite der Klappe angebracht ist, kann die Signalstärke durch z.B. eine Metalltür stark abgeschwächt werden.  
-   
-   Mit diesem Befehl kannst du die Stärke des WLAN-Signals überprüfen:
-   ```bash
-   iwconfig wlan0
-   ```
-   Installation ausführen:
-   ```bash
-   sudo curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && sudo chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh de && sudo rm /tmp/kittyhack-setup.sh
-   ```
-   Du hast die Auswahl zwischen folgenden Optionen:
-   - **Erstmalige Installation**: Führt das komplette Setup aus, inklusive stoppen und entfernen von ungewollten Services auf der Kittyflap (nur erstmalig auszuführen)
-   - **Kameratreiber erneut installieren**: Damit werden die erforderlichen Gerätetreiber im System erneut installiert. Nur auszuführen, wenn es Probleme mit dem Kamerabild geben sollte. Diese Installation ist auch direkt über das Web-Interface möglich.
-   - **Update auf die neueste Version**: Wenn bereits eine erstmalige Installation von Kittyhack ausgeführt wurde, reicht diese Option, um auf den aktuellsten Stand zu aktualisieren. An der bestehenden Systemkonfiguration wird nichts geändert.
+```bash
+sudo swapoff /swapfile
+sudo rm /swapfile
 
-   Das war's!
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+```
 
-### Zugriff auf das Kittyhack Webinterface
-Rufe die IP-Adresse der Kittyflap in deinem Browser auf:
-`http://<IP-Adresse-der-Kittyflap>`
+### Netzwerk / Sicherheit
 
->#### Hinweis
->⚠️ Da die Verbindung nicht verschlüsselt ist, wird der Browser eine Warnung anzeigen. Diese Verbindung ist innerhalb des lokalen Netzwerks in der Regel sicher, solange du keinen Fernzugriff 
-auf die Kittyflap über deinen Router freigibst. Für eine sichere Verbindung können zusätzliche Maßnahmen wie ein Reverse-Proxy eingerichtet werden.
+Die Weboberfläche nutzt HTTP ohne Verschlüsselung. Das ist im **vertrauenswürdigen LAN** in der Regel ok.
+Bitte nicht ins öffentliche Internet freigeben. Für Fernzugriff besser VPN oder Reverse Proxy nutzen.
 
->⚠️ Damit Kittyhack immer unter der selben IP Adresse erreichbar ist, empfiehlt es sich, im Router eine statische IP Adresse zu vergeben.
+</details>
 
-### Updates
-Updates von Kittyhack sind direkt in der WebGUI in der Sektion 'Info' möglich.  
-Alternativ zu den Updates über die WebGUI kann auch das [Setup Script](#setup_de) erneut ausgeführt werden. Auch dort ist ein Update möglich.
+<details>
+<summary><strong>FAQ (klicken zum Aufklappen)</strong></summary>
 
+### Meine Kittyflap verschwindet nach einigen Stunden aus dem WLAN
 
-## Fernsteuerung
+Meist ist das WLAN-Signal zu schwach (Antenne sitzt außen an der Klappe). Router näher platzieren oder WLAN-Abdeckung verbessern.
 
-Für einen detaillierteren Überblick (Anforderungen, Einrichtung, Verhalten bei Ausfällen), siehe [remote-mode_de.md](doc/remote-mode_de.md)
+### Hintergrund wird grau / Inhalte verschwinden am Smartphone
 
-Kittyhack kann in zwei Rollen aufgeteilt werden:
+Energiesparfunktionen können Verbindungen trennen. Seit v1.5 sollte die Seite nach einer Unterbrechung automatisch neu laden.
+Falls nicht, Seite manuell neu laden.
 
-- **Kittyhack**: läuft auf der Kittyflap-Hardware und steuert nur noch die Sensoren/Aktoren (PIR, Magnete/Verriegelungen, RFID).
-- **Remote Control**: läuft auf einem leistungsfähigeren Remote-System und führt Inference + WebGUI aus, während die Kittyflap ihre Sensoren/Aktoren exponiert.
+### Nachtmodus / IR-Filter schaltet nicht
 
-## FAQ
+Der IR-Filter wird vom Kameramodul selbst gesteuert. Wenn bei Tageslicht beim Abdecken kein „Klick“ zu hören ist, ist das Modul evtl. defekt.
+Siehe: https://github.com/floppyFK/kittyhack/issues/81
 
-### Meine Kittyflap verschwindet nach einigen Stunden immer wieder aus meinem WLAN
-Wahrscheinlich ist das WLAN Signal zu schwach, da die WLAN-Antenne auf der Außenseite der Kittyflap angebracht ist und bis zu deinem Router somit eine zusätzliche Wand bzw. Türe durchdringen muss.  
-Achte darauf, dass die Entfernung zum Router nicht zu groß ist. Wenn das WLAN-Signal zu schwach ist, meldet sich die Kittyflap irgendwann ab und wählt sich erst wieder ein,
-wenn sie durch Aus- und Wiedereinstecken neu gestartet wurde (warum das so ist untersuche ich noch - ich versuche, eine Lösung dafür zu finden!)   
+### Zu viele Fehl-Erkennungen / Boxen an falschen Stellen
 
-### Warum ist der Hintergrund der Website ausgegraut und der Inhalt verschwindet, wenn ich versuche, die Sektion wechsle?
-Dieses Problem hängt mit den Energiesparfunktionen von Smartphones und Tablets zusammen: Wenn dein Browser auf dem Smartphone den Fokus verliert (z. B. beim Wechsel auf den Homescreen), wird nach wenigen Sekunden die Verbindung zur Kittyhack-Seite getrennt.  
-Inzwischen (seit v1.5) sollte die Seite sich bei einem solchen Verbindungsabbruch automatisch neu laden. Falls das nicht geschieht, lade die Seite bitte einmal manuell neu (z. B. mit der Aktualisieren-Geste).
+Falls noch ein originales Kittyflap-Modell genutzt wird: Ergebnisse können schlecht sein. Ein eigenes Modell zu trainieren ist sehr empfehlenswert.
 
-### Ich habe Kittyhack erfolgreich installiert. Sollte nun nicht das Nachtlicht aktiviert werden, wenn es zu dunkel ist?
-Die Umschaltung zum Nachtlicht (Infrarot-Filter) erfolgt autark über das verbaute Kameramodul. Wenn der Bereich des Kameramoduls – bei ausreichendem Tageslicht – vollflächig mit der Hand abgedeckt wird, sollte ein leises Klicken zu hören sein. Ist dieses Klicken nicht zu hören, ist die Umschaltung vermutlich defekt.  
-Es gab bereits einige Fälle, bei denen die Umschaltung defekt war. In diesem Fall muss das Modul (Akozon 5MP OV5647) leider ausgetauscht werden.  
-Weitere Details findest du in diesem Beitrag: https://github.com/floppyFK/kittyhack/issues/81
+DE wiki: https://github.com/floppyFK/kittyhack/wiki/%5BDE%5D-Kittyhack-v2.0-%E2%80%90-Eigene-KI%E2%80%90Modelle-trainieren
 
-### Bei meiner Katzenklappe wird alles mögliche als Beute erkannt, nur nicht die Beute selbst. Die Zonen für die erkannten Bereiche liegen irgendwo im Bild.
-Du verwendest vermutlich noch ein originales Modell der Kittyflap für die Objekterkennung. Diese Modelle sind nicht zuverlässig!  
-Trainiere unbedingt ein eigenes Modell. Wie das funktioniert, kannst du im [Wiki](https://github.com/floppyFK/kittyhack/wiki/%5BDE%5D-Kittyhack-v2.0-%E2%80%90-Eigene-KI%E2%80%90Modelle-trainieren) nachlesen.  
-Falls du bereits ein eigenes Modell verwendest, solltest du es weiter trainieren und verfeinern. Achte außerdem darauf, dass nur wirklich gute und aussagekräftige Bilder in deinen Datensätzen enthalten sind.
+### Ständig Bewegung außen erkannt
 
-### Bei mir wird ständig Bewegung außen erkannt, was kann ich tun?
-Ab Version 2.1.0 kannst du alternativ zum äußeren PIR-Sensor auch das Kamerabild zur Bewegungserkennung nutzen.  
-Dies reduziert Fehlauslösungen, zum Beispiel durch Bäume oder Menschen im Bild, deutlich. Voraussetzung ist jedoch ein gut trainiertes, eigenes Erkennungsmodell.  
-Die Option findest du unter **Konfiguration** → **Kamera für die Bewegungserkennung verwenden**.
+Du kannst statt des externen PIR-Sensors auch das Kamerabild zur Bewegungserkennung nutzen (setzt ein gutes eigenes Modell voraus).
+Option: Konfiguration → Kamera für die Bewegungserkennung verwenden.
+
+</details>

@@ -18,6 +18,7 @@ import fcntl
 import struct
 import uuid
 import time as tm
+import shutil
 from faicons import icon_svg
 from src.baseconfig import set_language, update_single_config_parameter, CONFIG, AllowedToExit
 from src.system import (
@@ -763,6 +764,124 @@ def log_system_information():
     """
     Logs relevant system information.
     """
+    def _read_cpu_temperature() -> str | None:
+        # Raspberry Pi
+        try:
+            if shutil.which("vcgencmd"):
+                cpu_temp = subprocess.check_output(["vcgencmd", "measure_temp"], text=True).strip()
+                if cpu_temp:
+                    return cpu_temp
+        except Exception:
+            pass
+
+        # Generic Linux: /sys/class/thermal/thermal_zone*/temp
+        try:
+            base = "/sys/class/thermal"
+            if not os.path.isdir(base):
+                return None
+
+            candidates: list[tuple[int, str, float]] = []
+            for name in sorted(os.listdir(base)):
+                if not name.startswith("thermal_zone"):
+                    continue
+
+                zone_dir = os.path.join(base, name)
+                temp_path = os.path.join(zone_dir, "temp")
+                type_path = os.path.join(zone_dir, "type")
+                if not os.path.isfile(temp_path):
+                    continue
+
+                try:
+                    raw = open(temp_path, "r", encoding="utf-8").read().strip()
+                    if not raw:
+                        continue
+                    temp_val = float(raw)
+                    # Most kernels expose millidegrees C.
+                    if temp_val > 200:
+                        temp_val = temp_val / 1000.0
+                    if temp_val < -40 or temp_val > 130:
+                        continue
+
+                    zone_type = ""
+                    try:
+                        if os.path.isfile(type_path):
+                            zone_type = open(type_path, "r", encoding="utf-8").read().strip()
+                    except Exception:
+                        zone_type = ""
+
+                    zone_type_l = (zone_type or "").lower()
+                    # Prefer obvious CPU-related zones.
+                    if any(k in zone_type_l for k in ("cpu", "x86_pkg_temp", "package", "soc")):
+                        priority = 0
+                    else:
+                        priority = 1
+
+                    candidates.append((priority, zone_type or name, temp_val))
+                except Exception:
+                    continue
+
+            if not candidates:
+                return None
+
+            candidates.sort(key=lambda t: (t[0], -t[2]))
+            priority, zone_type, temp_c = candidates[0]
+            label = zone_type if zone_type else "thermal"
+            return f"{temp_c:.1f}°C ({label})"
+        except Exception:
+            return None
+
+    def _get_default_route_linux() -> str | None:
+        try:
+            with open("/proc/net/route", "r", encoding="utf-8") as f:
+                lines = f.read().splitlines()
+            # Iface  Destination  Gateway  Flags  RefCnt  Use  Metric  Mask  MTU  Window  IRTT
+            for line in lines[1:]:
+                parts = line.split()
+                if len(parts) < 4:
+                    continue
+                iface, destination, gateway_hex, flags_hex = parts[0], parts[1], parts[2], parts[3]
+                if destination != "00000000":
+                    continue
+                try:
+                    flags = int(flags_hex, 16)
+                except Exception:
+                    flags = 0
+                if flags & 0x2 == 0:  # RTF_GATEWAY
+                    continue
+                try:
+                    g = int(gateway_hex, 16)
+                    gateway_ip = socket.inet_ntoa(struct.pack("<L", g))
+                except Exception:
+                    gateway_ip = gateway_hex
+                return f"{iface} via {gateway_ip}"
+            return None
+        except Exception:
+            return None
+
+    def _list_interface_ipv4() -> list[tuple[str, str]]:
+        def _get_ip_address(ifname: str) -> str | None:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                return socket.inet_ntoa(fcntl.ioctl(
+                    s.fileno(),
+                    0x8915,  # SIOCGIFADDR
+                    struct.pack('256s', ifname[:15].encode('utf-8'))
+                )[20:24])
+            except Exception:
+                return None
+
+        out: list[tuple[str, str]] = []
+        try:
+            for ifname in sorted(os.listdir('/sys/class/net')):
+                if ifname == 'lo':
+                    continue
+                ip = _get_ip_address(ifname)
+                if ip:
+                    out.append((ifname, ip))
+        except Exception:
+            pass
+        return out
+
     info_lines = []
     info_lines.append("\n---- System information: ------------------------------------------------")
     info_lines.append(f"System: {os.uname().sysname} {os.uname().release} {os.uname().machine}")
@@ -784,27 +903,68 @@ def log_system_information():
 
     # CPU usage and temperature
     try:
-        cpu_temp = subprocess.check_output(['vcgencmd', 'measure_temp']).decode().strip()
-        info_lines.append(f"CPU Temperature: {cpu_temp}")
-        
-        # Get top processes sorted by CPU usage
-        ps_cmd = ['ps', '-eo', 'pid,ppid,%mem,%cpu,args', '--sort=-%cpu', '--columns', '200']
-        ps_output = subprocess.Popen(ps_cmd, stdout=subprocess.PIPE)
-        grep_output = subprocess.Popen(['grep', '-v', 'ps -eo'], 
-                                     stdin=ps_output.stdout,
-                                     stdout=subprocess.PIPE)
-        ps_output.stdout.close()
-        head_output = subprocess.check_output(['head', '-n', '10'], 
-                                            stdin=grep_output.stdout).decode()
-        grep_output.stdout.close()
-        info_lines.append(f"Top processes by CPU:\n{head_output}")
+        cpu_temp = _read_cpu_temperature()
+        info_lines.append(f"CPU Temperature: {cpu_temp}" if cpu_temp else "CPU Temperature: unknown")
+
+        # Get top processes sorted by CPU usage (no piping; works on remote-mode hosts too)
+        if shutil.which("ps"):
+            ps_cmd = ['ps', '-eo', 'pid,ppid,%mem,%cpu,args', '--sort=-%cpu', '--columns', '200']
+            ps_text = subprocess.check_output(ps_cmd, text=True, stderr=subprocess.STDOUT)
+            ps_lines = ps_text.splitlines()
+            top = "\n".join(ps_lines[:11])  # header + 10 lines
+            info_lines.append(f"Top processes by CPU:\n{top}")
+        else:
+            info_lines.append("Top processes by CPU: unavailable (missing 'ps')")
     except Exception as e:
         info_lines.append(f"Failed to get CPU info: {e}")
 
     # Network information
     try:
-        wifi_info = subprocess.check_output(['iwconfig', 'wlan0']).decode()
-        info_lines.append(f"WiFi status:\n{wifi_info}")
+        hostname = socket.gethostname()
+        info_lines.append(f"Hostname: {hostname}")
+
+        # Reuse existing helper (scans all interfaces if interface is empty)
+        current_ip = get_current_ip("")
+        info_lines.append(f"Current IP: {current_ip}")
+
+        iface_ips = _list_interface_ipv4()
+        if iface_ips:
+            info_lines.append("Interfaces (IPv4): " + ", ".join([f"{i}={ip}" for i, ip in iface_ips]))
+        else:
+            info_lines.append("Interfaces (IPv4): none detected")
+
+        default_route = _get_default_route_linux()
+        if default_route:
+            info_lines.append(f"Default route: {default_route}")
+
+        # Optional: detailed WiFi info on systems that ship wireless-tools
+        try:
+            if shutil.which("iwconfig"):
+                wifi_ifaces: list[str] = []
+                try:
+                    # Prefer /proc/net/wireless if present
+                    if os.path.isfile("/proc/net/wireless"):
+                        with open("/proc/net/wireless", "r", encoding="utf-8") as f:
+                            for line in f.read().splitlines()[2:]:
+                                if ":" in line:
+                                    wifi_ifaces.append(line.split(":", 1)[0].strip())
+                except Exception:
+                    wifi_ifaces = []
+
+                if not wifi_ifaces:
+                    try:
+                        for ifname in sorted(os.listdir('/sys/class/net')):
+                            if ifname.startswith(("wlan", "wl")):
+                                wifi_ifaces.append(ifname)
+                    except Exception:
+                        wifi_ifaces = []
+
+                if wifi_ifaces:
+                    wifi_iface = wifi_ifaces[0]
+                    wifi_info = subprocess.check_output(["iwconfig", wifi_iface], text=True, stderr=subprocess.STDOUT)
+                    info_lines.append(f"WiFi status ({wifi_iface}):\n{wifi_info}")
+        except Exception:
+            pass
     except Exception as e:
         info_lines.append(f"Failed to get network info: {e}")
     

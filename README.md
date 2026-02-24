@@ -15,9 +15,6 @@ If you find any bugs or have suggestions for improvement, please report them on 
 
 ## Features
 
-Until version `v1.1.x`, Kittyhack was merely a frontend for visualizing camera images and changing some settings.
-From version `v1.2.0`, Kittyhack replaces the complete original Kittyflap software with extended functionality.
-
 Current features:
 - **Toggle prey detection**
 - **Configure thresholds for mouse detection**
@@ -152,12 +149,6 @@ The setup is quite simple:
 
    That's it!
 
-### Language Settings
-By default, the language is set to English. You can adjust the configuration in the web interface or pre-load the German configuration file:
-```bash
-sudo cp /root/kittyhack/config.ini.sample_DE /root/kittyhack/config.ini
-```
-
 ### Access the Kittyhack Web Interface
 Open the Kittyflap's IP address in your browser:
 `http://<IP-address-of-Kittyflap>`
@@ -173,34 +164,20 @@ Updates for Kittyhack are available directly in the WebGUI in the 'Info' section
 Alternatively, you can also run the [setup script](#setup_en) again on the Kittyflap to perform an update.
 
 
-## Remote control (experimental)
+## Remote control
 
 For a more detailed overview (requirements, setup, failure behavior), see [remote-mode.md](doc/remote-mode.md)
 
 Kittyhack can be split into two roles:
 
-- **target-mode**: runs on the Kittyflap hardware and controls sensors/actors (PIR, magnets/locks, RFID).
-- **remote-mode**: runs on a more powerful remote system and performs inference + UI, while the target device exposes sensors/actors over WebSocket.
+- **Kittyhack**: runs on the Kittyflap hardware and controls sensors/actors (PIR, magnets/locks, RFID).
+- **Remote control**: runs on a more powerful remote system and performs inference + Web-UI, while the Kittyflap exposes sensors/actors.
 
 How it works:
 
 - The target device runs an always-on service **kittyhack_control** listening on port **8888**.
 - When a remote-mode instance connects, the target stops **kittyhack.service**, waits ~1s, then accepts remote control.
 - If the remote connection is lost (timeout), the target automatically starts **kittyhack.service** again.
-
-Mode selection:
-
-- Kittyhack defaults to **target-mode**.
-- If the marker file `.remote-mode` exists in the kittyhack folder, kittyhack runs in **remote-mode**.
-
-Initial sync (first remote connect):
-
-- The remote-mode client requests a best-effort sync of `kittyhack.db`, `config.ini`, pictures (`pictures/`), and models (`models/yolo/`).
-
-Remote-mode limitations (initial state):
-
-- Only **IP camera** is supported (no internal Kittyflap camera stream yet).
-
 
 ## FAQ
 
@@ -244,9 +221,6 @@ Wenn du Bugs findest oder Verbesserungsvorschläge hast, melde sie bitte im Issu
 ---
 
 ## Funktionsumfang
-
-Bis Version `v1.1.x` war Kittyhack lediglich ein Frontend zur Visualisierung der Kamerabilder und zum Ändern einiger Einstellungen.
-Ab Version `v1.2.0` ersetzt Kittyhack die komplette Originalsoftware der Kittyflap mit einem erweiterten Funktionsumfang.
 
 Aktuelle Features:
 - **Beuteerkennung ein-/ausschalten**
@@ -379,12 +353,6 @@ Die Installation ist kinderleicht:
 
    Das war's!
 
-### Spracheinstellungen
-Standardmäßig ist die Sprache auf Englisch eingestellt. Du kannst die Konfiguration entweder im Webinterface anpassen oder die deutsche Konfigurationsdatei vorab laden:
-```bash
-sudo cp /root/kittyhack/config.ini.sample_DE /root/kittyhack/config.ini
-```
-
 ### Zugriff auf das Kittyhack Webinterface
 Rufe die IP-Adresse der Kittyflap in deinem Browser auf:
 `http://<IP-Adresse-der-Kittyflap>`
@@ -400,34 +368,14 @@ Updates von Kittyhack sind direkt in der WebGUI in der Sektion 'Info' möglich.
 Alternativ zu den Updates über die WebGUI kann auch das [Setup Script](#setup_de) erneut ausgeführt werden. Auch dort ist ein Update möglich.
 
 
-## Fernsteuerung (experimentell)
+## Fernsteuerung
 
 Für einen detaillierteren Überblick (Anforderungen, Einrichtung, Verhalten bei Ausfällen), siehe [remote-mode_de.md](doc/remote-mode_de.md)
 
 Kittyhack kann in zwei Rollen aufgeteilt werden:
 
-- **target-mode**: läuft auf der Kittyflap-Hardware und steuert Sensoren/Aktoren (PIR, Magnete/Schlösser, RFID).
-- **remote-mode**: läuft auf einem leistungsfähigeren Remote-System und führt Inference + UI aus, während das Zielgerät Sensoren/Aktoren über WebSocket exponiert.
-
-Funktionsweise:
-
-- Das Zielgerät führt einen immer laufenden Dienst **kittyhack_control** aus, der auf Port **8888** hört.
-- Wenn sich eine remote-mode Instanz verbindet, stoppt das Ziel **kittyhack.service**, wartet ~1s und akzeptiert dann die Fernsteuerung.
-- Falls die Remote-Verbindung verloren geht (Timeout), startet das Ziel automatisch **kittyhack.service** erneut.
-
-Modusauswahl:
-
-- Kittyhack läuft standardmäßig im **target-mode**.
-- Wenn die Markierungsdatei `.remote-mode` im kittyhack Ordner existiert, läuft kittyhack im **remote-mode**.
-
-Erste Synchronisation (erste Remote-Verbindung):
-
-- Der remote-mode Client fordert eine bestmögliche Synchronisation von `kittyhack.db`, `config.ini`, Bildern (`pictures/`) und Modellen (`models/yolo/`) an.
-
-Einschränkungen des remote-modes (Anfangsstatus):
-
-- Nur **IP-Kamera** wird unterstützt (kein Stream der internen Kittyflap Kamera verfügbar).
-
+- **Kittyhack**: läuft auf der Kittyflap-Hardware und steuert nur noch die Sensoren/Aktoren (PIR, Magnete/Verriegelungen, RFID).
+- **Remote Control**: läuft auf einem leistungsfähigeren Remote-System und führt Inference + WebGUI aus, während die Kittyflap ihre Sensoren/Aktoren exponiert.
 
 ## FAQ
 

@@ -14,6 +14,7 @@ This release adds theme support (light/dark/auto), the ability to offload CPU-in
 
 ## Improvements
 - **Performance & RAM**: High-RAM tasks were pushed from kittyflap towards the web client to reduce server memory usage.
+- **Model Switching**: You can now switch between different models without requiring a restart.
 - **UI/UX**: Many small UI tweaks (styling, icons, tooltips, dark-theme details).
 - **Configuration (unlock decision timing)**: The "unlock decision delay" is now configured in **seconds** after a motion trigger (instead of a number of pictures).
   ❗ **Warning:** During the update, this value is set based on your previous configuration for "*Minimum pictures before unlock decision*". Please verify afterward that the value is still appropriate for your setup.

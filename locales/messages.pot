@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-02-23 22:05+0100\n"
+"POT-Creation-Date: 2026-02-24 08:54+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -287,7 +287,7 @@ msgstr ""
 msgid "Notifications"
 msgstr ""
 
-#: src/server.py:2592 src/server.py:8447
+#: src/server.py:2592 src/server.py:8486
 msgid "Close"
 msgstr ""
 
@@ -349,7 +349,7 @@ msgid "Startup continues after a successful sync and service restart."
 msgstr ""
 
 #: src/server.py:2697
-msgid "Remote target host IP:"
+msgid "Kittyflap IP:"
 msgstr ""
 
 #: src/server.py:2703
@@ -397,8 +397,8 @@ msgstr ""
 msgid "The web interface will be briefly unavailable during the restart."
 msgstr ""
 
-#: src/server.py:2772 src/server.py:4763 src/server.py:7577 src/server.py:8970
-#: src/server.py:8995
+#: src/server.py:2772 src/server.py:4763 src/server.py:7577 src/server.py:9009
+#: src/server.py:9034
 msgid "Restart required"
 msgstr ""
 
@@ -1132,11 +1132,11 @@ msgstr ""
 msgid "Click the button to update Label Studio to the latest version."
 msgstr ""
 
-#: src/server.py:5450 src/server.py:8224
+#: src/server.py:5450 src/server.py:8263
 msgid "Current Version"
 msgstr ""
 
-#: src/server.py:5452 src/server.py:8226
+#: src/server.py:5452 src/server.py:8265
 msgid "Latest Version"
 msgstr ""
 
@@ -2585,8 +2585,8 @@ msgid ""
 "kittyflap now?"
 msgstr ""
 
-#: src/server.py:7580 src/server.py:8538 src/server.py:8598 src/server.py:8973
-#: src/server.py:8998
+#: src/server.py:7580 src/server.py:8577 src/server.py:8637 src/server.py:9012
+#: src/server.py:9037
 msgid "Reboot"
 msgstr ""
 
@@ -2610,7 +2610,7 @@ msgstr ""
 msgid "Connected"
 msgstr ""
 
-#: src/server.py:7645 src/server.py:8415
+#: src/server.py:7645 src/server.py:8454
 msgid "Not connected"
 msgstr ""
 
@@ -2634,15 +2634,15 @@ msgstr ""
 msgid "No signal"
 msgstr ""
 
-#: src/server.py:7758 src/server.py:8407
+#: src/server.py:7758 src/server.py:8446
 msgid "Weak signal"
 msgstr ""
 
-#: src/server.py:7761 src/server.py:8404
+#: src/server.py:7761 src/server.py:8443
 msgid "Medium signal"
 msgstr ""
 
-#: src/server.py:7764 src/server.py:8401
+#: src/server.py:7764 src/server.py:8440
 msgid "Strong signal"
 msgstr ""
 
@@ -2662,613 +2662,613 @@ msgstr ""
 msgid "Preparing Download"
 msgstr ""
 
-#: src/server.py:7915
+#: src/server.py:7954
 #, python-brace-format
 msgid "Failed to create logs zip file: {}"
 msgstr ""
 
-#: src/server.py:7932
+#: src/server.py:7971
 #, python-brace-format
 msgid ""
 "Database snapshot is unavailable during image migration ({} pictures "
 "remaining). Please try again later."
 msgstr ""
 
-#: src/server.py:7947
+#: src/server.py:7986
 #, python-brace-format
 msgid "Failed to create a consistent snapshot: {}"
 msgstr ""
 
-#: src/server.py:7960
+#: src/server.py:7999
 #, python-brace-format
 msgid "Failed to prepare database download: {}"
 msgstr ""
 
-#: src/server.py:7970
+#: src/server.py:8009
 msgid "The original kittyflap database file does not exist."
 msgstr ""
 
-#: src/server.py:7981
+#: src/server.py:8020
 msgid "Latest version check failed."
 msgstr ""
 
-#: src/server.py:7983
+#: src/server.py:8022
 msgid "Internet connection not available."
 msgstr ""
 
-#: src/server.py:7986
+#: src/server.py:8025
 #, python-brace-format
 msgid "Retry failed: {}"
 msgstr ""
 
-#: src/server.py:8023
+#: src/server.py:8062
 #, python-brace-format
 msgid ""
 "Remote and Kittyflap versions differ (this device: {}, target device: {}). "
 "Please update to match versions."
 msgstr ""
 
-#: src/server.py:8035
+#: src/server.py:8074
 msgid ""
 "Unable to fetch the latest version from github. Please try it again later or "
 "check your internet connection."
 msgstr ""
 
-#: src/server.py:8038
+#: src/server.py:8077
 msgid "Retry latest version check"
 msgstr ""
 
-#: src/server.py:8046 src/server.py:8094 src/server.py:8147
+#: src/server.py:8085 src/server.py:8133 src/server.py:8186
 msgid "Remote/target version mismatch detected."
 msgstr ""
 
-#: src/server.py:8048
+#: src/server.py:8087
 msgid ""
 "You can update only one side to match versions before running a full update."
 msgstr ""
 
-#: src/server.py:8051 src/server.py:8099 src/server.py:8152
+#: src/server.py:8090 src/server.py:8138 src/server.py:8191
 msgid "Update target device only"
 msgstr ""
 
-#: src/server.py:8053 src/server.py:8101 src/server.py:8154
+#: src/server.py:8092 src/server.py:8140 src/server.py:8193
 msgid "Update this device only"
 msgstr ""
 
-#: src/server.py:8064
+#: src/server.py:8103
 msgid "Release Notes for"
 msgstr ""
 
-#: src/server.py:8074
+#: src/server.py:8113
 #, python-brace-format
 msgid "Release notes unavailable: {}"
 msgstr ""
 
-#: src/server.py:8082
+#: src/server.py:8121
 #, python-brace-format
 msgid "Automatic update to **{}**:"
 msgstr ""
 
-#: src/server.py:8083
+#: src/server.py:8122
 msgid "Update Kittyhack"
 msgstr ""
 
-#: src/server.py:8085
+#: src/server.py:8124
 msgid "Important: A stable WLAN connection is required for the update process."
 msgstr ""
 
-#: src/server.py:8087
+#: src/server.py:8126
 msgid "The update will end with a reboot of the Kittyflap."
 msgstr ""
 
-#: src/server.py:8088
+#: src/server.py:8127
 msgid ""
 "Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to "
 "see what's new in the latest version."
 msgstr ""
 
-#: src/server.py:8096
+#: src/server.py:8135
 msgid "Use one of the buttons below if you want to update only one device."
 msgstr ""
 
-#: src/server.py:8108
+#: src/server.py:8147
 msgid ""
 "This installation does not appear to be a git clone. Automatic updates "
 "require a git repository (git clone)."
 msgstr ""
 
-#: src/server.py:8122
+#: src/server.py:8161
 #, python-brace-format
 msgid "WARNING: Local changes detected in the git repository in `{}`."
 msgstr ""
 
-#: src/server.py:8123
+#: src/server.py:8162
 msgid ""
 "If you proceed with the update, these changes will be lost (the database and "
 "configuration will not be affected)."
 msgstr ""
 
-#: src/server.py:8124
+#: src/server.py:8163
 msgid ""
 "Please commit or stash your changes manually before updating, if you want to "
 "keep them."
 msgstr ""
 
-#: src/server.py:8126
+#: src/server.py:8165
 msgid "Local changes:"
 msgstr ""
 
-#: src/server.py:8136
+#: src/server.py:8175
 #, python-brace-format
 msgid "Unable to check local git changes: {}"
 msgstr ""
 
-#: src/server.py:8143
+#: src/server.py:8182
 msgid "You are already using the latest version of Kittyhack."
 msgstr ""
 
-#: src/server.py:8149
+#: src/server.py:8188
 msgid "Use one of the buttons below to align the versions."
 msgstr ""
 
-#: src/server.py:8165
+#: src/server.py:8204
 #, python-brace-format
 msgid ""
 "The original kittyflap database file consumes currently **{:.1f} MB** of "
 "disk space."
 msgstr ""
 
-#: src/server.py:8166
+#: src/server.py:8205
 msgid ""
 "The file contains a lot pictures which could not be uploaded to the original "
 "kittyflap servers anymore."
 msgstr ""
 
-#: src/server.py:8167
+#: src/server.py:8206
 msgid "You could delete the pictures from it to free up disk space."
 msgstr ""
 
-#: src/server.py:8169
+#: src/server.py:8208
 msgid "Remove pictures from original Kittyflap Database"
 msgstr ""
 
-#: src/server.py:8170
+#: src/server.py:8209
 msgid "Download Kittyflap Database"
 msgstr ""
 
-#: src/server.py:8176
+#: src/server.py:8215
 msgid "Original Kittyflap Database"
 msgstr ""
 
-#: src/server.py:8190
+#: src/server.py:8229
 msgid "Information"
 msgstr ""
 
-#: src/server.py:8193
+#: src/server.py:8232
 msgid ""
 "Kittyhack is an open-source project that enables offline use of the "
 "Kittyflap cat door—completely without internet access."
 msgstr ""
 
-#: src/server.py:8194
+#: src/server.py:8233
 msgid ""
 "It was created after the manufacturer of Kittyflap filed for bankruptcy, "
 "rendering the associated app non-functional."
 msgstr ""
 
-#: src/server.py:8198
+#: src/server.py:8237
 msgid "**Important Notes**"
 msgstr ""
 
-#: src/server.py:8199
+#: src/server.py:8238
 msgid ""
 "I have no connection to the manufacturer of Kittyflap. This project was "
 "developed on my own initiative to continue using my Kittyflap."
 msgstr ""
 
-#: src/server.py:8200
+#: src/server.py:8239
 msgid ""
 "If you find any bugs or have suggestions for improvement, please report them "
 "on the GitHub page."
 msgstr ""
 
-#: src/server.py:8202
+#: src/server.py:8241
 msgid "GitHub Repository"
 msgstr ""
 
-#: src/server.py:8205
+#: src/server.py:8244
 msgid "**License**"
 msgstr ""
 
-#: src/server.py:8206
+#: src/server.py:8245
 msgid "This project is licensed under the MIT License."
 msgstr ""
 
-#: src/server.py:8207
+#: src/server.py:8246
 msgid "Copyright (c) 2025 Florian Kispert."
 msgstr ""
 
-#: src/server.py:8209
+#: src/server.py:8248
 msgid "MIT License (full text)"
 msgstr ""
 
-#: src/server.py:8210
+#: src/server.py:8249
 msgid ""
 "If you like Kittyhack, you can support the project with a small donation:"
 msgstr ""
 
-#: src/server.py:8211
+#: src/server.py:8250
 msgid "Donate via PayPal"
 msgstr ""
 
-#: src/server.py:8221
+#: src/server.py:8260
 msgid "Version Information"
 msgstr ""
 
-#: src/server.py:8225
+#: src/server.py:8264
 msgid "Current Version on Kittyflap"
 msgstr ""
 
-#: src/server.py:8232
+#: src/server.py:8271
 msgid ""
-"Remote/target versions are different. This can cause confusing update "
-"behavior."
-msgstr ""
-
-#: src/server.py:8242
-msgid "Show all Changelogs"
-msgstr ""
-
-#: src/server.py:8252
-msgid "System Information"
-msgstr ""
-
-#: src/server.py:8256
-msgid "Kittyhack Database"
-msgstr ""
-
-#: src/server.py:8257
-msgid "Backup and Restore your Kittyhack database"
-msgstr ""
-
-#: src/server.py:8258
-msgid "Download Kittyhack Database"
-msgstr ""
-
-#: src/server.py:8263
-msgid "Restore Kittyhack Database (.db)"
-msgstr ""
-
-#: src/server.py:8265
-msgid "Restore Database"
-msgstr ""
-
-#: src/server.py:8274
-msgid "Configuration File"
-msgstr ""
-
-#: src/server.py:8275
-msgid "Backup and Restore your Kittyhack configuration"
-msgstr ""
-
-#: src/server.py:8276
-msgid "Download Configuration File"
+"The remote and Kittyflap versions differ. This may lead to malfunction "
+"during operation."
 msgstr ""
 
 #: src/server.py:8281
+msgid "Show all Changelogs"
+msgstr ""
+
+#: src/server.py:8291
+msgid "System Information"
+msgstr ""
+
+#: src/server.py:8295
+msgid "Kittyhack Database"
+msgstr ""
+
+#: src/server.py:8296
+msgid "Backup and Restore your Kittyhack database"
+msgstr ""
+
+#: src/server.py:8297
+msgid "Download Kittyhack Database"
+msgstr ""
+
+#: src/server.py:8302
+msgid "Restore Kittyhack Database (.db)"
+msgstr ""
+
+#: src/server.py:8304
+msgid "Restore Database"
+msgstr ""
+
+#: src/server.py:8313
+msgid "Configuration File"
+msgstr ""
+
+#: src/server.py:8314
+msgid "Backup and Restore your Kittyhack configuration"
+msgstr ""
+
+#: src/server.py:8315
+msgid "Download Configuration File"
+msgstr ""
+
+#: src/server.py:8320
 msgid "Restore Configuration File (config.ini)"
 msgstr ""
 
-#: src/server.py:8283
+#: src/server.py:8322
 msgid "Restore Configuration"
 msgstr ""
 
-#: src/server.py:8292
+#: src/server.py:8331
 msgid ""
 "> Note: If the database or the configuration gets restored from a backup, "
 "then the Kittyflap will be rebooted afterwards to apply the new "
 "configuration."
 msgstr ""
 
-#: src/server.py:8303
+#: src/server.py:8342
 msgid "Progressive Web App (PWA)"
 msgstr ""
 
-#: src/server.py:8306
+#: src/server.py:8345
 msgid "You can install Kittyhack as a"
 msgstr ""
 
-#: src/server.py:8306
+#: src/server.py:8345
 msgid "Progressive Web App"
 msgstr ""
 
-#: src/server.py:8306
+#: src/server.py:8345
 msgid "on your Smartphone or computer for easier access."
 msgstr ""
 
-#: src/server.py:8307
+#: src/server.py:8346
 msgid ""
 "Such a PWA can be added to your home screen and launched like a native app, "
 "without needing to open a web browser."
 msgstr ""
 
-#: src/server.py:8313
+#: src/server.py:8352
 msgid "**HTTPS Required**"
 msgstr ""
 
-#: src/server.py:8314
+#: src/server.py:8353
 msgid ""
 "PWA installation requires a secure connection (HTTPS). You are currently "
 "accessing Kittyhack via HTTP."
 msgstr ""
 
-#: src/server.py:8315
+#: src/server.py:8354
 msgid "You'll need to set up a reverse proxy with HTTPS."
 msgstr ""
 
-#: src/server.py:8316
+#: src/server.py:8355
 msgid ""
 "If you want to setup a reverse proxy in your home network, you can watch"
 msgstr ""
 
-#: src/server.py:8316
+#: src/server.py:8355
 msgid "this guide"
 msgstr ""
 
-#: src/server.py:8323
+#: src/server.py:8362
 msgid "**App is already installed on this device!**"
 msgstr ""
 
-#: src/server.py:8329
+#: src/server.py:8368
 msgid "**Installation successful!**"
 msgstr ""
 
-#: src/server.py:8337
+#: src/server.py:8376
 msgid "Install as App"
 msgstr ""
 
-#: src/server.py:8354
+#: src/server.py:8393
 msgid "Logfiles"
 msgstr ""
 
-#: src/server.py:8356
+#: src/server.py:8395
 msgid "Download Kittyhack Logfile"
 msgstr ""
 
-#: src/server.py:8390
+#: src/server.py:8429
 msgid "Not available in remote-mode"
 msgstr ""
 
-#: src/server.py:8412
+#: src/server.py:8451
 #, python-brace-format
 msgid "Quality: {}, Signal: {} dBm"
 msgstr ""
 
-#: src/server.py:8417
+#: src/server.py:8456
 msgid "Unable to determine"
 msgstr ""
 
-#: src/server.py:8421
+#: src/server.py:8460
 msgid "Kittyhack database size"
 msgstr ""
 
-#: src/server.py:8421
+#: src/server.py:8460
 msgid "Free disk space"
 msgstr ""
 
-#: src/server.py:8421
+#: src/server.py:8460
 msgid "Used RAM"
 msgstr ""
 
-#: src/server.py:8421
+#: src/server.py:8460
 msgid "WLAN Status"
 msgstr ""
 
-#: src/server.py:8443
+#: src/server.py:8482
 msgid "Changelogs"
 msgstr ""
 
-#: src/server.py:8460
+#: src/server.py:8499
 msgid ""
 "The pictures from the original kittyflap database were removed successfully."
 msgstr ""
 
-#: src/server.py:8463
+#: src/server.py:8502
 #, python-brace-format
 msgid ""
 "An error occurred while deleting the pictures from the original kittyflap "
 "database: {}"
 msgstr ""
 
-#: src/server.py:8465
+#: src/server.py:8504
 msgid "The original kittyflap database file does not exist anymore."
 msgstr ""
 
-#: src/server.py:8478
+#: src/server.py:8517
 msgid "config.ini not found"
 msgstr ""
 
-#: src/server.py:8482
+#: src/server.py:8521
 #, python-brace-format
 msgid "Failed to download config.ini file: {}"
 msgstr ""
 
-#: src/server.py:8490 src/server.py:8551
+#: src/server.py:8529 src/server.py:8590
 msgid "No file selected."
 msgstr ""
 
-#: src/server.py:8497 src/server.py:8558
+#: src/server.py:8536 src/server.py:8597
 msgid "Uploaded file not found."
 msgstr ""
 
-#: src/server.py:8501
+#: src/server.py:8540
 msgid "Invalid file type. Please upload a .db file."
 msgstr ""
 
-#: src/server.py:8506
+#: src/server.py:8545
 msgid "Database file uploaded. Click 'Restore Database' to apply."
 msgstr ""
 
-#: src/server.py:8513
+#: src/server.py:8552
 msgid "No uploaded database ready to restore."
 msgstr ""
 
-#: src/server.py:8530
+#: src/server.py:8569
 msgid "Database restored successfully."
 msgstr ""
 
-#: src/server.py:8534 src/server.py:8594
+#: src/server.py:8573 src/server.py:8633
 msgid "Please click the 'Reboot' button to restart the Kittyflap."
 msgstr ""
 
-#: src/server.py:8535 src/server.py:8595
+#: src/server.py:8574 src/server.py:8634
 msgid "Reboot required"
 msgstr ""
 
-#: src/server.py:8544
+#: src/server.py:8583
 #, python-brace-format
 msgid "Failed to restore database: {}"
 msgstr ""
 
-#: src/server.py:8562
+#: src/server.py:8601
 msgid "Invalid file type. Please upload a config.ini file."
 msgstr ""
 
-#: src/server.py:8570
+#: src/server.py:8609
 msgid "Invalid configuration file: missing [Settings] section."
 msgstr ""
 
-#: src/server.py:8574
+#: src/server.py:8613
 #, python-brace-format
 msgid "Failed to validate configuration: {}"
 msgstr ""
 
-#: src/server.py:8579
+#: src/server.py:8618
 msgid "Configuration file uploaded. Click 'Restore Configuration' to apply."
 msgstr ""
 
-#: src/server.py:8586
+#: src/server.py:8625
 msgid "No uploaded configuration ready to restore."
 msgstr ""
 
-#: src/server.py:8591
+#: src/server.py:8630
 msgid "Configuration restored successfully."
 msgstr ""
 
-#: src/server.py:8604
+#: src/server.py:8643
 #, python-brace-format
 msgid "Failed to restore configuration: {}"
 msgstr ""
 
-#: src/server.py:8612
+#: src/server.py:8651
 msgid ""
 "Automatic update requires a git repository. Please reinstall via git clone "
 "or the setup script."
 msgstr ""
 
-#: src/server.py:8619
+#: src/server.py:8658
 msgid "Nothing to update."
 msgstr ""
 
-#: src/server.py:8623
+#: src/server.py:8662
 msgid "Target-only update is only available in remote-mode."
 msgstr ""
 
-#: src/server.py:8637
+#: src/server.py:8676
 msgid "Starting update..."
 msgstr ""
 
-#: src/server.py:8659 src/server.py:8715 src/server.py:8762
+#: src/server.py:8698 src/server.py:8754 src/server.py:8801
 msgid "Updating connected target device..."
 msgstr ""
 
-#: src/server.py:8660
+#: src/server.py:8699
 msgid "Preparing remote update..."
 msgstr ""
 
-#: src/server.py:8668
+#: src/server.py:8707
 msgid "Remote target is not connected."
 msgstr ""
 
-#: src/server.py:8680
+#: src/server.py:8719
 msgid "Timed out while waiting for target device update."
 msgstr ""
 
-#: src/server.py:8688
+#: src/server.py:8727
 msgid "Unknown target update error."
 msgstr ""
 
-#: src/server.py:8689
+#: src/server.py:8728
 #, python-brace-format
 msgid "Target device update failed: {}."
 msgstr ""
 
-#: src/server.py:8696 src/server.py:8744
+#: src/server.py:8735 src/server.py:8783
 msgid "Connected target device updated."
 msgstr ""
 
-#: src/server.py:8697 src/server.py:8745
+#: src/server.py:8736 src/server.py:8784
 msgid "Starting update on this device..."
 msgstr ""
 
-#: src/server.py:8697 src/server.py:8745
+#: src/server.py:8736 src/server.py:8784
 msgid "Update finished."
 msgstr ""
 
-#: src/server.py:8716
+#: src/server.py:8755
 msgid "Connection lost while target is restarting/reconnecting. Waiting..."
 msgstr ""
 
-#: src/server.py:8721
+#: src/server.py:8760
 msgid ""
 "Connection to target device did not recover in time after update restart."
 msgstr ""
 
-#: src/server.py:8752
+#: src/server.py:8791
 msgid "Target update is running..."
 msgstr ""
 
-#: src/server.py:8754
+#: src/server.py:8793
 msgid "Waiting for target update to start..."
 msgstr ""
 
-#: src/server.py:8756
+#: src/server.py:8795
 msgid "Waiting for remote target response..."
 msgstr ""
 
-#: src/server.py:8785
+#: src/server.py:8824
 #, python-brace-format
 msgid "Target device reconnected, but version is still {} instead of {}."
 msgstr ""
 
-#: src/server.py:8797
+#: src/server.py:8836
 #, python-brace-format
 msgid "Failed to run target update: {}."
 msgstr ""
 
-#: src/server.py:8911
+#: src/server.py:8950
 msgid "Do not close this page until the update is finished!"
 msgstr ""
 
-#: src/server.py:8912
+#: src/server.py:8951
 msgid "*This step may take several minutes. Please be patient.*"
 msgstr ""
 
-#: src/server.py:8914
+#: src/server.py:8953
 msgid "Updating Kittyhack..."
 msgstr ""
 
-#: src/server.py:8969
+#: src/server.py:9008
 msgid ""
 "A restart is required to apply the update. Please click the 'Reboot' button "
 "to restart the Kittyflap."
 msgstr ""
 
-#: src/server.py:8990
+#: src/server.py:9029
 msgid "An error occurred during the update process:"
 msgstr ""
 
-#: src/server.py:8993
+#: src/server.py:9032
 msgid ""
 "A restart is required to recover. Please click the 'Reboot' button to "
 "restart the Kittyflap."

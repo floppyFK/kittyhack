@@ -5813,31 +5813,62 @@ def server(input, output, session):
                             ui.input_text("user_name", _("Username (optional)"), value=CONFIG['USER_NAME'], placeholder=_("Enter your name"), width="90%"),
                             ui.input_text("email_notification", _("Email for Notification (optional)"), value=CONFIG['EMAIL'], placeholder=_("Enter your email address"), width="90%"),
                             ui.help_text(_("If you provide an email address, you will be notified when the model training is finished.")),
-                            ui.tags.details(
-                                ui.br(),
-                                ui.tags.summary(_("Advanced options")),
-                                ui.br(),
-                                model_training_base_model_input,
-                                ui.help_text(
-                                    _(
-                                        "Base model (YOLOv8n/s/m/l/x): larger variants are usually more accurate, but they run slower and need more CPU/RAM. "
-                                        "Choose smaller variants (e.g. 'n') if your device struggles to keep up in real-time."
-                                    )
+                            (
+                                ui.div(
+                                    ui.tags.button(
+                                        ui.tags.span(
+                                            "\u25b6",
+                                            class_="toggle-chevron",
+                                            style_="display:inline-block; transition:transform .2s;",
+                                        ),
+                                        " ",
+                                        _("Advanced options"),
+                                        type="button",
+                                        class_="btn btn-link p-0 info-toggle-btn",
+                                        style_="text-decoration:none;",
+                                        **{
+                                            "data-bs-toggle": "collapse",
+                                            "data-bs-target": "#model_training_advanced_options_body",
+                                            "aria-expanded": "false",
+                                            "aria-controls": "model_training_advanced_options_body",
+                                        },
+                                    ),
+                                    ui.div(
+                                        ui.div(
+                                            ui.br(),
+                                            model_training_base_model_input,
+                                            ui.help_text(
+                                                _(
+                                                    "Base model (YOLOv8n/s/m/l/x): larger variants are usually more accurate, but they run slower and need more CPU/RAM. "
+                                                    "Choose smaller variants (e.g. 'n') if your device struggles to keep up in real-time."
+                                                )
+                                            ),
+                                            model_training_image_size_input,
+                                            ui.help_text(
+                                                _(
+                                                    "Image size (imgsz): higher values can improve detection of small objects, but increase computation and can reduce FPS."
+                                                )
+                                            ),
+                                            ui.help_text(_("Defaults: YOLOv8n and image size 320.")),
+                                            class_="kh-info-box",
+                                        ),
+                                        id="model_training_advanced_options_body",
+                                        class_="collapse info-toggle-body",
+                                        style_="margin-top:6px;",
+                                    ),
+                                    class_="kh-info-toggle",
+                                    style_="width: 90%; text-align: left; margin: 0.75rem auto 0 auto;",
+                                )
+                                if is_remote_mode()
+                                else ui.div(
+                                        ui.br(),
+                                        ui.hr(),
+                                        ui.help_text(_("Advanced model options are only available if you run Kittyhack on a separate server (remote mode).")),
+                                        style_="text-align: center;"
                                 ),
-                                model_training_image_size_input,
-                                ui.help_text(
-                                    _(
-                                        "Image size (imgsz): higher values can improve detection of small objects, but increase computation and can reduce FPS."
-                                    )
-                                ),
-                                (
-                                    ui.help_text(_("These options are only available if you run Kittyhack on a dedicated system in remote mode."))
-                                    if not is_remote_mode()
-                                    else ui.help_text(_("Defaults: YOLOv8n and image size 320."))
-                                ),
-                                style="width: 90%; text-align: left; margin: 0 auto;",
                             ),
                             ui.br(),
+                            ui.hr(),
                             ui.br(),
                             ui.input_task_button("submit_model_training", _("Submit Model for Training"), class_="btn-primary"),
                             id="model_training_form",

@@ -96,7 +96,12 @@ class Rfid:
         return self._client.get_tag()
 
     def set_tag(self, tag_id, timestamp):
-        # Backend uses this to clear; we ignore and rely on target stream.
+        # Backend uses this to clear tags after timeouts / block ends.
+        # In remote-mode the RFID reader lives on the target device, so we
+        # must instruct the target to clear its stored tag state.
+        if tag_id is None or str(tag_id).strip() == "":
+            self._client.clear_rfid_tag()
+        # Ignore non-empty tag sets (remote controller must not spoof tags).
         return
 
     def get_run_state(self):

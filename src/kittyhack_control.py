@@ -1319,6 +1319,11 @@ async def _handler(ws: WebSocketServerProtocol):
                         STATE.rfid.set_field(bool(data.get("field")))
                     if "power" in data:
                         STATE.rfid.set_power(bool(data.get("power")))
+                    if data.get("clear_tag"):
+                        try:
+                            STATE.rfid.set_tag(None, 0.0)
+                        except Exception as e:
+                            logging.warning(f"[CONTROL] Failed to clear RFID tag on request: {e}")
                     if data.get("stop"):
                         STATE.rfid.stop_read(wait_for_stop=False)
                 continue

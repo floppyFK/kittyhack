@@ -192,6 +192,15 @@ class RemoteControlClient:
     def stop_read(self) -> None:
         self._send_async({"type": "rfid", "stop": True})
 
+    def clear_rfid_tag(self) -> None:
+        """Request the target to clear its current RFID tag state.
+
+        The backend uses `Rfid.set_tag(None, 0.0)` to forget tags after timeouts.
+        In remote-mode, the tag is owned by the target device, so we need an
+        explicit remote command to clear it at the source.
+        """
+        self._send_async({"type": "rfid", "clear_tag": True})
+
     def ping(self) -> None:
         self._send_async({"type": "ping", "ts": time.time()})
 

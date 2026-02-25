@@ -471,11 +471,43 @@ class RemoteModelTrainer:
             raise FileNotFoundError(f"Result {result_id} not found")
         response.raise_for_status()
 
+        expected_sha256 = (response.headers.get("X-Model-SHA256") or "").strip().lower()
+        delete_token = (response.headers.get("X-Delete-Token") or "").strip()
+        try:
+            expected_size = int(response.headers.get("X-Model-Size", "0") or "0")
+        except Exception:
+            expected_size = 0
+
         with open(tmp_path, "wb") as f:
             for chunk in response.iter_content(chunk_size=1024 * 128):
                 if not chunk:
                     continue
                 f.write(chunk)
+
+        # Best-effort integrity check + acknowledge so server can delete the artifact.
+        try:
+            size_bytes = int(os.path.getsize(tmp_path))
+            if expected_size and size_bytes != expected_size:
+                raise RuntimeError("size_mismatch")
+
+            import hashlib
+
+            h = hashlib.sha256()
+            with open(tmp_path, "rb") as f:
+                for block in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(block)
+            sha = h.hexdigest().lower()
+            if expected_sha256 and sha != expected_sha256:
+                raise RuntimeError("sha256_mismatch")
+
+            if delete_token:
+                ack_url = f"{RemoteModelTrainer.BASE_URL}/download/{result_id}/ack"
+                payload = {"delete_token": delete_token, "sha256": sha, "size_bytes": size_bytes}
+                ack_resp = requests.post(ack_url, json=payload, verify=True, timeout=(5, 30))
+                if ack_resp.status_code != 200:
+                    logging.warning(f"[MODEL_TRAINING] Download ack failed ({ack_resp.status_code}): {ack_resp.text}")
+        except Exception as e:
+            logging.warning(f"[MODEL_TRAINING] Download ack skipped: {e}")
 
         return tmp_path
 

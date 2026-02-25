@@ -9,6 +9,7 @@ import time
 import zipfile
 from datetime import datetime
 from typing import Any
+import hashlib
 
 import requests
 
@@ -78,6 +79,34 @@ def _determine_model_name_from_info(zip_path: str) -> tuple[str | None, str]:
     return None, creation_date
 
 
+def _sha256_file(path: str, *, chunk_size: int = 1024 * 1024) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _acknowledge_download(*, base_url: str, result_id: str, delete_token: str, sha256: str, size_bytes: int) -> None:
+    url = f"{base_url}/download/{result_id}/ack"
+    payload = {
+        "delete_token": delete_token,
+        "sha256": sha256,
+        "size_bytes": int(size_bytes),
+    }
+    try:
+        resp = requests.post(url, json=payload, verify=True, timeout=(5, 30))
+        if resp.status_code != 200:
+            logging.warning("[MODEL_DL_WORKER] Ack failed (%s): %s", resp.status_code, getattr(resp, "text", ""))
+            return
+        logging.info("[MODEL_DL_WORKER] Ack ok: %s", resp.text)
+    except Exception as e:
+        logging.warning("[MODEL_DL_WORKER] Ack exception: %s", e)
+
+
 def download_and_extract(*, base_url: str, result_id: str, model_name: str, token: str | None, state_path: str) -> None:
     started_at = time.time()
 
@@ -109,11 +138,22 @@ def download_and_extract(*, base_url: str, result_id: str, model_name: str, toke
     if token:
         headers["token"] = token
 
+    expected_sha256 = ""
+    expected_size = 0
+    delete_token = ""
+
     try:
         resp = requests.get(url, headers=headers, stream=True, verify=True, timeout=(5, 60))
         if resp.status_code == 404:
             raise FileNotFoundError(f"Result {result_id} not found")
         resp.raise_for_status()
+
+        expected_sha256 = (resp.headers.get("X-Model-SHA256") or "").strip().lower()
+        delete_token = (resp.headers.get("X-Delete-Token") or "").strip()
+        try:
+            expected_size = int(resp.headers.get("X-Model-Size", "0") or "0")
+        except Exception:
+            expected_size = 0
 
         total = int(resp.headers.get("content-length", "0") or "0")
         state["total_bytes"] = total
@@ -126,6 +166,15 @@ def download_and_extract(*, base_url: str, result_id: str, model_name: str, toke
                 f.write(chunk)
                 state["bytes_downloaded"] += len(chunk)
                 _merge_write_json(state_path, state)
+
+        # Verify integrity before extraction/ack.
+        downloaded_size = int(state.get("bytes_downloaded") or 0)
+        if expected_size and downloaded_size and expected_size != downloaded_size:
+            raise RuntimeError(f"size_mismatch expected={expected_size} got={downloaded_size}")
+
+        computed_sha = _sha256_file(tmp_zip_path)
+        if expected_sha256 and computed_sha.lower() != expected_sha256:
+            raise RuntimeError("sha256_mismatch")
 
         # Extract
         state["status"] = "extracting"
@@ -167,6 +216,18 @@ def download_and_extract(*, base_url: str, result_id: str, model_name: str, toke
         state["target_dir"] = target_dir
         state["finished_at"] = time.time()
         _merge_write_json(state_path, state)
+
+        # Notify server that download+verification finished so it can delete the model zip.
+        if delete_token:
+            _acknowledge_download(
+                base_url=base_url,
+                result_id=result_id,
+                delete_token=delete_token,
+                sha256=computed_sha,
+                size_bytes=downloaded_size,
+            )
+        else:
+            logging.warning("[MODEL_DL_WORKER] No delete token received; cannot ack download")
 
         logging.info("[MODEL_DL_WORKER] Done. Extracted to %s", target_dir)
 

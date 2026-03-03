@@ -3336,8 +3336,13 @@ def server(input, output, session):
         reactive.invalidate_later(0.25)
 
         def _set_live_status_if_changed(new_state: dict) -> None:
+            # IMPORTANT: Use reactive.isolate() when reading live_status here.
+            # Without it, this effect would take a reactive dependency on live_status,
+            # creating a tight invalidation loop whenever the value changes (e.g. during
+            # prey-detection cooldown where time_until_release changes every tick).
             try:
-                prev = live_status.get() or {}
+                with reactive.isolate():
+                    prev = live_status.get() or {}
             except Exception:
                 prev = {}
             if prev != new_state:
@@ -3429,6 +3434,11 @@ def server(input, output, session):
                 # Keep stable values when no prey lock is active to avoid unnecessary UI re-renders.
                 delta_to_last_prey_detection = 0
                 time_until_release = 0
+            else:
+                # Round to whole seconds so the dict stays identical across sub-second ticks,
+                # preventing unnecessary reactive invalidations that would flood the UI.
+                time_until_release = float(int(time_until_release))
+                delta_to_last_prey_detection = float(int(delta_to_last_prey_detection))
 
             _set_live_status_if_changed(
                 {

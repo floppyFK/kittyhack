@@ -5881,6 +5881,21 @@ def server(input, output, session):
                             ui.hr(),
                             ui.br(),
                             ui.input_task_button("submit_model_training", _("Submit Model for Training"), class_="btn-primary"),
+                            ui.tags.script(
+                                ui.HTML("""
+                                    (function() {
+                                        var btn = document.getElementById('submit_model_training');
+                                        if (!btn) return;
+                                        btn.disabled = true;
+                                        var tid = setInterval(function() {
+                                            if (!document.body.contains(btn)) { clearInterval(tid); return; }
+                                            var bar = document.querySelector('#model_training_data_progress .progress-bar');
+                                            var done = bar && bar.textContent.trim().toLowerCase() === 'upload complete';
+                                            btn.disabled = !done;
+                                        }, 300);
+                                    })();
+                                """)
+                            ),
                             id="model_training_form",
                             style_="display: flex; flex-direction: column; align-items: center; justify-content: center;"
                         ),
@@ -6160,11 +6175,14 @@ def server(input, output, session):
         model_name = input.model_name()
         email_notification = input.email_notification()
         user_name = input.user_name()
-        model_variant = str(input.model_training_base_model() or "n").strip().lower()
-        image_size_raw = str(input.model_training_image_size() or "320").strip()
 
-        # Advanced model parameters are only enabled in remote-mode.
-        if not is_remote_mode():
+        # Advanced model parameters are only available in remote-mode.
+        # In target-mode, the select inputs are not rendered in the DOM,
+        # so accessing them would raise a SilentException.
+        if is_remote_mode():
+            model_variant = str(input.model_training_base_model() or "n").strip().lower()
+            image_size_raw = str(input.model_training_image_size() or "320").strip()
+        else:
             model_variant = "n"
             image_size_raw = "320"
 

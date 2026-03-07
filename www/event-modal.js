@@ -1,6 +1,7 @@
-// Kittyhack - Event modal helpers
-// Keeps the Python server code clean by hosting modal-specific JS here.
-// This file is served via app.py static_assets mapping ("/" -> www/).
+// Kittyhack – Event modal: fully client-side player
+// After the server sends initial frame data (JSON in the modal DOM),
+// all playback, scrubbing, overlay rendering and navigation happen
+// entirely in the browser. Only delete + download still hit the server.
 
 (function () {
     "use strict";
@@ -15,46 +16,19 @@
         }
     } catch (e) {}
 
-    // ---------------------------------------------------------------------
-    // Optional performance optimization:
-    // If the server provides a per-event bundle URL (tar.gz under /thumb/...),
-    // fetch & unpack it once and then replace /thumb/<id>.jpg with blob: URLs.
-    // This reduces the number of HTTP requests during playback/scrubbing,
-    // while keeping the existing server-driven controls intact.
-    // ---------------------------------------------------------------------
-
-    // Global cache: blockId -> { urlsByPid: Map<number,string>, lastUsedMs: number }
+    // =====================================================================
+    // Section 1 – Bundle cache globals
+    // =====================================================================
     window.__khEventBundles = window.__khEventBundles || new Map();
-    // Remember last shown frame per event block so DOM swaps don't flash black.
     window.__khEventModalLastShownByBlock = window.__khEventModalLastShownByBlock || new Map();
-    // Track bundle load state by URL so we can avoid JPG fallback while it loads.
     window.__khEventBundleStateByUrl = window.__khEventBundleStateByUrl || new Map();
 
-    function nowMs() {
-        return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-    }
-
+    // =====================================================================
+    // Section 2 – Utility helpers
+    // =====================================================================
     function parseIntSafe(v, fallback) {
         var n = parseInt(v, 10);
         return (typeof n === 'number' && isFinite(n)) ? n : fallback;
-    }
-
-    function parsePidFromThumbSrc(src) {
-        if (!src || typeof src !== 'string') return null;
-        // Accept absolute or relative URLs.
-        // Examples: /thumb/123.jpg , https://host/thumb/123.jpg
-        var m = src.match(/\/thumb\/(\d+)\.jpg(?:\?|#|$)/);
-        if (!m) return null;
-        var pid = parseIntSafe(m[1], null);
-        return (pid === null || !isFinite(pid)) ? null : pid;
-    }
-
-    function canDecompressGzip() {
-        try {
-            return (typeof DecompressionStream !== 'undefined');
-        } catch (e) {
-            return false;
-        }
     }
 
     function tarIsAllZero(headerBytes) {
@@ -75,38 +49,31 @@
     }
 
     function parseTar(arrayBuffer, onFile) {
-        // Minimal tar parser for ustar-like archives.
         var u8 = new Uint8Array(arrayBuffer);
         var offset = 0;
         while (offset + 512 <= u8.length) {
             var header = u8.subarray(offset, offset + 512);
             if (tarIsAllZero(header)) break;
-
             var name = decodeNullTerminatedAscii(u8, offset + 0, offset + 100);
             var sizeOct = decodeNullTerminatedAscii(u8, offset + 124, offset + 136).trim();
             var size = 0;
-            if (sizeOct) {
-                try { size = parseInt(sizeOct, 8) || 0; } catch (e) { size = 0; }
-            }
+            if (sizeOct) { try { size = parseInt(sizeOct, 8) || 0; } catch (e) { size = 0; } }
             var fileStart = offset + 512;
             var fileEnd = fileStart + size;
             if (fileEnd > u8.length) break;
-
-            try {
-                onFile(name, u8.subarray(fileStart, fileEnd));
-            } catch (e) {
-                // ignore per-file parse errors
-            }
-
-            // Advance to next 512-byte boundary
-            var padded = Math.ceil(size / 512) * 512;
-            offset = fileStart + padded;
+            try { onFile(name, u8.subarray(fileStart, fileEnd)); } catch (e) {}
+            offset = fileStart + Math.ceil(size / 512) * 512;
         }
     }
 
+    function canDecompressGzip() {
+        try { return (typeof DecompressionStream !== 'undefined'); } catch (e) { return false; }
+    }
+
+    // =====================================================================
+    // Section 3 – Bundle fetch / cache
+    // =====================================================================
     async function fetchAndCacheBundle(blockId, bundleUrl) {
-        // IMPORTANT: Use bundleUrl as cache key (stable across re-renders).
-        // Some Shiny ids can change across renders; the bundle URL is the true identity.
         var key = String(bundleUrl || '');
         if (!key) return;
 
@@ -132,7 +99,6 @@
             return;
         }
 
-        // Prevent duplicate parallel fetches per block
         if (window.__khEventBundles.get(key) && window.__khEventBundles.get(key).__inFlight) return;
         window.__khEventBundles.set(key, { urlsByPid: new Map(), lastUsedMs: Date.now(), __inFlight: true });
 
@@ -141,13 +107,10 @@
             if (!resp || !resp.ok) return;
 
             var buf;
-            // Support both plain tar and tar.gz. Prefer plain tar (works on HTTP without special APIs).
             var isGz = /\.gz(?:\?|#|$)/.test(bundleUrl);
             if (isGz) {
                 if (!canDecompressGzip() || !resp.body) return;
-                var ds = new DecompressionStream('gzip');
-                var decompressedStream = resp.body.pipeThrough(ds);
-                buf = await new Response(decompressedStream).arrayBuffer();
+                buf = await new Response(resp.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
             } else {
                 buf = await resp.arrayBuffer();
             }
@@ -155,29 +118,21 @@
             var urlsByPid = new Map();
             parseTar(buf, function (name, bytes) {
                 if (!name || typeof name !== 'string') return;
-                // Expect entries like "123.jpg"
                 var m = name.match(/(^|\/)(\d+)\.jpg$/);
                 if (!m) return;
                 var pid = parseIntSafe(m[2], null);
                 if (pid === null) return;
-
                 try {
-                    var blob = new Blob([bytes], { type: 'image/jpeg' });
-                    var url = URL.createObjectURL(blob);
-                    urlsByPid.set(pid, url);
-                } catch (e) {
-                    // ignore
-                }
+                    urlsByPid.set(pid, URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' })));
+                } catch (e) {}
             });
 
             var entry = window.__khEventBundles.get(key) || { urlsByPid: new Map(), lastUsedMs: Date.now() };
-            // Revoke any previous URLs (shouldn't exist normally)
             try {
                 if (entry.urlsByPid && entry.urlsByPid.size) {
                     entry.urlsByPid.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
                 }
             } catch (e) {}
-
             entry.urlsByPid = urlsByPid;
             entry.lastUsedMs = Date.now();
             entry.__inFlight = false;
@@ -186,8 +141,6 @@
             try {
                 var st1 = window.__khEventBundleStateByUrl.get(key) || {};
                 st1.status = (urlsByPid && urlsByPid.size > 0) ? 'ready' : 'error';
-                if (!st1.startedAtMs) st1.startedAtMs = Date.now();
-                st1.lastTryAtMs = Date.now();
                 window.__khEventBundleStateByUrl.set(key, st1);
             } catch (e) {}
 
@@ -195,30 +148,21 @@
             try {
                 if (window.__khEventBundles.size > 3) {
                     var items = Array.from(window.__khEventBundles.entries());
-                    items.sort(function (a, b) {
-                        return (a[1].lastUsedMs || 0) - (b[1].lastUsedMs || 0);
-                    });
+                    items.sort(function (a, b) { return (a[1].lastUsedMs || 0) - (b[1].lastUsedMs || 0); });
                     while (items.length > 3) {
                         var evict = items.shift();
                         if (!evict) break;
-                        var evKey = evict[0];
-                        var evVal = evict[1];
                         try {
-                            if (evVal && evVal.urlsByPid) {
-                                evVal.urlsByPid.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
-                            }
+                            if (evict[1] && evict[1].urlsByPid) evict[1].urlsByPid.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
                         } catch (e) {}
-                        window.__khEventBundles.delete(evKey);
+                        window.__khEventBundles.delete(evict[0]);
                     }
                 }
             } catch (e) {}
         } catch (e) {
-            // ignore
             try {
                 var stE = window.__khEventBundleStateByUrl.get(key) || {};
                 stE.status = 'error';
-                if (!stE.startedAtMs) stE.startedAtMs = Date.now();
-                stE.lastTryAtMs = Date.now();
                 window.__khEventBundleStateByUrl.set(key, stE);
             } catch (e) {}
         } finally {
@@ -229,242 +173,47 @@
         }
     }
 
-    function maybeSwapImgToBlob(modal, imgEl) {
+    // =====================================================================
+    // Section 4 – Blob-URL helpers
+    // =====================================================================
+    function lookupBlobUrlByPid(bundleKey, pid) {
         try {
-            if (!modal || !imgEl || !imgEl.getAttribute) return;
-
-            var root = modal.querySelector ? modal.querySelector('#event_modal_root') : null;
-            var bundleUrl = root && root.getAttribute ? (root.getAttribute('data-bundle-url') || '') : '';
-            var key = bundleUrl ? String(bundleUrl) : '';
-            if (!key) {
-                // Backwards compatibility fallback (older server versions)
-                var blockId = root && root.getAttribute ? root.getAttribute('data-block-id') : null;
-                if (!blockId) return;
-                key = String(blockId);
-            }
-
-            var entry = window.__khEventBundles.get(String(key));
-            if (!entry || !entry.urlsByPid) return;
-
-            var pid = parseIntSafe(imgEl.getAttribute('data-pid'), null);
-            if (pid === null) {
-                pid = parsePidFromThumbSrc(imgEl.getAttribute('src') || imgEl.src || '');
-            }
-            if (pid === null) return;
-
-            var blobUrl = entry.urlsByPid.get(pid);
-            if (!blobUrl) return;
-
-            var currentSrc = imgEl.getAttribute('src') || '';
-            if (currentSrc === blobUrl) return;
-
-            // Swap source to the cached blob.
-            imgEl.setAttribute('src', blobUrl);
-        } catch (e) {
-            // ignore
-        }
-    }
-
-    function lookupBlobUrl(modal, imgEl) {
-        try {
-            if (!modal || !imgEl || !imgEl.getAttribute) return '';
-
-            var root = modal.querySelector ? modal.querySelector('#event_modal_root') : null;
-            var bundleUrl = root && root.getAttribute ? (root.getAttribute('data-bundle-url') || '') : '';
-            var key = bundleUrl ? String(bundleUrl) : '';
-            if (!key) {
-                var blockId = root && root.getAttribute ? root.getAttribute('data-block-id') : null;
-                if (!blockId) return '';
-                key = String(blockId);
-            }
-
-            var entry = window.__khEventBundles.get(String(key));
+            var entry = window.__khEventBundles.get(String(bundleKey));
             if (!entry || !entry.urlsByPid) return '';
-
-            var pid = parseIntSafe(imgEl.getAttribute('data-pid'), null);
-            if (pid === null) return '';
-
             return entry.urlsByPid.get(pid) || '';
-        } catch (e) {
-            return '';
-        }
+        } catch (e) { return ''; }
     }
 
-    function desiredImgSrc(modal, imgEl) {
-        // Return the src we *want* to use without setting it.
-        try {
-            if (!imgEl || !imgEl.getAttribute) return '';
-
-            // If a bundle is advertised but not ready yet, avoid falling back to /thumb/*.jpg.
-            try {
-                var root = modal && modal.querySelector ? modal.querySelector('#event_modal_root') : null;
-                var bundleUrl = root && root.getAttribute ? (root.getAttribute('data-bundle-url') || '') : '';
-                if (bundleUrl) {
-                    var st = window.__khEventBundleStateByUrl.get(String(bundleUrl));
-                    var startedAt = st && st.startedAtMs ? st.startedAtMs : 0;
-                    var status = st && st.status ? st.status : '';
-                    var age = startedAt ? (Date.now() - startedAt) : 0;
-                    if (status !== 'ready' && age > 0 && age < 2500) {
-                        return '';
-                    }
-                }
-            } catch (e) {}
-
-            var blob = lookupBlobUrl(modal, imgEl);
-            if (blob) return blob;
-
-            return imgEl.getAttribute('data-src') || '';
-        } catch (e) {
-            return '';
-        }
-    }
-
-    function ensureImgSrc(modal, imgEl) {
-        // Set src from cached blob (if ready) else from data-src.
-        try {
-            if (!imgEl || !imgEl.getAttribute || !imgEl.setAttribute) return '';
-            if (modal) maybeSwapImgToBlob(modal, imgEl);
-
-            var src = imgEl.getAttribute('src') || '';
-            if (src) return src;
-
-            // If a bundle is advertised but not ready yet, avoid falling back to /thumb/*.jpg
-            // (that would cause a burst of JPG GETs and defeats the optimization).
-            try {
-                var root = modal && modal.querySelector ? modal.querySelector('#event_modal_root') : null;
-                var bundleUrl = root && root.getAttribute ? (root.getAttribute('data-bundle-url') || '') : '';
-                if (bundleUrl) {
-                    var st = window.__khEventBundleStateByUrl.get(String(bundleUrl));
-                    var startedAt = st && st.startedAtMs ? st.startedAtMs : 0;
-                    var status = st && st.status ? st.status : '';
-                    var age = startedAt ? (Date.now() - startedAt) : 0;
-                    // Wait up to 2500ms for the TAR to land; afterwards allow JPG fallback.
-                    if (status !== 'ready' && age > 0 && age < 2500) {
-                        return '';
-                    }
-                }
-            } catch (e) {}
-
-            var ds = imgEl.getAttribute('data-src') || '';
-            if (ds) {
-                imgEl.setAttribute('src', ds);
-                return ds;
-            }
-        } catch (e) {}
-        return (imgEl && imgEl.getAttribute) ? (imgEl.getAttribute('src') || '') : '';
-    }
-
-    function q(sel, root) {
-        try {
-            return (root || document).querySelector(sel);
-        } catch (e) {
-            return null;
-        }
-    }
-
-    function getEventBlockId() {
-        try {
-            var rootEl = document.getElementById('event_modal_root');
-            var blockId = rootEl && rootEl.getAttribute ? rootEl.getAttribute('data-block-id') : null;
-            return blockId ? String(blockId) : '';
-        } catch (e) {
-            return '';
-        }
-    }
-
+    // =====================================================================
+    // Section 5 – DOM / image helpers
+    // =====================================================================
     function setWrapBg(wrap, src) {
         try {
-            if (!wrap) return;
-            if (!src) return;
-            // Prefer a real <img> backdrop (more reliable than CSS background-image on Firefox mobile).
-            var bg = null;
-            // Prefer placing the backdrop inside the persistent JS layer if present.
-            var host = null;
-            try { host = wrap.querySelector('#event_modal_js_layer') || wrap; } catch (e) { host = wrap; }
-            try { bg = host.querySelector('img[data-role="bg"]'); } catch (e) { bg = null; }
+            if (!wrap || !src) return;
+            var host = wrap.querySelector('#event_modal_js_layer') || wrap;
+            var bg = host.querySelector('img[data-role="bg"]');
             if (!bg) {
                 try {
                     bg = document.createElement('img');
                     bg.setAttribute('data-role', 'bg');
                     bg.setAttribute('aria-hidden', 'true');
                     bg.className = 'event-modal-picture-bg';
-                    // Help mobile browsers prioritize decode.
                     try { bg.decoding = 'async'; } catch (e) {}
                     try { bg.loading = 'eager'; } catch (e) {}
                     host.insertBefore(bg, host.firstChild);
-                } catch (e) {
-                    bg = null;
-                }
+                } catch (e) { bg = null; }
             }
             if (bg) {
-                var cur = bg.getAttribute('src') || '';
-                if (cur !== src) bg.setAttribute('src', src);
+                if ((bg.getAttribute('src') || '') !== src) bg.setAttribute('src', src);
             }
-            // Keep CSS var as a fallback (older CSS versions).
             wrap.style.setProperty('--kh-event-bg', 'url("' + src + '")');
-        } catch (e) {}
-    }
-
-    function getPersistentPreloader() {
-        // Persistent Image() preloader for clean, controlled swaps.
-        try {
-            if (!window.__khEventModalPreloader) {
-                var im = new Image();
-                try { im.decoding = 'async'; } catch (e) {}
-                window.__khEventModalPreloader = { img: im, target: '', pid: null };
-            }
-            return window.__khEventModalPreloader;
-        } catch (e) {
-            return null;
-        }
-    }
-
-    function getPrefetchPool() {
-        try {
-            if (!window.__khEventModalPrefetchPool) {
-                var im1 = new Image();
-                var im2 = new Image();
-                try { im1.decoding = 'async'; } catch (e) {}
-                try { im2.decoding = 'async'; } catch (e) {}
-                window.__khEventModalPrefetchPool = {
-                    imgs: [im1, im2],
-                    idx: 0,
-                    seenAtMsBySrc: new Map(),
-                };
-            }
-            return window.__khEventModalPrefetchPool;
-        } catch (e) {
-            return null;
-        }
-    }
-
-    function prefetchSrc(src) {
-        try {
-            if (!src) return;
-            var pool = getPrefetchPool();
-            if (!pool || !pool.imgs || pool.imgs.length === 0) return;
-
-            var now = Date.now();
-            var last = pool.seenAtMsBySrc.get(src) || 0;
-            // Avoid hammering the same URL on rapid button repeats.
-            if (now - last < 2500) return;
-            pool.seenAtMsBySrc.set(src, now);
-
-            // Prevent unbounded growth.
-            if (pool.seenAtMsBySrc.size > 200) {
-                pool.seenAtMsBySrc.clear();
-            }
-
-            var im = pool.imgs[pool.idx % pool.imgs.length];
-            pool.idx = (pool.idx + 1) % pool.imgs.length;
-            try { im.src = src; } catch (e) {}
         } catch (e) {}
     }
 
     function ensureJsImageLayer(wrap) {
         try {
             if (!wrap) return null;
-            var layer = document.getElementById('event_modal_js_layer');
+            var layer = wrap.querySelector('#event_modal_js_layer');
             if (!layer) {
                 layer = document.createElement('div');
                 layer.id = 'event_modal_js_layer';
@@ -472,572 +221,736 @@
                 wrap.insertBefore(layer, wrap.firstChild);
             }
 
-            // Backdrop is managed by setWrapBg (uses this layer).
-            // Use a double-buffered visible image pair to avoid rare Chrome mobile
-            // black flashes during rapid src swaps (old frame stays visible until
-            // the new frame has painted).
-            var a = null;
-            var b = null;
-            try { a = layer.querySelector('img[data-role="visible"][data-slot="a"]'); } catch (e) { a = null; }
-            try { b = layer.querySelector('img[data-role="visible"][data-slot="b"]'); } catch (e) { b = null; }
+            var a = layer.querySelector('img[data-role="visible"][data-slot="a"]');
+            var b = layer.querySelector('img[data-role="visible"][data-slot="b"]');
 
             function mk(slot) {
                 var el = document.createElement('img');
                 el.setAttribute('data-role', 'visible');
                 el.setAttribute('data-slot', slot);
-                // Start hidden; we unhide the active one.
                 el.setAttribute('aria-hidden', 'true');
-                // Help mobile browsers prioritize decode.
                 try { el.decoding = 'async'; } catch (e) {}
                 try { el.loading = 'eager'; } catch (e) {}
-                // Ensure deterministic stacking when both are temporarily visible.
-                try { el.style.zIndex = (slot === 'a') ? '2' : '1'; } catch (e) {}
+                el.style.zIndex = (slot === 'a') ? '2' : '1';
                 layer.appendChild(el);
                 return el;
             }
-
             if (!a) a = mk('a');
             if (!b) b = mk('b');
 
-            // Default active slot.
-            var activeSlot = '';
-            try { activeSlot = wrap.getAttribute('data-active-slot') || ''; } catch (e) { activeSlot = ''; }
+            var activeSlot = wrap.getAttribute('data-active-slot') || 'a';
             if (activeSlot !== 'a' && activeSlot !== 'b') {
                 activeSlot = 'a';
-                try { wrap.setAttribute('data-active-slot', activeSlot); } catch (e) {}
+                wrap.setAttribute('data-active-slot', activeSlot);
             }
 
-            // IMPORTANT: attachOnce() can run many times per second (MutationObserver + poll).
-            // If we force visibility while a swap is mid-flight, we can momentarily show the old
-            // frame again (jitter). During a buffered swap, leave the DOM as-is.
-            var swapInProgress = '';
-            try { swapInProgress = wrap.getAttribute('data-swap-in-progress') || ''; } catch (e) { swapInProgress = ''; }
-            if (!swapInProgress) {
-                // Ensure only the active one is visible.
-                try {
-                    if (activeSlot === 'a') {
-                        a.removeAttribute('aria-hidden');
-                        b.setAttribute('aria-hidden', 'true');
-                        a.style.zIndex = '2';
-                        b.style.zIndex = '1';
-                    } else {
-                        b.removeAttribute('aria-hidden');
-                        a.setAttribute('aria-hidden', 'true');
-                        b.style.zIndex = '2';
-                        a.style.zIndex = '1';
-                    }
-                } catch (e) {}
+            if (activeSlot === 'a') {
+                a.removeAttribute('aria-hidden'); b.setAttribute('aria-hidden', 'true');
+                a.style.zIndex = '2'; b.style.zIndex = '1';
+            } else {
+                b.removeAttribute('aria-hidden'); a.setAttribute('aria-hidden', 'true');
+                b.style.zIndex = '2'; a.style.zIndex = '1';
             }
 
-            function getActive() {
-                var slot = '';
-                try { slot = wrap.getAttribute('data-active-slot') || 'a'; } catch (e) { slot = 'a'; }
-                return (slot === 'b') ? b : a;
-            }
-
-            function getInactive() {
-                var slot = '';
-                try { slot = wrap.getAttribute('data-active-slot') || 'a'; } catch (e) { slot = 'a'; }
-                return (slot === 'b') ? a : b;
-            }
-
-            function setActiveSlot(slot) {
-                if (slot !== 'a' && slot !== 'b') return;
-                try { wrap.setAttribute('data-active-slot', slot); } catch (e) {}
-            }
-
-            return { layer: layer, getActive: getActive, getInactive: getInactive, setActiveSlot: setActiveSlot, a: a, b: b };
-        } catch (e) {
-            return null;
-        }
+            return {
+                layer: layer, a: a, b: b,
+                getActive:   function () { return (wrap.getAttribute('data-active-slot') === 'b') ? b : a; },
+                getInactive: function () { return (wrap.getAttribute('data-active-slot') === 'b') ? a : b; },
+                setActiveSlot: function (s) { if (s === 'a' || s === 'b') wrap.setAttribute('data-active-slot', s); }
+            };
+        } catch (e) { return null; }
     }
 
-    function lookupBlobUrlByPid(modal, pid) {
+    function prefetchSrc(src) {
         try {
-            if (!modal) return '';
-            var root = modal.querySelector ? modal.querySelector('#event_modal_root') : null;
-            var bundleUrl = root && root.getAttribute ? (root.getAttribute('data-bundle-url') || '') : '';
-            var key = bundleUrl ? String(bundleUrl) : '';
-            if (!key) {
-                var blockId = root && root.getAttribute ? root.getAttribute('data-block-id') : null;
-                if (!blockId) return '';
-                key = String(blockId);
+            if (!src) return;
+            var pool = window.__khPlayerPrefetchPool;
+            if (!pool) {
+                var im1 = new Image(); var im2 = new Image();
+                try { im1.decoding = 'async'; } catch (e) {} try { im2.decoding = 'async'; } catch (e) {}
+                pool = { imgs: [im1, im2], idx: 0, seen: new Map() };
+                window.__khPlayerPrefetchPool = pool;
             }
-
-            var entry = window.__khEventBundles.get(String(key));
-            if (!entry || !entry.urlsByPid) return '';
-            return entry.urlsByPid.get(pid) || '';
-        } catch (e) {
-            return '';
-        }
+            var now = Date.now();
+            if ((pool.seen.get(src) || 0) > now - 2500) return;
+            pool.seen.set(src, now);
+            if (pool.seen.size > 200) pool.seen.clear();
+            pool.imgs[pool.idx % pool.imgs.length].src = src;
+            pool.idx = (pool.idx + 1) % pool.imgs.length;
+        } catch (e) {}
     }
 
-    function desiredSrcForPid(modal, pid, fallbackUrl) {
-        try {
-            if (!pid) return '';
+    // =====================================================================
+    // Section 6 – Client-side Event Player
+    // =====================================================================
+    var _player = null;
 
-            var blob = lookupBlobUrlByPid(modal, pid);
+    /**
+     * @constructor
+     * @param {HTMLElement} rootEl  – #event_modal_root
+     */
+    function Player(rootEl) {
+        this.root = rootEl;
+        this.wrap = rootEl.querySelector('#event_modal_picture_wrap');
+        this.overlayContainer = rootEl.querySelector('#event_modal_overlay_container');
+
+        // Parse frame data from embedded JSON
+        var dataScript = rootEl.querySelector('#event_modal_data');
+        var data = {};
+        try { data = JSON.parse((dataScript && dataScript.textContent) || '{}'); } catch (e) { data = {}; }
+
+        this.frames = data.frames || [];
+        this.mouseThreshold = parseFloat(data.mouseThreshold) || 50.0;
+        this.overlayOn = (data.overlayInitial !== false);
+        this.fps = parseFloat(data.fps) || 4.0;
+        this.fallbackMode = !!data.fallbackMode;
+        this.blockId = String(data.blockId || '');
+
+        this.currentIdx = 0;
+        this.playing = true;
+        this.playTimer = null;
+        this.destroyed = false;
+
+        this.bundleUrl = rootEl.getAttribute('data-bundle-url') || '';
+        this.bundleKey = this.bundleUrl || '';
+        this.nsFrameIdx = rootEl.getAttribute('data-ns-frame-idx') || '';
+
+        this._layerInfo = null;
+        this._swapToken = '';
+        this._lastShownSrc = '';
+        this._scrubberInput = null;
+
+        // Bound handlers for cleanup
+        this._boundKeyDown = null;
+        this._boundModalClick = null;
+    }
+
+    // ---- Initialisation ------------------------------------------------
+
+    Player.prototype.init = function () {
+        if (this.frames.length === 0) {
+            this._showEmptyState();
+            return;
+        }
+
+        this._layerInfo = ensureJsImageLayer(this.wrap);
+
+        // Fetch bundle (non-blocking)
+        if (this.bundleUrl) {
+            var self = this;
+            fetchAndCacheBundle(this.blockId, this.bundleUrl).then(function () {
+                if (!self.destroyed) self._upgradeCurrentFrame();
+            }).catch(function () {});
+        }
+
+        this._buildScrubber();
+        this._attachControls();
+        this._attachModalCloseHandler();
+        this._attachKeyboardHandler();
+
+        // Show first frame
+        this.showFrame(0);
+
+        // Auto-play for multi-frame events
+        if (this.frames.length > 1) {
+            this._startPlayback();
+        } else {
+            this.playing = false;
+        }
+        this._updatePlayPauseUI();
+        this._updateNavButtonsState();
+        this._updateScrubberPlayingState();
+    };
+
+    // ---- Frame display -------------------------------------------------
+
+    Player.prototype.showFrame = function (idx) {
+        if (this.destroyed) return;
+        if (idx < 0 || idx >= this.frames.length) return;
+        this.currentIdx = idx;
+
+        var frame = this.frames[idx];
+        var src = this._resolveFrameSrc(frame.pid);
+
+        if (!src) {
+            // Bundle still loading – retry shortly
+            var self = this;
+            setTimeout(function () { if (!self.destroyed && self.currentIdx === idx) self.showFrame(idx); }, 200);
+            return;
+        }
+
+        this._swapImage(src);
+        this._renderOverlay(frame, idx);
+        this._updateScrubber(idx);
+        this._signalFrameIdx(idx);
+        this._prefetchAdjacent(idx);
+    };
+
+    Player.prototype._resolveFrameSrc = function (pid) {
+        // Prefer blob URL from bundle cache
+        if (this.bundleKey) {
+            var blob = lookupBlobUrlByPid(this.bundleKey, pid);
             if (blob) return blob;
-            return fallbackUrl || '';
-        } catch (e) {
-            return '';
+
+            // If bundle is still loading (< 2.5 s), suppress /thumb fallback
+            // to avoid a burst of individual HTTP requests
+            var st = window.__khEventBundleStateByUrl.get(this.bundleKey);
+            if (st && st.status !== 'ready' && st.status !== 'error') {
+                var age = st.startedAtMs ? (Date.now() - st.startedAtMs) : 0;
+                if (age > 0 && age < 2500) return '';
+            }
         }
+        return '/thumb/' + pid + '.jpg';
+    };
+
+    Player.prototype._upgradeCurrentFrame = function () {
+        if (this.destroyed || this.currentIdx < 0 || this.currentIdx >= this.frames.length) return;
+        var pid = this.frames[this.currentIdx].pid;
+        var newSrc = this._resolveFrameSrc(pid);
+        if (newSrc && newSrc.indexOf('blob:') === 0) {
+            this._swapImage(newSrc);
+        }
+    };
+
+    // ---- Double-buffered image swap ------------------------------------
+
+    Player.prototype._swapImage = function (src) {
+        if (!src || !this.wrap || !this._layerInfo) return;
+        var layer = this._layerInfo;
+        var active = layer.getActive();
+        var inactive = layer.getInactive();
+        if (!active || !inactive) return;
+
+        var currentSrc = active.getAttribute('src') || '';
+        if (currentSrc === src) {
+            this.wrap.classList.add('has-image');
+            return;
+        }
+
+        // Keep old frame as backdrop during transition
+        if (currentSrc) setWrapBg(this.wrap, currentSrc);
+        this.wrap.classList.add('has-image');
+
+        var token = String(Date.now()) + ':' + String(Math.random());
+        this._swapToken = token;
+
+        inactive.setAttribute('src', src);
+
+        var self = this;
+        var raf = window.requestAnimationFrame || function (cb) { setTimeout(cb, 16); };
+
+        function doSwap() {
+            if (self._swapToken !== token || self.destroyed) return;
+
+            inactive.style.zIndex = '2';
+            active.style.zIndex = '1';
+            inactive.removeAttribute('aria-hidden');
+
+            raf(function () {
+                if (self._swapToken !== token || self.destroyed) return;
+                active.setAttribute('aria-hidden', 'true');
+                var slot = inactive.getAttribute('data-slot') || '';
+                if (slot === 'a' || slot === 'b') layer.setActiveSlot(slot);
+                setWrapBg(self.wrap, src);
+                self._lastShownSrc = src;
+
+                var blockKey = self.blockId ? String(self.blockId) : '';
+                if (blockKey) window.__khEventModalLastShownByBlock.set(blockKey, src);
+            });
+        }
+
+        if (typeof inactive.decode === 'function') {
+            inactive.decode().then(doSwap).catch(doSwap);
+        } else if (inactive.complete && inactive.naturalWidth > 0) {
+            raf(doSwap);
+        } else {
+            inactive.onload = doSwap;
+            inactive.onerror = doSwap;
+        }
+    };
+
+    // ---- Overlay rendering ---------------------------------------------
+
+    Player.prototype._renderOverlay = function (frame, idx) {
+        if (!this.overlayContainer) return;
+
+        var html = '<div id="event_modal_overlay" style="position:absolute;inset:0;pointer-events:none;">';
+
+        if (this.overlayOn && !this.fallbackMode && frame.objects && frame.objects.length > 0) {
+            for (var i = 0; i < frame.objects.length; i++) {
+                var obj = frame.objects[i];
+                var nameL = (obj.name || '').toLowerCase();
+                var isPrey = (nameL === 'prey' || nameL === 'beute');
+                var prob = parseFloat(obj.prob) || 0;
+
+                var preyStrong = isPrey && prob >= this.mouseThreshold;
+                var strokeRgb, strokeHex;
+
+                if (isPrey && !preyStrong) {
+                    strokeRgb = '252, 165, 165'; strokeHex = '#fca5a5';
+                } else if (isPrey) {
+                    strokeRgb = '255, 0, 0'; strokeHex = '#ff0000';
+                } else {
+                    strokeRgb = '0, 180, 0'; strokeHex = '#00b400';
+                }
+
+                var labelPos = (parseFloat(obj.y) || 0) < 16 ? 'bottom: -26px' : 'top: -26px';
+
+                html += '<div style="position:absolute;'
+                    + 'left:' + obj.x + '%;top:' + obj.y + '%;'
+                    + 'width:' + obj.w + '%;height:' + obj.h + '%;'
+                    + 'border:2px solid ' + strokeHex + ';'
+                    + 'background-color:rgba(' + strokeRgb + ',0.05);'
+                    + 'pointer-events:none;z-index:3;">'
+                    + '<div style="position:absolute;' + labelPos + ';left:0px;'
+                    + 'background-color:rgba(' + strokeRgb + ',0.7);color:white;'
+                    + 'padding:2px 5px;border-radius:5px;white-space:nowrap;font-size:12px;">'
+                    + _escHtml(obj.name) + ' (' + Math.round(prob) + '%)</div></div>';
+            }
+        }
+
+        // Timestamp (keep time portion only: after first space)
+        var ts = frame.ts || '';
+        if (ts) {
+            html += '<div id="event_modal_timestamp" style="position:absolute;top:12px;left:50%;'
+                + 'transform:translateX(-50%);background-color:rgba(0,0,0,0.5);color:white;'
+                + 'padding:2px 5px;border-radius:3px;z-index:3;">' + _escHtml(ts) + '</div>';
+        }
+
+        // Counter
+        html += '<div id="event_modal_counter" style="position:absolute;bottom:12px;right:8px;'
+            + 'background-color:rgba(0,0,0,0.5);color:white;padding:2px 5px;border-radius:3px;z-index:3;">'
+            + (idx + 1) + '/' + this.frames.length + '</div>';
+
+        html += '</div>';
+        this.overlayContainer.innerHTML = html;
+    };
+
+    function _escHtml(s) {
+        if (!s) return '';
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    function safeClick(el) {
+    // ---- Scrubber (native range input) ---------------------------------
+
+    Player.prototype._buildScrubber = function () {
+        var container = document.getElementById('event_modal_scrubber_container');
+        if (!container) return;
+
+        var n = this.frames.length;
+        if (n <= 1) { container.innerHTML = ''; return; }
+
+        var html = '<div id="event_scrubber_wrap" class="event-modal-scrubber" data-playing="' + (this.playing ? '1' : '0') + '">';
+        html += '<div class="event-modal-range-wrap">';
+        html += '<input type="range" class="event-modal-range" min="0" max="' + (n - 1) + '" value="0" step="1">';
+        html += '</div>';
+
+        // Marker overlay (prey / other detection segments)
+        html += '<div class="event-scrubber-markers" aria-hidden="true">';
+        html += this._buildMarkerSegments(n);
+        html += '</div>';
+        html += '</div>';
+
+        container.innerHTML = html;
+
+        var rangeInput = container.querySelector('input.event-modal-range');
+        if (rangeInput) {
+            var self = this;
+            this._scrubberInput = rangeInput;
+            this._updateScrubberFill(rangeInput);
+
+            rangeInput.addEventListener('input', function () {
+                var idx = parseIntSafe(rangeInput.value, 0);
+                if (self.playing) {
+                    self._stopPlayback();
+                    self.playing = false;
+                    self._updatePlayPauseUI();
+                    self._updateNavButtonsState();
+                    self._updateScrubberPlayingState();
+                }
+                self.showFrame(idx);
+                self._updateScrubberFill(rangeInput);
+            });
+        }
+    };
+
+    Player.prototype._buildMarkerSegments = function (nFrames) {
+        if (nFrames <= 1) return '';
+        var html = '';
+
+        var preySegs = [], otherSegs = [];
+        var preyStart = -1, preyEnd = -1, preyKind = '';
+        var otherStart = -1, otherEnd = -1, otherOn = false;
+
+        for (var i = 0; i < nFrames; i++) {
+            var frame = this.frames[i];
+            var hasPrey = false, preyStrong = false, hasOther = false;
+            var preyMaxProb = null;
+
+            if (frame.objects) {
+                for (var j = 0; j < frame.objects.length; j++) {
+                    var obj = frame.objects[j];
+                    var nameL = (obj.name || '').toLowerCase();
+                    if (nameL === 'false-accept') continue;
+                    if (nameL === 'prey' || nameL === 'beute') {
+                        var p = parseFloat(obj.prob) || 0;
+                        preyMaxProb = (preyMaxProb === null) ? p : Math.max(preyMaxProb, p);
+                    } else if (nameL) {
+                        hasOther = true;
+                    }
+                }
+            }
+            hasPrey = (preyMaxProb !== null);
+            preyStrong = hasPrey && (preyMaxProb >= this.mouseThreshold);
+
+            var thisPreyKind = preyStrong ? 'prey-strong' : (hasPrey ? 'prey-soft' : '');
+
+            if (!thisPreyKind) {
+                if (preyKind) { preySegs.push([preyStart, preyEnd, preyKind]); preyKind = ''; }
+            } else {
+                if (thisPreyKind === preyKind && i === preyEnd + 1) { preyEnd = i; }
+                else { if (preyKind) preySegs.push([preyStart, preyEnd, preyKind]); preyKind = thisPreyKind; preyStart = i; preyEnd = i; }
+            }
+
+            if (!hasOther) {
+                if (otherOn) { otherSegs.push([otherStart, otherEnd, 'other']); otherOn = false; }
+            } else {
+                if (otherOn && i === otherEnd + 1) { otherEnd = i; }
+                else { if (otherOn) otherSegs.push([otherStart, otherEnd, 'other']); otherOn = true; otherStart = i; otherEnd = i; }
+            }
+        }
+        if (preyKind) preySegs.push([preyStart, preyEnd, preyKind]);
+        if (otherOn) otherSegs.push([otherStart, otherEnd, 'other']);
+
+        function pct(idx) { return (idx / Math.max(1, nFrames - 1)) * 100; }
+
+        function segHtml(seg, lane) {
+            var left = pct(seg[0]);
+            var right = pct(seg[1]);
+            var w = Math.max(0, right - left);
+            var single = (seg[0] === seg[1]) ? ' is-single' : '';
+            return '<div class="event-scrubber-seg lane-' + lane + ' is-' + seg[2] + single + '" '
+                + 'style="left:calc(' + left.toFixed(4) + '% - 1px);width:calc(' + w.toFixed(4) + '% + 2px);"></div>';
+        }
+
+        for (var pi = 0; pi < preySegs.length; pi++) html += segHtml(preySegs[pi], 'prey');
+        for (var oi = 0; oi < otherSegs.length; oi++) html += segHtml(otherSegs[oi], 'other');
+        return html;
+    };
+
+    Player.prototype._updateScrubber = function (idx) {
+        if (this._scrubberInput) {
+            this._scrubberInput.value = String(idx);
+            this._updateScrubberFill(this._scrubberInput);
+        }
+    };
+
+    Player.prototype._updateScrubberFill = function (input) {
         try {
-            if (el && typeof el.click === 'function') el.click();
-        } catch (e) {
-            // ignore
-        }
-    }
+            var pct = ((input.value - input.min) / (input.max - input.min)) * 100;
+            var fill = 'var(--kh-scrubber-fill, var(--bs-primary, #0d6efd))';
+            var track = 'var(--kh-scrubber-track, rgba(0,0,0,0.18))';
+            input.style.background = 'linear-gradient(to right, ' + fill + ' ' + pct + '%, ' + track + ' ' + pct + '%)';
+        } catch (e) {}
+    };
 
+    // ---- Playback control ----------------------------------------------
+
+    Player.prototype._startPlayback = function () {
+        this._stopPlayback();
+        var intervalMs = Math.max(10, Math.round(1000 / Math.max(0.1, Math.min(30, this.fps))));
+        var self = this;
+        this.playTimer = setInterval(function () {
+            if (self.destroyed || !self.playing) { self._stopPlayback(); return; }
+            var next = (self.currentIdx + 1) % self.frames.length;
+            self.showFrame(next);
+        }, intervalMs);
+    };
+
+    Player.prototype._stopPlayback = function () {
+        if (this.playTimer) { clearInterval(this.playTimer); this.playTimer = null; }
+    };
+
+    Player.prototype.togglePlayPause = function () {
+        if (this.frames.length <= 1) return;
+        this.playing = !this.playing;
+        if (this.playing) {
+            this._startPlayback();
+        } else {
+            this._stopPlayback();
+        }
+        this._updatePlayPauseUI();
+        this._updateNavButtonsState();
+        this._updateScrubberPlayingState();
+    };
+
+    Player.prototype.prevFrame = function () {
+        if (this.playing || this.frames.length <= 1) return;
+        var idx = (this.currentIdx - 1 + this.frames.length) % this.frames.length;
+        this.showFrame(idx);
+    };
+
+    Player.prototype.nextFrame = function () {
+        if (this.playing || this.frames.length <= 1) return;
+        var idx = (this.currentIdx + 1) % this.frames.length;
+        this.showFrame(idx);
+    };
+
+    Player.prototype.toggleOverlay = function () {
+        if (this.fallbackMode) return;
+        this.overlayOn = !this.overlayOn;
+        this._updateOverlayToggleUI();
+        if (this.currentIdx >= 0 && this.currentIdx < this.frames.length) {
+            this._renderOverlay(this.frames[this.currentIdx], this.currentIdx);
+        }
+    };
+
+    // ---- UI state updates ----------------------------------------------
+
+    Player.prototype._updatePlayPauseUI = function () {
+        var btn = this.root.closest('.modal-content');
+        if (!btn) btn = this.root.closest('.modal');
+        if (!btn) btn = document;
+        var ppBtn = btn.querySelector('[data-action="play-pause"]');
+        if (!ppBtn) return;
+        var iconPlay = ppBtn.querySelector('.kh-icon-play');
+        var iconPause = ppBtn.querySelector('.kh-icon-pause');
+        if (iconPlay) iconPlay.style.display = this.playing ? 'none' : '';
+        if (iconPause) iconPause.style.display = this.playing ? '' : 'none';
+    };
+
+    Player.prototype._updateNavButtonsState = function () {
+        var scope = this.root.closest('.modal-content') || this.root.closest('.modal') || document;
+        var prevBtn = scope.querySelector('[data-action="prev"]');
+        var nextBtn = scope.querySelector('[data-action="next"]');
+        if (prevBtn) {
+            prevBtn.disabled = this.playing;
+            prevBtn.style.opacity = this.playing ? '0.5' : '';
+        }
+        if (nextBtn) {
+            nextBtn.disabled = this.playing;
+            nextBtn.style.opacity = this.playing ? '0.5' : '';
+        }
+        this._updateDownloadSingleState();
+    };
+
+    Player.prototype._updateDownloadSingleState = function () {
+        try {
+            var scope = this.root.closest('.modal-content') || document;
+            var dlBtn = scope.querySelector('.event-modal-toolbar-bottom-left a, .event-modal-toolbar-bottom-left button');
+            if (dlBtn) {
+                if (this.playing) {
+                    dlBtn.classList.add('disabled');
+                    dlBtn.style.opacity = '0.5';
+                    dlBtn.style.pointerEvents = 'none';
+                } else {
+                    dlBtn.classList.remove('disabled');
+                    dlBtn.style.opacity = '';
+                    dlBtn.style.pointerEvents = '';
+                }
+            }
+        } catch (e) {}
+    };
+
+    Player.prototype._updateOverlayToggleUI = function () {
+        var scope = this.root.closest('.modal-content') || this.root.closest('.modal') || document;
+        var btn = scope.querySelector('[data-action="toggle-overlay"]');
+        if (!btn) return;
+        var iconOn = btn.querySelector('.kh-icon-overlay-on');
+        var iconOff = btn.querySelector('.kh-icon-overlay-off');
+        if (iconOn) iconOn.style.display = this.overlayOn ? '' : 'none';
+        if (iconOff) iconOff.style.display = this.overlayOn ? 'none' : '';
+    };
+
+    Player.prototype._updateScrubberPlayingState = function () {
+        var wrap = document.getElementById('event_scrubber_wrap');
+        if (wrap) wrap.setAttribute('data-playing', this.playing ? '1' : '0');
+    };
+
+    // ---- Controls attachment -------------------------------------------
+
+    Player.prototype._attachControls = function () {
+        var self = this;
+        var modal = this.root.closest('.modal-content') || this.root.closest('.modal') || document;
+
+        this._boundModalClick = function (e) {
+            if (self.destroyed) return;
+            var target = e.target.closest('[data-action]');
+            if (!target) return;
+            var action = target.getAttribute('data-action');
+            switch (action) {
+                case 'play-pause': self.togglePlayPause(); break;
+                case 'prev': self.prevFrame(); break;
+                case 'next': self.nextFrame(); break;
+                case 'toggle-overlay': self.toggleOverlay(); break;
+            }
+        };
+        modal.addEventListener('click', this._boundModalClick);
+
+        // Signal current frame index before Shiny processes download click
+        try {
+            var dlSingle = modal.querySelector('a[id$="btn_download_single"]');
+            if (dlSingle) {
+                dlSingle.addEventListener('click', function () {
+                    self._signalFrameIdx(self.currentIdx);
+                }, true);
+            }
+        } catch (e) {}
+    };
+
+    Player.prototype._attachKeyboardHandler = function () {
+        var self = this;
+        this._boundKeyDown = function (e) {
+            if (self.destroyed) return;
+            var modal = document.querySelector('.modal.show');
+            if (!modal) return;
+            var tag = (document.activeElement && document.activeElement.tagName) ? document.activeElement.tagName.toLowerCase() : '';
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+            switch (e.key) {
+                case ' ':
+                case 'k':
+                    e.preventDefault();
+                    self.togglePlayPause();
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    if (self.playing) { self.playing = false; self._stopPlayback(); self._updatePlayPauseUI(); self._updateNavButtonsState(); self._updateScrubberPlayingState(); }
+                    self.prevFrame();
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    if (self.playing) { self.playing = false; self._stopPlayback(); self._updatePlayPauseUI(); self._updateNavButtonsState(); self._updateScrubberPlayingState(); }
+                    self.nextFrame();
+                    break;
+            }
+        };
+        document.addEventListener('keydown', this._boundKeyDown);
+    };
+
+    Player.prototype._attachModalCloseHandler = function () {
+        var self = this;
+        var modalEl = this.root.closest('.modal');
+        if (modalEl) {
+            modalEl.addEventListener('hidden.bs.modal', function () {
+                self.destroy();
+                try {
+                    var btn = document.querySelector('button[id$="modal_pulse"]');
+                    if (btn) btn.click();
+                } catch (e) {}
+            }, { once: true });
+        }
+    };
+
+    // ---- Prefetch adjacent ---------------------------------------------
+
+    Player.prototype._prefetchAdjacent = function (idx) {
+        try {
+            if (this.frames.length <= 1) return;
+            var prevIdx = (idx - 1 + this.frames.length) % this.frames.length;
+            var nextIdx = (idx + 1) % this.frames.length;
+            var prevSrc = this._resolveFrameSrc(this.frames[prevIdx].pid);
+            var nextSrc = this._resolveFrameSrc(this.frames[nextIdx].pid);
+            if (prevSrc) prefetchSrc(prevSrc);
+            if (nextSrc) prefetchSrc(nextSrc);
+        } catch (e) {}
+    };
+
+    // ---- Shiny communication -------------------------------------------
+
+    Player.prototype._signalFrameIdx = function (idx) {
+        try {
+            if (this.nsFrameIdx && typeof Shiny !== 'undefined' && Shiny.setInputValue) {
+                Shiny.setInputValue(this.nsFrameIdx, idx);
+            }
+        } catch (e) {}
+    };
+
+    // ---- Empty state ---------------------------------------------------
+
+    Player.prototype._showEmptyState = function () {
+        if (this.overlayContainer) {
+            this.overlayContainer.innerHTML =
+                '<div class="placeholder-image" style="display:flex;align-items:center;justify-content:center;min-height:200px;">'
+                + '<strong>No pictures found for this event.</strong></div>';
+        }
+    };
+
+    // ---- Cleanup -------------------------------------------------------
+
+    Player.prototype.destroy = function () {
+        this.destroyed = true;
+        this._stopPlayback();
+        if (this._boundKeyDown) {
+            document.removeEventListener('keydown', this._boundKeyDown);
+            this._boundKeyDown = null;
+        }
+        if (this._boundModalClick) {
+            var modal = this.root.closest('.modal-content') || this.root.closest('.modal') || document;
+            modal.removeEventListener('click', this._boundModalClick);
+            this._boundModalClick = null;
+        }
+    };
+
+    // =====================================================================
+    // Section 7 – Modal pulse observer (Bootstrap modal-static detection)
+    // =====================================================================
     function initModalStaticPulseObserver() {
-        // Guard against multiple observers in case init() is called more than once.
         if (window.__khModalStaticObserver) return;
         window.__khModalStaticObserver = true;
 
         function setupPulseObserver() {
             var modal = document.querySelector('.modal');
             var btn = document.querySelector('button[id$="modal_pulse"]');
-            if (!modal || !btn) {
-                setTimeout(setupPulseObserver, 100);
-                return;
-            }
+            if (!modal || !btn) { setTimeout(setupPulseObserver, 100); return; }
             try {
                 var observer = new MutationObserver(function (mutations) {
                     mutations.forEach(function (mutation) {
-                        if (
-                            mutation.type === "attributes" &&
-                            mutation.attributeName === "class" &&
+                        if (mutation.type === "attributes" && mutation.attributeName === "class" &&
                             mutation.target.classList.contains("modal-static") &&
-                            (!mutation.oldValue || !mutation.oldValue.includes("modal-static"))
-                        ) {
-                            safeClick(btn);
-                            try { console.log('Shiny modal_pulse button clicked'); } catch (e) {}
+                            (!mutation.oldValue || !mutation.oldValue.includes("modal-static"))) {
+                            try { btn.click(); } catch (e) {}
                         }
                     });
                 });
                 observer.observe(modal, { attributes: true, attributeOldValue: true });
-            } catch (e) {
-                // ignore
-            }
+            } catch (e) {}
         }
         setupPulseObserver();
     }
 
-    function initEventImageObserver() {
-        // This observer is designed for Shiny re-renders that replace DOM nodes.
-        // It:
-        // - prevents modal height collapse (wrapper has CSS aspect-ratio + min-height)
-        // - keeps previous frame visible as wrapper background while next loads
-        // - advances slideshow ONLY after the current frame is confirmed loaded in the browser
+    // =====================================================================
+    // Section 8 – Initialisation / polling
+    // =====================================================================
+    function tryInitPlayer() {
+        var root = document.getElementById('event_modal_root');
+        if (!root) return;
+        if (root.getAttribute('data-player-init')) return;
+        root.setAttribute('data-player-init', '1');
 
-        // Guard against multiple poll loops in case init() is called more than once.
-        if (window.__khEventImagePoller) return;
-        window.__khEventImagePoller = true;
+        if (_player) { _player.destroy(); _player = null; }
 
-        function attachOnce() {
-            // Note: the modal is created/destroyed dynamically by Shiny.
-            // Do NOT stop polling permanently if it's not present yet.
-
-            var wrap = document.getElementById('event_modal_picture_wrap');
-            var pulseBtn = q('button[id$="img_loaded_pulse"]');
-            var modal = document.querySelector('.modal');
-
-            var blockIdKey = getEventBlockId();
-            if (wrap && blockIdKey) {
-                // If wrap was recreated by Shiny, restore last shown frame immediately.
-                var remembered = window.__khEventModalLastShownByBlock.get(blockIdKey) || '';
-                if (remembered) setWrapBg(wrap, remembered);
-            }
-
-            // Kick off bundle fetch if available (non-blocking).
-            try {
-                var rootEl = document.getElementById('event_modal_root');
-                var blockId = rootEl && rootEl.getAttribute ? rootEl.getAttribute('data-block-id') : null;
-                var bundleUrl = rootEl && rootEl.getAttribute ? (rootEl.getAttribute('data-bundle-url') || '') : '';
-                if (blockId && bundleUrl) {
-                    // Start download in background; swap as soon as URLs are present.
-                    fetchAndCacheBundle(blockId, bundleUrl);
-                }
-            } catch (e) {}
-
-            if (!wrap || !pulseBtn) return;
-
-            var layerInfo = ensureJsImageLayer(wrap);
-            if (!layerInfo || !layerInfo.getActive || !layerInfo.getInactive) return;
-            var img = layerInfo.getActive();
-            var imgAlt = layerInfo.getInactive();
-            if (!img || !imgAlt) return;
-
-            // Read Shiny-rendered indicator (no <img> tags in reactive output).
-            var ind = document.getElementById('event_modal_indicator');
-            if (!ind || !ind.getAttribute) return;
-
-            var pid = parseIntSafe(ind.getAttribute('data-visible-pid'), null);
-            var fallbackUrl = ind.getAttribute('data-visible-src') || '';
-            var prevPid = parseIntSafe(ind.getAttribute('data-prev-pid'), null);
-            var prevFallbackUrl = ind.getAttribute('data-prev-src') || '';
-            var nextPid = parseIntSafe(ind.getAttribute('data-next-pid'), null);
-            var nextFallbackUrl = ind.getAttribute('data-next-src') || '';
-            var playingNow = (ind.getAttribute('data-playing') === '1');
-            if (pid === null) return;
-
-            // If playback just resumed, kick it once so the server advances to the next frame.
-            try {
-                var lastPlayAttr = wrap.getAttribute('data-playing-last') || '';
-                var nowPlayAttr = playingNow ? '1' : '0';
-                if (lastPlayAttr !== nowPlayAttr) {
-                    wrap.setAttribute('data-playing-last', nowPlayAttr);
-                    if (playingNow) {
-                        // Clear any pending pulse-throttle state.
-                        try { wrap.removeAttribute('data-pulse-timeout'); } catch (e) {}
-                        try { wrap.setAttribute('data-last-pulse-ms', String(Date.now())); } catch (e) {}
-                        safeClick(pulseBtn);
-                    }
-                }
-            } catch (e) {}
-
-            // Mark that the dedicated event-modal observer is active (so global app.js doesn't interfere).
-            try {
-                wrap.setAttribute('data-event-modal-observer', '1');
-            } catch (e) {}
-
-            // Determine desired src (blob if ready, else /thumb/<id>.jpg if allowed).
-            var src = desiredSrcForPid(modal, pid, fallbackUrl) || '';
-            if (!src) return;
-
-            // Prefetch adjacent frames so rapid prev/next feels instant.
-            try {
-                if (prevPid !== null) {
-                    var psrc = desiredSrcForPid(modal, prevPid, prevFallbackUrl) || '';
-                    if (psrc && psrc !== src) prefetchSrc(psrc);
-                }
-                if (nextPid !== null) {
-                    var nsrc = desiredSrcForPid(modal, nextPid, nextFallbackUrl) || '';
-                    if (nsrc && nsrc !== src) prefetchSrc(nsrc);
-                }
-            } catch (e) {}
-
-            var currentSrc = wrap.getAttribute('data-current-src') || '';
-            var shownSrc = wrap.getAttribute('data-shown-src') || '';
-
-            if (!shownSrc && blockIdKey) {
-                shownSrc = window.__khEventModalLastShownByBlock.get(blockIdKey) || '';
-            }
-
-            function syncShownMeta(finalSrc) {
-                try {
-                    if (!finalSrc) return;
-                    wrap.classList.add('has-image');
-                    wrap.setAttribute('data-shown-src', finalSrc);
-                    if (blockIdKey) window.__khEventModalLastShownByBlock.set(blockIdKey, finalSrc);
-                } catch (e) {}
-            }
-
-            function scheduleBgUpdate(finalSrc) {
-                // Chrome mobile can briefly flash black if we switch the backdrop to the new
-                // frame before the visible <img> has actually painted. Keep the old backdrop
-                // for a couple frames, then update.
-                try {
-                    if (!finalSrc) return;
-                    var token = String(Date.now()) + ':' + String(Math.random());
-                    wrap.setAttribute('data-bg-pending', token);
-
-                    var raf = (window.requestAnimationFrame || function (cb) { return setTimeout(cb, 16); });
-                    raf(function () {
-                        raf(function () {
-                            try {
-                                if (wrap.getAttribute('data-bg-pending') !== token) return;
-                                var activeImg = null;
-                                try { activeImg = layerInfo.getActive ? layerInfo.getActive() : img; } catch (e) { activeImg = img; }
-                                var visNow = (activeImg && activeImg.getAttribute && activeImg.getAttribute('src')) ? (activeImg.getAttribute('src') || '') : '';
-                                if (visNow === finalSrc) setWrapBg(wrap, finalSrc);
-                                wrap.removeAttribute('data-bg-pending');
-                            } catch (e) {}
-                        });
-                    });
-                } catch (e) {}
-            }
-
-            function decodePromiseFor(el) {
-                try {
-                    if (!el) return Promise.resolve();
-                    if (typeof el.decode === 'function') {
-                        return el.decode().catch(function () { return null; });
-                    }
-                } catch (e) {}
-                return Promise.resolve();
-            }
-
-            function swapBufferedTo(finalSrc) {
-                // Swap using the inactive <img> as a buffer.
-                // Steps:
-                // 1) Put finalSrc into inactive img.
-                // 2) Wait for decode() best-effort.
-                // 3) Unhide inactive (new frame) on a frame boundary.
-                // 4) Hide old active on the next frame boundary.
-                try {
-                    if (!finalSrc) return;
-
-                    // Resolve current active/inactive at the moment of calling.
-                    var active = null;
-                    var inactive = null;
-                    try { active = layerInfo.getActive(); } catch (e) { active = img; }
-                    try { inactive = layerInfo.getInactive(); } catch (e) { inactive = imgAlt; }
-                    if (!active || !inactive) return;
-
-                    var activeSrc = (active.getAttribute && active.getAttribute('src')) ? (active.getAttribute('src') || '') : '';
-                    if (activeSrc === finalSrc) {
-                        syncShownMeta(finalSrc);
-                        scheduleBgUpdate(finalSrc);
-                        maybePulseLoadedFor(finalSrc);
-                        return;
-                    }
-
-                    // Cancel any prior pending buffer swap.
-                    var token = String(Date.now()) + ':' + String(Math.random());
-                    wrap.setAttribute('data-swap-token', token);
-                    // Mark swap-in-progress so ensureJsImageLayer doesn't fight us.
-                    wrap.setAttribute('data-swap-in-progress', token);
-
-                    // Prepare inactive.
-                    try { inactive.setAttribute('aria-hidden', 'true'); } catch (e) {}
-                    try { inactive.setAttribute('src', finalSrc); } catch (e) {}
-
-                    decodePromiseFor(inactive).then(function () {
-                        try {
-                            if (wrap.getAttribute('data-swap-token') !== token) return;
-                            var wantNow = wrap.getAttribute('data-current-src') || '';
-                            if (wantNow && wantNow !== finalSrc) {
-                                try {
-                                    if (wrap.getAttribute('data-swap-in-progress') === token) {
-                                        wrap.removeAttribute('data-swap-in-progress');
-                                    }
-                                } catch (e) {}
-                                return;
-                            }
-
-                            var raf = (window.requestAnimationFrame || function (cb) { return setTimeout(cb, 16); });
-
-                            // Show new frame first.
-                            raf(function () {
-                                try {
-                                    if (wrap.getAttribute('data-swap-token') !== token) return;
-                                    // Put new frame on top.
-                                    try { inactive.style.zIndex = '2'; } catch (e) {}
-                                    try { active.style.zIndex = '1'; } catch (e) {}
-                                    try { inactive.removeAttribute('aria-hidden'); } catch (e) {}
-
-                                    // Then hide the old frame on the next tick.
-                                    raf(function () {
-                                        try {
-                                            if (wrap.getAttribute('data-swap-token') !== token) return;
-                                            try { active.setAttribute('aria-hidden', 'true'); } catch (e) {}
-                                            // Flip active slot marker.
-                                            try {
-                                                var newSlot = inactive.getAttribute ? (inactive.getAttribute('data-slot') || '') : '';
-                                                if (layerInfo.setActiveSlot && (newSlot === 'a' || newSlot === 'b')) {
-                                                    layerInfo.setActiveSlot(newSlot);
-                                                }
-                                            } catch (e) {}
-
-                                            // Swap finished.
-                                            try {
-                                                if (wrap.getAttribute('data-swap-in-progress') === token) {
-                                                    wrap.removeAttribute('data-swap-in-progress');
-                                                }
-                                            } catch (e) {}
-
-                                            // Sync state + backdrop after the new frame is actually visible.
-                                            syncShownMeta(finalSrc);
-                                            scheduleBgUpdate(finalSrc);
-                                            maybePulseLoadedFor(finalSrc);
-                                        } catch (e) {}
-                                    });
-                                } catch (e) {}
-                            });
-                        } catch (e) {}
-                    });
-                } catch (e) {}
-            }
-
-            function maybePulseLoadedFor(finalSrc) {
-                try {
-                    var lastAck = wrap.getAttribute('data-last-ack-src') || '';
-                    if (lastAck === finalSrc) return;
-                    wrap.setAttribute('data-last-ack-src', finalSrc);
-
-                    // Pace autoplay based on the capture FPS stored for this event.
-                    // When paused we pulse immediately so overlays stay in sync.
-                    var fpsIntervalMs = 250; // default ~4fps for legacy events
-                    try {
-                        var root = document.getElementById('event_modal_root');
-                        var fpsAttr = root && root.getAttribute ? (root.getAttribute('data-event-fps') || '') : '';
-                        var fps = parseFloat(String(fpsAttr || '').trim());
-                        if (typeof fps === 'number' && isFinite(fps) && fps > 0) {
-                            // Clamp to avoid extreme values (CPU/network spikes or division issues)
-                            if (fps < 1) fps = 1;
-                            if (fps > 30) fps = 30;
-                            fpsIntervalMs = Math.max(10, Math.round(1000 / fps));
-                        }
-                    } catch (e) {}
-                    if (!playingNow) {
-                        safeClick(pulseBtn);
-                        return;
-                    }
-
-                    var now = Date.now();
-                    var lastMs = parseIntSafe(wrap.getAttribute('data-last-pulse-ms'), 0) || 0;
-                    var dueIn = (lastMs + fpsIntervalMs) - now;
-                    if (dueIn <= 0) {
-                        wrap.setAttribute('data-last-pulse-ms', String(now));
-                        safeClick(pulseBtn);
-                        return;
-                    }
-
-                    // Avoid stacking timeouts during fast cache hits.
-                    var tok = wrap.getAttribute('data-pulse-timeout') || '';
-                    if (tok) return;
-                    wrap.setAttribute('data-pulse-timeout', '1');
-                    setTimeout(function () {
-                        try {
-                            wrap.removeAttribute('data-pulse-timeout');
-                            var now2 = Date.now();
-                            wrap.setAttribute('data-last-pulse-ms', String(now2));
-                            safeClick(pulseBtn);
-                        } catch (e) {}
-                    }, Math.min(2000, Math.max(0, dueIn)));
-                } catch (e) {}
-            }
-
-            function swapTo(finalSrc) {
-                // Keep old frame visible until the new one has painted.
-                try {
-                    swapBufferedTo(finalSrc);
-                } catch (e) {}
-            }
-
-            if (currentSrc !== src) {
-                wrap.setAttribute('data-current-src', src);
-                try {
-                    wrap.setAttribute('data-current-at-ms', String(Date.now()));
-                } catch (e) {}
-
-                // Ensure we always have something behind the visible layer.
-                var activeNow = null;
-                try { activeNow = layerInfo.getActive ? layerInfo.getActive() : img; } catch (e) { activeNow = img; }
-                var fallbackBg = shownSrc || (activeNow && activeNow.getAttribute ? (activeNow.getAttribute('src') || '') : '') || '';
-                if (fallbackBg) setWrapBg(wrap, fallbackBg);
-
-                // Preload using persistent Image() to avoid any Shiny DOM races.
-                var pre = getPersistentPreloader();
-                if (!pre || !pre.img) {
-                    swapTo(src);
-                } else {
-                    pre.target = src;
-                    pre.pid = pid;
-                    try {
-                        pre.img.src = src;
-                        // If it's already in cache, swap without waiting for the async load event.
-                        try {
-                            if (pre.img.complete && pre.img.naturalWidth > 0) {
-                                // Defer a tick so pre.img.src has settled.
-                                setTimeout(function () {
-                                    try {
-                                        var wantNow = wrap.getAttribute('data-current-src') || '';
-                                        if (wantNow && wantNow === src) swapTo(src);
-                                    } catch (e) {}
-                                }, 0);
-                            }
-                        } catch (e) {}
-                    } catch (e) {
-                        swapTo(src);
-                    }
-                }
-            } else {
-                // If server re-render replaced the <img> node, ensure it has the current src.
-                var existing = (img.getAttribute && img.getAttribute('src')) ? (img.getAttribute('src') || '') : '';
-                if (!existing) swapTo(src);
-            }
-
-            // Bind persistent preloader handlers once.
-            var pre2 = getPersistentPreloader();
-            if (pre2 && pre2.img && !pre2.__bound) {
-                pre2.__bound = true;
-                pre2.img.addEventListener('load', function () {
-                    try {
-                        var target = pre2.target || '';
-                        var want = wrap.getAttribute('data-current-src') || '';
-                        if (target && want && target === want) swapTo(target);
-                    } catch (e) {}
-                });
-                pre2.img.addEventListener('error', function () {
-                    try {
-                        var want = wrap.getAttribute('data-current-src') || '';
-                        if (want) swapTo(want);
-                    } catch (e) {}
-                });
-            }
-        }
-
-
-        function setupObserverLoop() {
-            try {
-                attachOnce();
-            } catch (e) {}
-
-            // Observe the Shiny output container so updates are instant.
-            try {
-                // NOTE: Shiny module output IDs are namespaced, so don't rely on a fixed "show_event_picture" id.
-                // Observe our own stable container instead.
-                var out = document.getElementById('event_modal_overlay_container') || document.getElementById('event_modal_picture_wrap');
-                if (out) {
-                    var prevTarget = window.__khEventModalIndicatorObserverTarget || null;
-                    if (prevTarget !== out) {
-                        try {
-                            if (window.__khEventModalIndicatorObserver && window.__khEventModalIndicatorObserver.disconnect) {
-                                window.__khEventModalIndicatorObserver.disconnect();
-                            }
-                        } catch (e) {}
-                        try {
-                            var obs = new MutationObserver(function () {
-                                try { attachOnce(); } catch (e) {}
-                            });
-                            obs.observe(out, { childList: true, subtree: true, attributes: true });
-                            window.__khEventModalIndicatorObserver = obs;
-                            window.__khEventModalIndicatorObserverTarget = out;
-                        } catch (e) {}
-                    }
-                }
-            } catch (e) {}
-
-            // Still keep a lightweight poll as a fallback (covers modal open/close).
-            setTimeout(setupObserverLoop, document.querySelector('.modal') ? 250 : 800);
-        }
-
-        setupObserverLoop();
+        _player = new Player(root);
+        _player.init();
     }
 
-    // Expose a single init entrypoint so server-rendered HTML can call it.
-    // It is safe to call multiple times.
+    function pollLoop() {
+        try { tryInitPlayer(); } catch (e) {}
+        try { initModalStaticPulseObserver(); } catch (e) {}
+        setTimeout(pollLoop, document.querySelector('.modal') ? 200 : 800);
+    }
+
     window.kittyhackEventModal = window.kittyhackEventModal || {};
     window.kittyhackEventModal.init = function () {
+        try { tryInitPlayer(); } catch (e) {}
         try { initModalStaticPulseObserver(); } catch (e) {}
-        try { initEventImageObserver(); } catch (e) {}
     };
 
-    // Auto-init (safe because observers poll and are idempotent)
     try {
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function () {
-                try { window.kittyhackEventModal.init(); } catch (e) {}
-            }, { once: true });
+            document.addEventListener('DOMContentLoaded', function () { pollLoop(); }, { once: true });
         } else {
-            setTimeout(function () {
-                try { window.kittyhackEventModal.init(); } catch (e) {}
-            }, 0);
+            setTimeout(pollLoop, 0);
         }
     } catch (e) {}
 })();

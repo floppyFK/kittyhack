@@ -17,6 +17,7 @@ import re
 import hashlib
 import asyncio
 import tarfile
+import json
 from io import BytesIO
 import zipfile
 import uuid
@@ -901,21 +902,15 @@ def btn_yolo_activate():
 @module.server
 def show_event_server(input, output, session, block_id: int):
 
-    # Use standard Python list to store frame IDs (int) and current frame index
-    # Images are served directly from disk via /thumb/<id>.jpg (see app.py mounts).
+    # Server-side state: kept for download/delete handlers.
+    # All playback, scrubbing and overlay rendering is done client-side (event-modal.js).
     pictures: list[int] = []
     timestamps = []
     photo_ids: list[int | None] = []
     # Store lists of DetectedObjects, one list per event
     event_datas: List[List[DetectedObject]] = []
-    frame_index = [0]  # 0-based index into pictures (kept non-reactive to avoid feedback loops)
-    shown_index = [0]  # 0-based index that matches the actually displayed frame (confirmed by JS)
-    frame_tick = reactive.Value(0)  # bump to force re-render when paused
     fallback_mode = [False]
-    slideshow_running = reactive.Value(True)
-    scrubber_suppress = reactive.Value(0)  # suppress server-side reactions to programmatic scrubber updates
-    last_scrubber_seen = [None]  # 1-based last observed scrubber value (for robustness)
-    bundle_url = [None]  # optional: /thumb/... tar.gz that contains all thumbnails for this event
+    bundle_url = [None]  # optional: /thumb/... tar that contains all thumbnails for this event
     aspect_style = [""]  # CSS var: --kh-event-aspect: w / h
     event_effective_fps = [None]  # float | None
 
@@ -1011,285 +1006,6 @@ def show_event_server(input, output, session, block_id: int):
             except Exception:
                 pass
             return None
-
-    def _suppress_next_scrubber_events(count: int = 1) -> None:
-        try:
-            current = int(scrubber_suppress.get() or 0)
-        except Exception:
-            current = 0
-        try:
-            scrubber_suppress.set(max(0, current + int(count)))
-        except Exception:
-            scrubber_suppress.set(max(0, int(count)))
-
-    def _handle_scrub_to(target_idx: int, source: str = "event") -> None:
-        """Seek to target_idx (0-based) and pause if needed.
-
-        This is used by both the explicit event handler and a fallback watcher.
-        """
-        if not pictures:
-            return
-
-        target_idx = max(0, min(len(pictures) - 1, int(target_idx)))
-
-        # If a scrub happens while playing (race / fast click), pause playback and seek.
-        if bool(slideshow_running.get()):
-            try:
-                slideshow_running.set(False)
-                setattr(_advance_slideshow_when_loaded, "_last_pid", -1)
-            except Exception:
-                pass
-
-        try:
-            current_idx = int(frame_index[0] or 0)
-        except Exception:
-            current_idx = 0
-        if target_idx == current_idx:
-            return
-
-        frame_index[0] = target_idx
-        _bump_frame_tick()
-
-    def _bump_frame_tick():
-        try:
-            frame_tick.set(int(frame_tick.get()) + 1)
-        except Exception:
-            # last-resort fallback
-            frame_tick.set(monotonic_time())
-
-    @render.ui
-    def event_nav_controls():
-        is_playing = bool(slideshow_running.get())
-        play_pause_icon = (
-            icon_svg("pause", margin_left="0", margin_right="0")
-            if is_playing
-            else icon_svg("play", margin_left="0", margin_right="0")
-        )
-
-        return ui.div(
-            ui.input_action_button(
-                id="btn_prev",
-                label="",
-                icon=icon_svg("backward-step", margin_left="0", margin_right="0"),
-                class_="btn-icon-square btn-outline-secondary",
-                disabled=is_playing,
-                style_="opacity: 0.5;" if is_playing else "",
-            ),
-            ui.input_action_button(
-                id="btn_play_pause",
-                label="",
-                icon=play_pause_icon,
-                class_="btn-icon-square btn-outline-secondary",
-            ),
-            ui.input_action_button(
-                id="btn_next",
-                label="",
-                icon=icon_svg("forward-step", margin_left="0", margin_right="0"),
-                class_="btn-icon-square btn-outline-secondary",
-                disabled=is_playing,
-                style_="opacity: 0.5;" if is_playing else "",
-            ),
-            class_="event-modal-toolbar-nav",
-        )
-
-    @output
-    @render.ui
-    def event_scrubber_ui():
-        is_playing = bool(slideshow_running.get())
-        if not pictures or len(pictures) <= 1:
-            return ui.HTML("")
-
-        try:
-            vis_idx = int(frame_index[0] or 0)
-        except Exception:
-            vis_idx = 0
-
-        # Use 1-based values in the UI
-        value = max(1, min(len(pictures), vis_idx + 1))
-
-        # Always show the scrubber (video-player style). Keep data-playing for client logic.
-        cls = "event-modal-scrubber"
-
-        def _mouse_threshold() -> float:
-            try:
-                return float(CONFIG.get("MOUSE_THRESHOLD"))
-            except Exception:
-                return 0.0
-
-        def _frame_marker_state(frame_i: int) -> tuple[bool, bool, bool]:
-            """Return (has_prey, prey_is_strong, has_other) for a given frame index."""
-            try:
-                objs = event_datas[frame_i] if frame_i < len(event_datas) else []
-            except Exception:
-                objs = []
-
-            has_other = False
-            prey_max_prob = None
-            for obj in (objs or []):
-                try:
-                    name = (obj.object_name or "").strip()
-                except Exception:
-                    name = ""
-                if not name:
-                    continue
-
-                name_l = name.lower()
-                if name_l == "false-accept":
-                    continue
-
-                if name_l in ("prey", "beute"):
-                    try:
-                        p = float(getattr(obj, "probability", 0.0))
-                    except Exception:
-                        p = 0.0
-                    prey_max_prob = p if prey_max_prob is None else max(prey_max_prob, p)
-                    continue
-
-                has_other = True
-
-            has_prey = prey_max_prob is not None
-            prey_is_strong = bool(has_prey and float(prey_max_prob or 0.0) >= _mouse_threshold())
-            return has_prey, prey_is_strong, has_other
-
-        def _build_lane_segments(n_frames: int):
-            """Build grouped segments per lane: prey (soft/hard) and other."""
-            if n_frames <= 1:
-                return ([], [])
-
-            prey_lane: list[tuple[int, int, str]] = []
-            other_lane: list[tuple[int, int, str]] = []
-
-            prey_kind = ""
-            prey_start = -1
-            prey_end = -1
-
-            other_on = False
-            other_start = -1
-            other_end = -1
-
-            for i in range(n_frames):
-                has_prey, prey_strong, has_other = _frame_marker_state(i)
-
-                # Prey lane: kind is prey-strong or prey-soft
-                this_prey_kind = "prey-strong" if (has_prey and prey_strong) else ("prey-soft" if has_prey else "")
-                if not this_prey_kind:
-                    if prey_kind:
-                        prey_lane.append((prey_start, prey_end, prey_kind))
-                        prey_kind, prey_start, prey_end = "", -1, -1
-                else:
-                    if this_prey_kind == prey_kind and i == prey_end + 1:
-                        prey_end = i
-                    else:
-                        if prey_kind:
-                            prey_lane.append((prey_start, prey_end, prey_kind))
-                        prey_kind, prey_start, prey_end = this_prey_kind, i, i
-
-                # Other lane: boolean segment
-                if not has_other:
-                    if other_on:
-                        other_lane.append((other_start, other_end, "other"))
-                        other_on, other_start, other_end = False, -1, -1
-                else:
-                    if other_on and i == other_end + 1:
-                        other_end = i
-                    else:
-                        if other_on:
-                            other_lane.append((other_start, other_end, "other"))
-                        other_on, other_start, other_end = True, i, i
-
-            if prey_kind:
-                prey_lane.append((prey_start, prey_end, prey_kind))
-            if other_on:
-                other_lane.append((other_start, other_end, "other"))
-
-            return (prey_lane, other_lane)
-
-        def _pct(i: int, n_frames: int) -> float:
-            denom = max(1, n_frames - 1)
-            return (float(i) / float(denom)) * 100.0
-
-        n_frames = len(pictures)
-        prey_segments, other_segments = _build_lane_segments(n_frames)
-
-        marker_children = []
-        for start_i, end_i, kind in prey_segments:
-            left = _pct(start_i, n_frames)
-            right = _pct(end_i, n_frames)
-            width = max(0.0, right - left)
-            single_cls = " is-single" if start_i == end_i else ""
-            marker_children.append(
-                ui.tags.div(
-                    {
-                        "class": f"event-scrubber-seg lane-prey is-{kind}{single_cls}",
-                        # Add a couple pixels so single-frame segments are still visible.
-                        "style": f"left: calc({left:.4f}% - 1px); width: calc({width:.4f}% + 2px);",
-                    }
-                )
-            )
-
-        for start_i, end_i, kind in other_segments:
-            left = _pct(start_i, n_frames)
-            right = _pct(end_i, n_frames)
-            width = max(0.0, right - left)
-            single_cls = " is-single" if start_i == end_i else ""
-            marker_children.append(
-                ui.tags.div(
-                    {
-                        "class": f"event-scrubber-seg lane-other is-{kind}{single_cls}",
-                        "style": f"left: calc({left:.4f}% - 1px); width: calc({width:.4f}% + 2px);",
-                    }
-                )
-            )
-
-        return ui.div(
-            ui.input_slider(
-                id="event_scrubber",
-                label="",
-                min=1,
-                max=len(pictures),
-                value=value,
-                step=1,
-                width="100%",
-            ),
-            ui.tags.div({"class": "event-scrubber-markers", "aria-hidden": "true"}, *marker_children),
-            id="event_scrubber_wrap",
-            class_=cls,
-            **{"data-playing": "1" if is_playing else "0"},
-        )
-
-    @render.ui
-    def download_single_ui():
-        disabled = bool(slideshow_running.get())
-        help_text = (
-            _("Pause playback to download the current picture")
-            if disabled
-            else _("Download current picture")
-        )
-
-        if disabled:
-            button = ui.tags.button(
-                icon_svg("image", margin_left="0", margin_right="0"),
-                type="button",
-                class_="btn btn-icon-square btn-outline-secondary",
-                disabled=True,
-                tabindex="-1",
-                **{"aria-disabled": "true"},
-                style_="opacity: 0.5;",
-            )
-        else:
-            button = ui.download_button(
-                id="btn_download_single",
-                label="",
-                icon=icon_svg("image", margin_left="0", margin_right="0"),
-                class_="btn-icon-square btn-outline-secondary",
-            )
-
-        return ui.tooltip(
-            button,
-            help_text,
-            id="tooltip_download_single",
-            options={"trigger": "hover"},
-        )
 
     @render.ui
     @reactive.effect
@@ -1473,34 +1189,118 @@ def show_event_server(input, output, session, block_id: int):
             except Exception:
                 pass
 
-        # Initialize double-buffer state for the slideshow: visible + preload
-        frame_index[0] = 0
-        shown_index[0] = 0
-        _bump_frame_tick()
-
-        # Optional optimization: build a single tar.gz containing all thumbnails.
+        # Optional optimization: build a single tar containing all thumbnails.
         # The browser can fetch & unpack once and then swap <img> sources to blob: URLs.
         try:
             bundle_url[0] = await asyncio.to_thread(_ensure_event_bundle_file, block_id, list(pictures))
         except Exception:
             bundle_url[0] = None
 
-        if int(CONFIG['SHOW_IMAGES_WITH_OVERLAY']):
-            overlay_icon = icon_svg('border-all', margin_left="0", margin_right="0")
-        else:
-            overlay_icon = icon_svg('border-none', margin_left="0", margin_right="0")
+        # ---- Build frames JSON for the client-side player ----
+        def _format_event_modal_ts(ts_value):
+            if not ts_value:
+                return ""
+
+            ts_text = str(ts_value).strip()
+            time_part = ts_text.split(" ", 1)[1] if " " in ts_text else ts_text
+
+            if "." not in time_part:
+                return time_part
+
+            base, frac = time_part.split(".", 1)
+            frac = frac.strip()
+            if not frac:
+                return base
+
+            return f"{base}.{frac[:1]}"
+
+        frames_json = []
+        for i in range(len(pictures)):
+            frame_obj = {
+                "pid": pictures[i],
+                "ts": _format_event_modal_ts(timestamps[i] if i < len(timestamps) else ""),
+                "objects": [],
+            }
+            if i < len(event_datas):
+                for dobj in event_datas[i]:
+                    obj_name = (dobj.object_name or "").strip()
+                    if obj_name.lower() == "false-accept":
+                        continue
+                    frame_obj["objects"].append({
+                        "x": round(dobj.x, 2),
+                        "y": round(dobj.y, 2),
+                        "w": round(dobj.width, 2),
+                        "h": round(dobj.height, 2),
+                        "name": obj_name,
+                        "prob": round(dobj.probability, 1) if dobj.probability else 0,
+                    })
+            frames_json.append(frame_obj)
+
+        player_data = json.dumps({
+            "frames": frames_json,
+            "mouseThreshold": float(CONFIG.get("MOUSE_THRESHOLD", 50)),
+            "overlayInitial": bool(int(CONFIG.get("SHOW_IMAGES_WITH_OVERLAY", True))) and not fallback_mode[0],
+            "fps": float(event_effective_fps[0]) if event_effective_fps[0] else 4.0,
+            "fallbackMode": fallback_mode[0],
+            "blockId": block_id,
+        })
+
+        # Generate SVG icons for static control buttons (not Shiny action buttons)
+        prev_icon_html = str(icon_svg("backward-step", margin_left="0", margin_right="0"))
+        play_icon_html = str(icon_svg("play", margin_left="0", margin_right="0"))
+        pause_icon_html = str(icon_svg("pause", margin_left="0", margin_right="0"))
+        next_icon_html = str(icon_svg("forward-step", margin_left="0", margin_right="0"))
+        overlay_on_icon_html = str(icon_svg("border-all", margin_left="0", margin_right="0"))
+        overlay_off_icon_html = str(icon_svg("border-none", margin_left="0", margin_right="0"))
+
+        initial_overlay = bool(int(CONFIG.get("SHOW_IMAGES_WITH_OVERLAY", True))) and not fallback_mode[0]
+
+        nav_html = f'''
+        <div class="event-modal-toolbar-nav">
+            <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
+                    data-action="prev" title="{_('Previous frame')}">
+                {prev_icon_html}
+            </button>
+            <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
+                    data-action="play-pause" title="{_('Play/Pause')}">
+                <span class="kh-icon-play" {"" if len(pictures) <= 1 else 'style="display:none"'}>{play_icon_html}</span>
+                <span class="kh-icon-pause" {'style="display:none"' if len(pictures) <= 1 else ""}>{pause_icon_html}</span>
+            </button>
+            <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
+                    data-action="next" title="{_('Next frame')}">
+                {next_icon_html}
+            </button>
+        </div>
+        '''
+
+        overlay_btn_html = f'''
+        <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
+                data-action="toggle-overlay" title="{_('Toggle overlay for detected objects')}"
+                {"disabled" if fallback_mode[0] else ""}
+                style="{"opacity:0.5" if fallback_mode[0] else ""}">
+            <span class="kh-icon-overlay-on" {"" if initial_overlay else 'style="display:none"'}>{overlay_on_icon_html}</span>
+            <span class="kh-icon-overlay-off" {'style="display:none"' if initial_overlay else ""}>{overlay_off_icon_html}</span>
+        </button>
+        '''
+
+        # Shiny module namespace for JS → Python communication
+        ns_frame_idx = session.ns("client_frame_idx")
 
         ui.modal_show(
             ui.modal(
                 ui.card(
                     ui.div(
+                        ui.tags.script(
+                            ui.HTML(player_data),
+                            type="application/json",
+                            id="event_modal_data",
+                        ),
                         ui.div(
                             ui.tags.div(
                                 id="event_modal_js_layer",
                                 class_="event-modal-js-layer",
                             ),
                             ui.tags.div(
-                                ui.output_ui("show_event_picture"),
                                 id="event_modal_overlay_container",
                                 class_="event-modal-overlay-container",
                             ),
@@ -1525,7 +1325,7 @@ def show_event_server(input, output, session, block_id: int):
                         **{
                             "data-block-id": str(block_id),
                             "data-bundle-url": str(bundle_url[0] or ""),
-                            "data-event-fps": "" if event_effective_fps[0] is None else str(event_effective_fps[0]),
+                            "data-ns-frame-idx": ns_frame_idx,
                         },
                     ),
                     ui.card_footer(
@@ -1546,33 +1346,33 @@ def show_event_server(input, output, session, block_id: int):
                                     class_="event-modal-toolbar-left",
                                 ),
                                 ui.div(
-                                    ui.output_ui("event_nav_controls"),
+                                    ui.HTML(nav_html),
                                 ),
                                 ui.div(
-                                    ui.tooltip(
-                                        ui.input_action_button(
-                                            id="btn_toggle_overlay",
-                                            label="",
-                                            icon=overlay_icon,
-                                            class_="btn-icon-square btn-outline-secondary",
-                                            style_=f"opacity: 0.5;" if fallback_mode[0] else "",
-                                            disabled=fallback_mode[0],
-                                        ),
-                                        _("Toggle overlay for detected objects"),
-                                        id="tooltip_toggle_overlay",
-                                        options={"trigger": "hover"},
-                                    ),
+                                    ui.HTML(overlay_btn_html),
                                     class_="event-modal-toolbar-close",
                                 ),
                                 class_="event-modal-toolbar-row event-modal-toolbar-top",
                             ),
                             ui.div(
                                 ui.div(
-                                    ui.output_ui("download_single_ui"),
+                                    ui.tooltip(
+                                        ui.download_button(
+                                            id="btn_download_single",
+                                            label="",
+                                            icon=icon_svg("image", margin_left="0", margin_right="0"),
+                                            class_="btn-icon-square btn-outline-secondary",
+                                        ),
+                                        _("Download current picture"),
+                                        id="tooltip_download_single",
+                                        options={"trigger": "hover"},
+                                    ),
                                     class_="event-modal-toolbar-bottom-left",
                                 ),
                                 ui.div(
-                                    ui.output_ui("event_scrubber_ui"),
+                                    ui.tags.div(
+                                        id="event_modal_scrubber_container",
+                                    ),
                                     class_="event-modal-toolbar-bottom-middle",
                                 ),
                                 ui.div(
@@ -1605,231 +1405,28 @@ def show_event_server(input, output, session, block_id: int):
                 ),
                 footer=ui.div(
                     ui.input_action_button("modal_pulse", "", style_="visibility:hidden; width:1px; height:1px;"),
-                    ui.input_action_button("img_loaded_pulse", "", style_="visibility:hidden; width:1px; height:1px;"),
                 ),
                 size='l',
                 easy_close=True,
                 class_="transparent-modal-content"
             )
         )
-
-        # Initialize scrubber to the current visible frame (if paused later)
-        try:
-            # Avoid triggering on_scrub_event from a programmatic update.
-            _suppress_next_scrubber_events(1)
-            ui.update_slider("event_scrubber", value=1, min=1, max=max(1, len(pictures)))
-            last_scrubber_seen[0] = 1
-        except Exception:
-            pass
     
-    @render.text
-    def show_event_picture():
-        # Dependency hook for explicit navigation / slideshow advances
-        try:
-            frame_tick.get()
-        except Exception:
-            pass
-
-        try:
-            if len(pictures) > 0:
-                vis_idx = int(frame_index[0] or 0) % len(pictures)
-                try:
-                    shown_idx = int(shown_index[0] or 0) % len(pictures)
-                except Exception:
-                    shown_idx = vis_idx
-                prev_idx = (vis_idx - 1) % len(pictures)
-                next_idx = (vis_idx + 1) % len(pictures)
-
-                visible_pid = int(pictures[vis_idx])
-                prev_pid = int(pictures[prev_idx]) if len(pictures) > 1 else None
-                next_pid = int(pictures[next_idx]) if len(pictures) > 1 else None
-
-                visible_src = f"/thumb/{visible_pid}.jpg"
-                prev_src = f"/thumb/{prev_pid}.jpg" if prev_pid is not None else ""
-                next_src = f"/thumb/{next_pid}.jpg" if next_pid is not None else ""
-
-                # Keep the scrubber synced to the currently visible frame while playing.
-                # Do not use scrubber_suppress here: periodic updates may not always
-                # generate input events, which could otherwise accumulate the counter.
-                if slideshow_running.get():
-                    try:
-                        if len(pictures) > 1:
-                            ui.update_slider(
-                                "event_scrubber",
-                                value=int(vis_idx) + 1,
-                                min=1,
-                                max=len(pictures),
-                            )
-                    except Exception:
-                        pass
-
-                overlay_on = (input.btn_toggle_overlay() % 2 == (1 - int(CONFIG['SHOW_IMAGES_WITH_OVERLAY'])))
-                playing = 1 if bool(slideshow_running.get()) else 0
-
-                # Indicator only (JS fully controls <img> rendering).
-                indicator_html = (
-                    f'<div id="event_modal_indicator" '
-                    f'data-vis-idx="{vis_idx}" '
-                    f'data-total="{len(pictures)}" '
-                    f'data-overlay="{1 if overlay_on else 0}" '
-                    f'data-playing="{playing}" '
-                    f'data-visible-pid="{visible_pid}" '
-                    f'data-visible-src="{visible_src}" '
-                    f'data-prev-pid="{prev_pid if prev_pid is not None else ""}" '
-                    f'data-prev-src="{prev_src}" '
-                    f'data-next-pid="{next_pid if next_pid is not None else ""}" '
-                    f'data-next-src="{next_src}" '
-                    f'style="display:none"></div>'
-                )
-
-                # Overlay layer (kept separate from the JS image layer).
-                overlay_html = '<div id="event_modal_overlay" style="position:absolute; inset:0; pointer-events:none;">'
-
-                detected_objects = event_datas[shown_idx] if shown_idx < len(event_datas) else []
-                if overlay_on:
-                    for detected_object in detected_objects:
-                        if detected_object.object_name != "false-accept":
-                            obj_label = (detected_object.object_name or "").strip()
-                            obj_label_l = obj_label.lower()
-                            is_prey = obj_label_l in ("prey", "beute")
-
-                            # Match scrubber marker logic: prey below threshold is light red.
-                            prey_strong = False
-                            if is_prey:
-                                try:
-                                    p = float(getattr(detected_object, "probability", 0.0))
-                                except Exception:
-                                    p = 0.0
-                                try:
-                                    thr = float(CONFIG.get("MOUSE_THRESHOLD"))
-                                except Exception:
-                                    thr = 0.0
-                                prey_strong = bool(p >= thr)
-
-                            if is_prey and not prey_strong:
-                                stroke_rgb = "252, 165, 165"  # light red (tailwind red-300)
-                                stroke_hex = "#fca5a5"
-                            else:
-                                stroke_rgb = "255, 0, 0" if is_prey else "0, 180, 0"
-                                stroke_hex = "#ff0000" if is_prey else "#00b400"
-
-                            overlay_html += f'''
-                            <div style="position: absolute; 
-                                        left: {detected_object.x}%; 
-                                        top: {detected_object.y}%; 
-                                        width: {detected_object.width}%; 
-                                        height: {detected_object.height}%; 
-                                        border: 2px solid {stroke_hex}; 
-                                        background-color: rgba({stroke_rgb}, 0.05);
-                                        pointer-events: none; z-index: 3;">
-                                <div style="position: absolute; 
-                                            {f'bottom: -26px' if detected_object.y < 16 else 'top: -26px'}; 
-                                            left: 0px; 
-                                            background-color: rgba({stroke_rgb}, 0.7); 
-                                            color: white; 
-                                            padding: 2px 5px;
-                                            border-radius: 5px;
-                                            text-wrap-mode: nowrap;
-                                            font-size: 12px;">
-                                    {detected_object.object_name} ({detected_object.probability:.0f}%)
-                                </div>
-                            </div>'''
-
-                ts_display = timestamps[shown_idx][11:-4] if shown_idx < len(timestamps) else ""
-                overlay_html += f'''
-                    <div id="event_modal_timestamp" style="position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px; z-index: 3;">
-                        {ts_display}
-                    </div>
-                    <div id="event_modal_counter" style="position: absolute; bottom: 12px; right: 8px; background-color: rgba(0, 0, 0, 0.5); color: white; padding: 2px 5px; border-radius: 3px; z-index: 3;">
-                        {shown_idx + 1}/{len(pictures)}
-                    </div>
-                </div>
-                '''
-
-                return ui.HTML(indicator_html + overlay_html)
-
-            return ui.HTML('<div class="placeholder-image"><strong>' + _('No pictures found for this event.') + '</strong></div>')
-        except Exception as e:
-            logging.error(f"Failed to show the picture for event: {e}")
-            return ui.HTML('<div class="placeholder-image"><strong>' + _('An error occured while reading the image.') + '</strong></div>')
-
-    @reactive.effect
-    @reactive.event(input.img_loaded_pulse)
-    def _advance_slideshow_when_loaded():
-        # Only advance while playing, and only once per loaded frame.
-        if not bool(slideshow_running.get()):
-            return
-
-        if not pictures or len(pictures) <= 1:
-            return
-
-        try:
-            vis_idx = int(frame_index[0] or 0) % len(pictures)
-            pid = int(pictures[vis_idx])
-        except Exception:
-            return
-
-        # Debounce duplicate pulses for the same PID (can happen on cache hits or rebinds)
-        try:
-            last_pid = int(getattr(_advance_slideshow_when_loaded, "_last_pid", -1))
-        except Exception:
-            last_pid = -1
-        if pid == last_pid:
-            return
-
-        try:
-            setattr(_advance_slideshow_when_loaded, "_last_pid", pid)
-        except Exception:
-            pass
-
-        # Confirm that this frame is now actually visible.
-        shown_index[0] = vis_idx
-
-        frame_index[0] = (vis_idx + 1) % max(len(pictures), 1)
-        _bump_frame_tick()
-
-    @reactive.effect
-    @reactive.event(input.img_loaded_pulse)
-    def _confirm_frame_when_paused():
-        # When paused, JS still pulses after it has swapped the visible <img>.
-        # Use this to update overlays/timestamp/counter only after the image is really shown.
-        if bool(slideshow_running.get()):
-            return
-
-        if not pictures:
-            return
-
-        try:
-            idx = int(frame_index[0] or 0) % len(pictures)
-        except Exception:
-            return
-
-        shown_index[0] = idx
-        _bump_frame_tick()
-
+    # ---- Modal close ----
     @reactive.effect
     @reactive.event(input.btn_modal_cancel, input.modal_pulse)
     def modal_cancel():
         ui.modal_remove()
-        # Clear pictures and timestamps lists and reset frame index
         pictures.clear()
         timestamps.clear()
         event_datas.clear()
         photo_ids.clear()
-        photo_ids.clear()
-        frame_index[0] = 0
-        shown_index[0] = 0
-        last_scrubber_seen[0] = None
-        try:
-            scrubber_suppress.set(0)
-        except Exception:
-            pass
 
+    # ---- Single image download ----
     def _single_image_filename():
         try:
-            # Keep in sync with current frame
-            frame_tick.get()
-            picture_number = int(frame_index[0]) + 1 if frame_index[0] is not None else 0
+            frame_idx = int(input.client_frame_idx() or 0)
+            picture_number = frame_idx + 1
         except Exception:
             picture_number = 0
         return f"kittyhack_event_{block_id}_{picture_number}.jpg"
@@ -1837,16 +1434,8 @@ def show_event_server(input, output, session, block_id: int):
     @render.download(filename=_single_image_filename)
     def btn_download_single():
         try:
-            if slideshow_running.get():
-                ui.notification_show(
-                    _("Pause playback before downloading the current picture."),
-                    duration=6,
-                    type="warning",
-                )
-                raise RuntimeError("Playback running")
-
-            vis_idx = int(frame_index[0] or 0)
-            if vis_idx is None or vis_idx >= len(photo_ids):
+            vis_idx = int(input.client_frame_idx() or 0)
+            if vis_idx >= len(photo_ids):
                 raise RuntimeError("No visible image")
 
             pid = photo_ids[int(vis_idx)]
@@ -1886,12 +1475,12 @@ def show_event_server(input, output, session, block_id: int):
             return out_path
         except Exception as e:
             logging.warning(f"[DOWNLOAD] Single image download failed: {e}")
-            # Provide a tiny placeholder file rather than crashing the download handler
             out_path = os.path.join("/tmp", f"kittyhack_event_{block_id}_download_failed.txt")
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write("Single image download failed.\n")
             return out_path
-    
+
+    # ---- Delete event ----
     @reactive.effect
     @reactive.event(input.btn_delete_event)
     def delete_event():
@@ -1899,28 +1488,25 @@ def show_event_server(input, output, session, block_id: int):
         delete_photos_by_block_id(CONFIG['KITTYHACK_DATABASE_PATH'], block_id)
         reload_trigger_photos.set(reload_trigger_photos.get() + 1)
         ui.modal_remove()
-        # Clear pictures and timestamps lists and reset frame index
         pictures.clear()
         timestamps.clear()
-        frame_index[0] = 0
+        event_datas.clear()
+        photo_ids.clear()
 
+    # ---- ZIP download ----
     @render.download(filename=f"kittyhack_event_{block_id}.zip")
     def btn_download():
-        # Fetch all rows in this block, including original and modified images
         df = db_get_photos_by_block_id(
             CONFIG['KITTYHACK_DATABASE_PATH'],
             block_id,
             ReturnDataPhotosDB.all
         )
 
-        # Collect files to zip
         files: list[tuple[str, bytes]] = []
         if not df.empty:
             for __, row in df.iterrows():
                 pid = int(row['id'])
-                # Safe timestamp for filename
                 try:
-                    # get_local_date_from_utc_date expects a single UTC timestamp string
                     local_dt_str = get_local_date_from_utc_date(str(row['created_at']))
                     ts = pd.to_datetime(local_dt_str, errors='coerce')
                     ts = ts.strftime("%Y%m%d_%H%M%S") if isinstance(ts, pd.Timestamp) else "unknown"
@@ -1928,9 +1514,7 @@ def show_event_server(input, output, session, block_id: int):
                     logging.warning(f"[DOWNLOAD] Failed to format timestamp for ID {pid}: {e}")
                     ts = "unknown"
 
-                # Original image bytes from FS or DB
                 orig_bytes = None
-                # Try filesystem path
                 try:
                     fp = os.path.join(pictures_original_dir(), f"{pid}.jpg")
                     if os.path.exists(fp):
@@ -1938,17 +1522,14 @@ def show_event_server(input, output, session, block_id: int):
                             orig_bytes = f.read()
                 except Exception as e:
                     logging.warning(f"[DOWNLOAD] Failed reading original file for ID {pid}: {e}")
-                # Fallback to DB blob if present
                 if orig_bytes is None:
                     ob = row.get('original_image')
                     if isinstance(ob, (bytes, bytearray)) and len(ob) > 0:
                         orig_bytes = bytes(ob)
 
-                # Add original if present
                 if isinstance(orig_bytes, (bytes, bytearray)) and len(orig_bytes) > 0:
                     files.append((f"{pid}_{ts}.jpg", bytes(orig_bytes)))
 
-        # If we have no files, add a minimal ZIP with README
         if len(files) == 0:
             logging.warning(f"[DOWNLOAD] No images available for block_id {block_id}. Returning placeholder ZIP.")
             readme = (
@@ -1961,7 +1542,6 @@ def show_event_server(input, output, session, block_id: int):
             ).encode("utf-8")
             files.append(("README.txt", readme))
 
-        # Write ZIP to a temp file and return its path
         tmp_dir = "/tmp"
         zip_path = os.path.join(tmp_dir, f"kittyhack_event_{block_id}_{int(tm.time())}.zip")
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -1969,192 +1549,6 @@ def show_event_server(input, output, session, block_id: int):
                 zf.writestr(name, data)
 
         return zip_path
-    
-    @reactive.effect
-    @reactive.event(input.btn_play_pause)
-    def play_pause():
-        # Toggle play/pause based on the click count
-        new_state = not bool(slideshow_running.get())
-        slideshow_running.set(new_state)
-
-        # When resuming playback, allow the next img_loaded_pulse for the current frame
-        # to advance the slideshow (avoid getting stuck due to last_pid debounce).
-        if new_state:
-            try:
-                setattr(_advance_slideshow_when_loaded, "_last_pid", -1)
-            except Exception:
-                pass
-
-        # When switching into paused mode, align the scrubber to the current frame.
-        if not new_state:
-            try:
-                if pictures and len(pictures) > 1:
-                    _suppress_next_scrubber_events(1)
-                    ui.update_slider(
-                        "event_scrubber",
-                        value=int(frame_index[0] or 0) + 1,
-                        min=1,
-                        max=len(pictures),
-                    )
-            except Exception:
-                pass
-
-    @reactive.effect
-    @reactive.event(input.btn_toggle_overlay)
-    def toggle_overlay():
-        # Toggle the overlay visibility based on the click count
-        if input.btn_toggle_overlay() % 2 == int(CONFIG['SHOW_IMAGES_WITH_OVERLAY']):
-            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg('border-none', margin_left="0", margin_right="0"))
-        else:
-            ui.update_action_button("btn_toggle_overlay", label="", icon=icon_svg('border-all', margin_left="0", margin_right="0"))
-
-    @reactive.effect
-    @reactive.event(input.btn_prev)
-    def prev_picture():
-        if slideshow_running.get():
-            return
-        if not pictures:
-            return
-        frame_index[0] = (int(frame_index[0]) - 1) % max(len(pictures), 1)
-        _bump_frame_tick()
-
-        # Keep scrubber aligned without triggering on_scrub_event.
-        try:
-            if len(pictures) > 1:
-                _suppress_next_scrubber_events(1)
-                ui.update_slider("event_scrubber", value=int(frame_index[0]) + 1)
-        except Exception:
-            pass
-
-    @reactive.effect
-    @reactive.event(input.btn_next)
-    def next_picture():
-        if slideshow_running.get():
-            return
-        if not pictures:
-            return
-        frame_index[0] = (int(frame_index[0]) + 1) % max(len(pictures), 1)
-        _bump_frame_tick()
-
-        # Keep scrubber aligned without triggering on_scrub_event.
-        try:
-            if len(pictures) > 1:
-                _suppress_next_scrubber_events(1)
-                ui.update_slider("event_scrubber", value=int(frame_index[0]) + 1)
-        except Exception:
-            pass
-
-    @reactive.effect
-    @reactive.event(input.event_scrubber)
-    def on_scrub_event():
-        # Ignore scrubber changes that are caused by server-side updates/re-renders.
-        try:
-            pending = int(scrubber_suppress.get() or 0)
-        except Exception:
-            pending = 0
-        if pending > 0:
-            try:
-                scrubber_suppress.set(max(0, pending - 1))
-            except Exception:
-                pass
-
-            # If we're playing, this is almost certainly a programmatic update.
-            # If we're paused, a stale suppress counter can happen when the server calls
-            # ui.update_slider() but the browser doesn't emit an input event (same value).
-            # In paused mode we continue and rely on the target==current guard.
-            if bool(slideshow_running.get()):
-                return
-
-        # If we're playing, the server may be updating the slider programmatically each frame.
-        # Those updates can still trigger an input event; do not treat them as user scrubs.
-        # We allow large jumps (delta > 1) to act as user-initiated seeks (auto-pausing).
-
-        if not pictures or len(pictures) == 0:
-            return
-
-        try:
-            # Slider is 1-based
-            target_idx = int(input.event_scrubber()) - 1
-        except Exception:
-            return
-
-        # Compute current index for delta heuristics.
-        try:
-            current_idx = int(frame_index[0] or 0)
-        except Exception:
-            current_idx = 0
-
-        is_playing_now = bool(slideshow_running.get())
-        delta = abs(int(target_idx) - int(current_idx))
-
-        # Track last seen (1-based) for the fallback watcher.
-        try:
-            last_scrubber_seen[0] = int(target_idx) + 1
-        except Exception:
-            pass
-
-        if is_playing_now and delta <= 1:
-            return
-
-        target_idx = max(0, min(len(pictures) - 1, target_idx))
-
-        try:
-            logging.debug(
-                f"Scrubber clicked to frame {int(target_idx) + 1}/{len(pictures)} (block_id={block_id}, playing={1 if is_playing_now else 0}, suppress={pending}, delta={delta})"
-            )
-        except Exception:
-            pass
-
-        _handle_scrub_to(target_idx, source="event")
-
-    @reactive.effect
-    def _scrubber_value_fallback_watch():
-        """Fallback: ensure seeking works even if the explicit input event is flaky.
-
-        If the input value changes while paused, seek to it.
-        """
-        if bool(slideshow_running.get()):
-            return
-        if not pictures:
-            return
-
-        try:
-            v1 = int(input.event_scrubber() or 0)
-        except Exception:
-            return
-        if v1 <= 0:
-            return
-
-        # Ignore programmatic updates
-        try:
-            pending = int(scrubber_suppress.get() or 0)
-        except Exception:
-            pending = 0
-        if pending > 0:
-            try:
-                scrubber_suppress.set(max(0, pending - 1))
-            except Exception:
-                pass
-            last_scrubber_seen[0] = v1
-            return
-
-        if last_scrubber_seen[0] is None:
-            last_scrubber_seen[0] = v1
-            return
-        if int(last_scrubber_seen[0]) == v1:
-            return
-
-        last_scrubber_seen[0] = v1
-        target_idx = v1 - 1
-
-        try:
-            logging.info(
-                f"DEBUG: Scrubber value changed to frame {int(target_idx) + 1}/{len(pictures)} (fallback watcher, block_id={block_id})"
-            )
-        except Exception:
-            pass
-
-        _handle_scrub_to(target_idx, source="watch")
 
 @module.server
 def wlan_connect_server(input, output, session, ssid: str):

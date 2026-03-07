@@ -658,7 +658,8 @@ html[data-bs-theme="dark"] .event-modal-picture-spinner {
     min-width: 0;
 }
 
-.event-modal-toolbar-bottom-middle > .shiny-html-output {
+.event-modal-toolbar-bottom-middle > .shiny-html-output,
+#event_modal_scrubber_container {
     flex: 1 1 auto;
     min-width: 0;
     width: 100%;
@@ -686,27 +687,14 @@ html[data-bs-theme="dark"] .event-modal-picture-spinner {
     pointer-events: auto;
 }
 
-.event-modal-scrubber .shiny-input-container {
-    margin-bottom: 0 !important;
-    width: 100%;
-    line-height: 1;
-}
-
-.event-modal-scrubber input[type="range"] {
-    width: 100%;
-}
-
 /* Event modal scrubber: disabled/dimmed while playing */
 .event-modal-scrubber[data-playing="1"] {
     opacity: 0.45;
+    cursor: not-allowed;
 }
 
-.event-modal-scrubber[data-playing="1"] .irs,
 .event-modal-scrubber[data-playing="1"] input {
     pointer-events: none;
-}
-
-.event-modal-scrubber[data-playing="1"] {
     cursor: not-allowed;
 }
 
@@ -716,9 +704,10 @@ html[data-bs-theme="dark"] .event-modal-picture-spinner {
     }
 }
 
-/* Event modal scrubber: modern video-like playhead style (ionRangeSlider) */
+/* Event modal scrubber: modern video-like playhead (native range input) */
 #event_scrubber_wrap {
     position: relative;
+    width: 100%;
     --kh-scrubber-track: rgba(0, 0, 0, 0.18);
     --kh-scrubber-fill: var(--bs-primary);
     --kh-scrubber-thumb-border: #ffffff;
@@ -726,7 +715,6 @@ html[data-bs-theme="dark"] .event-modal-picture-spinner {
     --kh-scrubber-marker-prey: #ef4444; /* red-500 */
     --kh-scrubber-marker-prey-soft: #fca5a5; /* red-300 */
     --kh-scrubber-marker-other: #22c55e; /* green-500 */
-    /* Inset marker overlay slightly to match the slider's real track width */
     --kh-scrubber-inset: 6px;
 }
 
@@ -736,60 +724,79 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
     --kh-scrubber-thumb-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 6px 16px rgba(0, 0, 0, 0.40);
 }
 
-/* Hide min/max and value labels (min/max/current) */
-#event_scrubber_wrap .irs-min,
-#event_scrubber_wrap .irs-max,
-#event_scrubber_wrap .irs-from,
-#event_scrubber_wrap .irs-to,
-#event_scrubber_wrap .irs-single {
-    display: none !important;
-}
-
-/* Compress slider chrome a bit */
-#event_scrubber_wrap .irs--shiny {
+/* Range input wrapper (relative for marker overlay) */
+.event-modal-range-wrap {
+    position: relative;
+    width: 100%;
     height: 30px;
+    display: flex;
+    align-items: center;
 }
 
-/* Thin track */
-#event_scrubber_wrap .irs--shiny .irs-line {
-    top: 14px;
-    height: 4px;
+/* Native range input styling */
+.event-modal-range {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 24px;       /* tall invisible hit area for easier clicking */
+    margin: 0;
+    padding: 0;
+    border: none;
+    outline: none;
+    cursor: pointer;
+    background: transparent;
+    position: relative;
+    z-index: 2;
+}
+
+/* WebKit track */
+.event-modal-range::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 9999px;
+    /* background set via JS gradient for fill */
+    background: var(--kh-scrubber-track);
+}
+
+/* Firefox track */
+.event-modal-range::-moz-range-track {
+    height: 6px;
+    border-radius: 9999px;
     background: var(--kh-scrubber-track);
     border: none;
-    border-radius: 9999px;
 }
 
-/* Filled progress */
-#event_scrubber_wrap .irs--shiny .irs-bar {
-    top: 14px;
-    height: 4px;
-    background: var(--kh-scrubber-fill);
-    border: none;
+/* Firefox progress (fill) */
+.event-modal-range::-moz-range-progress {
+    height: 6px;
     border-radius: 9999px;
+    background: var(--kh-scrubber-fill);
 }
 
-/* Playhead */
-#event_scrubber_wrap .irs--shiny .irs-handle {
-    /* Center the playhead on the track */
-    top: 10px;
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--kh-scrubber-thumb-border);
-    background: var(--kh-scrubber-fill);
+/* WebKit thumb */
+.event-modal-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 0;
+    height: 0;
+    border: 0;
+    background: transparent;
     border-radius: 9999px;
-    box-shadow: var(--kh-scrubber-thumb-shadow);
-    z-index: 4;
+    box-shadow: none;
+    margin-top: 0;
+    cursor: pointer;
+    z-index: 1;
     box-sizing: border-box;
 }
 
-/* Disabled while playing: keep cursor consistent */
-.event-modal-scrubber[data-playing="1"] #event_scrubber_wrap .irs,
-.event-modal-scrubber[data-playing="1"] #event_scrubber_wrap .irs * {
-    cursor: not-allowed !important;
-}
-
-.event-modal-scrubber[data-playing="1"] {
-    cursor: not-allowed !important;
+/* Firefox thumb */
+.event-modal-range::-moz-range-thumb {
+    width: 0;
+    height: 0;
+    border: 0;
+    background: transparent;
+    border-radius: 9999px;
+    box-shadow: none;
+    cursor: pointer;
+    box-sizing: border-box;
 }
 
 /* Marker overlay for labeled frames */
@@ -800,12 +807,12 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
     top: 0;
     bottom: 0;
     pointer-events: none;
-    z-index: 3;
+    z-index: 4;
     overflow: hidden;
     border-radius: 9999px;
 }
 
-/* Align marker segments with the track (match the .irs-line top/height) */
+/* Align marker segments with the track */
 #event_scrubber_wrap .event-scrubber-seg {
     position: absolute;
     height: 2px;
@@ -824,11 +831,11 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
 
 /* Two-lane layout: prey lane above, other lane below */
 #event_scrubber_wrap .event-scrubber-seg.lane-prey {
-    top: 13px;
+    top: 7px;
 }
 
 #event_scrubber_wrap .event-scrubber-seg.lane-other {
-    top: 16px;
+    top: 10px;
 }
 
 #event_scrubber_wrap .event-scrubber-seg.is-prey-strong {
@@ -841,11 +848,6 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
 
 #event_scrubber_wrap .event-scrubber-seg.is-other {
     background: var(--kh-scrubber-marker-other);
-}
-
-/* Remove the 3 "grip" lines inside the handle */
-#event_scrubber_wrap .irs--shiny .irs-handle i {
-    display: none !important;
 }
 
 /* Make focus/hover feel modern */

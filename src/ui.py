@@ -39,35 +39,42 @@ _nav_items = [
         ui.output_ui("ui_live_view"),
         ui.output_ui("ui_live_view_footer"),
         ui.output_ui("ui_last_events"),
+        value="live-view",
     ),
     ui.nav_panel(
         _("Pictures"),
         ui.output_ui("ui_photos_date"),
         ui.output_ui("ui_photos_events"),
         ui.br(),
+        value="pictures",
     ),
     ui.nav_panel(
         _("Manage cats"),
         ui.output_ui("ui_manage_cats"),
         ui.br(),
+        value="manage-cats",
     ),
     ui.nav_panel(
         _("Add new cat"),
         ui.output_ui("ui_add_new_cat"),
         ui.br(),
+        value="add-new-cat",
     ),
     ui.nav_panel(
         _("AI Training"),
         ui.output_ui("ui_ai_training"),
         ui.br(),
+        value="ai-training",
     ),
     ui.nav_panel(
         _("System"),
         ui.output_ui("ui_system"),
+        value="system",
     ),
     ui.nav_panel(
         _("Configuration"),
         ui.output_ui("ui_configuration"),
+        value="configuration",
     ),
 ]
 
@@ -77,6 +84,7 @@ if not is_remote_mode():
             _("WLAN Configuration"),
             ui.output_ui("ui_wlan_configured_connections"),
             ui.output_ui("ui_wlan_available_networks"),
+            value="wlan-configuration",
         )
     )
 
@@ -84,6 +92,7 @@ _nav_items.append(
     ui.nav_panel(
         _("Info"),
         ui.output_ui("ui_info"),
+        value="info",
     )
 )
 
@@ -105,6 +114,7 @@ app_ui = ui.page_fillable(
     ),
     ui.navset_bar(
         *_nav_items,
+        id="main_nav",
         title=ui.tags.div(
             {
                 "class": "d-flex align-items-center gap-2 flex-nowrap navbar-title-wrap",

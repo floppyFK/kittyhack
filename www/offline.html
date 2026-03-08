@@ -89,7 +89,18 @@
   </style>
   <script>
     const CHECK_INTERVAL = 5000;
-    const TARGET_URL = "/";
+
+    // Determine the return URL: if we stored an active tab before going offline,
+    // navigate back to that tab path instead of the root.
+    var TAB_SESSION_KEY = 'kittyhack_active_tab_v1';
+    var TAB_ROUTES = {
+      'live-view': '/live-view/', 'pictures': '/pictures/', 'manage-cats': '/manage-cats/',
+      'add-new-cat': '/add-new-cat/', 'ai-training': '/ai-training/', 'system': '/system/',
+      'configuration': '/configuration/', 'wlan-configuration': '/wlan-configuration/', 'info': '/info/'
+    };
+    var savedTab = '';
+    try { savedTab = sessionStorage.getItem(TAB_SESSION_KEY) || ''; } catch(e) {}
+    const TARGET_URL = (savedTab && TAB_ROUTES[savedTab]) ? TAB_ROUTES[savedTab] : '/';
 
     let countdownInterval;
 
@@ -155,7 +166,7 @@
       <div class="offline-symbol">⚠️</div>
       <h1>Not reachable</h1>
       <p>The connection to your Kittyflap has been lost. This might be due to network issues or the device being powered off.</p>
-      <button onclick="window.location.href = '/'" class="btn-retry">
+      <button onclick="window.location.href = (typeof TARGET_URL !== 'undefined' ? TARGET_URL : '/')" class="btn-retry">
         Try to reload the WebGUI
       </button>
       <div class="status" id="status-text">Initializing...</div>

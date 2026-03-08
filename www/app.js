@@ -568,6 +568,10 @@ document.addEventListener("DOMContentLoaded", function() {
             console.warn('[ReloadDebug] suppressed (page hidden)');
             return;
         }
+        // Persist the active tab so the reload lands on the same view.
+        if (typeof window.__kh_saveActiveTab === 'function') {
+            try { window.__kh_saveActiveTab(); } catch (e) {}
+        }
         location.reload();
     }
 
@@ -621,7 +625,8 @@ document.addEventListener("DOMContentLoaded", function() {
         }
 
         function scheduleReload(reason) {
-            // Defer reload slightly so navigation-away events can win the race (Android Firefox).
+            // Defer reload so transient disconnects (e.g. brief tab-switch on mobile)
+            // have a chance to resolve before we force a full page reload.
             if (pendingReloadTimeout || reloadedOnce) return;
             if (isNavigatingAway || isPageHidden) return;
             pendingReloadTimeout = setTimeout(() => {
@@ -631,7 +636,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (!stillOverlay) return;
                 reloadedOnce = true;
                 attemptReload(reason);
-            }, 250);
+            }, 1000);
         }
 
         // Listen for navigation attempts
@@ -692,7 +697,7 @@ document.addEventListener("DOMContentLoaded", function() {
                             clearReloadTimers();
                             reloadedOnce = false;
                         }
-                    }, 3000);
+                    }, 5000);
                 }
             }
         }
@@ -763,6 +768,143 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         });
     });
+
+    // --- Tab ↔ URL routing ---
+    // Keeps the browser URL in sync with the active navigation tab so that
+    // reloads (manual or after disconnect) restore the correct tab, and users
+    // can share / bookmark deep-links like /pictures/ or /system/.
+    (function() {
+        var TAB_SESSION_KEY = 'kittyhack_active_tab_v1';
+
+        // Map nav_panel value → URL pathname.
+        // Must match the TAB_PATHS set in the Python TabRoutingMiddleware (app.py).
+        var TAB_ROUTES = {
+            'live-view':           '/live-view/',
+            'pictures':            '/pictures/',
+            'manage-cats':         '/manage-cats/',
+            'add-new-cat':         '/add-new-cat/',
+            'ai-training':         '/ai-training/',
+            'system':              '/system/',
+            'configuration':       '/configuration/',
+            'wlan-configuration':  '/wlan-configuration/',
+            'info':                '/info/'
+        };
+
+        // Reverse mapping: pathname → tab value (with and without trailing slash).
+        var PATH_TO_TAB = {};
+        for (var tab in TAB_ROUTES) {
+            if (!TAB_ROUTES.hasOwnProperty(tab)) continue;
+            var p = TAB_ROUTES[tab];
+            PATH_TO_TAB[p] = tab;
+            PATH_TO_TAB[p.replace(/\/$/, '')] = tab;
+        }
+
+        function getActiveTabValue() {
+            try {
+                var active = document.querySelector('.navbar-nav .nav-link.active[data-value]');
+                return active ? active.getAttribute('data-value') : null;
+            } catch (e) { return null; }
+        }
+
+        function saveTabToSession(value) {
+            try { sessionStorage.setItem(TAB_SESSION_KEY, value || ''); } catch (e) {}
+        }
+
+        function loadTabFromSession() {
+            try { return sessionStorage.getItem(TAB_SESSION_KEY) || ''; } catch (e) { return ''; }
+        }
+
+        function tabFromUrl() {
+            var path = window.location.pathname;
+            return PATH_TO_TAB[path] || PATH_TO_TAB[path.replace(/\/$/, '')] || null;
+        }
+
+        // Activate a tab by its data-value.
+        function activateTab(tabValue) {
+            if (!tabValue) return false;
+            var link = document.querySelector('.nav-link[data-value="' + tabValue + '"]');
+            if (!link) return false;
+            if (link.classList.contains('active')) return true;
+            try {
+                if (window.bootstrap && window.bootstrap.Tab) {
+                    window.bootstrap.Tab.getOrCreateInstance(link).show();
+                } else {
+                    link.click();
+                }
+                return true;
+            } catch (e) {
+                try { link.click(); return true; } catch (e2) { return false; }
+            }
+        }
+
+        // On page load: determine which tab to show from URL → sessionStorage → default.
+        function initTabFromUrl() {
+            var urlTab = tabFromUrl();
+            var sessionTab = loadTabFromSession();
+            var target = urlTab || sessionTab || null;
+
+            if (target) {
+                if (!activateTab(target)) {
+                    // Nav links might not be fully ready; poll briefly.
+                    var attempts = 0;
+                    var poll = setInterval(function() {
+                        attempts++;
+                        if (activateTab(target) || attempts >= 40) {
+                            clearInterval(poll);
+                        }
+                    }, 100);
+                }
+                // If we used the sessionStorage fallback on "/", push the correct path.
+                if (!urlTab && target && TAB_ROUTES[target]) {
+                    try {
+                        history.replaceState({ tab: target }, '', TAB_ROUTES[target]);
+                    } catch (e) {}
+                }
+            }
+        }
+
+        // When a Bootstrap tab is shown, update the URL bar.
+        document.addEventListener('shown.bs.tab', function(event) {
+            var link = event.target;
+            if (!link || !link.getAttribute) return;
+            var value = link.getAttribute('data-value');
+            if (!value || !TAB_ROUTES[value]) return;
+
+            saveTabToSession(value);
+
+            var desired = TAB_ROUTES[value];
+            var cur = window.location.pathname;
+            if (cur !== desired && cur !== desired.replace(/\/$/, '')) {
+                try {
+                    history.pushState({ tab: value }, '', desired);
+                } catch (e) {}
+            }
+        });
+
+        // Handle browser back / forward buttons.
+        window.addEventListener('popstate', function() {
+            var tab = tabFromUrl();
+            if (tab) {
+                activateTab(tab);
+                saveTabToSession(tab);
+            }
+        });
+
+        // Persist active tab before any reload / navigation.
+        window.addEventListener('beforeunload', function() {
+            var cur = getActiveTabValue();
+            if (cur) saveTabToSession(cur);
+        });
+
+        // Expose helper for other code (e.g. attemptReload) to save tab eagerly.
+        window.__kh_saveActiveTab = function() {
+            var cur = getActiveTabValue();
+            if (cur) saveTabToSession(cur);
+        };
+
+        // Activate on load.
+        initTabFromUrl();
+    })();
 
     // --- Register Service Worker for PWA ---
     // Only register on HTTPS or localhost. Avoid registering on plain HTTP to prevent caching/stale pages.
@@ -907,6 +1049,10 @@ document.addEventListener("DOMContentLoaded", function() {
             })
             .catch(() => {
                 console.log("Reconnect: server not reachable, showing offline page...");
+                // Persist the active tab so we can restore it when coming back online.
+                if (typeof window.__kh_saveActiveTab === 'function') {
+                    try { window.__kh_saveActiveTab(); } catch (e) {}
+                }
                 // Prefer offline page to avoid blank screen when SW is present
                 if (!isNavigatingAway) {
                     try {

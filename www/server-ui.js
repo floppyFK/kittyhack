@@ -121,7 +121,7 @@
         }, true);
 
         // Also detect slider drag end (mousedown/touchstart on handle -> one-shot mouseup/touchend)
-        container.addEventListener('mousedown', function (ev) {
+        function handleSliderDragStart(ev) {
             var handle = closest(ev.target, '.irs-handle');
             if (!handle) return;
             var group = closest(handle, '.form-group') || closest(handle, '.shiny-input-container') || handle.parentElement;
@@ -137,7 +137,9 @@
             }
             document.addEventListener('mouseup', onUp, true);
             document.addEventListener('touchend', onUp, true);
-        }, true);
+        }
+        container.addEventListener('mousedown', handleSliderDragStart, true);
+        container.addEventListener('touchstart', handleSliderDragStart, true);
 
         // Reset on save click
         saveBtn.addEventListener('click', function () {

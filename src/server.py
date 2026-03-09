@@ -5721,6 +5721,7 @@ def server(input, output, session):
     @reactive.event(input.btn_labelstudio_stop)
     def stop_labelstudio():
         systemctl("stop", "labelstudio")
+        systemctl("disable", "labelstudio")
         
         # Wait up to 10 seconds for the process to stop
         max_wait_time = 10  # seconds
@@ -5747,6 +5748,7 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.btn_labelstudio_start)
     def start_labelstudio():
+        systemctl("enable", "labelstudio")
         systemctl("start", "labelstudio")
         
         # Wait up to 300 seconds for the process to start

@@ -3,6 +3,7 @@ import configparser
 import pandas as pd
 from datetime import datetime, timedelta
 import time as tm
+import tempfile
 from src.clock import monotonic_time
 from shiny import render, ui, reactive, module
 from shiny.types import FileInfo
@@ -90,6 +91,11 @@ from src.system import (
 )
 from src.paths import pictures_original_dir, kittyhack_root
 from src.mode import is_remote_mode
+from src.labelstudio_api import (
+    get_labelstudio_projects_list,
+    export_labelstudio_project_as_zip,
+    get_labelstudio_project_task_summary,
+)
 
 # Prepare gettext for translations based on the configured language
 _ = set_language(CONFIG['LANGUAGE'])
@@ -107,7 +113,6 @@ def _disable_numeric_input(tag):
 
 
 def _disable_input(tag):
-    """Disable generic input tags (e.g. select/text) by setting disabled on the input element."""
     try:
         # Structure: <div> [0]=<label>, [1]=<input/select>
         if getattr(tag, "children", None) and len(tag.children) >= 2:
@@ -115,7 +120,6 @@ def _disable_input(tag):
     except Exception:
         pass
     return tag
-
 
 logging.info("----- Startup -----------------------------------------------------------------------------------------")
 
@@ -835,6 +839,9 @@ reload_trigger_wlan = reactive.Value(0)
 reload_trigger_photos = reactive.Value(0)
 reload_trigger_ai = reactive.Value(0)
 reload_trigger_config = reactive.Value(0)
+
+# Label Studio project choices map (id -> title), populated by the async project selector
+ls_project_choices = reactive.Value({})
 
 # Live view helpers: force immediate refresh on camera config changes
 # and keep the stage aspect-ratio in sync without waiting for the next image tick.
@@ -5025,102 +5032,126 @@ def server(input, output, session):
             # Check if labelstudio is running
             if get_labelstudio_status() == True:
                 ui_labelstudio = ui.div(
-                    ui.row(
-                        ui.column(
-                            12,
-                            ui.input_task_button("btn_labelstudio_stop", _("Stop Label Studio"), icon=icon_svg("stop")),
-                            ui.br(),
-                            ui.help_text(_("Label Studio is running. Click the button to stop it.")),
-                            ui.br(),
-                            ui.help_text(_("Remember to stop Label Studio after you are done with the labeling process, to free up resources for KittyHack.")),
-                            style_="text-align: center;"
-                        ),
+                    ui.div(
+                        ui.input_task_button("btn_labelstudio_stop", _("Stop Label Studio"), icon=icon_svg("stop")),
+                        ui.HTML(' <a href="http://{}:8080" target="_blank" class="btn btn-default">{}</a>'.format(
+                            get_current_ip(), _("Open Label Studio"))),
+                        class_="d-flex gap-2 justify-content-center flex-wrap",
                     ),
-                    ui.row(
-                        ui.column(
-                            12,
-                            # Inject an HTML button that links to the Label Studio web interface
-                            ui.HTML('<a href="http://{}:8080" target="_blank" class="btn btn-default">{}</a>'.format(get_current_ip(), _("Open Label Studio"))),
-                            style_="text-align: center;"
-                        ),
-                        ui.column(
-                            12,
-                            ui.help_text(_("Installed Version: ") + CONFIG["LABELSTUDIO_VERSION"]),
-                            style_="text-align: center; padding-top: 20px;"
-                        ),
-                        ui.column(
-                            12,
-                            ui.help_text(_("Latest version: ") + labelstudio_latest_version_display),
-                            style_="text-align: center;"
-                        ),
-                        style_ ="padding-top: 50px;"
-                    )
+                    ui.help_text(
+                        _("Label Studio Version: {}").format(CONFIG["LABELSTUDIO_VERSION"]) + " · " +
+                        _("Latest: {}").format(labelstudio_latest_version_display)
+                    ),
+                    style_="text-align:center;"
                 )
             else:
-                ui_labelstudio = ui.row(
-                    ui.column(
-                        12,
-                        ui.input_task_button("btn_labelstudio_start", _("Start Label Studio"), icon=icon_svg("play")),
-                        ui.br(),
-                        ui.help_text(_("Label Studio is not running. Click the button to start it.")),
-                        style_="text-align: center;"
+                ui_labelstudio = ui.div(
+                    ui.input_task_button("btn_labelstudio_start", _("Start Label Studio"), icon=icon_svg("play")),
+                    ui.help_text(_("Label Studio is not running."), style_="margin-top:0.5rem;"),
+                    ui.help_text(
+                        _("Version: {}").format(CONFIG["LABELSTUDIO_VERSION"]) + " · " +
+                        _("Latest: {}").format(labelstudio_latest_version_display)
                     ),
+                    style_="text-align:center;"
                 )
 
             if labelstudio_latest_version is not None and labelstudio_latest_version != CONFIG["LABELSTUDIO_VERSION"]:
-                ui_labelstudio = ui_labelstudio, ui.row(
-                    ui.column(
-                        12,
-                        ui.input_task_button("btn_labelstudio_update", _("Update Label Studio"), icon=icon_svg("circle-up"), class_="btn-primary"),
-                        ui.br(),
-                        ui.help_text(_("Click the button to update Label Studio to the latest version.")),
-                        ui.br(),
-                        ui.help_text(_('Current Version') + ": " + CONFIG['LABELSTUDIO_VERSION']),
-                        ui.br(),
-                        ui.help_text(_('Latest Version') + ": " + labelstudio_latest_version_display),
-                        style_="text-align: center;"
+                ui_labelstudio = ui_labelstudio, ui.div(
+                    ui.hr(),
+                    ui.input_task_button("btn_labelstudio_update", _("Update Label Studio"), icon=icon_svg("circle-up"), class_="btn-primary"),
+                    ui.help_text(
+                        CONFIG['LABELSTUDIO_VERSION'] + " → " + labelstudio_latest_version_display,
+                        style_="margin-top:0.5rem;"
                     ),
-                    style_="padding-top: 50px;"
+                    style_="text-align:center;"
                 )
 
-            ui_labelstudio = ui_labelstudio, ui.hr(), ui.row(
-                ui.column(
-                    12,
-                    ui.input_task_button("btn_labelstudio_remove", _("Remove Label Studio"), icon=icon_svg("trash"), class_="btn-danger"),
-                    ui.br(),
-                    ui.help_text(_("Click the button to remove Label Studio.")),
-                    ui.br(),
-                    ui.help_text(_("(Your project data will not be deleted. You can re-install Label Studio later.)")),
-                    style_="text-align: center;"
+            ui_labelstudio = ui_labelstudio, ui.hr(), ui.div(
+                ui.markdown(_("#### API Token")),
+                ui.help_text(_("Required to access Label Studio projects from this page.")),
+                ui.br(),
+                ui.div(
+                    ui.tags.button(
+                        ui.tags.span(
+                            "\u25b6",
+                            class_="toggle-chevron",
+                            style_="display:inline-block; transition:transform .2s;",
+                        ),
+                        " ",
+                        _("How to create an API token"),
+                        type="button",
+                        class_="btn btn-link p-0 info-toggle-btn",
+                        style_="text-decoration:none;",
+                        **{
+                            "data-bs-toggle": "collapse",
+                            "data-bs-target": "#labelstudio_token_help_body",
+                            "aria-expanded": "false",
+                            "aria-controls": "labelstudio_token_help_body",
+                        },
+                    ),
+                    ui.div(
+                        ui.br(),
+                        ui.markdown(
+                            _("**Option 1: Personal Access Token (recommended)**") + "  \n" +
+                            _("1. Open Label Studio in your browser (button above)") + "  \n" +
+                            _("2. Click on your user icon (top right) → Account & Settings") + "  \n" +
+                            _("3. Scroll to 'Personal Access Tokens' section") + "  \n" +
+                            _("4. Click 'Create new token'") + "  \n" +
+                            _("5. Copy the token, paste it here below and click Save") + "  \n" +
+                            "  \n" +
+                            _("**Option 2: Legacy Token (fallback)**") + "  \n" +
+                            _("1. In Label Studio, go to 'burger menu' → Organization") + "  \n" +
+                            _("2. Click on 'API Tokens Settings' and enable 'Legacy Tokens'") + "  \n" +
+                            _("3. Click your user icon → Account & Settings") + "  \n" +
+                            _("4. Find 'Legacy Token' section and copy the 'Access Token'") + "  \n" +
+                            _("5. Paste it below and click Save")
+                        ),
+                        id="labelstudio_token_help_body",
+                        class_="collapse",
+                        style_="text-align: left; padding: 1rem; background-color: var(--bs-body-bg); border: 1px solid var(--bs-border-color); border-radius: 0.25rem; margin-top: 0.5rem;",
+                    ),
                 ),
-                style_ ="padding-top: 20px;"
-
+                ui.br(),
+                ui.div(
+                    ui.input_password(
+                        "labelstudio_api_token",
+                        _("Label Studio API Token"),
+                        value=CONFIG.get("LABELSTUDIO_API_TOKEN", ""),
+                        placeholder=_("Paste Personal Access Token or Legacy Token here"),
+                        width="100%"
+                    ),
+                    ui.br(),
+                    ui.input_action_button("btn_save_labelstudio_token", _("Save Token"), class_="btn-primary"),
+                    style_="max-width:600px; margin:0 auto;"
+                ),
+                style_="text-align:center;"
+            ), ui.hr(), ui.div(
+                ui.markdown(_("#### Project")),
+                ui.output_ui("ui_labelstudio_project_selector"),
+                style_="text-align:center;"
+            ), ui.hr(), ui.div(
+                ui.input_task_button("btn_labelstudio_remove", _("Remove Label Studio"), icon=icon_svg("trash"), class_="btn-danger btn-sm"),
+                ui.br(),
+                ui.help_text(_("Your project data will not be deleted."), style_="margin-top:0.5rem;"),
+                style_="text-align:center;"
             )
 
         # If labelstudio is not installed, show the install button
         else:
             ui_labelstudio = ui.div(
                 ui.markdown(
-                    _("#### You have two choices:") + "  \n" +
-                    _("1. `EASY` **Install Label Studio automatically on the Kittyflap**:") + "  \n" +
-                    _("Easy, but you may be limited in the number of images you can label. The performance may vary, depending on the wlan connection to the Kittyflap.") + "  \n" +
-                    _("2. `EXPERT` **Install Label Studio on your own computer**:") + "  \n" +
-                    _("This is a bit harder, but you are more flexible and the performance while labeling the images may be better. Also, you don't need to worry about the limited disk space on the Kittyflap. See the [Label Studio](https://labelstud.io/) website for instructions.") + "  \n" +
-                    _("> **Please note, if you want to install Label Studio on the Kittyflap:**") + "  \n" +
-                    _("Some Kittyflaps have only 1GB of RAM. In this case, it is strongly recommended to always stop the Label Studio server after you are done with the labeling process, otherwise the Kittyflap may run out of memory.") + "  \n" +
-                    _("You can check the available disk space and the RAM configuration in the `INFO` section.")
+                    _("**Option 1** – Install on the Kittyflap (easy, limited resources)") + "  \n" +
+                    _("**Option 2** – Install on your own computer ([labelstud.io](https://labelstud.io/))") + "  \n\n" +
+                    _("> Some Kittyflaps have only 1 GB RAM. Stop Label Studio when not in use.")
                 ),
                 ui.hr(),
-                ui.column(
-                    12,
+                ui.div(
                     ui.input_task_button("btn_labelstudio_install", _("Install Label Studio on the Kittyflap")),
-                    ui.br(),
-                    ui.help_text(_("Click the button to install Label Studio.")),
-                    ui.br(),
-                    ui.help_text(_("This will take 5-10 minutes, so please be patient.")),
-                    ui.br(),
-                    ui.help_text(_("The Kittyflap may not be reachable during the installation. This is normal.")),
-                    style_="text-align: center;"
+                    ui.help_text(
+                        _("This will take 5–10 minutes. The Kittyflap may not be reachable during installation."),
+                        style_="margin-top:0.5rem;"
+                    ),
+                    style_="text-align:center;"
                 ),
             )
 
@@ -5209,10 +5240,26 @@ def server(input, output, session):
                     model_training_base_model_input = _disable_input(model_training_base_model_input)
                     model_training_image_size_input = _disable_input(model_training_image_size_input)
 
+                # Build training data source options
+                ls_training_source_options = {}
+                saved_project = CONFIG.get("LABELSTUDIO_PROJECT", "").strip()
+                if saved_project and get_labelstudio_status():
+                    project_title = CONFIG.get("LABELSTUDIO_PROJECT_TITLE", "").strip() or saved_project
+                    ls_training_source_options["__labelstudio__"] = _("Export from Label Studio project") + f" ({project_title})"
+                ls_training_source_options["__manual__"] = _("Upload project zip manually")
+
                 training_content = ui.div(
                     ui.div(
                         ui.div(
-                            uix.input_file("model_training_data", _("Upload Label-Studio Training Data (ZIP file)"), accept=".zip", multiple=False, width="90%"),
+                            ui.markdown(_("### Training Data")),
+                            ui.input_select(
+                                "model_training_labelstudio_project",
+                                _("Training data source"),
+                                ls_training_source_options,
+                                width="90%"
+                            ),
+                            ui.output_ui("ui_model_training_project_note"),
+                            ui.output_ui("ui_model_training_data_upload"),
                             ui.input_text("model_name", _("Model Name (optional)"), placeholder=_("Enter a name for your model"), width="90%"),
                             ui.input_text("user_name", _("Username (optional)"), value=CONFIG['USER_NAME'], placeholder=_("Enter your name"), width="90%"),
                             ui.input_text("email_notification", _("Email for Notification (optional)"), value=CONFIG['EMAIL'], placeholder=_("Enter your email address"), width="90%"),
@@ -5283,93 +5330,82 @@ def server(input, output, session):
                                         btn.disabled = true;
                                         var tid = setInterval(function() {
                                             if (!document.body.contains(btn)) { clearInterval(tid); return; }
-                                            var bar = document.querySelector('#model_training_data_progress .progress-bar');
-                                            var done = bar && bar.textContent.trim().toLowerCase() === 'upload complete';
-                                            btn.disabled = !done;
+                                            
+                                            var srcSelect = document.querySelector('select[id*="model_training_labelstudio_project"]');
+                                            var src = srcSelect ? srcSelect.value : '';
+                                            
+                                            if (src === '__labelstudio__') {
+                                                // LS project: enable if no warning note is visible
+                                                var note = document.getElementById('ls_project_task_warning');
+                                                btn.disabled = !!note;
+                                            } else {
+                                                // Manual upload: enable when file upload is complete
+                                                var bar = document.querySelector('#model_training_data_progress .progress-bar');
+                                                var fileUploaded = bar && bar.textContent.trim().toLowerCase() === 'upload complete';
+                                                btn.disabled = !fileUploaded;
+                                            }
                                         }, 300);
                                     })();
                                 """)
                             ),
                             id="model_training_form",
-                            style_="display: flex; flex-direction: column; align-items: center; justify-content: center;"
+                            style_="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%;"
                         ),
-                        style_="text-align: center;"
+                        style_="text-align: center; width: 100%;"
                     ),
                 )
 
-        ui_ai_training =  ui.div(
+        ui_ai_training = ui.div(
             ui.div(
-                ui.card(
-                    ui.card_header(
-                        ui.h4(_("Description"), style_="text-align: center;"),
-                    ),
-                    ui.br(),
+                ui.br(),
+                # Compact intro (replaces the old Description card)
+                ui.div(
                     ui.markdown(
-                        _("In this section, you can train your own individual AI model for the Kittyflap. The training process consists of two steps:") + "  \n" +
-                        _("1. **Label Studio**: In this step, you can label your cat(s) and their prey in the captured images. This is done using the Label Studio tool.") + "  \n" +
-                        _("2. **Model Training**: In this step, the labeled images are used to train a new AI model.") + "  \n" +
-                        _("To achieve the best results, it is recommended to label at least 100 images of each cat and their prey. The more images you label, the better the model will be.") + " " +
-                        _("The training process can take from several minutes up to an hour, depending on the number of images.") + "  \n" +
-                        _("Please read the instructions before creating your own model! Following these exact instructions is crucial for successful training:")
+                        _("Train your own AI model: label images with Label Studio, then submit them for training.") + " " +
+                        _("Read the instructions before starting:")
                     ),
+                    ui.HTML(f'<a href="{wiki_url}" target="_blank" class="btn btn-sm btn-outline-secondary" style="margin-top:0.25rem;">'
+                           f'<i class="fa fa-clipboard-list" style="margin-right:5px;"></i>'
+                           + _("Instructions for training your own model") + '</a>'),
+                    style_="text-align:center; margin-bottom:1.5rem;"
+                ),
+                collapsible_section(
+                    "ai_labelstudio",
+                    "Label Studio",
+                    (_("Manage Label Studio, configure API access, and select a project.")
+                     if CONFIG["LABELSTUDIO_VERSION"] is not None
+                     else _("Install Label Studio to start labeling your images.")),
                     ui.div(
-                        ui.HTML(f'<a href="{wiki_url}" target="_blank" class="btn btn-default">' +
-                               '<i class="fa fa-clipboard-list" style="margin-right: 5px;"></i>' + 
-                               _("Instructions for training your own model") + '</a>'),
-                        style_="text-align: center;"
+                        ui_labelstudio,
+                        class_="generic-container align-left",
+                        style_="padding-left:1rem !important; padding-right:1rem !important;",
                     ),
-                    ui.br(),
-                    full_screen=False,
-                    class_="generic-container align-left",
-                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
                 ),
-                width="400px"
-            ),
-            ui.div(
-                ui.card(
-                    ui.card_header(
-                        ui.h4("Label Studio", style_="text-align: center;"),
+                collapsible_section(
+                    "ai_model_training",
+                    _("Model Training"),
+                    (_("A model training is in progress.")
+                     if training_in_progress
+                     else _("Upload labeled data and submit for model training.")),
+                    ui.div(
+                        training_content,
+                        class_="generic-container align-left",
+                        style_="padding-left:1rem !important; padding-right:1rem !important;",
                     ),
-                    ui.br(),
-                    ui_labelstudio,
-                    ui.br(),
-                    full_screen=False,
-                    class_="generic-container align-left",
-                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
                 ),
-                width="400px"
-            ),
-            ui.div(
-                ui.card(
-                    ui.card_header(
-                        ui.h4(_("Model Training"), style_="text-align: center;"),
+                collapsible_section(
+                    "ai_model_management",
+                    _("Model Management"),
+                    _("Rename, activate, or remove your trained models."),
+                    ui.div(
+                        ui.output_ui("manage_yolo_models_table"),
+                        class_="generic-container align-left",
+                        style_="padding-left:1rem !important; padding-right:1rem !important;",
                     ),
-                    ui.br(),
-                    training_content,
-                    ui.br(),
-                    full_screen=False,
-                    class_="generic-container align-left",
-                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
                 ),
-                width="400px"
+                class_="generic-container align-left",
+                style_="padding-left:1rem !important; padding-right:1rem !important;",
             ),
-            ui.div(
-                ui.card(
-                    ui.card_header(
-                        ui.h4(_("Model Management"), style_="text-align: center;"),
-                    ),
-                    ui.br(),
-                    ui.div(_("Here you can rename or remove your own models. To activate a model, go to the [CONFIGURATION] section.")),
-                    ui.output_ui("manage_yolo_models_table"),
-                    full_screen=False,
-                    class_="generic-container align-left",
-                    style_="padding-left: 1rem !important; padding-right: 1rem !important;",
-                ),
-                width="400px"
-            ),
-
-            ui.br(),
-            ui.br(),
             ui.br(),
             ui.br(),
             ui.br(),
@@ -5551,21 +5587,193 @@ def server(input, output, session):
         ui.notification_show(_("Model training cancelled."), duration=15, type="message")
         reload_trigger_ai.set(reload_trigger_ai.get() + 1)
     
+    @output
+    @render.ui
+    def ui_model_training_data_upload():
+        """Show/hide file upload based on training data source selection."""
+        try:
+            selected = input.model_training_labelstudio_project()
+            if selected == "__manual__" or selected is None:
+                return ui.div(
+                    uix.input_file("model_training_data", _("Upload Label-Studio Training Data (ZIP file)"), accept=".zip", multiple=False, width="90%"),
+                    ui.br(),
+                    style_="width: 100%; max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; align-items: center;"
+                )
+            else:
+                return ui.div()
+        except Exception:
+            return ui.div(
+                uix.input_file("model_training_data", _("Upload Label-Studio Training Data (ZIP file)"), accept=".zip", multiple=False, width="90%"),
+                ui.br(),
+                style_="width: 100%; max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; align-items: center;"
+            )
+
+    @output
+    @render.ui
+    def ui_model_training_project_note():
+        """Show a warning if the selected LS project has no/incomplete tasks."""
+        # Read reload_trigger_ai so this output re-executes when the AI tab reloads
+        # (e.g. after saving a new project selection).
+        reload_trigger_ai.get()
+
+        try:
+            selected = input.model_training_labelstudio_project()
+        except Exception:
+            return ui.div()
+
+        if selected != "__labelstudio__":
+            return ui.div()
+
+        saved_project = CONFIG.get("LABELSTUDIO_PROJECT", "").strip()
+        if not saved_project:
+            return ui.div(
+                ui.div(
+                    ui.div(
+                        icon_svg('triangle-exclamation', margin_left='-0.1em'),
+                        " ",
+                        _("No Label Studio project selected. Please select a project in the Label Studio card above."),
+                        style_="margin-bottom: 0;"
+                    ),
+                    id="ls_project_task_warning",
+                    class_="alert alert-warning",
+                    style_="text-align: left; margin-top: 0.5rem;",
+                ),
+            )
+
+        try:
+            project_id = int(saved_project)
+        except (ValueError, TypeError):
+            return ui.div()
+
+        summary = get_labelstudio_project_task_summary(project_id)
+        if summary is None:
+            return ui.div(
+                ui.div(
+                    ui.div(
+                        icon_svg('triangle-exclamation', margin_left='-0.1em'),
+                        " ",
+                        _("Could not retrieve task information for the selected project."),
+                        style_="margin-bottom: 0;"
+                    ),
+                    id="ls_project_task_warning",
+                    class_="alert alert-warning",
+                    style_="text-align: left; margin-top: 0.5rem;",
+                ),
+            )
+
+        if summary["total_tasks"] == 0:
+            return ui.div(
+                ui.div(
+                    ui.div(
+                        icon_svg('triangle-exclamation', margin_left='-0.1em'),
+                        " ",
+                        _("The selected project has no tasks. Please add and annotate images in Label Studio first."),
+                        style_="margin-bottom: 0;"
+                    ),
+                    id="ls_project_task_warning",
+                    class_="alert alert-warning",
+                    style_="text-align: left; margin-top: 0.5rem;",
+                ),
+            )
+
+        if not summary["ready"]:
+            return ui.div(
+                ui.div(
+                    ui.div(
+                        icon_svg('triangle-exclamation', margin_left='-0.1em'),
+                        " ",
+                        _("The selected project has {unannotated} of {total} tasks without annotations. Please complete all annotations before training.").format(
+                            unannotated=summary["unannotated_tasks"],
+                            total=summary["total_tasks"],
+                        ),
+                        style_="margin-bottom: 0;"
+                    ),
+                    id="ls_project_task_warning",
+                    class_="alert alert-warning",
+                    style_="text-align: left; margin-top: 0.5rem;",
+                ),
+            )
+
+        # All good
+        return ui.div(
+            ui.div(
+                ui.div(
+                    icon_svg('circle-check', margin_left='-0.1em'),
+                    " ",
+                    _("Project ready: {annotated} annotated tasks.").format(
+                        annotated=summary["annotated_tasks"],
+                    ),
+                    style_="margin-bottom: 0;"
+                ),
+                class_="alert alert-success",
+                style_="text-align: left; margin-top: 0.5rem;",
+            ),
+        )
+
     @reactive.Effect
     @reactive.event(input.submit_model_training)
     def on_submit_model_training():
-        # Check if a file was uploaded
-        if input.model_training_data() is None:
-            ui.notification_show(_("Please upload a ZIP file with the Label Studio training data."), duration=10, type="error")
-            return
+        # Check if a Label Studio project was selected or a file was uploaded
+        labelstudio_project_id = None
+        zip_file_path = None
+        
+        try:
+            source = input.model_training_labelstudio_project()
+            if source == "__labelstudio__":
+                saved_project = CONFIG.get("LABELSTUDIO_PROJECT", "").strip()
+                if saved_project:
+                    try:
+                        labelstudio_project_id = int(saved_project)
+                    except (ValueError, TypeError):
+                        labelstudio_project_id = None
+        except Exception:
+            labelstudio_project_id = None
+        
+        if labelstudio_project_id:
+            # User selected a Label Studio project
+            logging.info(f"[MODEL_TRAINING] User selected Label Studio project {labelstudio_project_id}")
+            
+            # Export the project as YOLO format
+            try:
+                with ui.Progress(min=1, max=3) as p:
+                    p.set(message=_("Exporting Label Studio project..."), value=1)
+                    
+                    # Create a temporary file for the export
+                    temp_dir = tempfile.gettempdir()
+                    zip_file_path = os.path.join(temp_dir, f"labelstudio_project_{labelstudio_project_id}_{int(tm.time())}.zip")
+                    
+                    p.set(message=_("Downloading project data..."), value=2)
+                    if not export_labelstudio_project_as_zip(labelstudio_project_id, zip_file_path):
+                        ui.notification_show(_("Failed to export Label Studio project. Please ensure the project is properly configured and exported as 'YOLO with Images'."), duration=15, type="error")
+                        # Clean up temp file if it was created
+                        try:
+                            if os.path.exists(zip_file_path):
+                                os.remove(zip_file_path)
+                        except Exception:
+                            pass
+                        return
+                    
+                    p.set(message=_("Project exported successfully"), value=3)
+                    logging.info(f"[MODEL_TRAINING] Successfully exported Label Studio project to {zip_file_path}")
+            except Exception as e:
+                logging.error(f"[MODEL_TRAINING] Error exporting Label Studio project: {e}")
+                ui.notification_show(_("Error exporting Label Studio project: {}").format(str(e)), duration=15, type="error")
+                return
+        else:
+            # User uploaded a file
+            if input.model_training_data() is None:
+                ui.notification_show(_("Please either select a Label Studio project or upload a ZIP file with the training data."), duration=10, type="error")
+                return
 
-        # Check if the file is a ZIP file
-        if not input.model_training_data()[0]['name'].endswith('.zip'):
-            ui.notification_show(_("The uploaded file is not a ZIP file. Please upload a valid ZIP file."), duration=10, type="error")
-            return
+            # Check if the file is a ZIP file
+            if not input.model_training_data()[0]['name'].endswith('.zip'):
+                ui.notification_show(_("The uploaded file is not a ZIP file. Please upload a valid ZIP file."), duration=10, type="error")
+                return
 
-        # Get the uploaded file path
-        zip_file_path = input.model_training_data()[0]['datapath']
+            # Get the uploaded file path
+            zip_file_path = input.model_training_data()[0]['datapath']
+            logging.info(f"[MODEL_TRAINING] User uploaded ZIP file: {zip_file_path}")
+
         model_name = input.model_name()
         email_notification = input.email_notification()
         user_name = input.user_name()
@@ -5775,6 +5983,111 @@ def server(input, output, session):
         # If we get here, the process didn't start within the timeout period
         ui.notification_show(_("Label Studio may not have started completely. Please check the logs."), duration=5, type="warning")
         reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+
+    @reactive.Effect
+    @reactive.event(input.btn_save_labelstudio_token)
+    def save_labelstudio_token():
+        """Save the Label Studio API token to config.ini and reload the AI Training tab."""
+        try:
+            token = (input.labelstudio_api_token() or "").strip()
+            CONFIG["LABELSTUDIO_API_TOKEN"] = token
+            update_single_config_parameter("LABELSTUDIO_API_TOKEN")
+            
+            if token:
+                ui.notification_show(_("Label Studio API token saved successfully. Reloading…"), duration=3, type="message")
+            else:
+                ui.notification_show(_("Label Studio API token cleared. Reloading…"), duration=3, type="message")
+
+            # Trigger a reload of the AI Training tab so the project list is
+            # re-fetched with the (possibly new) token.
+            reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+        except Exception as e:
+            logging.error(f"[SERVER] Failed to save Label Studio API token: {e}")
+            ui.notification_show(_("Failed to save token. Please check the logs."), duration=None, type="error")
+
+    @output
+    @render.ui
+    @reactive.event(reload_trigger_ai, ignore_none=True)
+    async def ui_labelstudio_project_selector():
+        """Render the Label Studio project dropdown with async fetching and spinner."""
+        token = CONFIG.get("LABELSTUDIO_API_TOKEN", "").strip()
+        if not token:
+            return ui.div(
+                ui.help_text(_("Please configure an API token above to select a project.")),
+                style_="margin-top: 0.5rem;"
+            )
+
+        if not get_labelstudio_status():
+            return ui.div(
+                ui.help_text(_("Label Studio is not running. Please start it to select a project.")),
+                style_="margin-top: 0.5rem;"
+            )
+
+        # Fetch projects (may take a few seconds – Shiny shows a spinner automatically for async outputs)
+        projects = await asyncio.to_thread(get_labelstudio_projects_list, token=token)
+
+        if projects is None:
+            return ui.div(
+                ui.div(
+                    ui.markdown(f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} " +
+                                _("Could not fetch projects. Please check your API token.")),
+                    class_="alert alert-warning",
+                    style_="text-align: left; margin-top: 0.5rem;",
+                ),
+            )
+
+        if not projects:
+            return ui.div(
+                ui.help_text(_("No projects found in Label Studio.")),
+                style_="margin-top: 0.5rem;"
+            )
+
+        project_choices = {"":  _("— Select a project —")}
+        for p in projects:
+            project_choices[str(p["id"])] = p.get("title", f"Project {p['id']}")
+
+        # Store the id->title map so the save handler can look up names
+        ls_project_choices.set({k: v for k, v in project_choices.items() if k})
+
+        saved_project = CONFIG.get("LABELSTUDIO_PROJECT", "").strip()
+        selected = saved_project if saved_project in project_choices else ""
+
+        return ui.div(
+            ui.input_select(
+                "labelstudio_project_select",
+                _("Select a Label Studio project"),
+                project_choices,
+                selected=selected,
+                width="90%"
+            ),
+            style_="max-width: 600px; margin: 0 auto; margin-top: 0.5rem;"
+        )
+
+    @reactive.Effect
+    @reactive.event(input.labelstudio_project_select)
+    def save_labelstudio_project():
+        """Persist the selected Label Studio project to config.ini whenever the dropdown changes."""
+        try:
+            selected = (input.labelstudio_project_select() or "").strip()
+            if selected == CONFIG.get("LABELSTUDIO_PROJECT", ""):
+                return  # no change
+
+            CONFIG["LABELSTUDIO_PROJECT"] = selected
+            update_single_config_parameter("LABELSTUDIO_PROJECT")
+
+            # Also persist the human-readable project title
+            choices = ls_project_choices.get()
+            title = choices.get(selected, "") if selected else ""
+            CONFIG["LABELSTUDIO_PROJECT_TITLE"] = title
+            update_single_config_parameter("LABELSTUDIO_PROJECT_TITLE")
+
+            if selected:
+                ui.notification_show(_("Label Studio project saved."), duration=2, type="message")
+
+            reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+        except Exception as e:
+            logging.error(f"[SERVER] Failed to save Label Studio project: {e}")
+            ui.notification_show(_("Failed to save project selection. Please check the logs."), duration=None, type="error")
 
     def collapsible_section(section_id, title, intro, content):
         return ui.div(

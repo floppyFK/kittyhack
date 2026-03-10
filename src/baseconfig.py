@@ -229,6 +229,9 @@ DEFAULT_CONFIG = {
         "allowed_to_exit_range3_from": "00:00",
         "allowed_to_exit_range3_to": "23:59",
         "labelstudio_version": None,
+        "labelstudio_api_token": "",
+        "labelstudio_project": "",
+        "labelstudio_project_title": "",
         "email": "",
         "user_name": "",
         "model_training": "",
@@ -274,7 +277,8 @@ SENSITIVE_CONFIG_KEYS = {
     'MQTT_PASSWORD',
     'MQTT_USERNAME',
     'EMAIL',
-    'IP_CAMERA_URL'  # May contain embedded credentials
+    'IP_CAMERA_URL',  # May contain embedded credentials
+    'LABELSTUDIO_API_TOKEN'
 }
 
 # Legacy config defaults (kept for migration only; not written to new configs)
@@ -482,6 +486,9 @@ def load_config():
         "ALLOWED_TO_EXIT_RANGE3_FROM": safe_str("ALLOWED_TO_EXIT_RANGE3_FROM", d['allowed_to_exit_range3_from']),
         "ALLOWED_TO_EXIT_RANGE3_TO": safe_str("ALLOWED_TO_EXIT_RANGE3_TO", d['allowed_to_exit_range3_to']),
         "LABELSTUDIO_VERSION": safe_str("LABELSTUDIO_VERSION", d['labelstudio_version']),
+        "LABELSTUDIO_API_TOKEN": safe_str("LABELSTUDIO_API_TOKEN", d.get('labelstudio_api_token', "")),
+        "LABELSTUDIO_PROJECT": safe_str("LABELSTUDIO_PROJECT", d.get('labelstudio_project', "")),
+        "LABELSTUDIO_PROJECT_TITLE": safe_str("LABELSTUDIO_PROJECT_TITLE", d.get('labelstudio_project_title', "")),
         "EMAIL": safe_str("EMAIL", d['email']),
         "USER_NAME": safe_str("USER_NAME", d['user_name']),
         "MODEL_TRAINING": safe_str("MODEL_TRAINING", d['model_training']),
@@ -651,6 +658,8 @@ def save_config():
     settings['allowed_to_exit_range3_to'] = CONFIG['ALLOWED_TO_EXIT_RANGE3_TO']
     settings['remote_wait_after_reboot_timeout'] = CONFIG.get('REMOTE_WAIT_AFTER_REBOOT_TIMEOUT', 30.0)
     #settings['labelstudio_version'] = CONFIG['LABELSTUDIO_VERSION'] # This value may not be written to the config file
+    settings['labelstudio_project'] = CONFIG.get('LABELSTUDIO_PROJECT', '')
+    settings['labelstudio_project_title'] = CONFIG.get('LABELSTUDIO_PROJECT_TITLE', '')
     settings['email'] = CONFIG['EMAIL']
     settings['user_name'] = CONFIG['USER_NAME']
     settings['model_training'] = CONFIG['MODEL_TRAINING']

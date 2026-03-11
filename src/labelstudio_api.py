@@ -610,6 +610,43 @@ class LabelStudioAPI:
             logging.error(f"[LABELSTUDIO] Error getting project details: {e}")
             return None
     
+    def upload_image(self, project_id: int, image_bytes: bytes, filename: str) -> bool:
+        """
+        Upload an image to a Label Studio project as a new task.
+
+        Args:
+            project_id: Target project ID
+            image_bytes: Raw JPEG/PNG image bytes
+            filename: Filename for the uploaded image
+
+        Returns:
+            True if upload succeeded, False otherwise
+        """
+        if not self.is_authenticated():
+            logging.error("[LABELSTUDIO] Not authenticated")
+            return False
+
+        try:
+            import_url = f"{self.base_url}/api/projects/{int(project_id)}/import"
+            files = {"file": (filename, image_bytes, "image/jpeg")}
+            response = self.session.post(
+                import_url,
+                headers=self._auth_headers(),
+                files=files,
+                timeout=max(self.timeout, 30),
+            )
+            if response.status_code in (200, 201):
+                logging.info(f"[LABELSTUDIO] Uploaded image '{filename}' to project {project_id}")
+                return True
+            else:
+                logging.warning(
+                    f"[LABELSTUDIO] Upload failed: HTTP {response.status_code} — {response.text[:200]}"
+                )
+                return False
+        except Exception as e:
+            logging.error(f"[LABELSTUDIO] Error uploading image: {e}")
+            return False
+
     @staticmethod
     def is_labelstudio_available(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, timeout: int = 5) -> bool:
         """
@@ -746,3 +783,44 @@ def get_labelstudio_project_task_summary(
     except Exception as e:
         logging.error(f"[LABELSTUDIO] Error getting project task summary: {e}")
         return None
+
+
+def upload_image_to_labelstudio_project(
+    project_id: int,
+    image_bytes: bytes,
+    filename: str,
+    host: str = LabelStudioAPI.DEFAULT_HOST,
+    port: int = LabelStudioAPI.DEFAULT_PORT,
+    token: Optional[str] = None,
+) -> bool:
+    """
+    Upload a single image to a Label Studio project.
+
+    Args:
+        project_id: Target project ID
+        image_bytes: Raw image bytes (JPEG/PNG)
+        filename: Filename for the uploaded image
+        host: Label Studio server host
+        port: Label Studio server port
+        token: Optional API token override
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        if not LabelStudioAPI.is_labelstudio_available(host, port):
+            logging.warning("[LABELSTUDIO] Label Studio is not available")
+            return False
+
+        api = LabelStudioAPI(host=host, port=port)
+        if not api.authenticate(token=token):
+            logging.error("[LABELSTUDIO] Failed to authenticate with Label Studio")
+            return False
+
+        success = api.upload_image(project_id, image_bytes, filename)
+        api.close()
+        return success
+
+    except Exception as e:
+        logging.error(f"[LABELSTUDIO] Error uploading image to project: {e}")
+        return False

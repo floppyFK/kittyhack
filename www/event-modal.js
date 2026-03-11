@@ -737,16 +737,17 @@
     Player.prototype._updateDownloadSingleState = function () {
         try {
             var scope = this.root.closest('.modal-content') || document;
-            var dlBtn = scope.querySelector('.event-modal-toolbar-bottom-left a, .event-modal-toolbar-bottom-left button');
-            if (dlBtn) {
+            var btns = scope.querySelectorAll('.event-modal-toolbar-bottom-left a, .event-modal-toolbar-bottom-left button');
+            for (var i = 0; i < btns.length; i++) {
+                var btn = btns[i];
                 if (this.playing) {
-                    dlBtn.classList.add('disabled');
-                    dlBtn.style.opacity = '0.5';
-                    dlBtn.style.pointerEvents = 'none';
+                    btn.classList.add('disabled');
+                    btn.style.opacity = '0.5';
+                    btn.style.pointerEvents = 'none';
                 } else {
-                    dlBtn.classList.remove('disabled');
-                    dlBtn.style.opacity = '';
-                    dlBtn.style.pointerEvents = '';
+                    btn.classList.remove('disabled');
+                    btn.style.opacity = '';
+                    btn.style.pointerEvents = '';
                 }
             }
         } catch (e) {}
@@ -792,6 +793,16 @@
             var dlSingle = modal.querySelector('a[id$="btn_download_single"]');
             if (dlSingle) {
                 dlSingle.addEventListener('click', function () {
+                    self._signalFrameIdx(self.currentIdx);
+                }, true);
+            }
+        } catch (e) {}
+
+        // Signal current frame index before Shiny processes Label Studio upload click
+        try {
+            var lsBtn = modal.querySelector('button[id$="btn_send_to_labelstudio"]');
+            if (lsBtn) {
+                lsBtn.addEventListener('click', function () {
                     self._signalFrameIdx(self.currentIdx);
                 }, true);
             }

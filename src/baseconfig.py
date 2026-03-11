@@ -780,7 +780,8 @@ def update_single_config_parameter(parameter: str):
     try:
         with open(CONFIGFILE, 'w') as configfile:
             updater.write(configfile)
-        logging.info(f"Updated {parameter.upper()} in the configfile to: {value}")
+        loggable_value = get_loggable_config_value(parameter.upper(), value)
+        logging.info(f"Updated {parameter.upper()} in the configfile to: {loggable_value}")
     except Exception as e:
         logging.error(f"Failed to update {parameter.upper()} in the configfile: {e}")
 

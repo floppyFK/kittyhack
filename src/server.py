@@ -95,6 +95,7 @@ from src.labelstudio_api import (
     get_labelstudio_projects_list,
     export_labelstudio_project_as_zip,
     get_labelstudio_project_task_summary,
+    upload_image_to_labelstudio_project,
 )
 
 # Prepare gettext for translations based on the configured language
@@ -1374,6 +1375,22 @@ def show_event_server(input, output, session, block_id: int):
                                         id="tooltip_download_single",
                                         options={"trigger": "hover"},
                                     ),
+                                    ui.tooltip(
+                                        ui.input_action_button(
+                                            id="btn_send_to_labelstudio",
+                                            label="",
+                                            icon=icon_svg("upload", margin_left="0", margin_right="0"),
+                                            class_="btn-icon-square btn-outline-secondary",
+                                            disabled_=(
+                                                not CONFIG.get("LABELSTUDIO_API_TOKEN")
+                                                or not CONFIG.get("LABELSTUDIO_PROJECT")
+                                                or not get_labelstudio_status()
+                                            ),
+                                        ),
+                                        _("Send current picture to Label Studio"),
+                                        id="tooltip_send_to_labelstudio",
+                                        options={"trigger": "hover"},
+                                    ),
                                     class_="event-modal-toolbar-bottom-left",
                                 ),
                                 ui.div(
@@ -1486,6 +1503,91 @@ def show_event_server(input, output, session, block_id: int):
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write("Single image download failed.\n")
             return out_path
+
+    # ---- Send to Label Studio ----
+    @reactive.effect
+    @reactive.event(input.btn_send_to_labelstudio)
+    async def send_to_labelstudio():
+        project_id = CONFIG.get("LABELSTUDIO_PROJECT", "").strip()
+        api_token = CONFIG.get("LABELSTUDIO_API_TOKEN", "").strip()
+
+        if not project_id or not api_token:
+            ui.notification_show(_("Label Studio is not configured. Please set an API token and select a project in the settings."), type="warning", duration=5)
+            return
+
+        if not get_labelstudio_status():
+            ui.notification_show(_("Label Studio is not running."), type="warning", duration=5)
+            return
+
+        try:
+            vis_idx = int(input.client_frame_idx() or 0)
+            if vis_idx >= len(photo_ids):
+                raise RuntimeError("No visible image")
+
+            pid = photo_ids[int(vis_idx)]
+            if pid is None:
+                raise RuntimeError("Missing photo ID")
+
+            # Load image bytes (same logic as single-image download)
+            img_bytes = None
+            try:
+                fp = os.path.join(pictures_original_dir(), f"{int(pid)}.jpg")
+                if os.path.exists(fp):
+                    with open(fp, "rb") as f:
+                        img_bytes = f.read()
+            except Exception:
+                img_bytes = None
+
+            if img_bytes is None:
+                try:
+                    df = read_df_from_database(
+                        CONFIG['KITTYHACK_DATABASE_PATH'],
+                        f"SELECT original_image FROM events WHERE id = {int(pid)}",
+                    )
+                    if not df.empty:
+                        ob = df.iloc[0].get('original_image')
+                        if isinstance(ob, (bytes, bytearray)) and len(ob) > 0:
+                            img_bytes = bytes(ob)
+                except Exception:
+                    pass
+
+            if not isinstance(img_bytes, (bytes, bytearray)) or len(img_bytes) == 0:
+                ui.notification_show(_("Could not load the image."), type="warning", duration=5)
+                return
+
+            # Show progress notification
+            ui.notification_show(
+                ui.HTML(
+                    '<div class="d-flex align-items-center gap-2">'
+                    '<div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>'
+                    f'<span>{_("Sending picture to Label Studio...")}</span>'
+                    '</div>'
+                ),
+                id="ls_upload_progress",
+                type="message",
+                duration=None,
+            )
+
+            filename = f"kittyhack_event_{block_id}_{vis_idx + 1}.jpg"
+            success = await asyncio.to_thread(
+                upload_image_to_labelstudio_project,
+                project_id=int(project_id),
+                image_bytes=img_bytes,
+                filename=filename,
+                token=api_token,
+            )
+
+            ui.notification_remove("ls_upload_progress")
+
+            if success:
+                ui.notification_show(_("Picture sent to Label Studio successfully."), type="message", duration=3)
+            else:
+                ui.notification_show(_("Failed to send picture to Label Studio."), type="error", duration=5)
+
+        except Exception as e:
+            logging.warning(f"[LABELSTUDIO] Send to Label Studio failed: {e}")
+            ui.notification_remove("ls_upload_progress")
+            ui.notification_show(_("Failed to send picture to Label Studio."), type="error", duration=5)
 
     # ---- Delete event ----
     @reactive.effect

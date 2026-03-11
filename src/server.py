@@ -2792,6 +2792,17 @@ def server(input, output, session):
             reload_trigger_ai.set(reload_trigger_ai.get() + 1)
             reload_trigger_config.set(reload_trigger_config.get() + 1)
 
+    @reactive.Effect
+    @reactive.event(input.main_nav, ignore_none=True)
+    def refresh_ai_training_on_tab_activate():
+        try:
+            current_tab = str(input.main_nav() or "").strip()
+        except Exception:
+            return
+
+        if current_tab == "ai-training":
+            reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+
     # Show user notifications if there are any
     show_user_notifications()
 
@@ -3596,14 +3607,13 @@ def server(input, output, session):
     @render.ui
     @reactive.event(
         input.photos_page,
-        input.photos_prev_page,
-        input.photos_next_page,
         input.button_events_view,         # to clear when switching view mode
         input.button_detection_overlay,   # to toggle overlays without extra reloads
         input.button_reload,
         input.date_selector,
         input.button_cat_only,
         input.button_mouse_only,
+        reload_trigger_photos,
         ignore_none=True
     )
     def ui_photos_cards():
@@ -3652,7 +3662,13 @@ def server(input, output, session):
 
         if df_photos.empty:
             logging.info("No pictures for the selected filter criteria found.")
-            return ui.help_text(_("No pictures for the selected filter criteria found."), class_="no-images-found")
+            return ui.div(
+                ui.div(
+                    ui.HTML(f'{icon_svg("image", height="2.5em", width="2.5em")}'),
+                    ui.p(_("No pictures for the selected filter criteria found.")),
+                    class_="kh-empty-state",
+                ),
+            )
 
         # Get a dictionary mapping RFIDs to cat names
         cat_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
@@ -3686,9 +3702,7 @@ def server(input, output, session):
             thumb_src = f"/thumb/{pid}.jpg"
             orig_src = f"/orig/{pid}.jpg"
 
-            img_html = f'''
-                <div class="kh-photo-thumb">
-                    <a class="kh-photo-open" href="{orig_src}" target="_blank" rel="noopener" aria-label="Open original">{icon_svg('up-right-from-square')}</a>
+            img_html = f'''<div class="kh-photo-thumb" data-photo-id="{pid}" data-orig-src="{orig_src}">
                     <img src="{thumb_src}" loading="lazy" decoding="async" />'''
 
             if input.button_detection_overlay() and detected_objects:
@@ -3702,49 +3716,87 @@ def server(input, output, session):
                     </div>'''
 
             img_html += "</div>"
-            
+
+            ls_disabled = (
+                not CONFIG.get("LABELSTUDIO_API_TOKEN")
+                or not CONFIG.get("LABELSTUDIO_PROJECT")
+                or not get_labelstudio_status()
+            )
+
             ui_cards.append(
                 ui.card(
                     ui.card_header(
                         ui.div(
                             ui.HTML(f"{photo_timestamp} | {data_row['id']}"),
-                            ui.div(ui.input_checkbox(id=f"delete_photo_{data_row['id']}", label="", value=False), class_="kh-photo-delete"),
                         ),
                     ),
                     ui.HTML(img_html),
                     ui.card_footer(
                         ui.div(
-                            ui.tooltip(ui.HTML(card_footer_mouse), _("Mouse probability"), options={"trigger": "hover"}),
-                            ui.HTML(card_footer_cat),
-                        )
+                            ui.div(
+                                ui.tooltip(ui.HTML(card_footer_mouse), _("Mouse probability"), options={"trigger": "hover"}),
+                                ui.HTML(card_footer_cat),
+                                class_="kh-photo-footer-info",
+                            ),
+                            ui.div(
+                                ui.tooltip(
+                                    ui.tags.a(
+                                        ui.HTML(str(icon_svg("image", margin_left="0", margin_right="0"))),
+                                        href=f"/orig/{pid}.jpg",
+                                        download=f"kittyhack_photo_{pid}.jpg",
+                                        class_="btn btn-icon-square btn-outline-primary kh-photo-action-btn",
+                                    ),
+                                    _("Download picture"),
+                                    options={"trigger": "hover"},
+                                ),
+                                ui.tooltip(
+                                    ui.input_action_button(
+                                        id=f"photo_send_ls_{pid}",
+                                        label="",
+                                        icon=icon_svg("upload", margin_left="0", margin_right="0"),
+                                        class_="btn-icon-square btn-outline-secondary kh-photo-action-btn",
+                                        disabled_=ls_disabled,
+                                    ),
+                                    _("Send picture to Label Studio"),
+                                    options={"trigger": "hover"},
+                                ),
+                                ui.tooltip(
+                                    ui.input_action_button(
+                                        id=f"photo_delete_{pid}",
+                                        label="",
+                                        icon=icon_svg("trash-can", margin_left="0", margin_right="0"),
+                                        class_="btn-icon-square btn-outline-danger kh-photo-action-btn",
+                                    ),
+                                    _("Delete picture"),
+                                    options={"trigger": "hover"},
+                                ),
+                                class_="kh-photo-actions",
+                            ),
+                            class_="kh-photo-footer-row",
+                        ),
                     ),
-                    full_screen=True,
                     class_="image-container kh-photo-card" + (" image-container-alert" if mouse_probability >= CONFIG['MOUSE_THRESHOLD'] else "")
                 )
             )
-            pass
 
         return ui.div(
             ui.tags.div(*ui_cards, class_="kh-photo-grid"),
-            ui.panel_absolute(
-                ui.panel_well(
-                    ui.input_action_button(id="delete_selected_photos", label=_("Delete selected photos"), icon=icon_svg("trash")),
-                    class_="sticky-action-well",
-                ),
-                draggable=False, width="100%", left="0px", right="0px", bottom="0px", fixed=True,
-            ),
-            ui.br(),
-            ui.br(),
-            ui.br(),
         )
         
-    @reactive.Effect
-    @reactive.event(input.delete_selected_photos)
-    def delete_selected_photos():
-        deleted_photos = []
+    # Per-photo action handlers: delete, send to Label Studio
+    # These are dynamic based on photo IDs currently on the page.
+    _photo_action_registered_ids: set = set()
+
+    @reactive.effect
+    def _register_photo_actions():
+        """Dynamically register per-photo action handlers for current page."""
+        try:
+            if input.button_events_view():
+                return
+        except Exception:
+            pass
 
         try:
-            # Only consider IDs that are currently rendered on the page
             date_start_utc, date_end_utc = _photos_filters_to_utc_range()
             total_count = db_count_photos(
                 CONFIG['KITTYHACK_DATABASE_PATH'],
@@ -3776,25 +3828,93 @@ def server(input, output, session):
         except Exception:
             df_photos = pd.DataFrame()
 
-        for id in (df_photos['id'] if not df_photos.empty and 'id' in df_photos.columns else []):
+        current_ids = set(df_photos['id'].tolist()) if not df_photos.empty and 'id' in df_photos.columns else set()
+        new_ids = current_ids - _photo_action_registered_ids
+
+        for pid in new_ids:
+            _photo_action_registered_ids.add(pid)
+            _register_single_photo_delete(int(pid))
+            _register_single_photo_send_ls(int(pid))
+
+    def _register_single_photo_delete(pid: int):
+        @reactive.effect
+        @reactive.event(input[f"photo_delete_{pid}"])
+        def _handler():
+            result = delete_photo_by_id(CONFIG['KITTYHACK_DATABASE_PATH'], pid)
+            if result.success:
+                ui.notification_show(_("Photo {} deleted successfully.").format(pid), duration=5, type="message")
+                reload_trigger_photos.set(reload_trigger_photos.get() + 1)
+            else:
+                ui.notification_show(_("An error occurred while deleting the photo: {}").format(result.message), duration=10, type="error")
+
+    def _register_single_photo_send_ls(pid: int):
+        @reactive.effect
+        @reactive.event(input[f"photo_send_ls_{pid}"])
+        async def _handler():
+            project_id = CONFIG.get("LABELSTUDIO_PROJECT", "").strip()
+            api_token = CONFIG.get("LABELSTUDIO_API_TOKEN", "").strip()
+
+            if not project_id or not api_token:
+                ui.notification_show(_("Label Studio is not configured. Please set an API token and select a project in the settings."), type="warning", duration=5)
+                return
+
+            if not get_labelstudio_status():
+                ui.notification_show(_("Label Studio is not running."), type="warning", duration=5)
+                return
+
+            img_bytes = None
             try:
-                card_del = input[f"delete_photo_{id}"]()
-            except:
-                card_del = False
+                fp = os.path.join(pictures_original_dir(), f"{pid}.jpg")
+                if os.path.exists(fp):
+                    with open(fp, "rb") as f:
+                        img_bytes = f.read()
+            except Exception:
+                img_bytes = None
 
-            if card_del:
-                deleted_photos.append(id)
-                result = delete_photo_by_id(CONFIG['KITTYHACK_DATABASE_PATH'], id)
-                if result.success:
-                    ui.notification_show(_("Photo {} deleted successfully.").format(id), duration=5, type="message")
-                else:
-                    ui.notification_show(_("An error occurred while deleting the photo: {}").format(result.message), duration=10, type="error")
+            if img_bytes is None:
+                try:
+                    df = read_df_from_database(
+                        CONFIG['KITTYHACK_DATABASE_PATH'],
+                        f"SELECT original_image FROM events WHERE id = {int(pid)}",
+                    )
+                    if not df.empty:
+                        ob = df.iloc[0].get('original_image')
+                        if isinstance(ob, (bytes, bytearray)) and len(ob) > 0:
+                            img_bytes = bytes(ob)
+                except Exception:
+                    pass
 
-        if deleted_photos:
-            # Reload the dataset
-            reload_trigger_photos.set(reload_trigger_photos.get() + 1)
-        else:
-            ui.notification_show(_("No photos selected for deletion."), duration=5, type="message")
+            if not isinstance(img_bytes, (bytes, bytearray)) or len(img_bytes) == 0:
+                ui.notification_show(_("Could not load the image."), type="warning", duration=5)
+                return
+
+            ui.notification_show(
+                ui.HTML(
+                    '<div class="d-flex align-items-center gap-2">'
+                    '<div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>'
+                    f'<span>{_("Sending picture to Label Studio...")}</span>'
+                    '</div>'
+                ),
+                id="ls_upload_progress",
+                type="message",
+                duration=None,
+            )
+
+            filename = f"kittyhack_photo_{pid}.jpg"
+            success = await asyncio.to_thread(
+                upload_image_to_labelstudio_project,
+                project_id=int(project_id),
+                image_bytes=img_bytes,
+                filename=filename,
+                token=api_token,
+            )
+
+            ui.notification_remove("ls_upload_progress")
+
+            if success:
+                ui.notification_show(_("Picture sent to Label Studio successfully."), type="message", duration=3)
+            else:
+                ui.notification_show(_("Failed to send picture to Label Studio."), type="error", duration=5)
 
     @output
     @render.ui
@@ -5149,6 +5269,7 @@ def server(input, output, session):
             else:
                 ui_labelstudio = ui.div(
                     ui.input_task_button("btn_labelstudio_start", _("Start Label Studio"), icon=icon_svg("play")),
+                    ui.br(),
                     ui.help_text(_("Label Studio is not running."), style_="margin-top:0.5rem;"),
                     ui.help_text(
                         _("Version: {}").format(CONFIG["LABELSTUDIO_VERSION"]) + " · " +
@@ -5194,19 +5315,22 @@ def server(input, output, session):
                     ui.div(
                         ui.br(),
                         ui.markdown(
-                            _("**Option 1: Personal Access Token (recommended)**") + "  \n" +
+                            _("**Option 1: Legacy Token (preferred)**") + "  \n" +
+                            _("1. Open Label Studio in your browser (button above)") + "  \n" +
+                            _("2. In Label Studio, go to 'burger menu' → Organization") + "  \n" +
+                            _("3. Click on 'API Tokens Settings' and enable 'Legacy Tokens'") + "  \n" +
+                            _("4. Click your user icon → Account & Settings") + "  \n" +
+                            _("5. Find 'Legacy Token' section and copy the 'Access Token'") + "  \n" +
+                            _("6. Important: the 'Copy token' button in Label Studio does NOT work. Please copy the token manually.") + "  \n" +
+                            _("7. Paste it below and click Save") + "  \n" +
+                            "  \n" +
+                            _("**Option 2: Personal Access Token**") + "  \n" +
                             _("1. Open Label Studio in your browser (button above)") + "  \n" +
                             _("2. Click on your user icon (top right) → Account & Settings") + "  \n" +
                             _("3. Scroll to 'Personal Access Tokens' section") + "  \n" +
                             _("4. Click 'Create new token'") + "  \n" +
-                            _("5. Copy the token, paste it here below and click Save") + "  \n" +
-                            "  \n" +
-                            _("**Option 2: Legacy Token (fallback)**") + "  \n" +
-                            _("1. In Label Studio, go to 'burger menu' → Organization") + "  \n" +
-                            _("2. Click on 'API Tokens Settings' and enable 'Legacy Tokens'") + "  \n" +
-                            _("3. Click your user icon → Account & Settings") + "  \n" +
-                            _("4. Find 'Legacy Token' section and copy the 'Access Token'") + "  \n" +
-                            _("5. Paste it below and click Save")
+                            _("5. Important: the 'Copy token' button in Label Studio does NOT work. Please copy the token manually.") + "  \n" +
+                            _("6. Paste it below and click Save")
                         ),
                         id="labelstudio_token_help_body",
                         class_="collapse",
@@ -5343,12 +5467,14 @@ def server(input, output, session):
                     model_training_image_size_input = _disable_input(model_training_image_size_input)
 
                 # Build training data source options
+                api_token = CONFIG.get("LABELSTUDIO_API_TOKEN", "").strip()
                 ls_training_source_options = {}
                 saved_project = CONFIG.get("LABELSTUDIO_PROJECT", "").strip()
                 if saved_project and get_labelstudio_status():
                     project_title = CONFIG.get("LABELSTUDIO_PROJECT_TITLE", "").strip() or saved_project
                     ls_training_source_options["__labelstudio__"] = _("Export from Label Studio project") + f" ({project_title})"
                 ls_training_source_options["__manual__"] = _("Upload project zip manually")
+                default_training_source = "__labelstudio__" if (api_token and "__labelstudio__" in ls_training_source_options) else "__manual__"
 
                 training_content = ui.div(
                     ui.div(
@@ -5358,6 +5484,7 @@ def server(input, output, session):
                                 "model_training_labelstudio_project",
                                 _("Training data source"),
                                 ls_training_source_options,
+                                selected=default_training_source,
                                 width="90%"
                             ),
                             ui.output_ui("ui_model_training_project_note"),
@@ -5466,7 +5593,7 @@ def server(input, output, session):
                         _("Train your own AI model: label images with Label Studio, then submit them for training.") + " " +
                         _("Read the instructions before starting:")
                     ),
-                    ui.HTML(f'<a href="{wiki_url}" target="_blank" class="btn btn-sm btn-outline-secondary" style="margin-top:0.25rem;">'
+                    ui.HTML(f'<a href="{wiki_url}" target="_blank" class="btn btn-sm btn-outline-secondary" style="margin-top:0.25rem; white-space: normal; max-width: 100%; display: inline-flex; align-items: center; justify-content: center; flex-wrap: wrap; text-align: center;">'
                            f'<i class="fa fa-clipboard-list" style="margin-right:5px;"></i>'
                            + _("Instructions for training your own model") + '</a>'),
                     style_="text-align:center; margin-bottom:1.5rem;"
@@ -5713,7 +5840,7 @@ def server(input, output, session):
     @output
     @render.ui
     def ui_model_training_project_note():
-        """Show a warning if the selected LS project has no/incomplete tasks."""
+        """Show a warning if the selected LS project has no/incomplete labeled pictures."""
         # Read reload_trigger_ai so this output re-executes when the AI tab reloads
         # (e.g. after saving a new project selection).
         reload_trigger_ai.get()
@@ -5726,6 +5853,22 @@ def server(input, output, session):
         if selected != "__labelstudio__":
             return ui.div()
 
+        api_token = CONFIG.get("LABELSTUDIO_API_TOKEN", "").strip()
+        if not api_token:
+            return ui.div(
+                ui.div(
+                    ui.div(
+                        icon_svg('circle-info', margin_left='-0.1em'),
+                        " ",
+                        _("No Label Studio API token configured. If you want to train a model directly from a Label Studio project, please add your API token in the Label Studio card above."),
+                        style_="margin-bottom: 0;"
+                    ),
+                    id="ls_project_task_warning",
+                    class_="alert alert-info",
+                    style_="text-align: left; margin-top: 0.5rem;",
+                ),
+            )
+
         saved_project = CONFIG.get("LABELSTUDIO_PROJECT", "").strip()
         if not saved_project:
             return ui.div(
@@ -5734,6 +5877,21 @@ def server(input, output, session):
                         icon_svg('triangle-exclamation', margin_left='-0.1em'),
                         " ",
                         _("No Label Studio project selected. Please select a project in the Label Studio card above."),
+                        style_="margin-bottom: 0;"
+                    ),
+                    id="ls_project_task_warning",
+                    class_="alert alert-warning",
+                    style_="text-align: left; margin-top: 0.5rem;",
+                ),
+            )
+
+        if not get_labelstudio_status():
+            return ui.div(
+                ui.div(
+                    ui.div(
+                        icon_svg('triangle-exclamation', margin_left='-0.1em'),
+                        " ",
+                        _("Label Studio is not running. Please start it in the Label Studio card above."),
                         style_="margin-bottom: 0;"
                     ),
                     id="ls_project_task_warning",
@@ -5754,7 +5912,7 @@ def server(input, output, session):
                     ui.div(
                         icon_svg('triangle-exclamation', margin_left='-0.1em'),
                         " ",
-                        _("Could not retrieve task information for the selected project."),
+                        _("Could not retrieve picture information for the selected project."),
                         style_="margin-bottom: 0;"
                     ),
                     id="ls_project_task_warning",
@@ -5769,7 +5927,7 @@ def server(input, output, session):
                     ui.div(
                         icon_svg('triangle-exclamation', margin_left='-0.1em'),
                         " ",
-                        _("The selected project has no tasks. Please add and annotate images in Label Studio first."),
+                        _("The selected project has no pictures. Please add and label images in Label Studio first."),
                         style_="margin-bottom: 0;"
                     ),
                     id="ls_project_task_warning",
@@ -5784,8 +5942,8 @@ def server(input, output, session):
                     ui.div(
                         icon_svg('triangle-exclamation', margin_left='-0.1em'),
                         " ",
-                        _("The selected project has {unannotated} of {total} tasks without annotations. Please complete all annotations before training.").format(
-                            unannotated=summary["unannotated_tasks"],
+                        _("The selected project has {unlabeled} of {total} pictures without labels. Please complete all labels before training.").format(
+                            unlabeled=summary["unannotated_tasks"],
                             total=summary["total_tasks"],
                         ),
                         style_="margin-bottom: 0;"
@@ -5802,8 +5960,8 @@ def server(input, output, session):
                 ui.div(
                     icon_svg('circle-check', margin_left='-0.1em'),
                     " ",
-                    _("Project ready: {annotated} annotated tasks.").format(
-                        annotated=summary["annotated_tasks"],
+                    _("Project ready: {labeled} labeled pictures.").format(
+                        labeled=summary["annotated_tasks"],
                     ),
                     style_="margin-bottom: 0;"
                 ),

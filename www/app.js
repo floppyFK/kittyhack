@@ -1095,4 +1095,60 @@ document.addEventListener("DOMContentLoaded", function() {
     });
 
     window.addEventListener('online', () => tryReconnect({ source: 'online', allowOverlayReload: true }));
+
+    // ---- Photo lightbox modal (un-grouped pictures view) ----
+    (function initPhotoLightbox() {
+        let currentModal = null;
+
+        function openLightbox(origSrc) {
+            closeLightbox();
+            const backdrop = document.createElement('div');
+            backdrop.className = 'kh-photo-modal-backdrop';
+            backdrop.addEventListener('click', function(e) {
+                if (e.target === backdrop) closeLightbox();
+            });
+
+            const content = document.createElement('div');
+            content.className = 'kh-photo-modal-content';
+
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'kh-photo-modal-close';
+            closeBtn.setAttribute('aria-label', 'Close');
+            closeBtn.innerHTML = '&times;';
+            closeBtn.addEventListener('click', closeLightbox);
+
+            const img = document.createElement('img');
+            img.src = origSrc;
+            img.alt = 'Original image';
+
+            content.appendChild(closeBtn);
+            content.appendChild(img);
+            backdrop.appendChild(content);
+            document.body.appendChild(backdrop);
+            currentModal = backdrop;
+
+            document.addEventListener('keydown', onEscKey);
+        }
+
+        function closeLightbox() {
+            if (currentModal) {
+                currentModal.remove();
+                currentModal = null;
+            }
+            document.removeEventListener('keydown', onEscKey);
+        }
+
+        function onEscKey(e) {
+            if (e.key === 'Escape') closeLightbox();
+        }
+
+        document.addEventListener('click', function(e) {
+            const thumb = e.target.closest('.kh-photo-thumb[data-orig-src]');
+            if (!thumb) return;
+            // Ignore clicks on action buttons within card footer
+            if (e.target.closest('.kh-photo-actions') || e.target.closest('a') || e.target.closest('button')) return;
+            e.preventDefault();
+            openLightbox(thumb.getAttribute('data-orig-src'));
+        });
+    })();
 });

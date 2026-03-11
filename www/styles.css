@@ -216,6 +216,7 @@ html[data-bs-theme="dark"] .spinner {
 .kh-photo-thumb {
     position: relative;
     display: block;
+    cursor: pointer;
 }
 
 .kh-photo-thumb img {
@@ -225,30 +226,112 @@ html[data-bs-theme="dark"] .spinner {
     border-radius: 8px;
 }
 
-.kh-photo-open {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 5;
-    display: inline-flex;
+/* Footer layout for per-photo action buttons */
+.kh-photo-footer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.kh-photo-footer-info {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.kh-photo-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.kh-photo-action-btn {
+    width: 34px !important;
+    height: 34px !important;
+    padding: 0 !important;
+    border-radius: 8px !important;
+}
+
+.kh-photo-action-btn svg {
+    height: 1rem !important;
+    width: auto !important;
+    max-width: 1rem;
+}
+
+/* Photo preview modal (lightbox) */
+.kh-photo-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
-    border-radius: 10px;
-    background: rgba(0, 0, 0, 0.55);
-    color: #fff;
-    text-decoration: none;
-    backdrop-filter: blur(2px);
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(4px);
+    animation: kh-modal-fadein 0.15s ease;
 }
 
-.kh-photo-open:hover {
-    background: rgba(0, 0, 0, 0.70);
-    color: #fff;
+@keyframes kh-modal-fadein {
+    from { opacity: 0; }
+    to   { opacity: 1; }
 }
 
-.kh-photo-delete {
-    float: right;
+.kh-photo-modal-content {
+    position: relative;
+    max-width: 90vw;
+    max-height: 90vh;
+}
+
+.kh-photo-modal-content img {
+    display: block;
+    max-width: 90vw;
+    max-height: 90vh;
+    width: auto;
+    height: auto;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    object-fit: contain;
+}
+
+.kh-photo-modal-close {
+    position: absolute;
+    top: -12px;
+    right: -12px;
+    z-index: 10;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.9);
+    color: #333;
+    font-size: 1.2rem;
+    font-weight: bold;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    transition: background 0.15s;
+}
+
+.kh-photo-modal-close:hover {
+    background: #fff;
+    color: #000;
+}
+
+html[data-bs-theme="dark"] .kh-photo-modal-close {
+    background: rgba(40, 40, 40, 0.9);
+    color: #f8f9fa;
+}
+
+html[data-bs-theme="dark"] .kh-photo-modal-close:hover {
+    background: #333;
+    color: #fff;
 }
 
 .kh-detect-box {
@@ -438,10 +521,29 @@ html[data-bs-theme="dark"] .event-modal-picture-spinner {
     padding-right: 0.2rem !important;
 }
 
-.no-images-found {
+/* Empty state for filtered views */
+.kh-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 1.5rem;
     text-align: center;
-    width: 100%;
-    margin: 0 auto;
+    color: #6c757d;
+    gap: 0.75rem;
+}
+
+.kh-empty-state svg {
+    opacity: 0.4;
+}
+
+.kh-empty-state p {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+html[data-bs-theme="dark"] .kh-empty-state {
+    color: #adb5bd;
 }
 
 .card {

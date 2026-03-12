@@ -1096,6 +1096,38 @@ document.addEventListener("DOMContentLoaded", function() {
 
     window.addEventListener('online', () => tryReconnect({ source: 'online', allowOverlayReload: true }));
 
+    // ---- Instant photo-card removal on delete (un-grouped pictures view) ----
+    (function initPhotoDeleteHandler() {
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('[id^="photo_delete_"]');
+            if (!btn) return;
+            const card = btn.closest('.kh-photo-card');
+            if (!card) return;
+            // Animate card out instantly
+            card.classList.add('kh-removing');
+            setTimeout(function() {
+                card.remove();
+                // Update the photo count in pagination
+                var countEl = document.querySelector('.photos-count');
+                if (countEl) {
+                    var m = countEl.textContent.match(/(\d+)/);
+                    if (m) {
+                        var newCount = Math.max(0, parseInt(m[1], 10) - 1);
+                        countEl.textContent = countEl.textContent.replace(/\d+/, newCount);
+                        // Update total pages display
+                        var grid = document.getElementById('photos_grid');
+                        var totalEl = document.querySelector('.photos-page-total');
+                        if (grid && totalEl) {
+                            var perPage = parseInt(grid.getAttribute('data-per-page'), 10) || 1;
+                            var newTotal = Math.max(1, Math.ceil(newCount / perPage));
+                            totalEl.textContent = totalEl.textContent.replace(/\d+/, newTotal);
+                        }
+                    }
+                }
+            }, 300);
+        });
+    })();
+
     // ---- Photo lightbox modal (un-grouped pictures view) ----
     (function initPhotoLightbox() {
         let currentModal = null;

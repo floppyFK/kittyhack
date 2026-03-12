@@ -3603,6 +3603,116 @@ def server(input, output, session):
             class_="container",
         )
 
+    def _build_photo_card(data_row, cat_name_dict, show_overlay: bool, extra_class: str = ""):
+        """Build a single photo card UI element."""
+        mouse_probability = data_row["mouse_probability"]
+
+        event_text = data_row['event_text']
+        if event_text:
+            detected_objects = read_event_from_json(event_text)
+        else:
+            detected_objects = []
+
+        try:
+            photo_timestamp = pd.to_datetime(get_local_date_from_utc_date(data_row["created_at"])).strftime('%H:%M:%S')
+        except ValueError:
+            photo_timestamp = "Unknown date"
+
+        if data_row["rfid"]:
+            cat_name = cat_name_dict.get(data_row["rfid"], _("Unknown RFID: {}".format(data_row["rfid"])))
+        else:
+            cat_name = _("No RFID found")
+
+        card_footer_mouse = f"{icon_svg('magnifying-glass')} {mouse_probability:.1f}%"
+        if cat_name:
+            card_footer_cat = f" | {icon_svg('cat')} {cat_name}"
+        else:
+            card_footer_cat = ""
+
+        pid = int(data_row['id'])
+        thumb_src = f"/thumb/{pid}.jpg"
+        orig_src = f"/orig/{pid}.jpg"
+
+        img_html = f'''<div class="kh-photo-thumb" data-photo-id="{pid}" data-orig-src="{orig_src}">
+                <img src="{thumb_src}" loading="lazy" decoding="async" />'''
+
+        if show_overlay and detected_objects:
+            for detected_object in detected_objects:
+                label_pos = 'bottom: -26px' if detected_object.y < 16 else 'top: -26px'
+                img_html += f'''
+                <div class="kh-detect-box" style="left:{detected_object.x}%; top:{detected_object.y}%; width:{detected_object.width}%; height:{detected_object.height}%;">
+                    <div class="kh-detect-label" style="{label_pos};">
+                        {detected_object.object_name} ({detected_object.probability:.0f}%)
+                    </div>
+                </div>'''
+
+        img_html += "</div>"
+
+        ls_disabled = (
+            not CONFIG.get("LABELSTUDIO_API_TOKEN")
+            or not CONFIG.get("LABELSTUDIO_PROJECT")
+            or not get_labelstudio_status()
+        )
+
+        card_class = "image-container kh-photo-card" + (" image-container-alert" if mouse_probability >= CONFIG['MOUSE_THRESHOLD'] else "")
+        if extra_class:
+            card_class += f" {extra_class}"
+
+        return ui.card(
+            ui.card_header(
+                ui.div(
+                    ui.HTML(f"{photo_timestamp} | {data_row['id']}"),
+                ),
+            ),
+            ui.HTML(img_html),
+            ui.card_footer(
+                ui.div(
+                    ui.div(
+                        ui.tooltip(ui.HTML(card_footer_mouse), _("Mouse probability"), options={"trigger": "hover"}),
+                        ui.HTML(card_footer_cat),
+                        class_="kh-photo-footer-info",
+                    ),
+                    ui.div(
+                        ui.tooltip(
+                            ui.tags.a(
+                                ui.HTML(str(icon_svg("image", margin_left="0", margin_right="0"))),
+                                href=f"/orig/{pid}.jpg",
+                                download=f"kittyhack_photo_{pid}.jpg",
+                                class_="btn btn-icon-square btn-outline-primary kh-photo-action-btn",
+                            ),
+                            _("Download picture"),
+                            options={"trigger": "hover"},
+                        ),
+                        ui.tooltip(
+                            ui.input_action_button(
+                                id=f"photo_send_ls_{pid}",
+                                label="",
+                                icon=icon_svg("upload", margin_left="0", margin_right="0"),
+                                class_="btn-icon-square btn-outline-secondary kh-photo-action-btn",
+                                disabled_=ls_disabled,
+                            ),
+                            _("Send picture to Label Studio"),
+                            options={"trigger": "hover"},
+                        ),
+                        ui.tooltip(
+                            ui.input_action_button(
+                                id=f"photo_delete_{pid}",
+                                label="",
+                                icon=icon_svg("trash-can", margin_left="0", margin_right="0"),
+                                class_="btn-icon-square btn-outline-danger kh-photo-action-btn",
+                            ),
+                            _("Delete picture"),
+                            options={"trigger": "hover"},
+                        ),
+                        class_="kh-photo-actions",
+                    ),
+                    class_="kh-photo-footer-row",
+                ),
+            ),
+            id=f"photo_card_{pid}",
+            class_=card_class,
+        )
+
     @output
     @render.ui
     @reactive.event(
@@ -3617,21 +3727,15 @@ def server(input, output, session):
         ignore_none=True
     )
     def ui_photos_cards():
-        ui_cards = []
-
         if input.button_events_view():
             return ui.div()
 
-        date_start = format_date_minmax(input.date_selector(), True)
-        date_end = format_date_minmax(input.date_selector(), False)
-        timezone = ZoneInfo(CONFIG['TIMEZONE'])
-        date_start = datetime.strptime(date_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
-        date_end = datetime.strptime(date_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone).astimezone(ZoneInfo('UTC')).strftime('%Y-%m-%d %H:%M:%S%z')
+        date_start_utc, date_end_utc = _photos_filters_to_utc_range()
 
         total_count = db_count_photos(
             CONFIG['KITTYHACK_DATABASE_PATH'],
-            date_start,
-            date_end,
+            date_start_utc,
+            date_end_utc,
             input.button_cat_only(),
             input.button_mouse_only(),
             CONFIG['MOUSE_THRESHOLD'],
@@ -3651,8 +3755,8 @@ def server(input, output, session):
         df_photos = db_get_photos(
             CONFIG['KITTYHACK_DATABASE_PATH'],
             ReturnDataPhotosDB.all_except_photos,
-            date_start,
-            date_end,
+            date_start_utc,
+            date_end_utc,
             input.button_cat_only(),
             input.button_mouse_only(),
             CONFIG['MOUSE_THRESHOLD'],
@@ -3670,117 +3774,13 @@ def server(input, output, session):
                 ),
             )
 
-        # Get a dictionary mapping RFIDs to cat names
         cat_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
+        show_overlay = bool(input.button_detection_overlay())
 
-        for index, data_row in df_photos.iterrows():
-            mouse_probability = data_row["mouse_probability"]
-
-            event_text = data_row['event_text']
-            if event_text:
-                detected_objects = read_event_from_json(event_text)
-            else:
-                detected_objects = []
-
-            try:
-                photo_timestamp = pd.to_datetime(get_local_date_from_utc_date(data_row["created_at"])).strftime('%H:%M:%S')
-            except ValueError:
-                photo_timestamp = "Unknown date"
-            
-            if data_row["rfid"]:
-                cat_name = cat_name_dict.get(data_row["rfid"], _("Unknown RFID: {}".format(data_row["rfid"])))
-            else:
-                cat_name = _("No RFID found")
-
-            card_footer_mouse = f"{icon_svg('magnifying-glass')} {mouse_probability:.1f}%"
-            if cat_name:
-                card_footer_cat = f" | {icon_svg('cat')} {cat_name}"
-            else:
-                card_footer_cat = ""
-            
-            pid = int(data_row['id'])
-            thumb_src = f"/thumb/{pid}.jpg"
-            orig_src = f"/orig/{pid}.jpg"
-
-            img_html = f'''<div class="kh-photo-thumb" data-photo-id="{pid}" data-orig-src="{orig_src}">
-                    <img src="{thumb_src}" loading="lazy" decoding="async" />'''
-
-            if input.button_detection_overlay() and detected_objects:
-                for detected_object in detected_objects:
-                    label_pos = 'bottom: -26px' if detected_object.y < 16 else 'top: -26px'
-                    img_html += f'''
-                    <div class="kh-detect-box" style="left:{detected_object.x}%; top:{detected_object.y}%; width:{detected_object.width}%; height:{detected_object.height}%;">
-                        <div class="kh-detect-label" style="{label_pos};">
-                            {detected_object.object_name} ({detected_object.probability:.0f}%)
-                        </div>
-                    </div>'''
-
-            img_html += "</div>"
-
-            ls_disabled = (
-                not CONFIG.get("LABELSTUDIO_API_TOKEN")
-                or not CONFIG.get("LABELSTUDIO_PROJECT")
-                or not get_labelstudio_status()
-            )
-
-            ui_cards.append(
-                ui.card(
-                    ui.card_header(
-                        ui.div(
-                            ui.HTML(f"{photo_timestamp} | {data_row['id']}"),
-                        ),
-                    ),
-                    ui.HTML(img_html),
-                    ui.card_footer(
-                        ui.div(
-                            ui.div(
-                                ui.tooltip(ui.HTML(card_footer_mouse), _("Mouse probability"), options={"trigger": "hover"}),
-                                ui.HTML(card_footer_cat),
-                                class_="kh-photo-footer-info",
-                            ),
-                            ui.div(
-                                ui.tooltip(
-                                    ui.tags.a(
-                                        ui.HTML(str(icon_svg("image", margin_left="0", margin_right="0"))),
-                                        href=f"/orig/{pid}.jpg",
-                                        download=f"kittyhack_photo_{pid}.jpg",
-                                        class_="btn btn-icon-square btn-outline-primary kh-photo-action-btn",
-                                    ),
-                                    _("Download picture"),
-                                    options={"trigger": "hover"},
-                                ),
-                                ui.tooltip(
-                                    ui.input_action_button(
-                                        id=f"photo_send_ls_{pid}",
-                                        label="",
-                                        icon=icon_svg("upload", margin_left="0", margin_right="0"),
-                                        class_="btn-icon-square btn-outline-secondary kh-photo-action-btn",
-                                        disabled_=ls_disabled,
-                                    ),
-                                    _("Send picture to Label Studio"),
-                                    options={"trigger": "hover"},
-                                ),
-                                ui.tooltip(
-                                    ui.input_action_button(
-                                        id=f"photo_delete_{pid}",
-                                        label="",
-                                        icon=icon_svg("trash-can", margin_left="0", margin_right="0"),
-                                        class_="btn-icon-square btn-outline-danger kh-photo-action-btn",
-                                    ),
-                                    _("Delete picture"),
-                                    options={"trigger": "hover"},
-                                ),
-                                class_="kh-photo-actions",
-                            ),
-                            class_="kh-photo-footer-row",
-                        ),
-                    ),
-                    class_="image-container kh-photo-card" + (" image-container-alert" if mouse_probability >= CONFIG['MOUSE_THRESHOLD'] else "")
-                )
-            )
+        ui_cards = [_build_photo_card(row, cat_name_dict, show_overlay) for _, row in df_photos.iterrows()]
 
         return ui.div(
-            ui.tags.div(*ui_cards, class_="kh-photo-grid"),
+            ui.tags.div(*ui_cards, class_="kh-photo-grid", id="photos_grid", **{"data-per-page": str(per_page)}),
         )
         
     # Per-photo action handlers: delete, send to Label Studio
@@ -3843,7 +3843,69 @@ def server(input, output, session):
             result = delete_photo_by_id(CONFIG['KITTYHACK_DATABASE_PATH'], pid)
             if result.success:
                 ui.notification_show(_("Photo {} deleted successfully.").format(pid), duration=5, type="message")
-                reload_trigger_photos.set(reload_trigger_photos.get() + 1)
+                # Card is removed client-side instantly via JS.
+                # Backfill: pull the next photo into the current page so it stays full.
+                try:
+                    date_start_utc, date_end_utc = _photos_filters_to_utc_range()
+                    total_count = db_count_photos(
+                        CONFIG['KITTYHACK_DATABASE_PATH'],
+                        date_start_utc,
+                        date_end_utc,
+                        input.button_cat_only(),
+                        input.button_mouse_only(),
+                        CONFIG['MOUSE_THRESHOLD'],
+                    )
+
+                    if total_count == 0:
+                        reload_trigger_photos.set(reload_trigger_photos.get() + 1)
+                        return
+
+                    per_page = max(1, int(CONFIG['ELEMENTS_PER_PAGE']))
+                    total_pages = max(1, int(math.ceil(float(total_count) / float(per_page))))
+                    current_page = int(input.photos_page() or 1)
+
+                    if current_page > total_pages:
+                        # Current page no longer exists — navigate back
+                        session.send_input_message("photos_page", {"value": max(1, total_pages), "min": 1, "max": total_pages})
+                        return
+
+                    # Re-query the current page to find a replacement card
+                    page_index = max(0, total_pages - current_page)
+                    df_page = db_get_photos(
+                        CONFIG['KITTYHACK_DATABASE_PATH'],
+                        ReturnDataPhotosDB.all_except_photos,
+                        date_start_utc,
+                        date_end_utc,
+                        input.button_cat_only(),
+                        input.button_mouse_only(),
+                        CONFIG['MOUSE_THRESHOLD'],
+                        page_index,
+                        per_page,
+                    )
+
+                    if not df_page.empty:
+                        page_ids = set(int(r) for r in df_page['id'].tolist())
+                        # The replacement is any ID from this page we haven't seen yet
+                        new_ids = page_ids - _photo_action_registered_ids
+                        if new_ids:
+                            cat_name_dict = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH'])
+                            show_overlay = False
+                            try:
+                                show_overlay = bool(input.button_detection_overlay())
+                            except Exception:
+                                pass
+                            for new_pid in new_ids:
+                                row = df_page[df_page['id'] == new_pid].iloc[0]
+                                card = _build_photo_card(row, cat_name_dict, show_overlay, extra_class="kh-fadein")
+                                ui.insert_ui(card, "#photos_grid", where="beforeEnd")
+                                _photo_action_registered_ids.add(new_pid)
+                                _register_single_photo_delete(int(new_pid))
+                                _register_single_photo_send_ls(int(new_pid))
+
+                    # Update total-pages display via page input bounds
+                    session.send_input_message("photos_page", {"value": current_page, "min": 1, "max": total_pages})
+                except Exception:
+                    pass
             else:
                 ui.notification_show(_("An error occurred while deleting the photo: {}").format(result.message), duration=10, type="error")
 

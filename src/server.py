@@ -5530,13 +5530,17 @@ def server(input, output, session):
 
                 # Build training data source options
                 api_token = CONFIG.get("LABELSTUDIO_API_TOKEN", "").strip()
-                ls_training_source_options = {}
                 saved_project = CONFIG.get("LABELSTUDIO_PROJECT", "").strip()
-                if saved_project and get_labelstudio_status():
-                    project_title = CONFIG.get("LABELSTUDIO_PROJECT_TITLE", "").strip() or saved_project
-                    ls_training_source_options["__labelstudio__"] = _("Export from Label Studio project") + f" ({project_title})"
-                ls_training_source_options["__manual__"] = _("Upload project zip manually")
-                default_training_source = "__labelstudio__" if (api_token and "__labelstudio__" in ls_training_source_options) else "__manual__"
+                project_title = CONFIG.get("LABELSTUDIO_PROJECT_TITLE", "").strip() or saved_project
+                labelstudio_source_label = _("Export from Label Studio project")
+                if project_title:
+                    labelstudio_source_label += f" ({project_title})"
+
+                ls_training_source_options = {
+                    "__labelstudio__": labelstudio_source_label,
+                    "__manual__": _("Upload project zip manually"),
+                }
+                default_training_source = "__labelstudio__" if (api_token and saved_project and get_labelstudio_status()) else "__manual__"
 
                 training_content = ui.div(
                     ui.div(

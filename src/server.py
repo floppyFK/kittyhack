@@ -840,6 +840,7 @@ reload_trigger_wlan = reactive.Value(0)
 reload_trigger_photos = reactive.Value(0)
 reload_trigger_ai = reactive.Value(0)
 reload_trigger_config = reactive.Value(0)
+reload_trigger_api_tokens = reactive.Value(0)
 
 # Label Studio project choices map (id -> title), populated by the async project selector
 ls_project_choices = reactive.Value({})
@@ -4368,6 +4369,38 @@ def server(input, output, session):
                 ),
             )
 
+        api_tokens_card = ui.card(
+            ui.card_header(
+                ui.h4(_("API Tokens"), style_="text-align: center;"),
+            ),
+            ui.markdown(_(
+                "Tokens authenticate REST API calls (see **doc/api.md**). "
+                "Each token is shown only once at creation — store it safely. "
+                "Send it via `Authorization: Bearer <token>` header, or — for "
+                "URL-only clients like Stream Deck — as a `?token=<token>` "
+                "query parameter."
+            )),
+            ui.br(),
+            ui.output_ui("ui_api_tokens_table"),
+            ui.hr(),
+            ui.h5(_("Create new token"), style_="text-align: center;"),
+            ui.input_text("api_token_label", _("Label"), placeholder=_("e.g. stream-deck")),
+            ui.div(
+                ui.input_action_button("btn_create_api_token", _("Create Token"), icon=icon_svg("plus"), class_="btn-default"),
+                style_="text-align: center;"
+            ),
+            ui.hr(),
+            ui.h5(_("Revoke token"), style_="text-align: center;"),
+            ui.output_ui("ui_api_tokens_revoke_select"),
+            ui.div(
+                ui.input_action_button("btn_revoke_api_token", _("Revoke Selected"), icon=icon_svg("trash"), class_="btn-default"),
+                style_="text-align: center;"
+            ),
+            full_screen=False,
+            class_="generic-container",
+            style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+        )
+
         return ui.div(
             ui.div(
                 ui.card(
@@ -4382,6 +4415,8 @@ def server(input, output, session):
                 ),
                 width="400px"
             ),
+            ui.br(),
+            ui.div(api_tokens_card, width="400px"),
             ui.br(),
             ui.br()
         )
@@ -4609,6 +4644,133 @@ def server(input, output, session):
             reboot_message = _("Both devices are rebooting now... This may take 1 or 2 minutes. Please reconnect and reload the page afterwards.")
         ui.modal_show(ui.modal(reboot_message, title=_("Restart Kittyflap"), footer=None))
         systemcmd(["/sbin/reboot"], CONFIG['SIMULATE_KITTYFLAP'])
+
+    # ------------------------------------------------------------------
+    # API token management (System tab)
+    # ------------------------------------------------------------------
+
+    @output
+    @render.ui
+    def ui_api_tokens_table():
+        # Subscribe to reload trigger so create/revoke actions refresh the view.
+        reload_trigger_api_tokens.get()
+        try:
+            from src.api import list_tokens
+            tokens = list_tokens()
+        except Exception as e:
+            logging.exception("[API] failed to list tokens")
+            return ui.tags.em(_("Failed to load tokens: ") + str(e))
+        if not tokens:
+            return ui.tags.em(_("No tokens yet."))
+        rows = []
+        for t in tokens:
+            created = (t.get("created_at") or "")[:19].replace("T", " ")
+            last_used = t.get("last_used_at")
+            last_used_str = (last_used or "")[:19].replace("T", " ") if last_used else _("never")
+            rows.append(ui.tags.tr(
+                ui.tags.td(t.get("label", "?")),
+                ui.tags.td(created),
+                ui.tags.td(last_used_str),
+            ))
+        return ui.tags.table(
+            ui.tags.thead(ui.tags.tr(
+                ui.tags.th(_("Label")),
+                ui.tags.th(_("Created")),
+                ui.tags.th(_("Last used")),
+            )),
+            ui.tags.tbody(*rows),
+            class_="dataframe shiny-table table w-auto",
+        )
+
+    @output
+    @render.ui
+    def ui_api_tokens_revoke_select():
+        reload_trigger_api_tokens.get()
+        try:
+            from src.api import list_tokens
+            tokens = list_tokens()
+        except Exception:
+            tokens = []
+        choices = {"": _("— select a token —")}
+        for t in tokens:
+            tid = t.get("id", "")
+            label = t.get("label", "?")
+            choices[tid] = f"{label} ({tid})"
+        return ui.input_select("api_token_revoke_id", None, choices=choices)
+
+    @reactive.effect
+    @reactive.event(input.btn_create_api_token)
+    def on_create_api_token():
+        label = (input.api_token_label() or "").strip()
+        if not label:
+            ui.notification_show(_("Please enter a label first."), duration=5, type="warning")
+            return
+        try:
+            from src.api import create_token
+            raw, _record = create_token(label)
+        except Exception as e:
+            logging.exception("[API] token create failed")
+            ui.notification_show(_("Failed to create token: ") + str(e), duration=10, type="error")
+            return
+        logging.info(f"[API] Created new API token '{label}' via System tab")
+        reload_trigger_api_tokens.set(reload_trigger_api_tokens.get() + 1)
+        ui.update_text("api_token_label", value="")
+        m = ui.modal(
+            ui.markdown(_("**Copy this token now — it will not be shown again.**")),
+            ui.tags.pre(
+                ui.tags.code(raw),
+                style_="background: #f5f5f5; padding: 0.5rem; border-radius: 4px; word-break: break-all; white-space: pre-wrap; user-select: all;",
+            ),
+            ui.markdown(_(
+                "Use it as an `Authorization: Bearer <token>` header, or — for URL-only "
+                "clients like Stream Deck — as a `?token=<token>` query parameter. "
+                "URL-based tokens may appear in web-server access logs and browser "
+                "history; prefer headers whenever possible."
+            )),
+            title=_("Token created"),
+            easy_close=False,
+            footer=ui.input_action_button("btn_modal_cancel", _("Close")),
+        )
+        ui.modal_show(m)
+
+    @reactive.Effect
+    @reactive.event(input.btn_revoke_api_token)
+    def on_revoke_api_token():
+        token_id = (input.api_token_revoke_id() or "").strip()
+        if not token_id:
+            ui.notification_show(_("Please select a token to revoke."), duration=5, type="warning")
+            return
+        m = ui.modal(
+            _("Revoke token '{}'? This cannot be undone. Any client using it will immediately lose access.").format(token_id),
+            title=_("Revoke API token"),
+            easy_close=False,
+            footer=ui.div(
+                ui.input_action_button("btn_modal_revoke_api_token_ok", _("Revoke")),
+                ui.input_action_button("btn_modal_cancel", _("Cancel")),
+            ),
+        )
+        ui.modal_show(m)
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_revoke_api_token_ok)
+    def on_modal_revoke_api_token_ok():
+        token_id = (input.api_token_revoke_id() or "").strip()
+        ui.modal_remove()
+        if not token_id:
+            return
+        try:
+            from src.api import revoke_token
+            ok = revoke_token(token_id)
+        except Exception as e:
+            logging.exception("[API] token revoke failed")
+            ui.notification_show(_("Failed to revoke token: ") + str(e), duration=10, type="error")
+            return
+        if ok:
+            logging.info(f"[API] Revoked API token {token_id} via System tab")
+            ui.notification_show(_("Token revoked."), duration=5, type="message")
+        else:
+            ui.notification_show(_("Token not found — it may have been revoked already."), duration=5, type="warning")
+        reload_trigger_api_tokens.set(reload_trigger_api_tokens.get() + 1)
 
     @reactive.Effect
     @reactive.event(input.bRestartKittyflap)

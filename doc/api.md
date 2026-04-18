@@ -23,6 +23,16 @@ All endpoints require a token. Pick whichever method matches your client:
 Tokens are stored hashed (SHA-256) in `api_tokens.json` next to `config.ini`.
 The clear-text value is only shown once — at creation.
 
+**Primary path — the web UI:**
+
+1. Open the Kittyhack web interface and go to the **System** tab
+2. Scroll to the **API Tokens** card
+3. Enter a label (e.g. `stream-deck`, `home-assistant`) → click **Create Token**
+4. Copy the token from the dialog — it is only shown once
+5. To revoke, pick the token from the dropdown → **Revoke Selected**
+
+**Alternative — CLI** (useful for bootstrap / recovery over SSH):
+
 ```bash
 # From the kittyhack project root
 python tools/api_token.py create stream-deck
@@ -147,14 +157,12 @@ GET /api/v1/events?limit=50
 
 ## Example: Stream Deck setup
 
-1. On the kittyhack device, create a dedicated token:
-   ```bash
-   python tools/api_token.py create stream-deck
-   ```
-2. Copy the clear-text token shown.
-3. In Stream Deck, add a **Website** action with URL:
+1. In Kittyhack's **System** tab, scroll to **API Tokens**, enter a label
+   like `stream-deck` and click **Create Token**. Copy the shown value.
+2. In Stream Deck, add a **Website** action with URL:
    ```
    http://<kittyhack-host>/api/v1/door/open?token=<paste-token-here>
    ```
-4. Add more buttons for `/api/v1/mode/closed`, `/api/v1/mode/normal`,
-   `/api/v1/mode/open` as needed.
+3. Add more buttons for `/api/v1/mode/closed`, `/api/v1/mode/normal`,
+   `/api/v1/mode/open`, `/api/v1/mode/entry/none`, `/api/v1/mode/exit/deny`
+   etc. as needed.

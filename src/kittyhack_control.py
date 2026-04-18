@@ -19,6 +19,7 @@ from src.magnets_rfid import Magnets, Rfid
 from src.pir import Pir
 from src.system import systemctl
 from src.system import (
+    apply_wlan_runtime_settings,
     get_wlan_connections,
     is_gateway_reachable,
     switch_wlan_connection,
@@ -1469,12 +1470,18 @@ async def _wlan_watchdog_loop():
     wlan_disconnect_counter = 0
     wlan_reconnect_attempted = False
     last_skip_log_ts = 0.0
+    # Hard reboot deadline: if the outage lasts longer than this, reboot even
+    # if the counter-based branch is stuck (e.g. a reconnect subprocess hung).
+    outage_started_at: float | None = None
+    OUTAGE_HARD_REBOOT_SECONDS = 120.0
+
     while not sigterm_monitor.stop_now:
         await asyncio.sleep(5.0)
 
         if not bool(CONFIG.get("WLAN_WATCHDOG_ENABLED", True)):
             wlan_disconnect_counter = 0
             wlan_reconnect_attempted = False
+            outage_started_at = None
             continue
 
         # Pause watchdog actions during user-triggered WLAN reconfiguration from WebUI.
@@ -1485,6 +1492,7 @@ async def _wlan_watchdog_loop():
                 last_skip_log_ts = now
             wlan_disconnect_counter = 0
             wlan_reconnect_attempted = False
+            outage_started_at = None
             continue
 
         # Determine WLAN state
@@ -1499,9 +1507,33 @@ async def _wlan_watchdog_loop():
             gateway_reachable = False
 
         if wlan_connected and gateway_reachable:
+            if outage_started_at is not None:
+                outage_duration = time.monotonic() - outage_started_at
+                logging.info(f"[WLAN WATCHDOG] Link recovered after {outage_duration:.1f}s outage.")
             wlan_disconnect_counter = 0
             wlan_reconnect_attempted = False
+            outage_started_at = None
             continue
+
+        # Start of an outage: remember wall-clock start for the hard deadline.
+        if outage_started_at is None:
+            outage_started_at = time.monotonic()
+
+        # Hard-deadline safety net: if we've been offline longer than the
+        # configured threshold, reboot regardless of counter state. This catches
+        # the case where a reconnect subprocess hung and prevented the normal
+        # counter from reaching 8.
+        outage_duration = time.monotonic() - outage_started_at
+        if outage_duration > OUTAGE_HARD_REBOOT_SECONDS:
+            logging.error(
+                f"[WLAN WATCHDOG] Hard deadline exceeded ({outage_duration:.1f}s > "
+                f"{OUTAGE_HARD_REBOOT_SECONDS}s) — forcing reboot."
+            )
+            try:
+                systemcmd(["/sbin/reboot"], bool(CONFIG.get("SIMULATE_KITTYFLAP")))
+            except Exception:
+                pass
+            return
 
         wlan_disconnect_counter += 1
         if wlan_disconnect_counter <= 5:
@@ -1549,8 +1581,15 @@ async def _wlan_watchdog_loop():
                         pass
                 if ok:
                     logging.info(f"[WLAN WATCHDOG] Successfully reconnected to SSID: {ssid}")
+                    # Re-apply TX-power / power_save after re-association — Broadcom
+                    # chipsets often revert these on reconnect and then behave flaky.
+                    try:
+                        apply_wlan_runtime_settings()
+                    except Exception as e:
+                        logging.warning(f"[WLAN WATCHDOG] apply_wlan_runtime_settings after reconnect failed: {e}")
                     wlan_disconnect_counter = 0
                     wlan_reconnect_attempted = False
+                    outage_started_at = None
                     break
 
             wlan_reconnect_attempted = True
@@ -1573,13 +1612,9 @@ async def main():
         return
 
     # Align WLAN runtime settings with server.py startup behavior.
-    try:
-        logging.info(f"Setting WLAN TX Power to {CONFIG['WLAN_TX_POWER']} dBm...")
-        systemcmd(["iwconfig", "wlan0", "txpower", f"{CONFIG['WLAN_TX_POWER']}"] , CONFIG['SIMULATE_KITTYFLAP'])
-        logging.info("Disabling WiFi power saving mode...")
-        systemcmd(["iw", "dev", "wlan0", "set", "power_save", "off"], CONFIG['SIMULATE_KITTYFLAP'])
-    except Exception as e:
-        logging.warning(f"[CONTROL] Failed to apply WLAN runtime settings: {e}")
+    # The watchdog calls the same helper after a successful reconnect so flaky
+    # chipsets keep the configured tx-power + power_save values after re-association.
+    apply_wlan_runtime_settings()
 
     # Enforce target-mode boot semantics: kittyhack_control supervises kittyhack startup.
     # Best-effort: prevent kittyhack.service from auto-starting on subsequent boots.

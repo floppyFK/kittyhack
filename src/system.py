@@ -79,17 +79,18 @@ def ensure_ffmpeg_installed() -> bool:
         logging.error("[CAMERA] ffmpeg installation command finished, but ffmpeg is still unavailable.")
     return installed
 
-def systemctl(mode: str, service: str, simulate_operations=False):
+def systemctl(mode: str, service: str, simulate_operations=False, timeout: float = 15.0):
     """
     Start, stop or restart a service using systemctl.
 
     Parameters:
     - mode: start, stop, restart, disable, enable, mask
     - service: The name of the service, e.g. 'kwork'
+    - timeout: seconds before the subprocess call is aborted (default 15 s).
 
     Returns:
     - True, if the action succeeded
-    - False in case of an exception
+    - False in case of an exception or timeout
     """
     # stop kwork process
     if simulate_operations == True:
@@ -100,13 +101,20 @@ def systemctl(mode: str, service: str, simulate_operations=False):
                 ["/usr/bin/systemctl", mode, service],
                 check=True,
                 text=True,
-                capture_output=True
+                capture_output=True,
+                timeout=timeout,
             )
             logging.info(f"service {service} {mode}: {result.stdout}")
+        except subprocess.TimeoutExpired:
+            # Without a timeout a hung systemd operation (common when the network
+            # stack is in a bad state) would freeze callers like the WLAN watchdog
+            # indefinitely and prevent the emergency reboot from firing.
+            logging.error(f"systemctl {mode} {service} timed out after {timeout}s")
+            return False
         except subprocess.CalledProcessError as e:
             logging.error(f"Failed to {mode} {service}: {e.stderr}")
             return False
-    
+
     return True
 
 def run_with_progress(command, progress_callback, step, message, detail):
@@ -343,7 +351,11 @@ def switch_wlan_connection(ssid: str):
 
     Returns:
     - True if the switch was successful
-    - False if there was an error
+    - False if there was an error or timeout
+
+    Subprocess calls have explicit timeouts: without them, `nmcli connection up`
+    blocks indefinitely when the AP is physically unreachable, freezing the
+    async WLAN watchdog in kittyhack_control and preventing its emergency reboot.
     """
     if is_remote_mode():
         logging.info("[SYSTEM] WLAN management is not available in remote-mode.")
@@ -353,25 +365,72 @@ def switch_wlan_connection(ssid: str):
             ["/usr/bin/nmcli", "connection", "up", ssid],
             check=True,
             capture_output=True,
-            text=True
+            text=True,
+            timeout=20,
         )
         # Wait for the network to be up before returning
         for x in range(20):
-            result = subprocess.run(
-                ["/usr/bin/nmcli", "-t", "-f", "NETWORKING"],
-                stdout=subprocess.PIPE,
-                text=True,
-                check=True
-            )
+            try:
+                result = subprocess.run(
+                    ["/usr/bin/nmcli", "-t", "-f", "NETWORKING"],
+                    stdout=subprocess.PIPE,
+                    text=True,
+                    check=True,
+                    timeout=5,
+                )
+            except subprocess.TimeoutExpired:
+                logging.warning("[SYSTEM] nmcli NETWORKING probe timed out; retrying...")
+                continue
             if "wlan0: connected to" in result.stdout:
                 logging.info(f"[SYSTEM] Network is up and connected.")
                 return True
             tm.sleep(2)
         logging.error(f"[SYSTEM] Network did not come up in time.")
         return False
+    except subprocess.TimeoutExpired:
+        logging.error(f"[SYSTEM] 'nmcli connection up {ssid}' timed out after 20s")
+        return False
     except subprocess.CalledProcessError as e:
         logging.error(f"[SYSTEM] Error switching to WLAN network {ssid}: {e.stderr}")
         return False
+
+
+def apply_wlan_runtime_settings():
+    """Apply TX-Power and power-save settings to the wlan0 interface.
+
+    Called both at boot and after a successful reconnect from the WLAN watchdog.
+    Some Broadcom chipsets (BCM43xx on Raspberry Pi) revert these settings after
+    a WiFi re-association, so we re-apply them whenever the link comes up.
+
+    All calls are best-effort and bounded by timeouts to keep the watchdog loop
+    responsive even if the wireless stack is partially wedged.
+    """
+    tx_power = CONFIG.get('WLAN_TX_POWER')
+    simulate = CONFIG.get('SIMULATE_KITTYFLAP', False)
+    if simulate:
+        logging.info(f"[SYSTEM] (simulate) Would set wlan0 txpower={tx_power}, power_save=off")
+        return
+
+    try:
+        logging.info(f"[SYSTEM] Applying WLAN runtime settings: txpower={tx_power} dBm, power_save=off")
+        subprocess.run(
+            ["/usr/sbin/iwconfig", "wlan0", "txpower", f"{tx_power}"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        subprocess.run(
+            ["/usr/sbin/iw", "dev", "wlan0", "set", "power_save", "off"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired as e:
+        logging.warning(f"[SYSTEM] WLAN runtime settings command timed out: {e}")
+    except Exception as e:
+        logging.warning(f"[SYSTEM] Failed to apply WLAN runtime settings: {e}")
     
 def delete_wlan_connection(ssid):
     """

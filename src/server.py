@@ -6536,6 +6536,42 @@ def server(input, output, session):
                             ui.column(12, ui.markdown(_("Automatically check for new versions of Kittyhack.")), style_="color: grey;"),
                         ),
                         ui.hr(),
+                        ui.row(
+                            ui.column(
+                                6,
+                                ui.input_select(
+                                    "update_repository_mode",
+                                    _("Update repository"),
+                                    {"standard": _("Standard"), "custom": _("Custom")},
+                                    selected=CONFIG.get('UPDATE_REPOSITORY_MODE', 'standard'),
+                                ),
+                            ),
+                            ui.column(
+                                6,
+                                ui.input_text(
+                                    "update_repository",
+                                    _("Custom repository"),
+                                    value=CONFIG.get('UPDATE_REPOSITORY', ''),
+                                    placeholder=_("e.g. owner/repo or owner/repo@branch"),
+                                    width="100%",
+                                ),
+                                id="update_repository_container",
+                            ),
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _(
+                                        "Use **Standard** for official releases from `floppyFK/kittyhack`. "
+                                        "Select **Custom** to test your own fork or a feature branch. "
+                                        "Format: `owner/repo` (uses the repo's latest release tag) or "
+                                        "`owner/repo@branch-or-tag` (tracks the specified ref)."
+                                    )
+                                ),
+                                style_="color: grey;",
+                                id="update_repository_help",
+                            ),
+                        ),
+                        ui.hr(),
                         (
                             ui.row(
                                 ui.column(12, ui.markdown(_("WLAN settings are not available in remote-mode.")), style_="color: grey;")
@@ -7664,6 +7700,21 @@ def server(input, output, session):
             if not valid:
                 return
             
+        # Validate custom update repository spec when "custom" mode is selected.
+        if input.update_repository_mode() == "custom":
+            raw_repo_spec = (input.update_repository() or "").strip()
+            if not re.match(
+                r"^(?:https?://github\.com/)?[\w.-]+/[\w.-]+?(?:\.git)?(?:@[\w./\-]+)?$",
+                raw_repo_spec,
+            ):
+                ui.notification_show(
+                    _("Update repository: ") +
+                    _("Invalid format. Use 'owner/repo' or 'owner/repo@branch-or-tag'.") + "\n" +
+                    _("Changes were not saved."),
+                    duration=10, type="error"
+                )
+                return
+
         # Check for a changed hostname
         hostname_changed = input.txtHostname() != get_hostname()
         if hostname_changed:
@@ -7756,6 +7807,8 @@ def server(input, output, session):
         from src.baseconfig import AllowedToExit as ATE
         CONFIG['ALLOWED_TO_EXIT'] = ATE(input.btnAllowedToExit())
         CONFIG['PERIODIC_VERSION_CHECK'] = input.btnPeriodicVersionCheck()
+        CONFIG['UPDATE_REPOSITORY_MODE'] = input.update_repository_mode()
+        CONFIG['UPDATE_REPOSITORY'] = (input.update_repository() or "").strip()
         # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
         #CONFIG['PIR_OUTSIDE_THRESHOLD'] = 10-int(input.sldPirOutsideThreshold())
         CONFIG['PIR_INSIDE_THRESHOLD'] = float(input.sldPirInsideThreshold())

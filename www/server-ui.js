@@ -174,6 +174,28 @@
         sel.addEventListener('change', apply, true);
     }
 
+    function initUpdateRepoToggle() {
+        // Toggle custom repository input/help visibility based on #update_repository_mode.
+        // Expects containers: #update_repository_container, #update_repository_help
+        var sel = q('#update_repository_mode');
+        var urlWrap = q('#update_repository_container');
+        var helpWrap = q('#update_repository_help');
+        if (!sel || (!urlWrap && !helpWrap)) return;
+
+        if (sel.getAttribute('data-kh-updaterepo-bound') === '1') return;
+        sel.setAttribute('data-kh-updaterepo-bound', '1');
+
+        function apply() {
+            var isCustom = false;
+            try { isCustom = (String(sel.value) === 'custom'); } catch (e) {}
+            if (urlWrap) urlWrap.style.display = isCustom ? '' : 'none';
+            if (helpWrap) helpWrap.style.display = isCustom ? '' : 'none';
+        }
+
+        apply();
+        sel.addEventListener('change', apply, true);
+    }
+
     function initLogicToggles() {
         // Handles "Show decision logic" blocks for entry and exit.
         if (!onceFlag(window, '__khLogicToggleGlobal')) return;
@@ -330,6 +352,7 @@
         initTooltipWrappers(scope);
         // These run opportunistically when the corresponding UI is present.
         initIpCameraUrlToggle();
+        initUpdateRepoToggle();
         initLogicToggles();
         initManageCatsRFIDValidation();
         initUpdateProgressModal();

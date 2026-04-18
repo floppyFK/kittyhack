@@ -441,31 +441,117 @@ def get_local_date_from_utc_date(utc_date_string: str):
     
     return local_date_string
 
-def read_latest_kittyhack_version(timeout=10) -> str:
+# ---------------------------------------------------------------------------
+# Update repository resolution
+# ---------------------------------------------------------------------------
+# By default Kittyhack tracks floppyFK/kittyhack release tags. The CONFIG keys
+# UPDATE_REPOSITORY_MODE / UPDATE_REPOSITORY let users point update checks and
+# installs at a custom fork or a feature branch — useful for testing PRs
+# without publishing a release.
+
+DEFAULT_UPDATE_REPO_OWNER = "floppyFK"
+DEFAULT_UPDATE_REPO_NAME = "kittyhack"
+
+
+def _parse_repo_spec(raw: str):
+    """Parse 'owner/repo' or 'owner/repo@ref' (optionally with URL prefix).
+
+    Returns (owner, repo, ref_or_None) or (None, None, None) if invalid.
     """
-    Reads the latest version of Kittyhack from the GitHub repository.
-    If the version cannot be fetched, it returns 'unknown'.
+    if not raw:
+        return None, None, None
+    raw = raw.strip()
+    m = re.match(
+        r"^(?:https?://github\.com/)?([\w.-]+)/([\w.-]+?)(?:\.git)?(?:@([\w./\-]+))?$",
+        raw,
+    )
+    if not m:
+        return None, None, None
+    return m.group(1), m.group(2), m.group(3) or None
+
+
+def resolved_update_repo():
+    """Resolve the active update source based on CONFIG.
+
+    Returns a tuple (owner, repo, ref, git_url, mode):
+        - owner, repo: GitHub owner / repository
+        - ref: branch or tag name, or None -> use latest release
+        - git_url: https clone URL suitable for `git remote set-url`
+        - mode: "standard" or "custom"
+    Invalid custom values silently fall back to the default.
     """
     try:
+        from src.baseconfig import CONFIG
+        mode = str(CONFIG.get("UPDATE_REPOSITORY_MODE") or "standard").strip().lower()
+        if mode == "custom":
+            owner, repo, ref = _parse_repo_spec(CONFIG.get("UPDATE_REPOSITORY") or "")
+            if owner and repo:
+                return owner, repo, ref, f"https://github.com/{owner}/{repo}.git", "custom"
+            logging.warning(
+                f"[UPDATE] Invalid custom repository spec '{CONFIG.get('UPDATE_REPOSITORY', '')}'; "
+                f"falling back to {DEFAULT_UPDATE_REPO_OWNER}/{DEFAULT_UPDATE_REPO_NAME}"
+            )
+    except Exception as e:
+        logging.debug(f"[UPDATE] resolved_update_repo fell back to default: {e}")
+    return (
+        DEFAULT_UPDATE_REPO_OWNER,
+        DEFAULT_UPDATE_REPO_NAME,
+        None,
+        f"https://github.com/{DEFAULT_UPDATE_REPO_OWNER}/{DEFAULT_UPDATE_REPO_NAME}.git",
+        "standard",
+    )
+
+
+def read_latest_kittyhack_version(timeout=10) -> str:
+    """
+    Reads the latest version of Kittyhack from the configured GitHub repository.
+
+    Standard / tag mode (ref is None): returns the tag_name of the latest release.
+    Branch mode (ref is set): returns "<ref>@<short-sha>" of the branch head, so
+    the UI's "update available?" check still works by string comparison.
+    Returns 'unknown' on failure.
+    """
+    owner, repo, ref, _git_url, _mode = resolved_update_repo()
+    try:
         ts_pre = tm.time()
-        response = requests.get("https://api.github.com/repos/floppyFK/kittyhack/releases/latest", timeout=timeout)
-        ts_post = tm.time()
-        latest_version = str(response.json().get("tag_name", "unknown"))
-        logging.info(f"GitHub latest version fetch took {ts_post - ts_pre:.3f} seconds. Latest version: {latest_version}")
+        if ref is None:
+            url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+            response = requests.get(url, timeout=timeout)
+            ts_post = tm.time()
+            latest_version = str(response.json().get("tag_name", "unknown"))
+        else:
+            url = f"https://api.github.com/repos/{owner}/{repo}/commits/{ref}"
+            response = requests.get(url, timeout=timeout)
+            ts_post = tm.time()
+            sha = str(response.json().get("sha", "") or "")[:7]
+            latest_version = f"{ref}@{sha}" if sha else "unknown"
+        logging.info(
+            f"GitHub latest version fetch took {ts_post - ts_pre:.3f} seconds "
+            f"({owner}/{repo}{'@' + ref if ref else ''}). Latest: {latest_version}"
+        )
         return latest_version
     except Exception as e:
-        logging.error(f"Failed to fetch the latest version from GitHub: {e}")
+        logging.error(f"Failed to fetch the latest version from GitHub ({owner}/{repo}): {e}")
         return "unknown"
-    
+
+
 def fetch_github_release_notes(version: str) -> str:
     """
-    Fetches the release notes for a specific version from the Kittyhack GitHub repository.
-    Args:
-        version (str): The version tag (e.g., 'v2.0.0' or '2.0.0').
-    Returns:
-        str: The release notes (body) or an error message.
+    Fetches release notes for a specific version from the configured repository.
+
+    In branch mode (ref is set in the resolved repo) there are no releases, so
+    we return a short human-readable note pointing at the branch HEAD instead.
     """
-    url = "https://api.github.com/repos/floppyFK/kittyhack/releases"
+    owner, repo, ref, _git_url, _mode = resolved_update_repo()
+
+    if ref is not None:
+        # Branch mode — no release notes concept.
+        return (
+            f"You are tracking branch **{ref}** of **{owner}/{repo}**.\n\n"
+            f"No release notes are published for branches. Latest commit: `{version}`."
+        )
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/releases"
     try:
         response = requests.get(url, timeout=5)
         response.raise_for_status()

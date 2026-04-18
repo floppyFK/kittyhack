@@ -3,6 +3,7 @@ from src.ui import app_ui
 from src.server import server
 import os
 from src.paths import pictures_thumbnails_dir, pictures_original_dir
+from src.api import ApiMiddleware
 
 path_www = os.path.join(os.path.dirname(__file__), "www")
 path_doc_diagrams = os.path.join(os.path.dirname(__file__), "doc", "diagrams")
@@ -59,4 +60,8 @@ shiny_app = App(
 	},
 )
 
-app = TabRoutingMiddleware(shiny_app)
+# Middleware chain (outermost first, evaluated top-down on each request):
+#   ApiMiddleware       -> captures /api/v1/* and serves the REST API
+#   TabRoutingMiddleware -> rewrites tab paths (/pictures/..., /system/...) to "/"
+#   shiny_app           -> the SPA + static asset mounts
+app = ApiMiddleware(TabRoutingMiddleware(shiny_app))

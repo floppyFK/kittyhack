@@ -69,10 +69,10 @@ from src.helper import (
 )
 from src.database import *
 from src.system import (
-    switch_wlan_connection, 
-    get_wlan_connections, 
-    systemcmd, 
-    manage_and_switch_wlan, 
+    switch_wlan_connection,
+    get_wlan_connections,
+    systemcmd,
+    manage_and_switch_wlan,
     delete_wlan_connection,
     get_labelstudio_status,
     get_labelstudio_installed_version,
@@ -88,6 +88,7 @@ from src.system import (
     upgrade_base_system_packages,
     ensure_target_boot_service_semantics,
     ensure_ffmpeg_installed,
+    apply_wlan_runtime_settings,
 )
 from src.paths import pictures_original_dir, kittyhack_root
 from src.mode import is_remote_mode
@@ -591,14 +592,11 @@ else:
 # Log the relevant installed deb packages
 log_relevant_deb_packages()
 
-# Set the WLAN TX Power level
+# Set the WLAN TX Power level and disable power-save (no-op in remote-mode).
 if is_remote_mode():
     logging.info("Remote-mode detected: skipping WLAN txpower and power-save configuration.")
 else:
-    logging.info(f"Setting WLAN TX Power to {CONFIG['WLAN_TX_POWER']} dBm...")
-    systemcmd(["iwconfig", "wlan0", "txpower", f"{CONFIG['WLAN_TX_POWER']}"] , CONFIG['SIMULATE_KITTYFLAP'])
-    logging.info("Disabling WiFi power saving mode...")
-    systemcmd(["iw", "dev", "wlan0", "set", "power_save", "off"], CONFIG['SIMULATE_KITTYFLAP'])
+    apply_wlan_runtime_settings()
 
 logging.info("Starting frontend...")
 

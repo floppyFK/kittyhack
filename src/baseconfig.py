@@ -269,6 +269,13 @@ DEFAULT_CONFIG = {
         "remote_sync_on_first_connect": True,
         "remote_sync_labelstudio": True,
         "remote_inference_max_fps": 10.0,
+
+        # Update repository override (for testing your own fork or a feature branch).
+        # mode: "standard" -> use floppyFK/kittyhack (release tags)
+        #       "custom"   -> use UPDATE_REPOSITORY value below
+        # UPDATE_REPOSITORY format: "owner/repo" or "owner/repo@branch-or-tag"
+        "update_repository_mode": "standard",
+        "update_repository": "",
     }
 }
 
@@ -537,6 +544,10 @@ def load_config():
         "REMOTE_SYNC_ON_FIRST_CONNECT": safe_bool("REMOTE_SYNC_ON_FIRST_CONNECT", d.get('remote_sync_on_first_connect', True)),
         "REMOTE_SYNC_LABELSTUDIO": safe_bool("REMOTE_SYNC_LABELSTUDIO", d.get('remote_sync_labelstudio', True)),
         "REMOTE_INFERENCE_MAX_FPS": safe_float("REMOTE_INFERENCE_MAX_FPS", float(d.get('remote_inference_max_fps', 10.0))),
+
+        # Update repository override
+        "UPDATE_REPOSITORY_MODE": safe_str("UPDATE_REPOSITORY_MODE", d.get('update_repository_mode', 'standard')),
+        "UPDATE_REPOSITORY": safe_str("UPDATE_REPOSITORY", d.get('update_repository', '')),
     }
 
     # Update in-place so imported CONFIG references in other modules stay valid.
@@ -686,6 +697,8 @@ def save_config():
     settings['restart_ip_camera_stream_on_failure'] = CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE']
     settings['wlan_watchdog_enabled'] = CONFIG['WLAN_WATCHDOG_ENABLED']
     settings['disable_rfid_reader'] = CONFIG['DISABLE_RFID_READER']
+    settings['update_repository_mode'] = CONFIG.get('UPDATE_REPOSITORY_MODE', 'standard')
+    settings['update_repository'] = CONFIG.get('UPDATE_REPOSITORY', '')
 
     # Never persist remote-only settings in config.ini.
     # They are stored in config.remote.ini so they survive sync operations.

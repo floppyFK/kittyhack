@@ -790,6 +790,16 @@ def update_kittyhack(
     req_hash_after: str | None = None
     did_update_deps = False
 
+    # Resolve the configured update source (standard vs custom repo / branch).
+    try:
+        from src.helper import resolved_update_repo
+        update_owner, update_repo, update_ref, update_git_url, update_mode = resolved_update_repo()
+    except Exception as e:
+        logging.debug(f"[UPDATE] resolved_update_repo not available ({e}); using existing origin")
+        update_git_url = None
+        update_ref = None
+        update_mode = "standard"
+
     try:
         # 1
         _run_step(1, "Reverting local changes", ["/bin/git", "restore", "."])
@@ -799,10 +809,32 @@ def update_kittyhack(
         # Hash current requirements after a clean tree, so the comparison is meaningful.
         req_hash_before = _sha256_file(requirements_path)
 
+        # Point origin at the configured update source (best-effort).
+        if update_git_url:
+            try:
+                subprocess.run(
+                    ["/bin/git", "remote", "set-url", "origin", update_git_url],
+                    cwd=kittyhack_root(),
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                logging.info(f"[UPDATE] origin URL set to {update_git_url} (mode={update_mode})")
+            except Exception as e:
+                logging.warning(f"[UPDATE] Failed to update origin URL to {update_git_url}: {e}")
+
         # 3
         _run_step(3, f"Fetching latest version {latest_version}", ["/bin/git", "fetch", "--all", "--tags"])
-        # 4
-        _run_step(4, f"Checking out {latest_version}", ["/bin/git", "checkout", latest_version])
+        # 4 — checkout either a tag (standard / custom+tag) or a branch (custom+branch).
+        if update_ref is not None:
+            # Branch mode: create/reset a local branch tracking origin/<ref> to HEAD.
+            _run_step(
+                4,
+                f"Checking out branch {update_ref}",
+                ["/bin/git", "checkout", "-B", update_ref, f"origin/{update_ref}"],
+            )
+        else:
+            _run_step(4, f"Checking out {latest_version}", ["/bin/git", "checkout", latest_version])
 
         req_hash_after = _sha256_file(requirements_path)
         requirements_unchanged = (

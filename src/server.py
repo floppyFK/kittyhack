@@ -7646,6 +7646,13 @@ def server(input, output, session):
         global _
         global model_handler
 
+        # Capture the update-repository values BEFORE they are overwritten further
+        # down. A switch here (e.g. Standard -> Custom, or changing the target fork)
+        # almost always implies a different code base — we prompt the user to run
+        # an update immediately after save.
+        _prev_update_mode = str(CONFIG.get('UPDATE_REPOSITORY_MODE') or 'standard').strip().lower()
+        _prev_update_repo = str(CONFIG.get('UPDATE_REPOSITORY') or '').strip()
+
         camera_settings_changed = (
             CONFIG.get('CAMERA_SOURCE') != input.camera_source() or
             CONFIG.get('IP_CAMERA_URL') != input.ip_camera_url() or
@@ -7935,6 +7942,7 @@ def server(input, output, session):
                 ui.notification_show(_("Please restart the kittyflap in the [SYSTEM] section, to apply the new language."), duration=30, type="message")
                 update_mqtt_language()
 
+            restart_modal_shown = False
             if (
                 (selected_model_changed and model_reload_failed) or
                 hostname_changed or
@@ -7950,6 +7958,33 @@ def server(input, output, session):
                         footer=ui.div(
                             ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
                             ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                        )
+                    )
+                )
+                restart_modal_shown = True
+
+            # Offer to run the update right away when the update source changed.
+            # Usually the new source has a different code base than what's installed,
+            # so the user's next natural step is to update. We only prompt when no
+            # other restart-modal is already up to avoid stacking.
+            update_repo_changed = (
+                _prev_update_mode != str(CONFIG.get('UPDATE_REPOSITORY_MODE') or 'standard').strip().lower()
+                or _prev_update_repo != str(CONFIG.get('UPDATE_REPOSITORY') or '').strip()
+            )
+            if update_repo_changed and git_repo_available and not restart_modal_shown:
+                ui.modal_remove()
+                ui.modal_show(
+                    ui.modal(
+                        ui.markdown(
+                            _("The update repository was changed. The new source most likely has a different code base than what is currently installed.")
+                            + "\n\n"
+                            + _("Do you want to run an update now to switch to the new source?")
+                        ),
+                        title=_("Update source changed"),
+                        easy_close=False,
+                        footer=ui.div(
+                            ui.input_action_button("btn_modal_update_repo_now", _("Update now"), class_="btn-primary"),
+                            ui.input_action_button("btn_modal_cancel", _("Later")),
                         )
                     )
                 )
@@ -8566,6 +8601,32 @@ def server(input, output, session):
                         style_="text-align: center;"
                     ),
                 )
+
+        # Force-update block: always offer to re-run the update, regardless of
+        # version-equality. Useful when tracking a branch (commits may change
+        # without the version string moving) or when testing a fork where the
+        # latest release tag equals the currently installed one.
+        if git_repo_available:
+            custom_repo_mode = str(CONFIG.get('UPDATE_REPOSITORY_MODE') or 'standard').strip().lower() == 'custom'
+            force_update_help = (
+                _("The current update source is your custom repository. Use this button to pull the latest commit on the selected branch or re-install the selected tag.")
+                if custom_repo_mode
+                else _("Re-install the currently selected version from the configured update source.")
+            )
+            ui_update_kittyhack = ui_update_kittyhack, ui.hr(), ui.div(
+                ui.h6(_("Force update")),
+                ui.help_text(force_update_help),
+                ui.br(),
+                ui.div(
+                    ui.input_task_button(
+                        "btn_force_update_kittyhack",
+                        _("Force update now"),
+                        icon=icon_svg("rotate"),
+                        class_="btn-default",
+                    ),
+                    style_="text-align: center;",
+                ),
+            )
 
         # Check if the original kittyflap database file still exists
         kittyflap_db_file_exists = os.path.exists(CONFIG['DATABASE_PATH'])
@@ -9260,6 +9321,20 @@ def server(input, output, session):
     @reactive.event(input.update_remote_kittyhack)
     def update_remote_kittyhack_process():
         _start_update_process(update_target=False, update_local=True)
+
+    @reactive.Effect
+    @reactive.event(input.btn_force_update_kittyhack)
+    def force_update_kittyhack_process():
+        # Same flow as the regular update button; the underlying update_kittyhack()
+        # already handles both tag mode (re-checkout) and branch mode (reset to
+        # origin/<ref>) correctly when called with the current latest_version.
+        _start_update_process(update_target=bool(is_remote_mode()), update_local=True)
+
+    @reactive.Effect
+    @reactive.event(input.btn_modal_update_repo_now)
+    def _on_modal_update_repo_now():
+        ui.modal_remove()
+        _start_update_process(update_target=bool(is_remote_mode()), update_local=True)
 
     @output
     @render.text

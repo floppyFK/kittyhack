@@ -7493,6 +7493,43 @@ def server(input, output, session):
                         ui.row(
                             ui.column(
                                 12,
+                                ui.input_switch(
+                                    "btnMqttHaDiscoveryEnabled",
+                                    _("Publish Home Assistant MQTT discovery"),
+                                    CONFIG.get('MQTT_HA_DISCOVERY_ENABLED', True),
+                                ),
+                                ui.help_text(
+                                    _(
+                                        "When enabled, Kittyhack publishes retained discovery configs on MQTT connect "
+                                        "so Home Assistant auto-creates the camera, locks, binary sensors, event sensor "
+                                        "and direction selects. Disable if you manage entities manually — Kittyhack will "
+                                        "also clear any previously published discovery entries so Home Assistant removes them."
+                                    )
+                                ),
+                            ),
+                        ),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.input_text(
+                                    "txtMqttHaDiscoveryPrefix",
+                                    _("Discovery prefix"),
+                                    value=CONFIG.get('MQTT_HA_DISCOVERY_PREFIX', 'homeassistant'),
+                                    placeholder="homeassistant",
+                                    width="100%",
+                                ),
+                                ui.help_text(
+                                    _(
+                                        "Home Assistant's MQTT discovery prefix. Defaults to `homeassistant` — only change "
+                                        "this if your HA instance uses a non-standard prefix."
+                                    )
+                                ),
+                            ),
+                        ),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(
+                                12,
                                 ui.h5(_("Home Assistant Card Example")),
                                 ui.markdown(_("Copy this configuration to create a dashboard card in Home Assistant:")),
                                 ui.markdown(
@@ -7914,7 +7951,11 @@ def server(input, output, session):
             CONFIG['MQTT_BROKER_PORT'] != int(input.numMqttBrokerPort()) or
             CONFIG['MQTT_USERNAME'] != input.txtMqttUsername() or
             CONFIG['MQTT_PASSWORD'] != input.txtMqttPassword() or
-            CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL'] != float(input.mqtt_image_publish_interval())
+            CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL'] != float(input.mqtt_image_publish_interval()) or
+            # HA discovery changes require a reconnect so publish_discovery_topics()
+            # re-runs with the new toggle / prefix (or the cleanup path fires).
+            CONFIG.get('MQTT_HA_DISCOVERY_ENABLED', True) != bool(input.btnMqttHaDiscoveryEnabled()) or
+            (CONFIG.get('MQTT_HA_DISCOVERY_PREFIX', 'homeassistant') != ((input.txtMqttHaDiscoveryPrefix() or '').strip().strip('/') or 'homeassistant'))
         )
 
         if input.camera_source() == "ip_camera":
@@ -8037,6 +8078,9 @@ def server(input, output, session):
         CONFIG['MQTT_USERNAME'] = input.txtMqttUsername()
         CONFIG['MQTT_PASSWORD'] = input.txtMqttPassword()
         CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL'] = float(input.mqtt_image_publish_interval())
+        CONFIG['MQTT_HA_DISCOVERY_ENABLED'] = bool(input.btnMqttHaDiscoveryEnabled())
+        _prefix_raw = (input.txtMqttHaDiscoveryPrefix() or "").strip().strip('/')
+        CONFIG['MQTT_HA_DISCOVERY_PREFIX'] = _prefix_raw or 'homeassistant'
         CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE'] = input.btnRestartIpCameraStreamOnFailure()
         if not is_remote_mode():
             CONFIG['WLAN_WATCHDOG_ENABLED'] = input.btnWlanWatchdogEnabled()

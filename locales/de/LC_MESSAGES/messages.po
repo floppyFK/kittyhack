@@ -5198,3 +5198,34 @@ msgstr "Token nicht gefunden — möglicherweise wurde er bereits widerrufen."
 #: src/server.py
 msgid "Failed to revoke token: "
 msgstr "Fehler beim Widerrufen des Tokens: "
+
+#: src/server.py
+msgid "Publish Home Assistant MQTT discovery"
+msgstr "Home-Assistant-MQTT-Discovery veröffentlichen"
+
+#: src/server.py
+msgid ""
+"When enabled, Kittyhack publishes retained discovery configs on MQTT "
+"connect so Home Assistant auto-creates the camera, locks, binary sensors, "
+"event sensor and direction selects. Disable if you manage entities "
+"manually — Kittyhack will also clear any previously published discovery "
+"entries so Home Assistant removes them."
+msgstr ""
+"Wenn aktiv, veröffentlicht Kittyhack beim MQTT-Connect retained "
+"Discovery-Configs, sodass Home Assistant Kamera, Schlösser, Binärsensoren, "
+"Event-Sensor und Richtungs-Selects automatisch anlegt. Deaktivieren wenn du "
+"die Entities manuell verwaltest — Kittyhack löscht dann auch vorher "
+"veröffentlichte Discovery-Einträge, damit Home Assistant sie entfernt."
+
+#: src/server.py
+msgid "Discovery prefix"
+msgstr "Discovery-Präfix"
+
+#: src/server.py
+msgid ""
+"Home Assistant's MQTT discovery prefix. Defaults to `homeassistant` — only "
+"change this if your HA instance uses a non-standard prefix."
+msgstr ""
+"Der MQTT-Discovery-Präfix von Home Assistant. Standardwert ist "
+"`homeassistant` — nur ändern, wenn deine HA-Instanz einen abweichenden "
+"Präfix verwendet."

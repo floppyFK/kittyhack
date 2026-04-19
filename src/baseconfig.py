@@ -253,6 +253,8 @@ DEFAULT_CONFIG = {
         "mqtt_password": None,
         "mqtt_enabled": False,
         "mqtt_image_publish_interval": 5.0,
+        "mqtt_ha_discovery_enabled": True,
+        "mqtt_ha_discovery_prefix": "homeassistant",
         "show_cats_only": False,
         "show_mice_only": False,
         "restart_ip_camera_stream_on_failure": True,
@@ -526,6 +528,8 @@ def load_config():
         "MQTT_PASSWORD": safe_str("MQTT_PASSWORD", d['mqtt_password'] if d['mqtt_password'] is not None else ""),
         "MQTT_ENABLED": safe_bool("MQTT_ENABLED", d.get('mqtt_enabled', False)),
         "MQTT_IMAGE_PUBLISH_INTERVAL": safe_float("MQTT_IMAGE_PUBLISH_INTERVAL", float(d['mqtt_image_publish_interval'])),
+        "MQTT_HA_DISCOVERY_ENABLED": safe_bool("MQTT_HA_DISCOVERY_ENABLED", d.get('mqtt_ha_discovery_enabled', True)),
+        "MQTT_HA_DISCOVERY_PREFIX": safe_str("MQTT_HA_DISCOVERY_PREFIX", d.get('mqtt_ha_discovery_prefix', 'homeassistant')),
         "SHOW_CATS_ONLY": safe_bool("SHOW_CATS_ONLY", d['show_cats_only']),
         "SHOW_MICE_ONLY": safe_bool("SHOW_MICE_ONLY", d['show_mice_only']),
         "RESTART_IP_CAMERA_STREAM_ON_FAILURE": safe_bool("RESTART_IP_CAMERA_STREAM_ON_FAILURE", d.get('restart_ip_camera_stream_on_failure', True)),
@@ -692,6 +696,8 @@ def save_config():
     settings['mqtt_password'] = CONFIG['MQTT_PASSWORD']
     settings['mqtt_enabled'] = CONFIG['MQTT_ENABLED']
     settings['mqtt_image_publish_interval'] = CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL']
+    settings['mqtt_ha_discovery_enabled'] = CONFIG['MQTT_HA_DISCOVERY_ENABLED']
+    settings['mqtt_ha_discovery_prefix'] = CONFIG['MQTT_HA_DISCOVERY_PREFIX']
     settings['show_cats_only'] = CONFIG['SHOW_CATS_ONLY']
     settings['show_mice_only'] = CONFIG['SHOW_MICE_ONLY']
     settings['restart_ip_camera_stream_on_failure'] = CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE']

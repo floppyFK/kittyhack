@@ -5073,3 +5073,128 @@ msgstr "Jetzt updaten"
 #: src/server.py
 msgid "Later"
 msgstr "Später"
+
+#: src/server.py
+msgid "API Tokens"
+msgstr "API-Tokens"
+
+#: src/server.py
+msgid ""
+"Tokens authenticate REST API calls (see **doc/api.md**). Each token is "
+"shown only once at creation — store it safely. Send it via `Authorization: "
+"Bearer <token>` header, or — for URL-only clients like Stream Deck — as a "
+"`?token=<token>` query parameter."
+msgstr ""
+"Tokens authentifizieren Aufrufe der REST-API (siehe **doc/api.md**). Jeder "
+"Token wird nur einmalig bei der Erstellung angezeigt — bitte sicher "
+"aufbewahren. Übertragung entweder im `Authorization: Bearer <token>`-Header "
+"oder — für URL-only-Clients wie Stream Deck — als `?token=<token>`-"
+"Query-Parameter."
+
+#: src/server.py
+msgid "Create new token"
+msgstr "Neuen Token erstellen"
+
+#: src/server.py
+msgid "Label"
+msgstr "Bezeichnung"
+
+#: src/server.py
+msgid "e.g. stream-deck"
+msgstr "z. B. stream-deck"
+
+#: src/server.py
+msgid "Create Token"
+msgstr "Token erstellen"
+
+#: src/server.py
+msgid "Revoke token"
+msgstr "Token widerrufen"
+
+#: src/server.py
+msgid "Revoke Selected"
+msgstr "Ausgewählten widerrufen"
+
+#: src/server.py
+msgid "— select a token —"
+msgstr "— Token auswählen —"
+
+#: src/server.py
+msgid "Failed to load tokens: "
+msgstr "Fehler beim Laden der Tokens: "
+
+#: src/server.py
+msgid "No tokens yet."
+msgstr "Noch keine Tokens vorhanden."
+
+#: src/server.py
+msgid "Created"
+msgstr "Erstellt"
+
+#: src/server.py
+msgid "Last used"
+msgstr "Zuletzt verwendet"
+
+#: src/server.py
+msgid "never"
+msgstr "nie"
+
+#: src/server.py
+msgid "Please enter a label first."
+msgstr "Bitte zuerst eine Bezeichnung eingeben."
+
+#: src/server.py
+msgid "Failed to create token: "
+msgstr "Fehler beim Erstellen des Tokens: "
+
+#: src/server.py
+msgid "**Copy this token now — it will not be shown again.**"
+msgstr "**Kopiere diesen Token jetzt — er wird nicht noch einmal angezeigt.**"
+
+#: src/server.py
+msgid ""
+"Use it as an `Authorization: Bearer <token>` header, or — for URL-only "
+"clients like Stream Deck — as a `?token=<token>` query parameter. URL-based "
+"tokens may appear in web-server access logs and browser history; prefer "
+"headers whenever possible."
+msgstr ""
+"Verwende ihn im `Authorization: Bearer <token>`-Header oder — für URL-only-"
+"Clients wie Stream Deck — als `?token=<token>`-Query-Parameter. Tokens in "
+"URLs können in Webserver-Logs und im Browser-Verlauf landen; wann immer "
+"möglich Header bevorzugen."
+
+#: src/server.py
+msgid "Token created"
+msgstr "Token erstellt"
+
+#: src/server.py
+msgid "Please select a token to revoke."
+msgstr "Bitte einen Token zum Widerrufen auswählen."
+
+#: src/server.py
+msgid ""
+"Revoke token '{}'? This cannot be undone. Any client using it will "
+"immediately lose access."
+msgstr ""
+"Token '{}' widerrufen? Das kann nicht rückgängig gemacht werden. Clients, "
+"die diesen Token verwenden, verlieren sofort den Zugriff."
+
+#: src/server.py
+msgid "Revoke API token"
+msgstr "API-Token widerrufen"
+
+#: src/server.py
+msgid "Revoke"
+msgstr "Widerrufen"
+
+#: src/server.py
+msgid "Token revoked."
+msgstr "Token widerrufen."
+
+#: src/server.py
+msgid "Token not found — it may have been revoked already."
+msgstr "Token nicht gefunden — möglicherweise wurde er bereits widerrufen."
+
+#: src/server.py
+msgid "Failed to revoke token: "
+msgstr "Fehler beim Widerrufen des Tokens: "

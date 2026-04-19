@@ -3895,3 +3895,117 @@ msgstr ""
 #: src/server.py
 msgid "Later"
 msgstr ""
+
+#: src/server.py
+msgid "API Tokens"
+msgstr ""
+
+#: src/server.py
+msgid ""
+"Tokens authenticate REST API calls (see **doc/api.md**). Each token is "
+"shown only once at creation — store it safely. Send it via `Authorization: "
+"Bearer <token>` header, or — for URL-only clients like Stream Deck — as a "
+"`?token=<token>` query parameter."
+msgstr ""
+
+#: src/server.py
+msgid "Create new token"
+msgstr ""
+
+#: src/server.py
+msgid "Label"
+msgstr ""
+
+#: src/server.py
+msgid "e.g. stream-deck"
+msgstr ""
+
+#: src/server.py
+msgid "Create Token"
+msgstr ""
+
+#: src/server.py
+msgid "Revoke token"
+msgstr ""
+
+#: src/server.py
+msgid "Revoke Selected"
+msgstr ""
+
+#: src/server.py
+msgid "— select a token —"
+msgstr ""
+
+#: src/server.py
+msgid "Failed to load tokens: "
+msgstr ""
+
+#: src/server.py
+msgid "No tokens yet."
+msgstr ""
+
+#: src/server.py
+msgid "Created"
+msgstr ""
+
+#: src/server.py
+msgid "Last used"
+msgstr ""
+
+#: src/server.py
+msgid "never"
+msgstr ""
+
+#: src/server.py
+msgid "Please enter a label first."
+msgstr ""
+
+#: src/server.py
+msgid "Failed to create token: "
+msgstr ""
+
+#: src/server.py
+msgid "**Copy this token now — it will not be shown again.**"
+msgstr ""
+
+#: src/server.py
+msgid ""
+"Use it as an `Authorization: Bearer <token>` header, or — for URL-only "
+"clients like Stream Deck — as a `?token=<token>` query parameter. URL-based "
+"tokens may appear in web-server access logs and browser history; prefer "
+"headers whenever possible."
+msgstr ""
+
+#: src/server.py
+msgid "Token created"
+msgstr ""
+
+#: src/server.py
+msgid "Please select a token to revoke."
+msgstr ""
+
+#: src/server.py
+msgid ""
+"Revoke token '{}'? This cannot be undone. Any client using it will "
+"immediately lose access."
+msgstr ""
+
+#: src/server.py
+msgid "Revoke API token"
+msgstr ""
+
+#: src/server.py
+msgid "Revoke"
+msgstr ""
+
+#: src/server.py
+msgid "Token revoked."
+msgstr ""
+
+#: src/server.py
+msgid "Token not found — it may have been revoked already."
+msgstr ""
+
+#: src/server.py
+msgid "Failed to revoke token: "
+msgstr ""

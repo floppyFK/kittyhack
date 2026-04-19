@@ -355,29 +355,6 @@ async def mode_set(request: Request):
     return _ok({"mode": new})
 
 
-# Combined preset modes — set both directions at once
-_MODE_SHORTCUTS = {
-    "open":   ("all",   "allow"),  # all cats in, all out
-    "normal": ("known", "allow"),  # only known RFID cats may enter, all may leave
-    "closed": ("none",  "deny"),   # nobody in or out
-}
-
-
-async def mode_shortcut(request: Request):
-    _, err = await _auth_or_fail(request)
-    if err:
-        return err
-    name = request.path_params.get("name", "")
-    if name not in _MODE_SHORTCUTS:
-        return _err(f"unknown mode '{name}', valid: {list(_MODE_SHORTCUTS)}", 404)
-    entry, exit_ = _MODE_SHORTCUTS[name]
-    try:
-        new = _apply_mode(entry, exit_)
-    except ValueError as e:
-        return _err(str(e), status_code=500)
-    return _ok({"mode": new, "shortcut": name})
-
-
 async def mode_entry_set(request: Request):
     """GET /api/v1/mode/entry/{value} — only changes entry direction."""
     _, err = await _auth_or_fail(request)
@@ -507,12 +484,11 @@ def build_router() -> Router:
         Route("/api/v1/door/unlock_outside", door_unlock_outside, methods=["GET", "POST"]),
         Route("/api/v1/door/lock_outside", door_lock_outside, methods=["GET", "POST"]),
 
-        # Mode / settings — separate entry/exit + combined presets
+        # Mode / settings — independent entry and exit direction
         Route("/api/v1/mode", mode_get, methods=["GET"]),
         Route("/api/v1/mode", mode_set, methods=["PUT", "POST"]),
         Route("/api/v1/mode/entry/{value}", mode_entry_set, methods=["GET", "POST"]),
         Route("/api/v1/mode/exit/{value}", mode_exit_set, methods=["GET", "POST"]),
-        Route("/api/v1/mode/{name}", mode_shortcut, methods=["GET", "POST"]),
 
         # Cats
         Route("/api/v1/cats", cats_list, methods=["GET"]),

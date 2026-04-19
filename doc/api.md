@@ -102,30 +102,39 @@ or via query parameters (handy for URL-only clients):
 GET /api/v1/mode?entry=known&exit=allow
 ```
 
-Valid `entry` values: `all`, `all_rfids`, `known`, `none`, `configure_per_cat`.
-Valid `exit` values: `allow`, `deny`, `configure_per_cat`.
+**Entry values** (`entry`) — who may come in from outside:
+
+| Value | Meaning |
+|-------|---------|
+| `all` | Any cat may enter. Motion outside is enough; no RFID required. |
+| `all_rfids` | Any cat carrying **any** RFID chip may enter. The chip does not need to be registered in Kittyhack. |
+| `known` | Only cats that are **registered in the database** may enter. Identification happens via RFID (and optionally the camera, if enabled). |
+| `none` | Block all entries. Flap stays locked for incoming cats. |
+| `configure_per_cat` | Use the per-cat `allow_entry` setting from the cat list. |
+
+**Exit values** (`exit`) — who may leave:
+
+| Value | Meaning |
+|-------|---------|
+| `allow` | Any cat may leave. |
+| `deny` | Block all exits. Flap stays locked for outgoing cats. |
+| `configure_per_cat` | Use the per-cat `allow_exit` setting from the cat list. |
+
+Prey detection, optional outside time ranges and other safety rules are applied independently of the mode — this setting only determines *who* is allowed through.
 
 **Per-direction URLs** — change only one direction, leave the other untouched:
 
 ```
-GET /api/v1/mode/entry/all       # let any cat enter
-GET /api/v1/mode/entry/known     # only cats with a known RFID may enter
-GET /api/v1/mode/entry/none      # block all entries
-GET /api/v1/mode/entry/all_rfids # any cat with any registered RFID
+GET /api/v1/mode/entry/all
+GET /api/v1/mode/entry/all_rfids
+GET /api/v1/mode/entry/known
+GET /api/v1/mode/entry/none
 GET /api/v1/mode/entry/configure_per_cat
 
-GET /api/v1/mode/exit/allow      # any cat may leave
-GET /api/v1/mode/exit/deny       # block all exits
+GET /api/v1/mode/exit/allow
+GET /api/v1/mode/exit/deny
 GET /api/v1/mode/exit/configure_per_cat
 ```
-
-**Combined presets** — change both directions at once:
-
-| Endpoint | `entry` | `exit` |
-|----------|---------|--------|
-| `GET /api/v1/mode/open` | `all` | `allow` |
-| `GET /api/v1/mode/normal` | `known` | `allow` |
-| `GET /api/v1/mode/closed` | `none` | `deny` |
 
 ### Cats
 
@@ -163,6 +172,10 @@ GET /api/v1/events?limit=50
    ```
    http://<kittyhack-host>/api/v1/door/open?token=<paste-token-here>
    ```
-3. Add more buttons for `/api/v1/mode/closed`, `/api/v1/mode/normal`,
-   `/api/v1/mode/open`, `/api/v1/mode/entry/none`, `/api/v1/mode/exit/deny`
-   etc. as needed.
+3. Add more buttons for individual directions, e.g.
+   `/api/v1/mode/entry/none` (block entries),
+   `/api/v1/mode/entry/all` (open to everyone),
+   `/api/v1/mode/entry/known` (only registered cats),
+   `/api/v1/mode/exit/deny` (block exits),
+   `/api/v1/mode/exit/allow` (let anyone out),
+   or `/api/v1/door/close` for a manual lock.

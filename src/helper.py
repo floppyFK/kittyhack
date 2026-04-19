@@ -523,6 +523,65 @@ def normalize_repo_spec(raw: str) -> str | None:
     return f"{owner}/{repo}" + (f"@{ref}" if ref else "")
 
 
+def check_custom_update_repo_reachable(raw_spec: str, timeout: float = 5.0):
+    """Verify that `raw_spec` resolves to an existing GitHub repo + ref.
+
+    Hits up to two unauthenticated GitHub REST API endpoints:
+      - `/repos/{owner}/{repo}` to confirm the repository exists.
+      - `/repos/{owner}/{repo}/commits/{ref}` to confirm the branch, tag or
+        SHA exists (only when a ref is provided — the commits endpoint
+        resolves all three).
+
+    Intended for save-time validation in the configuration handler so
+    that typos like `asdasd/kittyhack@no-owner` are rejected before they
+    land in config.ini and trigger a futile update attempt.
+
+    Returns `(ok, reason, detail)`:
+      - `(True,  "",               "")`                         reachable
+      - `(False, "invalid_format", "")`                         parse failed
+      - `(False, "repo_not_found", "owner/repo")`               repo is 404
+      - `(False, "ref_not_found",  "owner/repo@ref")`           ref is 404
+      - `(False, "network_error",  "<short description>")`      request failed
+
+    The caller is responsible for presenting a translated message; the
+    string codes are stable and safe to switch on.
+    """
+    owner, repo, ref = _parse_repo_spec(raw_spec)
+    if not owner or not repo:
+        return False, "invalid_format", ""
+
+    try:
+        r = requests.get(
+            f"https://api.github.com/repos/{owner}/{repo}",
+            timeout=timeout,
+        )
+    except requests.RequestException as e:
+        return False, "network_error", str(e)
+
+    if r.status_code == 404:
+        return False, "repo_not_found", f"{owner}/{repo}"
+    if r.status_code != 200:
+        return False, "network_error", f"HTTP {r.status_code} for {owner}/{repo}"
+
+    if ref is None:
+        return True, "", ""
+
+    try:
+        r = requests.get(
+            f"https://api.github.com/repos/{owner}/{repo}/commits/{ref}",
+            timeout=timeout,
+        )
+    except requests.RequestException as e:
+        return False, "network_error", str(e)
+
+    if r.status_code == 404:
+        return False, "ref_not_found", f"{owner}/{repo}@{ref}"
+    if r.status_code != 200:
+        return False, "network_error", f"HTTP {r.status_code} for {owner}/{repo}@{ref}"
+
+    return True, "", ""
+
+
 def resolved_update_repo():
     """Resolve the active update source based on CONFIG.
 

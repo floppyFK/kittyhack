@@ -7889,7 +7889,7 @@ def server(input, output, session):
         # owner:branch with GitHub PR shorthand). We store the canonical form.
         normalized_update_repo: str | None = None
         if input.update_repository_mode() == "custom":
-            from src.helper import normalize_repo_spec
+            from src.helper import normalize_repo_spec, check_custom_update_repo_reachable
             normalized_update_repo = normalize_repo_spec(input.update_repository() or "")
             if normalized_update_repo is None:
                 ui.notification_show(
@@ -7899,6 +7899,30 @@ def server(input, output, session):
                     duration=10, type="error"
                 )
                 return
+
+            # Existence check against GitHub. Skipped when the spec is unchanged so
+            # a transient network glitch cannot block unrelated settings saves on
+            # an already-validated spec.
+            spec_changed = (
+                _prev_update_mode != "custom"
+                or _prev_update_repo != normalized_update_repo
+            )
+            if spec_changed:
+                ok, reason, detail = check_custom_update_repo_reachable(normalized_update_repo)
+                if not ok:
+                    if reason == "repo_not_found":
+                        msg = _("Repository '{}' was not found on GitHub.").format(detail)
+                    elif reason == "ref_not_found":
+                        msg = _("Branch or tag '{}' was not found on GitHub.").format(detail)
+                    elif reason == "network_error":
+                        msg = _("Could not reach GitHub to verify the custom repository: {}").format(detail)
+                    else:
+                        msg = _("Custom update repository could not be validated.")
+                    ui.notification_show(
+                        _("Update repository: ") + msg + "\n" + _("Changes were not saved."),
+                        duration=12, type="error"
+                    )
+                    return
 
         # Check for a changed hostname
         hostname_changed = input.txtHostname() != get_hostname()

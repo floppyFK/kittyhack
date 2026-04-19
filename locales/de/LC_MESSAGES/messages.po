@@ -5034,6 +5034,24 @@ msgstr ""
 "'owner:branch'."
 
 #: src/server.py
+msgid "Repository '{}' was not found on GitHub."
+msgstr "Repository '{}' wurde auf GitHub nicht gefunden."
+
+#: src/server.py
+msgid "Branch or tag '{}' was not found on GitHub."
+msgstr "Branch oder Tag '{}' wurde auf GitHub nicht gefunden."
+
+#: src/server.py
+msgid "Could not reach GitHub to verify the custom repository: {}"
+msgstr ""
+"GitHub konnte zur Überprüfung des benutzerdefinierten Repositories nicht "
+"erreicht werden: {}"
+
+#: src/server.py
+msgid "Custom update repository could not be validated."
+msgstr "Benutzerdefiniertes Update-Repository konnte nicht validiert werden."
+
+#: src/server.py
 msgid "Force update"
 msgstr "Update erzwingen"
 

@@ -4719,7 +4719,17 @@ def server(input, output, session):
             ui.markdown(_("**Copy this token now — it will not be shown again.**")),
             ui.tags.pre(
                 ui.tags.code(raw),
-                style_="background: #f5f5f5; padding: 0.5rem; border-radius: 4px; word-break: break-all; white-space: pre-wrap; user-select: all;",
+                # Use Bootstrap theme tokens so the token box stays readable in
+                # both light and dark themes. Previous hard-coded light bg led
+                # to white text on (near-)white background in dark mode.
+                style_=(
+                    "background: var(--bs-tertiary-bg, #f5f5f5); "
+                    "color: var(--bs-body-color, #212529); "
+                    "border: 1px solid var(--bs-border-color, #dee2e6); "
+                    "padding: 0.5rem; border-radius: 4px; "
+                    "word-break: break-all; white-space: pre-wrap; "
+                    "user-select: all;"
+                ),
             ),
             ui.markdown(_(
                 "Use it as an `Authorization: Bearer <token>` header, or — for URL-only "

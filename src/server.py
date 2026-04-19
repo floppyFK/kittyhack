@@ -13,6 +13,13 @@ from zoneinfo import ZoneInfo
 from faicons import icon_svg
 import math
 import threading
+import matplotlib
+# Headless backend: the Kittyflap runs without a display, and server-rendered
+# plots never need a GUI event loop. Must be set before importing pyplot / any
+# figure-creating call.
+matplotlib.use("Agg")
+from matplotlib.figure import Figure
+from matplotlib.dates import DateFormatter
 import subprocess
 import re
 import hashlib
@@ -9589,6 +9596,369 @@ def server(input, output, session):
             percent = int(round((step / max_steps) * 100))
             percent = max(0, min(100, percent))
         return f"{percent}%"
+
+    # ------------------------------------------------------------------
+    # Statistics tab
+    # ------------------------------------------------------------------
+    # Per-day aggregations of entries, exits, prey detections, and mean
+    # outside duration — grouped by cat. Data comes from db_get_motion_blocks
+    # (same source as the Pictures tab); timestamps are UTC ISO strings that
+    # we bucket into local dates via get_local_date_from_utc_date.
+
+    PRIMARY_ENTRY_EVENTS = {"cat_went_inside", "cat_went_probably_inside"}
+    PRIMARY_EXIT_EVENTS = {"cat_went_outside"}
+    PREY_MARKER_EVENTS = {"cat_went_inside_with_mouse", "motion_outside_with_mouse"}
+
+    def _stats_unknown_label() -> str:
+        return _("Unknown cat")
+
+    def _stats_cat_name_for_rfid(rfid: str | None, rfid_to_name: dict) -> str:
+        if not rfid:
+            return _stats_unknown_label()
+        return rfid_to_name.get(rfid) or _stats_unknown_label()
+
+    def _stats_local_date_from_utc(ts_str: str) -> str | None:
+        """Return 'YYYY-MM-DD' in the configured local timezone, or None on parse error."""
+        if not ts_str:
+            return None
+        try:
+            local = get_local_date_from_utc_date(str(ts_str))
+            return str(local).split(" ", 1)[0]
+        except Exception:
+            return None
+
+    def _stats_build_dataframes(date_start: str, date_end: str):
+        """Fetch motion blocks once and derive the four aggregation frames.
+
+        Returns a dict with:
+            'daily':     DataFrame [date, cat, entries, exits, prey]
+            'durations': DataFrame [date, cat, duration_s]  (one row per paired out→in trip)
+            'kpis':      dict {'entries','exits','prey','avg_outside_minutes'}
+            'cats':      sorted list of cat labels present in the data
+        """
+        try:
+            df = db_get_motion_blocks(
+                CONFIG['KITTYHACK_DATABASE_PATH'],
+                block_count=0,
+                date_start=date_start,
+                date_end=date_end,
+            )
+        except Exception as e:
+            logging.warning(f"[STATS] db_get_motion_blocks failed: {e}")
+            df = pd.DataFrame()
+
+        rfid_to_name = {}
+        try:
+            rfid_to_name = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH']) or {}
+        except Exception:
+            pass
+
+        if df is None or df.empty:
+            return {
+                "daily": pd.DataFrame(columns=["date", "cat", "entries", "exits", "prey"]),
+                "durations": pd.DataFrame(columns=["date", "cat", "duration_s"]),
+                "kpis": {"entries": 0, "exits": 0, "prey": 0, "avg_outside_minutes": None},
+                "cats": [],
+            }
+
+        # Enrich rows: local_date, cat_name, events_set, primary_event.
+        enriched = []
+        for _i, row in df.iterrows():
+            local_date = _stats_local_date_from_utc(row.get("created_at"))
+            if not local_date:
+                continue
+            events_raw = str(row.get("event_type") or "")
+            events = {tok.strip() for tok in events_raw.split(",") if tok.strip()}
+            if not events:
+                continue
+            primary = events_raw.split(",", 1)[0].strip()
+            cat = _stats_cat_name_for_rfid(str(row.get("rfid") or ""), rfid_to_name)
+            enriched.append({
+                "date": local_date,
+                "cat": cat,
+                "events": events,
+                "primary": primary,
+                "created_at": str(row.get("created_at") or ""),
+            })
+
+        if not enriched:
+            return {
+                "daily": pd.DataFrame(columns=["date", "cat", "entries", "exits", "prey"]),
+                "durations": pd.DataFrame(columns=["date", "cat", "duration_s"]),
+                "kpis": {"entries": 0, "exits": 0, "prey": 0, "avg_outside_minutes": None},
+                "cats": [],
+            }
+
+        # Daily aggregations.
+        daily_rows = {}  # key=(date,cat) → dict
+        for ev in enriched:
+            key = (ev["date"], ev["cat"])
+            slot = daily_rows.setdefault(key, {"date": ev["date"], "cat": ev["cat"], "entries": 0, "exits": 0, "prey": 0})
+            if ev["primary"] in PRIMARY_ENTRY_EVENTS:
+                slot["entries"] += 1
+            if ev["primary"] in PRIMARY_EXIT_EVENTS:
+                slot["exits"] += 1
+            # Prey counted once per motion block: "any event in the block is a prey marker".
+            if ev["events"] & PREY_MARKER_EVENTS:
+                slot["prey"] += 1
+
+        daily = pd.DataFrame(list(daily_rows.values()))
+        daily = daily.sort_values(["date", "cat"]).reset_index(drop=True)
+
+        # Outside-duration pairing (per cat): walk events chronologically, pair
+        # each cat_went_outside with the next cat_went_inside* event. Bucket
+        # the duration by the local date of the exit.
+        durations = []
+        per_cat = {}
+        for ev in sorted(enriched, key=lambda e: e["created_at"]):
+            cat = ev["cat"]
+            if ev["primary"] in PRIMARY_EXIT_EVENTS:
+                per_cat[cat] = ev  # remember the last exit waiting for an entry
+            elif ev["primary"] in PRIMARY_ENTRY_EVENTS:
+                pending_exit = per_cat.pop(cat, None)
+                if pending_exit is None:
+                    continue
+                try:
+                    t_exit = pd.to_datetime(pending_exit["created_at"], utc=True, errors="coerce")
+                    t_entry = pd.to_datetime(ev["created_at"], utc=True, errors="coerce")
+                    if pd.isna(t_exit) or pd.isna(t_entry):
+                        continue
+                    delta_s = (t_entry - t_exit).total_seconds()
+                    if delta_s <= 0 or delta_s > 86400:  # ignore same-timestamp / >1 day (likely missed pair)
+                        continue
+                    durations.append({
+                        "date": pending_exit["date"],
+                        "cat": cat,
+                        "duration_s": float(delta_s),
+                    })
+                except Exception:
+                    continue
+
+        durations_df = pd.DataFrame(durations) if durations else pd.DataFrame(columns=["date", "cat", "duration_s"])
+
+        # KPIs for the entire range.
+        kpis = {
+            "entries": int(daily["entries"].sum()) if not daily.empty else 0,
+            "exits": int(daily["exits"].sum()) if not daily.empty else 0,
+            "prey": int(daily["prey"].sum()) if not daily.empty else 0,
+            "avg_outside_minutes": (float(durations_df["duration_s"].mean()) / 60.0) if not durations_df.empty else None,
+        }
+
+        cats = sorted(daily["cat"].unique().tolist()) if not daily.empty else []
+        return {"daily": daily, "durations": durations_df, "kpis": kpis, "cats": cats}
+
+    @reactive.Calc
+    def _stats_date_range_utc():
+        """Convert the user's local date-range inputs to UTC-ish strings for the DB query.
+
+        We widen by ±1 day so no events on the edge are lost across timezone shifts;
+        per-event filtering later re-checks the exact local date.
+        """
+        try:
+            start = input.stats_date_start()
+            end = input.stats_date_end()
+        except Exception:
+            start = None
+            end = None
+        if start is None or end is None:
+            # default: last 30 days, inclusive of today (local)
+            try:
+                today_local = datetime.now(tz=get_timezone()).date()
+            except Exception:
+                today_local = datetime.utcnow().date()
+            end = today_local
+            start = end - timedelta(days=29)
+        start_str = (pd.to_datetime(start) - pd.Timedelta(days=1)).strftime("%Y-%m-%d 00:00:00")
+        end_str = (pd.to_datetime(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d 23:59:59")
+        return start_str, end_str
+
+    @reactive.Calc
+    def _stats_data():
+        date_start, date_end = _stats_date_range_utc()
+        data = _stats_build_dataframes(date_start, date_end)
+        # Apply the user-picked local date bounds after the fact.
+        try:
+            lstart = pd.to_datetime(input.stats_date_start()).strftime("%Y-%m-%d") if input.stats_date_start() else None
+        except Exception:
+            lstart = None
+        try:
+            lend = pd.to_datetime(input.stats_date_end()).strftime("%Y-%m-%d") if input.stats_date_end() else None
+        except Exception:
+            lend = None
+        if lstart and lend:
+            data["daily"] = data["daily"][(data["daily"]["date"] >= lstart) & (data["daily"]["date"] <= lend)].reset_index(drop=True)
+            data["durations"] = data["durations"][(data["durations"]["date"] >= lstart) & (data["durations"]["date"] <= lend)].reset_index(drop=True)
+
+        # Apply cat filter
+        try:
+            selected_cats = list(input.stats_cat_filter() or [])
+        except Exception:
+            selected_cats = []
+        if selected_cats:
+            data["daily"] = data["daily"][data["daily"]["cat"].isin(selected_cats)].reset_index(drop=True)
+            data["durations"] = data["durations"][data["durations"]["cat"].isin(selected_cats)].reset_index(drop=True)
+
+        # Recompute KPIs on the filtered slices
+        data["kpis"] = {
+            "entries": int(data["daily"]["entries"].sum()) if not data["daily"].empty else 0,
+            "exits": int(data["daily"]["exits"].sum()) if not data["daily"].empty else 0,
+            "prey": int(data["daily"]["prey"].sum()) if not data["daily"].empty else 0,
+            "avg_outside_minutes": (float(data["durations"]["duration_s"].mean()) / 60.0) if not data["durations"].empty else None,
+        }
+        return data
+
+    def _stats_stacked_bar(daily_df: pd.DataFrame, value_col: str, title: str, ylabel: str) -> Figure:
+        fig = Figure(figsize=(7.5, 3.8))
+        ax = fig.subplots()
+        if daily_df.empty or daily_df[value_col].sum() == 0:
+            ax.text(0.5, 0.5, _("No data for this range."), ha="center", va="center", transform=ax.transAxes, color="gray")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_title(title)
+            fig.tight_layout()
+            return fig
+        pivot = daily_df.pivot_table(index="date", columns="cat", values=value_col, aggfunc="sum", fill_value=0)
+        pivot = pivot.sort_index()
+        pivot.plot(kind="bar", stacked=True, ax=ax, width=0.85)
+        ax.set_xlabel("")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.legend(title=_("Cat"), fontsize=8, title_fontsize=8, loc="upper left", bbox_to_anchor=(1.01, 1.0))
+        ax.tick_params(axis="x", rotation=45, labelsize=8)
+        ax.grid(True, axis="y", alpha=0.25)
+        fig.tight_layout()
+        return fig
+
+    def _stats_duration_plot(durations_df: pd.DataFrame) -> Figure:
+        fig = Figure(figsize=(7.5, 3.8))
+        ax = fig.subplots()
+        if durations_df.empty:
+            ax.text(0.5, 0.5, _("No completed outside trips in range."), ha="center", va="center", transform=ax.transAxes, color="gray")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_title(_("Average outside duration per day"))
+            fig.tight_layout()
+            return fig
+        agg = durations_df.groupby(["date", "cat"])["duration_s"].mean().unstack(fill_value=0) / 60.0
+        agg = agg.sort_index()
+        agg.plot(kind="bar", ax=ax, width=0.85)
+        ax.set_xlabel("")
+        ax.set_ylabel(_("Minutes"))
+        ax.set_title(_("Average outside duration per day"))
+        ax.legend(title=_("Cat"), fontsize=8, title_fontsize=8, loc="upper left", bbox_to_anchor=(1.01, 1.0))
+        ax.tick_params(axis="x", rotation=45, labelsize=8)
+        ax.grid(True, axis="y", alpha=0.25)
+        fig.tight_layout()
+        return fig
+
+    @output
+    @render.ui
+    def ui_statistics():
+        try:
+            today_local = datetime.now(tz=get_timezone()).date()
+        except Exception:
+            today_local = datetime.utcnow().date()
+        default_end = today_local
+        default_start = today_local - timedelta(days=29)
+
+        # Cat-filter choices come from the union of RFID-to-name and events in range.
+        # For the initial render we seed it with the full cat roster; the UI will
+        # still work even if the user's DB hasn't cached any of these yet.
+        try:
+            rfid_to_name = get_cat_name_rfid_dict(CONFIG['KITTYHACK_DATABASE_PATH']) or {}
+        except Exception:
+            rfid_to_name = {}
+        cat_choices = sorted(set(rfid_to_name.values()) | {_stats_unknown_label()})
+
+        controls = ui.card(
+            ui.card_header(ui.h4(_("Statistics"), style_="text-align:center;")),
+            ui.row(
+                ui.column(4, ui.input_date("stats_date_start", _("From"), value=default_start)),
+                ui.column(4, ui.input_date("stats_date_end", _("To"), value=default_end)),
+                ui.column(
+                    4,
+                    ui.input_checkbox_group(
+                        "stats_cat_filter",
+                        _("Filter cats"),
+                        choices=cat_choices,
+                        selected=[],
+                    ),
+                ),
+            ),
+            ui.help_text(_("Leave 'Filter cats' empty to include every cat. Time range is inclusive of both dates in the Kittyflap's local timezone.")),
+            class_="generic-container",
+        )
+
+        kpis = ui.row(
+            ui.column(3, ui.output_ui("ui_stats_kpi_entries")),
+            ui.column(3, ui.output_ui("ui_stats_kpi_exits")),
+            ui.column(3, ui.output_ui("ui_stats_kpi_prey")),
+            ui.column(3, ui.output_ui("ui_stats_kpi_avg_outside")),
+        )
+
+        plots = ui.row(
+            ui.column(6, ui.card(ui.card_header(_("Entries per day")), ui.output_plot("plot_stats_entries", height="320px"), class_="generic-container")),
+            ui.column(6, ui.card(ui.card_header(_("Exits per day")), ui.output_plot("plot_stats_exits", height="320px"), class_="generic-container")),
+            ui.column(6, ui.card(ui.card_header(_("Prey detections per day")), ui.output_plot("plot_stats_prey", height="320px"), class_="generic-container")),
+            ui.column(6, ui.card(ui.card_header(_("Average outside duration per day")), ui.output_plot("plot_stats_duration", height="320px"), class_="generic-container")),
+        )
+
+        return ui.div(controls, ui.br(), kpis, ui.br(), plots)
+
+    def _kpi_card(label: str, value_html: str) -> ui.Tag:
+        return ui.card(
+            ui.div(
+                ui.div(value_html, style_="font-size:1.8rem; font-weight:600; text-align:center;"),
+                ui.div(label, style_="font-size:0.85rem; color:grey; text-align:center;"),
+                style_="padding:0.5rem 0.5rem;",
+            ),
+            class_="generic-container",
+        )
+
+    @output
+    @render.ui
+    def ui_stats_kpi_entries():
+        return _kpi_card(_("Total entries"), str(_stats_data()["kpis"]["entries"]))
+
+    @output
+    @render.ui
+    def ui_stats_kpi_exits():
+        return _kpi_card(_("Total exits"), str(_stats_data()["kpis"]["exits"]))
+
+    @output
+    @render.ui
+    def ui_stats_kpi_prey():
+        return _kpi_card(_("Prey detections"), str(_stats_data()["kpis"]["prey"]))
+
+    @output
+    @render.ui
+    def ui_stats_kpi_avg_outside():
+        v = _stats_data()["kpis"]["avg_outside_minutes"]
+        if v is None:
+            text = "—"
+        else:
+            text = f"{v:.0f} min" if v >= 1 else f"{int(v*60)} s"
+        return _kpi_card(_("Avg outside duration"), text)
+
+    @output
+    @render.plot
+    def plot_stats_entries():
+        return _stats_stacked_bar(_stats_data()["daily"], "entries", _("Entries per day"), _("Count"))
+
+    @output
+    @render.plot
+    def plot_stats_exits():
+        return _stats_stacked_bar(_stats_data()["daily"], "exits", _("Exits per day"), _("Count"))
+
+    @output
+    @render.plot
+    def plot_stats_prey():
+        return _stats_stacked_bar(_stats_data()["daily"], "prey", _("Prey detections per day"), _("Count"))
+
+    @output
+    @render.plot
+    def plot_stats_duration():
+        return _stats_duration_plot(_stats_data()["durations"])
 
     # Reactive effect to show/update the modal in all sessions
     @reactive.Effect

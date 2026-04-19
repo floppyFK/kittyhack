@@ -5198,3 +5198,75 @@ msgstr "Token nicht gefunden — möglicherweise wurde er bereits widerrufen."
 #: src/server.py
 msgid "Failed to revoke token: "
 msgstr "Fehler beim Widerrufen des Tokens: "
+
+#: src/ui.py
+msgid "Statistics"
+msgstr "Statistik"
+
+#: src/server.py
+msgid "Unknown cat"
+msgstr "Unbekannte Katze"
+
+#: src/server.py
+msgid "Filter cats"
+msgstr "Katzen filtern"
+
+#: src/server.py
+msgid ""
+"Leave 'Filter cats' empty to include every cat. Time range is inclusive of "
+"both dates in the Kittyflap's local timezone."
+msgstr ""
+"Lass 'Katzen filtern' leer, um alle Katzen einzuschließen. Der Zeitraum "
+"enthält beide Randdaten in der lokalen Zeitzone der Kittyflap."
+
+#: src/server.py
+msgid "Total entries"
+msgstr "Eintritte gesamt"
+
+#: src/server.py
+msgid "Total exits"
+msgstr "Austritte gesamt"
+
+#: src/server.py
+msgid "Prey detections"
+msgstr "Beute-Erkennungen"
+
+#: src/server.py
+msgid "Avg outside duration"
+msgstr "Ø Aufenthalt draußen"
+
+#: src/server.py
+msgid "Entries per day"
+msgstr "Eintritte pro Tag"
+
+#: src/server.py
+msgid "Exits per day"
+msgstr "Austritte pro Tag"
+
+#: src/server.py
+msgid "Prey detections per day"
+msgstr "Beute-Erkennungen pro Tag"
+
+#: src/server.py
+msgid "Average outside duration per day"
+msgstr "Ø Aufenthalt draußen pro Tag"
+
+#: src/server.py
+msgid "No data for this range."
+msgstr "Keine Daten in diesem Zeitraum."
+
+#: src/server.py
+msgid "No completed outside trips in range."
+msgstr "Keine vollständigen Draußen-Aufenthalte in diesem Zeitraum."
+
+#: src/server.py
+msgid "Cat"
+msgstr "Katze"
+
+#: src/server.py
+msgid "Count"
+msgstr "Anzahl"
+
+#: src/server.py
+msgid "Minutes"
+msgstr "Minuten"

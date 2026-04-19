@@ -8,6 +8,7 @@ sync-to-kittyflap.sh
 *.code-workspace
 notifications.json
 api_tokens.json
+webhooks.json
 ignore_*
 .vscode/settings.json
 config.remote.ini

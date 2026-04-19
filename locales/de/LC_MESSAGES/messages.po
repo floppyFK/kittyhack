@@ -4339,8 +4339,6 @@ msgstr "Label Studio wird aktualisiert..."
 #~ msgid "This will take 5-10 minutes, so please be patient."
 #~ msgstr "Dies wird 5-10 Minuten dauern, also bitte geduldig sein."
 
-#~ msgid "Description"
-#~ msgstr "Beschreibung"
 
 #~ msgid ""
 #~ "In this section, you can train your own individual AI model for the "
@@ -5198,3 +5196,169 @@ msgstr "Token nicht gefunden — möglicherweise wurde er bereits widerrufen."
 #: src/server.py
 msgid "Failed to revoke token: "
 msgstr "Fehler beim Widerrufen des Tokens: "
+
+#: src/server.py
+msgid "Webhooks"
+msgstr "Webhooks"
+
+#: src/server.py
+msgid "Send HTTP notifications to external services when events occur."
+msgstr "HTTP-Benachrichtigungen an externe Dienste senden, wenn Events auftreten."
+
+#: src/server.py
+msgid "Enable webhooks"
+msgstr "Webhooks aktivieren"
+
+#: src/server.py
+msgid ""
+"Global kill switch. When disabled, no webhook fires regardless of per-hook "
+"settings."
+msgstr ""
+"Globaler Kill-Switch. Deaktiviert unterdrückt alle Webhooks, unabhängig von "
+"den einzelnen Einstellungen."
+
+#: src/server.py
+msgid "Configured webhooks"
+msgstr "Konfigurierte Webhooks"
+
+#: src/server.py
+msgid "Add webhook"
+msgstr "Webhook hinzufügen"
+
+#: src/server.py
+msgid "Show available variables"
+msgstr "Verfügbare Variablen anzeigen"
+
+#: src/server.py
+msgid ""
+"Each webhook fires when one of its selected events occurs. Supports `GET` "
+"and `POST`; the URL, headers, and (for POST) body are templates — reference "
+"values like `{cat_name}` or `{event_type}`. Use **Show available variables**"
+" for the full list. Per-hook configuration survives Kittyhack updates."
+msgstr ""
+"Jeder Webhook wird ausgelöst, wenn eines seiner ausgewählten Events "
+"auftritt. Unterstützt `GET` und `POST`; URL, Header und (bei POST) Body "
+"sind Templates — nutze Werte wie `{cat_name}` oder `{event_type}`. Unter "
+"**Verfügbare Variablen anzeigen** siehst du die vollständige Liste. "
+"Webhook-Einstellungen überstehen Kittyhack-Updates."
+
+#: src/server.py
+msgid "Edit webhook"
+msgstr "Webhook bearbeiten"
+
+#: src/server.py
+msgid "URL"
+msgstr "URL"
+
+#: src/server.py
+msgid "Method"
+msgstr "Methode"
+
+#: src/server.py
+msgid "Timeout (s)"
+msgstr "Timeout (s)"
+
+#: src/server.py
+msgid "Enabled"
+msgstr "Aktiv"
+
+#: src/server.py
+msgid "Disabled"
+msgstr "Inaktiv"
+
+#: src/server.py
+msgid "Trigger events"
+msgstr "Auslösende Events"
+
+#: src/server.py
+msgid "Custom headers (one 'Key: Value' per line)"
+msgstr "Eigene Header (ein 'Key: Value' pro Zeile)"
+
+#: src/server.py
+msgid "Payload template (POST body)"
+msgstr "Payload-Template (POST-Body)"
+
+#: src/server.py
+msgid "Test"
+msgstr "Test"
+
+#: src/server.py
+msgid "Edit"
+msgstr "Bearbeiten"
+
+#: src/server.py
+msgid "No webhooks configured yet."
+msgstr "Noch keine Webhooks konfiguriert."
+
+#: src/server.py
+msgid "Failed to load webhooks: "
+msgstr "Fehler beim Laden der Webhooks: "
+
+#: src/server.py
+msgid "(none)"
+msgstr "(keine)"
+
+#: src/server.py
+msgid "Delete this webhook? This cannot be undone."
+msgstr "Diesen Webhook wirklich löschen? Das kann nicht rückgängig gemacht werden."
+
+#: src/server.py
+msgid "Delete webhook"
+msgstr "Webhook löschen"
+
+#: src/server.py
+msgid "URL is required."
+msgstr "URL ist erforderlich."
+
+#: src/server.py
+msgid "Failed to save webhook: "
+msgstr "Fehler beim Speichern des Webhooks: "
+
+#: src/server.py
+msgid "Webhook saved."
+msgstr "Webhook gespeichert."
+
+#: src/server.py
+msgid "Fill URL before testing."
+msgstr "Bitte zuerst die URL eingeben, dann testen."
+
+#: src/server.py
+msgid "Test: {}"
+msgstr "Test: {}"
+
+#: src/server.py
+msgid "Webhook '{}': {}"
+msgstr "Webhook '{}': {}"
+
+#: src/server.py
+msgid "Failed to delete webhook: "
+msgstr "Fehler beim Löschen des Webhooks: "
+
+#: src/server.py
+msgid "Webhook deleted."
+msgstr "Webhook gelöscht."
+
+#: src/server.py
+msgid ""
+"Use any of these placeholders in the URL, custom headers, or payload "
+"template. Unknown names are left as-is, so you can use templating "
+"defensively."
+msgstr ""
+"Nutze diese Platzhalter in URL, Headern oder Payload-Template. Unbekannte "
+"Namen bleiben unverändert stehen, du kannst also defensiv templaten."
+
+#: src/server.py
+msgid "Variable"
+msgstr "Variable"
+
+#: src/server.py
+msgid "Description"
+msgstr "Beschreibung"
+
+#: src/server.py
+msgid "Example"
+msgstr "Beispiel"
+
+#: src/server.py
+msgid "Available webhook variables"
+msgstr "Verfügbare Webhook-Variablen"

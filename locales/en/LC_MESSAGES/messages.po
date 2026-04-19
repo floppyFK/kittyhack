@@ -4009,3 +4009,160 @@ msgstr ""
 #: src/server.py
 msgid "Failed to revoke token: "
 msgstr ""
+
+#: src/server.py
+msgid "Webhooks"
+msgstr ""
+
+#: src/server.py
+msgid "Send HTTP notifications to external services when events occur."
+msgstr ""
+
+#: src/server.py
+msgid "Enable webhooks"
+msgstr ""
+
+#: src/server.py
+msgid ""
+"Global kill switch. When disabled, no webhook fires regardless of per-hook "
+"settings."
+msgstr ""
+
+#: src/server.py
+msgid "Configured webhooks"
+msgstr ""
+
+#: src/server.py
+msgid "Add webhook"
+msgstr ""
+
+#: src/server.py
+msgid "Show available variables"
+msgstr ""
+
+#: src/server.py
+msgid ""
+"Each webhook fires when one of its selected events occurs. Supports `GET` "
+"and `POST`; the URL, headers, and (for POST) body are templates — reference "
+"values like `{cat_name}` or `{event_type}`. Use **Show available variables**"
+" for the full list. Per-hook configuration survives Kittyhack updates."
+msgstr ""
+
+#: src/server.py
+msgid "Edit webhook"
+msgstr ""
+
+#: src/server.py
+msgid "URL"
+msgstr ""
+
+#: src/server.py
+msgid "Method"
+msgstr ""
+
+#: src/server.py
+msgid "Timeout (s)"
+msgstr ""
+
+#: src/server.py
+msgid "Enabled"
+msgstr ""
+
+#: src/server.py
+msgid "Disabled"
+msgstr ""
+
+#: src/server.py
+msgid "Trigger events"
+msgstr ""
+
+#: src/server.py
+msgid "Custom headers (one 'Key: Value' per line)"
+msgstr ""
+
+#: src/server.py
+msgid "Payload template (POST body)"
+msgstr ""
+
+#: src/server.py
+msgid "Test"
+msgstr ""
+
+#: src/server.py
+msgid "Edit"
+msgstr ""
+
+#: src/server.py
+msgid "No webhooks configured yet."
+msgstr ""
+
+#: src/server.py
+msgid "Failed to load webhooks: "
+msgstr ""
+
+#: src/server.py
+msgid "(none)"
+msgstr ""
+
+#: src/server.py
+msgid "Delete this webhook? This cannot be undone."
+msgstr ""
+
+#: src/server.py
+msgid "Delete webhook"
+msgstr ""
+
+#: src/server.py
+msgid "URL is required."
+msgstr ""
+
+#: src/server.py
+msgid "Failed to save webhook: "
+msgstr ""
+
+#: src/server.py
+msgid "Webhook saved."
+msgstr ""
+
+#: src/server.py
+msgid "Fill URL before testing."
+msgstr ""
+
+#: src/server.py
+msgid "Test: {}"
+msgstr ""
+
+#: src/server.py
+msgid "Webhook '{}': {}"
+msgstr ""
+
+#: src/server.py
+msgid "Failed to delete webhook: "
+msgstr ""
+
+#: src/server.py
+msgid "Webhook deleted."
+msgstr ""
+
+#: src/server.py
+msgid ""
+"Use any of these placeholders in the URL, custom headers, or payload "
+"template. Unknown names are left as-is, so you can use templating "
+"defensively."
+msgstr ""
+
+#: src/server.py
+msgid "Variable"
+msgstr ""
+
+#: src/server.py
+msgid "Description"
+msgstr ""
+
+#: src/server.py
+msgid "Example"
+msgstr ""
+
+#: src/server.py
+msgid "Available webhook variables"
+msgstr ""

@@ -257,6 +257,7 @@ DEFAULT_CONFIG = {
         "show_mice_only": False,
         "restart_ip_camera_stream_on_failure": True,
         "wlan_watchdog_enabled": True,
+        "webhooks_enabled": True,
         "disable_rfid_reader": False,
         "event_images_fs_migrated": False,
 
@@ -530,6 +531,7 @@ def load_config():
         "SHOW_MICE_ONLY": safe_bool("SHOW_MICE_ONLY", d['show_mice_only']),
         "RESTART_IP_CAMERA_STREAM_ON_FAILURE": safe_bool("RESTART_IP_CAMERA_STREAM_ON_FAILURE", d.get('restart_ip_camera_stream_on_failure', True)),
         "WLAN_WATCHDOG_ENABLED": safe_bool("WLAN_WATCHDOG_ENABLED", d.get('wlan_watchdog_enabled', True)),
+        "WEBHOOKS_ENABLED": safe_bool("WEBHOOKS_ENABLED", d.get('webhooks_enabled', True)),
         "DISABLE_RFID_READER": safe_bool("DISABLE_RFID_READER", d.get('disable_rfid_reader', False)),
         "EVENT_IMAGES_FS_MIGRATED": safe_bool("EVENT_IMAGES_FS_MIGRATED", d.get('event_images_fs_migrated', False)),
 
@@ -696,6 +698,7 @@ def save_config():
     settings['show_mice_only'] = CONFIG['SHOW_MICE_ONLY']
     settings['restart_ip_camera_stream_on_failure'] = CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE']
     settings['wlan_watchdog_enabled'] = CONFIG['WLAN_WATCHDOG_ENABLED']
+    settings['webhooks_enabled'] = CONFIG['WEBHOOKS_ENABLED']
     settings['disable_rfid_reader'] = CONFIG['DISABLE_RFID_READER']
     settings['update_repository_mode'] = CONFIG.get('UPDATE_REPOSITORY_MODE', 'standard')
     settings['update_repository'] = CONFIG.get('UPDATE_REPOSITORY', '')

@@ -703,13 +703,38 @@ def backend_main(simulate_kittyflap = False):
                 first_motion_inside_raw_mono = 0.0
 
                 # Publish the event to MQTT
+                if tag_id is not None:
+                    cat_name_for_event = get_cat_name(tag_id)
+                    cat_rfid_for_event = tag_id
+                    cat_rfid_source = "rfid"
+                elif tag_id_from_video is not None:
+                    cat_name_for_event = get_cat_name(tag_id_from_video)
+                    cat_rfid_for_event = tag_id_from_video
+                    cat_rfid_source = "camera"
+                else:
+                    cat_name_for_event = ""
+                    cat_rfid_for_event = None
+                    cat_rfid_source = "none"
+
                 if mqtt_publisher:
-                    if tag_id is not None:
-                        cat_name = get_cat_name(tag_id)
-                    else:
-                        cat_name = get_cat_name(tag_id_from_video)
-                    mqtt_publisher.publish_event_type(all_events, cat_name)
+                    mqtt_publisher.publish_event_type(all_events, cat_name_for_event)
                     mqtt_publisher.publish_motion_outside(False)
+
+                # Fan out to user-configured webhooks. Runs async per-hook so a
+                # slow endpoint cannot block the backend loop.
+                try:
+                    from src.notify import dispatch_event as _notify_dispatch
+                    _notify_dispatch(
+                        event_type=str(event_type),
+                        all_events=all_events,
+                        cat_name=cat_name_for_event,
+                        cat_rfid=cat_rfid_for_event,
+                        cat_rfid_source=cat_rfid_source,
+                        motion_block_id=motion_block_id,
+                        event_time=last_motion_outside_tm,
+                    )
+                except Exception as e:
+                    logging.warning(f"[BACKEND] webhook dispatch failed: {e}")
 
                 # Forget the video tag id
                 tag_id_from_video = None

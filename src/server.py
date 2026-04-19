@@ -53,6 +53,7 @@ from src.helper import (
     get_local_date_from_utc_date,
     format_date_minmax,
     normalize_version,
+    is_same_kittyhack_version,
     log_relevant_deb_packages,
     log_system_information,
     icon_svg_local,
@@ -2727,7 +2728,7 @@ def server(input, output, session):
         ui.modal_remove()
     
     # Show a notification if a new version of Kittyhack is available
-    if CONFIG['LATEST_VERSION'] != "unknown" and CONFIG['LATEST_VERSION'] != git_version and CONFIG['PERIODIC_VERSION_CHECK']:
+    if CONFIG['LATEST_VERSION'] != "unknown" and not is_same_kittyhack_version(git_version, CONFIG['LATEST_VERSION']) and CONFIG['PERIODIC_VERSION_CHECK']:
         ui.notification_show(_("A new version of Kittyhack is available: {}. Go to the [INFO] section for update instructions.").format(CONFIG['LATEST_VERSION']), duration=10, type="message")
 
     # Show a warning if the remaining disk space is below the critical threshold
@@ -8683,7 +8684,7 @@ def server(input, output, session):
                         style_="text-align: center;"
                     ),
                 )
-        elif git_version != latest_version:
+        elif not is_same_kittyhack_version(git_version, latest_version):
             release_notes_block = None
             try:
                 # Fetch the release notes of the latest version
@@ -9391,7 +9392,7 @@ def server(input, output, session):
                                 info = client.request_target_version(timeout=1.0) or client.get_target_version_info()
                                 target_git_version = str((info or {}).get("git_version") or "").strip()
                                 if target_git_version and target_git_version not in ("unknown",):
-                                    if str(target_git_version) == str(latest_version):
+                                    if is_same_kittyhack_version(str(target_git_version), str(latest_version)):
                                         set_update_progress(
                                             in_progress=True,
                                             step=1,
@@ -9435,7 +9436,7 @@ def server(input, output, session):
                                 if target_git_version:
                                     break
                             if target_git_version and target_git_version not in ("unknown",):
-                                if str(target_git_version) != str(latest_version):
+                                if not is_same_kittyhack_version(str(target_git_version), str(latest_version)):
                                     _set_error_and_stop(
                                         _("Target device reconnected, but version is still {} instead of {}.").format(
                                             target_git_version,

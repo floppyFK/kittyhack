@@ -394,6 +394,28 @@ def normalize_version(version_str):
     if '-' in version_str:
         version_str = version_str.split('-')[0]
     return version_str
+
+def is_same_kittyhack_version(installed: str, reference: str) -> bool:
+    """
+    True when the installed version matches the reference version.
+
+    Standard / tag mode: reference is a plain tag ("v2.5.4") — compared by
+    direct equality, identical to the previous behaviour.
+
+    Branch mode: reference has the form "<ref>@<short-sha>" (see
+    read_latest_kittyhack_version). The installed side reports just the
+    short SHA (get_git_version falls back to `git rev-parse --short HEAD`
+    when the commit has no tag), so compare against the SHA suffix.
+    """
+    if not installed or not reference:
+        return False
+    if installed == reference:
+        return True
+    if "@" in reference:
+        _, _, ref_sha = reference.rpartition("@")
+        if ref_sha and ref_sha == installed:
+            return True
+    return False
     
 def get_timezone():
     """

@@ -4981,3 +4981,95 @@ msgstr "Label Studio wird aktualisiert..."
 
 #~ msgid "Debug details"
 #~ msgstr "Debug Details"
+
+#: src/server.py
+msgid "Update repository"
+msgstr "Update-Repository"
+
+#: src/server.py
+msgid "Standard"
+msgstr "Standard"
+
+#: src/server.py
+msgid "Custom"
+msgstr "Benutzerdefiniert"
+
+#: src/server.py
+msgid "Custom repository"
+msgstr "Benutzerdefiniertes Repository"
+
+#: src/server.py
+msgid "e.g. owner/repo or owner/repo@branch"
+msgstr "z. B. owner/repo oder owner/repo@branch"
+
+#: src/server.py
+msgid ""
+"Use **Standard** for official releases from `floppyFK/kittyhack`. Select "
+"**Custom** to test your own fork or a feature branch. Format: `owner/repo` "
+"(uses the repo's latest release tag) or `owner/repo@branch-or-tag` (tracks "
+"the specified ref)."
+msgstr ""
+"Mit **Standard** werden wie bisher die offiziellen Releases von "
+"`floppyFK/kittyhack` verwendet. Mit **Benutzerdefiniert** kannst du einen "
+"eigenen Fork oder einen Feature-Branch testen. Format: `owner/repo` "
+"(verwendet den neuesten Release-Tag des angegebenen Forks) oder "
+"`owner/repo@branch-oder-tag` (verfolgt den HEAD des angegebenen Refs)."
+
+#: src/server.py
+msgid "Update repository: "
+msgstr "Update-Repository: "
+
+#: src/server.py
+msgid "Invalid format. Use 'owner/repo' or 'owner/repo@branch-or-tag'."
+msgstr "Ungültiges Format. Verwende 'owner/repo' oder 'owner/repo@branch-oder-tag'."
+
+#: src/server.py
+msgid "Force update"
+msgstr "Update erzwingen"
+
+#: src/server.py
+msgid ""
+"The current update source is your custom repository. Use this button to "
+"pull the latest commit on the selected branch or re-install the selected "
+"tag."
+msgstr ""
+"Die aktuelle Update-Quelle ist dein benutzerdefiniertes Repository. Dieser "
+"Button holt den neuesten Commit des gewählten Branches oder installiert den "
+"ausgewählten Tag erneut."
+
+#: src/server.py
+msgid ""
+"Re-install the currently selected version from the configured update "
+"source."
+msgstr ""
+"Die aktuell ausgewählte Version aus der konfigurierten Update-Quelle erneut "
+"installieren."
+
+#: src/server.py
+msgid "Force update now"
+msgstr "Update jetzt erzwingen"
+
+#: src/server.py
+msgid ""
+"The update repository was changed. The new source most likely has a "
+"different code base than what is currently installed."
+msgstr ""
+"Das Update-Repository wurde geändert. Die neue Quelle hat "
+"höchstwahrscheinlich eine andere Code-Basis als das, was aktuell "
+"installiert ist."
+
+#: src/server.py
+msgid "Do you want to run an update now to switch to the new source?"
+msgstr "Möchtest du jetzt ein Update ausführen, um zur neuen Quelle zu wechseln?"
+
+#: src/server.py
+msgid "Update source changed"
+msgstr "Update-Quelle geändert"
+
+#: src/server.py
+msgid "Update now"
+msgstr "Jetzt updaten"
+
+#: src/server.py
+msgid "Later"
+msgstr "Später"

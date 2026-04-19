@@ -3816,3 +3816,82 @@ msgstr ""
 
 #~ msgid "Debug details"
 #~ msgstr "Debug details"
+
+#: src/server.py
+msgid "Update repository"
+msgstr ""
+
+#: src/server.py
+msgid "Standard"
+msgstr ""
+
+#: src/server.py
+msgid "Custom"
+msgstr ""
+
+#: src/server.py
+msgid "Custom repository"
+msgstr ""
+
+#: src/server.py
+msgid "e.g. owner/repo or owner/repo@branch"
+msgstr ""
+
+#: src/server.py
+msgid ""
+"Use **Standard** for official releases from `floppyFK/kittyhack`. Select "
+"**Custom** to test your own fork or a feature branch. Format: `owner/repo` "
+"(uses the repo's latest release tag) or `owner/repo@branch-or-tag` (tracks "
+"the specified ref)."
+msgstr ""
+
+#: src/server.py
+msgid "Update repository: "
+msgstr ""
+
+#: src/server.py
+msgid "Invalid format. Use 'owner/repo' or 'owner/repo@branch-or-tag'."
+msgstr ""
+
+#: src/server.py
+msgid "Force update"
+msgstr ""
+
+#: src/server.py
+msgid ""
+"The current update source is your custom repository. Use this button to "
+"pull the latest commit on the selected branch or re-install the selected "
+"tag."
+msgstr ""
+
+#: src/server.py
+msgid ""
+"Re-install the currently selected version from the configured update "
+"source."
+msgstr ""
+
+#: src/server.py
+msgid "Force update now"
+msgstr ""
+
+#: src/server.py
+msgid ""
+"The update repository was changed. The new source most likely has a "
+"different code base than what is currently installed."
+msgstr ""
+
+#: src/server.py
+msgid "Do you want to run an update now to switch to the new source?"
+msgstr ""
+
+#: src/server.py
+msgid "Update source changed"
+msgstr ""
+
+#: src/server.py
+msgid "Update now"
+msgstr ""
+
+#: src/server.py
+msgid "Later"
+msgstr ""

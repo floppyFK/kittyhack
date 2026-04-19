@@ -3859,6 +3859,22 @@ msgid ""
 msgstr ""
 
 #: src/server.py
+msgid "Repository '{}' was not found on GitHub."
+msgstr ""
+
+#: src/server.py
+msgid "Branch or tag '{}' was not found on GitHub."
+msgstr ""
+
+#: src/server.py
+msgid "Could not reach GitHub to verify the custom repository: {}"
+msgstr ""
+
+#: src/server.py
+msgid "Custom update repository could not be validated."
+msgstr ""
+
+#: src/server.py
 msgid "Force update"
 msgstr ""
 

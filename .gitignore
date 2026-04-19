@@ -16,3 +16,4 @@ config.remote.ini
 .wlan-action-in-progress
 *.remote_synced
 *.remote_restart_pending
+.release_body_*.md

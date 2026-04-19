@@ -6724,7 +6724,7 @@ def server(input, output, session):
                                     "update_repository",
                                     _("Custom repository"),
                                     value=CONFIG.get('UPDATE_REPOSITORY', ''),
-                                    placeholder=_("e.g. owner/repo or owner/repo@branch"),
+                                    placeholder=_("e.g. owner/repo@branch or owner:branch"),
                                     width="100%",
                                 ),
                                 id="update_repository_container",
@@ -6735,8 +6735,12 @@ def server(input, output, session):
                                     _(
                                         "Use **Standard** for official releases from `floppyFK/kittyhack`. "
                                         "Select **Custom** to test your own fork or a feature branch. "
-                                        "Format: `owner/repo` (uses the repo's latest release tag) or "
-                                        "`owner/repo@branch-or-tag` (tracks the specified ref)."
+                                        "Accepted formats:\n\n"
+                                        "- `owner/repo` — latest release tag from that fork\n"
+                                        "- `owner/repo@branch-or-tag` — track the specified ref\n"
+                                        "- `owner:branch` — GitHub PR head-ref shorthand; "
+                                        "you can copy it straight from a pull request header, "
+                                        "the repo name defaults to `kittyhack`"
                                     )
                                 ),
                                 style_="color: grey;",
@@ -7879,16 +7883,17 @@ def server(input, output, session):
             if not valid:
                 return
             
-        # Validate custom update repository spec when "custom" mode is selected.
+        # Validate + normalize custom update repository spec when "custom" mode is selected.
+        # The user may type several equivalent forms (owner/repo, owner/repo@ref,
+        # owner:branch with GitHub PR shorthand). We store the canonical form.
+        normalized_update_repo: str | None = None
         if input.update_repository_mode() == "custom":
-            raw_repo_spec = (input.update_repository() or "").strip()
-            if not re.match(
-                r"^(?:https?://github\.com/)?[\w.-]+/[\w.-]+?(?:\.git)?(?:@[\w./\-]+)?$",
-                raw_repo_spec,
-            ):
+            from src.helper import normalize_repo_spec
+            normalized_update_repo = normalize_repo_spec(input.update_repository() or "")
+            if normalized_update_repo is None:
                 ui.notification_show(
                     _("Update repository: ") +
-                    _("Invalid format. Use 'owner/repo' or 'owner/repo@branch-or-tag'.") + "\n" +
+                    _("Invalid format. Use 'owner/repo', 'owner/repo@branch-or-tag', or 'owner:branch'.") + "\n" +
                     _("Changes were not saved."),
                     duration=10, type="error"
                 )
@@ -7987,7 +7992,13 @@ def server(input, output, session):
         CONFIG['ALLOWED_TO_EXIT'] = ATE(input.btnAllowedToExit())
         CONFIG['PERIODIC_VERSION_CHECK'] = input.btnPeriodicVersionCheck()
         CONFIG['UPDATE_REPOSITORY_MODE'] = input.update_repository_mode()
-        CONFIG['UPDATE_REPOSITORY'] = (input.update_repository() or "").strip()
+        # Use the normalized value computed during validation above, or keep the
+        # raw input when mode is 'standard' (UPDATE_REPOSITORY is ignored there).
+        CONFIG['UPDATE_REPOSITORY'] = (
+            normalized_update_repo
+            if normalized_update_repo is not None
+            else (input.update_repository() or "").strip()
+        )
         # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
         #CONFIG['PIR_OUTSIDE_THRESHOLD'] = 10-int(input.sldPirOutsideThreshold())
         CONFIG['PIR_INSIDE_THRESHOLD'] = float(input.sldPirInsideThreshold())

@@ -454,20 +454,51 @@ DEFAULT_UPDATE_REPO_NAME = "kittyhack"
 
 
 def _parse_repo_spec(raw: str):
-    """Parse 'owner/repo' or 'owner/repo@ref' (optionally with URL prefix).
+    """Parse a user-supplied repository spec.
+
+    Accepted forms:
+      - `owner/repo`
+      - `owner/repo@ref`
+      - `owner:branch` (GitHub PR head-ref shorthand — implies the default
+        repo name `kittyhack`, so values can be copied straight from a PR
+        page on github.com)
+      - an optional `https://github.com/` prefix and/or `.git` suffix on
+        the first two forms
 
     Returns (owner, repo, ref_or_None) or (None, None, None) if invalid.
     """
     if not raw:
         return None, None, None
     raw = raw.strip()
+
+    # Slash form: owner/repo[@ref], possibly with URL wrapping.
     m = re.match(
         r"^(?:https?://github\.com/)?([\w.-]+)/([\w.-]+?)(?:\.git)?(?:@([\w./\-]+))?$",
         raw,
     )
-    if not m:
-        return None, None, None
-    return m.group(1), m.group(2), m.group(3) or None
+    if m:
+        return m.group(1), m.group(2), m.group(3) or None
+
+    # Colon form: owner:branch — GitHub's "head ref" shorthand that shows up
+    # in the PR header ("wants to merge N commits from FabulousGee:feat/xyz").
+    # Repo name is implicit and defaults to this project.
+    m = re.match(r"^([\w.-]+):([\w./\-]+)$", raw)
+    if m:
+        return m.group(1), DEFAULT_UPDATE_REPO_NAME, m.group(2)
+
+    return None, None, None
+
+
+def normalize_repo_spec(raw: str) -> str | None:
+    """Return the canonical `owner/repo[@ref]` form, or None if invalid.
+
+    Used by the Configuration tab save handler to store a clean value
+    regardless of which accepted input form the user typed.
+    """
+    owner, repo, ref = _parse_repo_spec(raw)
+    if not owner or not repo:
+        return None
+    return f"{owner}/{repo}" + (f"@{ref}" if ref else "")
 
 
 def resolved_update_repo():

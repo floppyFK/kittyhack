@@ -3834,15 +3834,18 @@ msgid "Custom repository"
 msgstr ""
 
 #: src/server.py
-msgid "e.g. owner/repo or owner/repo@branch"
+msgid "e.g. owner/repo@branch or owner:branch"
 msgstr ""
 
 #: src/server.py
 msgid ""
 "Use **Standard** for official releases from `floppyFK/kittyhack`. Select "
-"**Custom** to test your own fork or a feature branch. Format: `owner/repo` "
-"(uses the repo's latest release tag) or `owner/repo@branch-or-tag` (tracks "
-"the specified ref)."
+"**Custom** to test your own fork or a feature branch. Accepted formats:\n"
+"\n"
+"- `owner/repo` — latest release tag from that fork\n"
+"- `owner/repo@branch-or-tag` — track the specified ref\n"
+"- `owner:branch` — GitHub PR head-ref shorthand; you can copy it straight "
+"from a pull request header, the repo name defaults to `kittyhack`"
 msgstr ""
 
 #: src/server.py
@@ -3850,7 +3853,9 @@ msgid "Update repository: "
 msgstr ""
 
 #: src/server.py
-msgid "Invalid format. Use 'owner/repo' or 'owner/repo@branch-or-tag'."
+msgid ""
+"Invalid format. Use 'owner/repo', 'owner/repo@branch-or-tag', or "
+"'owner:branch'."
 msgstr ""
 
 #: src/server.py

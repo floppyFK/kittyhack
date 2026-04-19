@@ -4999,29 +4999,39 @@ msgid "Custom repository"
 msgstr "Benutzerdefiniertes Repository"
 
 #: src/server.py
-msgid "e.g. owner/repo or owner/repo@branch"
-msgstr "z. B. owner/repo oder owner/repo@branch"
+msgid "e.g. owner/repo@branch or owner:branch"
+msgstr "z. B. owner/repo@branch oder owner:branch"
 
 #: src/server.py
 msgid ""
 "Use **Standard** for official releases from `floppyFK/kittyhack`. Select "
-"**Custom** to test your own fork or a feature branch. Format: `owner/repo` "
-"(uses the repo's latest release tag) or `owner/repo@branch-or-tag` (tracks "
-"the specified ref)."
+"**Custom** to test your own fork or a feature branch. Accepted formats:\n"
+"\n"
+"- `owner/repo` — latest release tag from that fork\n"
+"- `owner/repo@branch-or-tag` — track the specified ref\n"
+"- `owner:branch` — GitHub PR head-ref shorthand; you can copy it straight "
+"from a pull request header, the repo name defaults to `kittyhack`"
 msgstr ""
 "Mit **Standard** werden wie bisher die offiziellen Releases von "
 "`floppyFK/kittyhack` verwendet. Mit **Benutzerdefiniert** kannst du einen "
-"eigenen Fork oder einen Feature-Branch testen. Format: `owner/repo` "
-"(verwendet den neuesten Release-Tag des angegebenen Forks) oder "
-"`owner/repo@branch-oder-tag` (verfolgt den HEAD des angegebenen Refs)."
+"eigenen Fork oder einen Feature-Branch testen. Zulässige Formate:\n"
+"\n"
+"- `owner/repo` — neuester Release-Tag des angegebenen Forks\n"
+"- `owner/repo@branch-oder-tag` — HEAD des angegebenen Refs verfolgen\n"
+"- `owner:branch` — GitHub-PR-Kurzform; direkt aus dem Kopf einer "
+"Pull-Request-Seite kopierbar, der Repo-Name ist implizit `kittyhack`"
 
 #: src/server.py
 msgid "Update repository: "
 msgstr "Update-Repository: "
 
 #: src/server.py
-msgid "Invalid format. Use 'owner/repo' or 'owner/repo@branch-or-tag'."
-msgstr "Ungültiges Format. Verwende 'owner/repo' oder 'owner/repo@branch-oder-tag'."
+msgid ""
+"Invalid format. Use 'owner/repo', 'owner/repo@branch-or-tag', or "
+"'owner:branch'."
+msgstr ""
+"Ungültiges Format. Verwende 'owner/repo', 'owner/repo@branch-oder-tag' oder "
+"'owner:branch'."
 
 #: src/server.py
 msgid "Force update"

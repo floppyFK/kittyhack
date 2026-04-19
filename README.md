@@ -17,7 +17,7 @@ If you find bugs or have ideas, please use the GitHub issue tracker.
 - **Manage cats** (RFID, name, per-cat settings)
 - **Use external IP cameras** (better angle / night vision compared to the internal camera)
 - **Home Assistant integration** via MQTT
-- **REST API** under `/api/v1/*` — open/close the flap, change entry/exit direction independently (or apply combined `open` / `normal` / `closed` presets), read status, list cats & events. Token auth via Bearer header **or** `?token=…` query parameter (handy for Stream Deck, iOS Shortcuts, browser bookmarks). See [doc/api.md](doc/api.md).
+- **REST API** under `/api/v1/*` — open/close the flap, change entry and exit direction independently, read status, list cats & events. Token auth via Bearer header **or** `?token=…` query parameter (handy for Stream Deck, iOS Shortcuts, browser bookmarks). See [doc/api.md](doc/api.md).
 - **Train your own AI model** (optional) for better detection in your environment
 
 ### Remote mode (optional)
@@ -185,7 +185,7 @@ Wenn du Bugs findest oder Ideen hast, nutze bitte den GitHub Issue Tracker.
 - **Katzen verwalten** (RFID, Name, Einstellungen pro Katze)
 - **Externe IP-Kameras** (besserer Blickwinkel / bessere Nachtsicht als die interne Kamera)
 - **Home Assistant** via MQTT
-- **REST-API** unter `/api/v1/*` — Klappe öffnen/schließen, Eingangs- und Ausgangsrichtung unabhängig schalten (oder Presets `open` / `normal` / `closed` anwenden), Status abfragen, Katzen- und Event-Listen. Token-Auth per Bearer-Header **oder** `?token=…` Query-Parameter (praktisch für Stream Deck, iOS Shortcuts, Browser-Lesezeichen). Details: [doc/api.md](doc/api.md).
+- **REST-API** unter `/api/v1/*` — Klappe öffnen/schließen, Eingangs- und Ausgangsrichtung unabhängig schalten, Status abfragen, Katzen- und Event-Listen. Token-Auth per Bearer-Header **oder** `?token=…` Query-Parameter (praktisch für Stream Deck, iOS Shortcuts, Browser-Lesezeichen). Details: [doc/api.md](doc/api.md).
 - **Eigenes KI-Modell trainieren** (optional) für bessere Ergebnisse in deiner Umgebung
 
 ### Remote-Mode (optional)

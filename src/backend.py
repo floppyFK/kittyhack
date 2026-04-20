@@ -1004,9 +1004,16 @@ def backend_main(simulate_kittyflap = False):
             # ignore the global prey timeout gate for unlocking. This ensures that
             # late RFID identification can still disable prey gating even if prey was
             # detected a few seconds earlier by the camera.
+            # prey_detection_mono == 0.0 means no prey has been detected since the
+            # backend started — treat that as "timeout elapsed", otherwise the check
+            # would falsely block the unlock for LOCK_DURATION_AFTER_PREY_DETECTION
+            # seconds after every service restart (monotonic_time() is small just
+            # after boot, so the difference would be < the configured duration).
+            prey_mono = float(getattr(backend_main, "prey_detection_mono", 0.0) or 0.0)
             no_prey_within_timeout_effective = (
                 True if per_cat_prey_detection_disabled
-                else (monotonic_time() - float(getattr(backend_main, "prey_detection_mono", 0.0) or 0.0)) > float(CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'])
+                else prey_mono == 0.0
+                or (monotonic_time() - prey_mono) > float(CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'])
             )
 
             unlock_inside_conditions = {

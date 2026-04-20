@@ -4009,3 +4009,26 @@ msgstr ""
 #: src/server.py
 msgid "Failed to revoke token: "
 msgstr ""
+
+#: src/server.py
+msgid "Publish Home Assistant MQTT discovery"
+msgstr ""
+
+#: src/server.py
+msgid ""
+"When enabled, Kittyhack publishes retained discovery configs on MQTT "
+"connect so Home Assistant auto-creates the camera, locks, binary sensors, "
+"event sensor and direction selects. Disable if you manage entities "
+"manually — Kittyhack will also clear any previously published discovery "
+"entries so Home Assistant removes them."
+msgstr ""
+
+#: src/server.py
+msgid "Discovery prefix"
+msgstr ""
+
+#: src/server.py
+msgid ""
+"Home Assistant's MQTT discovery prefix. Defaults to `homeassistant` — only "
+"change this if your HA instance uses a non-standard prefix."
+msgstr ""

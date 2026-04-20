@@ -408,11 +408,16 @@ class StatePublisher:
             self.image_publish_thread.join(timeout=1.0)
             logging.info("[MQTT] Stopped periodic image publishing thread")
 
+    def _ha_discovery_prefix(self) -> str:
+        """Resolve the HA MQTT discovery prefix from CONFIG, with safe fallback."""
+        prefix = str(CONFIG.get('MQTT_HA_DISCOVERY_PREFIX') or 'homeassistant').strip().strip('/')
+        return prefix or 'homeassistant'
+
     def cleanup_old_discovery_topics(self):
         """Publish empty retained payloads to remove deprecated HA discovery entries"""
         try:
             device_id = CONFIG['MQTT_DEVICE_ID']
-            discovery_prefix = "homeassistant"
+            discovery_prefix = self._ha_discovery_prefix()
 
             # Old entity: switch for allow_exit (now replaced by select)
             old_topics = [
@@ -426,31 +431,14 @@ class StatePublisher:
         except Exception as e:
             logging.warning(f"[MQTT] Could not clean old discovery topics: {e}")
 
-    def publish_discovery_topics(self):
-        """Publish Home Assistant MQTT discovery topics for auto-configuration"""
-        # First, clean up deprecated discovery topics (e.g., old switch for allow_exit)
-        self.cleanup_old_discovery_topics()
+    def _ha_discovery_entities(self, device_id: str) -> dict:
+        """Return the full `{component: [config, …]}` map for HA discovery.
 
-        device_id = CONFIG['MQTT_DEVICE_ID']
-        discovery_prefix = "homeassistant"
-        
-        # Basic device info used in all configs
-        device_info = {
-            "identifiers": [device_id],
-            "name": f"{device_id}",
-            "model": "KittyHack",
-            "manufacturer": "FloppyFK",
-            "sw_version": get_git_version()
-        }
-        
-        # Availability configuration to add to all entities
-        availability_config = {
-            "availability_topic": f"kittyhack/{device_id}/status",
-            "payload_available": "online",
-            "payload_not_available": "offline"
-        }
-
-        # Language-dependent labels
+        Pulled out so `publish_discovery_topics()` can publish them and the
+        cleanup path (`clear_all_discovery_topics()`, triggered when the user
+        turns autodiscovery off) can iterate the same set to send empty
+        retained payloads.
+        """
         is_de = CONFIG['LANGUAGE'] == "de"
         allowed_exit_options = (
             [
@@ -482,10 +470,7 @@ class StatePublisher:
                 "Separate configuration per cat",
             ]
         )
-        
-        # Define all entities to create
-        entities = {
-            # Binary sensors
+        return {
             "binary_sensor": [
                 {
                     "name": "Motion Outside",
@@ -493,7 +478,7 @@ class StatePublisher:
                     "state_topic": f"kittyhack/{device_id}/motion/outside",
                     "payload_on": "detected",
                     "payload_off": "not_detected",
-                    "device_class": "motion"
+                    "device_class": "motion",
                 },
                 {
                     "name": "Motion Inside",
@@ -501,7 +486,7 @@ class StatePublisher:
                     "state_topic": f"kittyhack/{device_id}/motion/inside",
                     "payload_on": "detected",
                     "payload_off": "not_detected",
-                    "device_class": "motion"
+                    "device_class": "motion",
                 },
                 {
                     "name": "Prey Detected",
@@ -510,7 +495,7 @@ class StatePublisher:
                     "payload_on": "detected",
                     "payload_off": "not_detected",
                     "device_class": "motion",
-                    "icon": "mdi:rodent"
+                    "icon": "mdi:rodent",
                 },
                 {
                     "name": "Outside Lock",
@@ -518,10 +503,9 @@ class StatePublisher:
                     "state_topic": f"kittyhack/{device_id}/locks/outside",
                     "payload_on": "unlocked",
                     "payload_off": "locked",
-                    "device_class": "lock"
-                }
+                    "device_class": "lock",
+                },
             ],
-            # Locks
             "lock": [
                 {
                     "name": "Inside Lock",
@@ -531,19 +515,17 @@ class StatePublisher:
                     "payload_lock": "toggle_inside",
                     "payload_unlock": "toggle_inside",
                     "state_locked": "locked",
-                    "state_unlocked": "unlocked"
+                    "state_unlocked": "unlocked",
                 }
             ],
-            # Camera
             "camera": [
                 {
                     "name": "Camera",
                     "unique_id": f"{device_id}_camera",
                     "topic": f"kittyhack/{device_id}/camera/image",
-                    "image_encoding": "b64"
+                    "image_encoding": "b64",
                 }
             ],
-            # Selects for ALLOWED_TO_EXIT and ALLOWED_TO_ENTER
             "select": [
                 {
                     "name": "Allow Exit",
@@ -551,7 +533,7 @@ class StatePublisher:
                     "state_topic": f"kittyhack/{device_id}/config/allowed_to_exit",
                     "command_topic": f"kittyhack/{device_id}/config/allowed_to_exit/set",
                     "options": allowed_exit_options,
-                    "icon": "mdi:arrow-up-bold-circle"
+                    "icon": "mdi:arrow-up-bold-circle",
                 },
                 {
                     "name": "Allow Enter",
@@ -559,8 +541,8 @@ class StatePublisher:
                     "state_topic": f"kittyhack/{device_id}/config/allowed_to_enter",
                     "command_topic": f"kittyhack/{device_id}/config/allowed_to_enter/set",
                     "options": allowed_enter_options,
-                    "icon": "mdi:arrow-down-bold-circle"
-                }
+                    "icon": "mdi:arrow-down-bold-circle",
+                },
             ],
             "sensor": [
                 {
@@ -574,11 +556,69 @@ class StatePublisher:
                     "force_update": True,
                     "availability_topic": f"kittyhack/{device_id}/status",
                     "payload_available": "online",
-                    "payload_not_available": "offline"
+                    "payload_not_available": "offline",
                 }
-            ]
+            ],
+        }
+
+    def clear_all_discovery_topics(self):
+        """Publish empty retained payloads to every discovery topic we know about.
+
+        Called when the user turns HA autodiscovery off. HA treats an empty
+        retained payload on a `.../config` topic as an instruction to remove
+        that entity from the registry, so this leaves the user's HA instance
+        in a clean state after opt-out.
+        """
+        try:
+            device_id = CONFIG['MQTT_DEVICE_ID']
+            discovery_prefix = self._ha_discovery_prefix()
+            entities = self._ha_discovery_entities(device_id)
+            for component, configs in entities.items():
+                for config in configs:
+                    object_id = config["unique_id"]
+                    topic = f"{discovery_prefix}/{component}/{device_id}/{object_id}/config"
+                    self.mqtt_client.client.publish(topic, "", retain=True)
+                    logging.info(f"[MQTT] Cleared HA discovery entity: {topic}")
+        except Exception as e:
+            logging.warning(f"[MQTT] Could not clear HA discovery topics: {e}")
+
+    def publish_discovery_topics(self):
+        """Publish Home Assistant MQTT discovery topics for auto-configuration"""
+        # Always clean up deprecated discovery topics so stale entities (e.g.,
+        # old switch for allow_exit before we moved to select) don't linger.
+        self.cleanup_old_discovery_topics()
+
+        # Respect the user's opt-out. When disabled, actively remove any
+        # discovery entries we may have published previously so HA's entity
+        # registry doesn't keep orphaned entries around.
+        if not bool(CONFIG.get('MQTT_HA_DISCOVERY_ENABLED', True)):
+            logging.info("[MQTT] HA autodiscovery disabled — clearing previously-published discovery topics.")
+            self.clear_all_discovery_topics()
+            return
+
+        device_id = CONFIG['MQTT_DEVICE_ID']
+        discovery_prefix = self._ha_discovery_prefix()
+
+        # Basic device info used in all configs
+        device_info = {
+            "identifiers": [device_id],
+            "name": f"{device_id}",
+            "model": "KittyHack",
+            "manufacturer": "FloppyFK",
+            "sw_version": get_git_version()
         }
         
+        # Availability configuration to add to all entities
+        availability_config = {
+            "availability_topic": f"kittyhack/{device_id}/status",
+            "payload_available": "online",
+            "payload_not_available": "offline"
+        }
+
+        # Entity definitions live in a helper so the opt-out cleanup path
+        # (`clear_all_discovery_topics`) can iterate the same set.
+        entities = self._ha_discovery_entities(device_id)
+
         # Publish discovery messages
         for component, configs in entities.items():
             for config in configs:

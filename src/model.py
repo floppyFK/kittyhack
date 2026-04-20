@@ -1323,12 +1323,17 @@ class ModelHandler:
             while True:
                 try:
                     result_job_id, mouse_prob, cat_prob, objects = self._output_queue.get(timeout=timeout)
-                    self._job_results[result_job_id] = (mouse_prob, cat_prob, objects)
-                    
-                    if result_job_id == job_id:
-                        return self._job_results.pop(job_id)
-                except:
+                except Exception:
                     return None
+
+                # Drop results that arrived later than expected for an already-abandoned job_id.
+                if result_job_id < job_id:
+                    continue
+
+                self._job_results[result_job_id] = (mouse_prob, cat_prob, objects)
+                
+                if result_job_id == job_id:
+                    return self._job_results.pop(job_id)
         except Exception as e:
             logging.error(f"[MODEL] Error getting result: {e}")
             return None
@@ -1496,10 +1501,19 @@ class ModelHandler:
                 # Start timer (for calculating frame rate)
                 t1 = cv2.getTickCount()
 
-                # Run at least one inference to initialize the model, even if paused
-                if first_run or not self.paused:
-                    # Grab frame from video stream
-                    frame = videostream.read_oldest()
+                # When paused (after the initial warm-up iteration that primes the
+                # YOLO worker so the next real inference is fast), skip the entire
+                # inference + buffer-append work. Without this, the worker process
+                # keeps re-processing the last frame at full FPS, pegging a CPU core
+                # and leaking memory in self._job_results.
+                if not first_run and self.paused:
+                    elapsed_time = (cv2.getTickCount() - t1) / freq
+                    sleep_time = max(0.0, 0.1 - elapsed_time)  # poll for resume at ~10 Hz
+                    tm.sleep(sleep_time)
+                    continue
+
+                # Grab frame from video stream
+                frame = videostream.read_oldest()
 
                 if frame is not None:
                     last_good_frame_ts = tm.time()

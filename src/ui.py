@@ -49,6 +49,12 @@ _nav_items = [
         value="pictures",
     ),
     ui.nav_panel(
+        _("Statistics"),
+        ui.output_ui("ui_statistics"),
+        ui.br(),
+        value="statistics",
+    ),
+    ui.nav_panel(
         _("Manage cats"),
         ui.output_ui("ui_manage_cats"),
         ui.br(),

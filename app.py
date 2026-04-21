@@ -24,7 +24,7 @@ path_originals = pictures_original_dir()
 # ---------------------------------------------------------------------------
 
 TAB_PATHS = frozenset({
-    "live-view", "pictures", "manage-cats", "add-new-cat",
+    "live-view", "pictures", "statistics", "manage-cats", "add-new-cat",
     "ai-training", "system", "configuration", "wlan-configuration", "info",
 })
 

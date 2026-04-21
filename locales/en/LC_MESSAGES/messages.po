@@ -4009,3 +4009,73 @@ msgstr ""
 #: src/server.py
 msgid "Failed to revoke token: "
 msgstr ""
+
+#: src/ui.py
+msgid "Statistics"
+msgstr ""
+
+#: src/server.py
+msgid "Unknown cat"
+msgstr ""
+
+#: src/server.py
+msgid "Filter cats"
+msgstr ""
+
+#: src/server.py
+msgid ""
+"Leave 'Filter cats' empty to include every cat. Time range is inclusive of "
+"both dates in the Kittyflap's local timezone."
+msgstr ""
+
+#: src/server.py
+msgid "Total entries"
+msgstr ""
+
+#: src/server.py
+msgid "Total exits"
+msgstr ""
+
+#: src/server.py
+msgid "Prey detections"
+msgstr ""
+
+#: src/server.py
+msgid "Avg outside duration"
+msgstr ""
+
+#: src/server.py
+msgid "Entries per day"
+msgstr ""
+
+#: src/server.py
+msgid "Exits per day"
+msgstr ""
+
+#: src/server.py
+msgid "Prey detections per day"
+msgstr ""
+
+#: src/server.py
+msgid "Average outside duration per day"
+msgstr ""
+
+#: src/server.py
+msgid "No data for this range."
+msgstr ""
+
+#: src/server.py
+msgid "No completed outside trips in range."
+msgstr ""
+
+#: src/server.py
+msgid "Cat"
+msgstr ""
+
+#: src/server.py
+msgid "Count"
+msgstr ""
+
+#: src/server.py
+msgid "Minutes"
+msgstr ""

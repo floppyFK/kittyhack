@@ -3,6 +3,7 @@ import gettext
 import configparser
 import logging
 import sys
+import threading
 # If the systemd journal Python bindings are available, use them.
 try:
     from systemd.journal import JournalHandler  # type: ignore
@@ -17,6 +18,7 @@ from typing import Any, Callable, List, Tuple
 
 from src.mode import is_remote_mode
 from src.paths import kittyhack_root
+from src.locales_runtime import ensure_runtime_locales_ready
 
 ###### ENUM DEFINITIONS ######
 class AllowedToEnter(Enum):
@@ -820,8 +822,23 @@ def create_default_config():
         parser.write(configfile)
     logging.info(f"Default configuration written to {CONFIGFILE}")
 
+
+_locale_bootstrap_lock = threading.Lock()
+_locale_bootstrap_done = False
+
 def set_language(language_code = "de"):
     """Load translations for the specified language."""
+    global _locale_bootstrap_done
+
+    if not _locale_bootstrap_done:
+        with _locale_bootstrap_lock:
+            if not _locale_bootstrap_done:
+                try:
+                    ensure_runtime_locales_ready()
+                except Exception as e:
+                    logging.warning(f"[I18N] Failed to prepare runtime locales: {e}")
+                _locale_bootstrap_done = True
+
     gettext.bindtextdomain(DOMAIN, LOCALE_DIR)
     gettext.textdomain(DOMAIN)
     lang = gettext.translation(DOMAIN, localedir=LOCALE_DIR, languages=[language_code], fallback=True)

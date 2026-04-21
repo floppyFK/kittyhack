@@ -1,50 +1,32 @@
-# Initial Setup
+# Locale Workflow
 
-*NOTE:* Run these commands in the project root folder!  
-The steps below require gettext (on ubuntu systems install it with `apt install gettext`).
+The German PO file is the editable translation source and should stay versioned in git.
 
-##### Initially create POT file:
-```
-xgettext -d messages -o locales/messages.pot src/server.py --from-code UTF-8
-xgettext -d messages -o locales/messages.pot src/ui.py --from-code UTF-8 --join-existing
-xgettext -d messages -o locales/messages.pot src/helper.py --from-code UTF-8 --join-existing
-xgettext -d messages -o locales/messages.pot src/model.py --from-code UTF-8 --join-existing
-xgettext -d messages -o locales/messages.pot src/system.py --from-code UTF-8 --join-existing
-xgettext -d messages -o locales/messages.pot src/backend.py --from-code UTF-8 --join-existing
-```
+English uses gettext fallback to msgids (default source strings), so no `locales/en` catalog is required.
+The MO file is a compiled runtime artifact and does not need to be versioned.
 
-##### Initially create po file:
-```
-msginit -l de_DE.UTF-8 -o locales/de/LC_MESSAGES/messages.po -i locales/messages.pot --no-translator
-msginit -l en_EN.UTF-8 -o locales/en/LC_MESSAGES/messages.po -i locales/messages.pot --no-translator
-```
+At startup, kittyhack performs a locale refresh check and regenerates catalogs only when needed:
 
-##### Create mo file from po file:
-```
-msgfmt -o locales/de/LC_MESSAGES/messages.mo locales/de/LC_MESSAGES/messages.po
-msgfmt -o locales/en/LC_MESSAGES/messages.mo locales/en/LC_MESSAGES/messages.po
-```
+1. Check if gettext tools are available (`xgettext`, `msgmerge`, `msgfmt`).
+2. If missing, try to install gettext automatically on Debian-based systems.
+3. Build a temporary POT from `app.py` and all Python files in `src/`.
+4. Merge the tracked German PO with the current POT in a temporary file (the tracked PO is not modified at runtime).
+5. Compile the German MO from that merged temporary file (`msgfmt`).
+6. Store a small state file so this runs again only when locale inputs changed.
 
-# Update locales
+This keeps the tracked translation source clean while still creating up-to-date runtime catalogs.
 
-##### Update POT file:
-```
-xgettext -d messages -o locales/messages.pot src/server.py --from-code UTF-8
-xgettext -d messages -o locales/messages.pot src/ui.py --from-code UTF-8 --join-existing
-xgettext -d messages -o locales/messages.pot src/helper.py --from-code UTF-8 --join-existing
-xgettext -d messages -o locales/messages.pot src/model.py --from-code UTF-8 --join-existing
-xgettext -d messages -o locales/messages.pot src/system.py --from-code UTF-8 --join-existing
-xgettext -d messages -o locales/messages.pot src/backend.py --from-code UTF-8 --join-existing
-```
+# Runtime behavior
 
-##### Merge existing po file with new values from POT:
-```
-msgmerge -U locales/de/LC_MESSAGES/messages.po locales/messages.pot
-msgmerge -U locales/en/LC_MESSAGES/messages.po locales/messages.pot
-```
+- Locale regeneration runs before translations are loaded on process startup.
+- No extra restart is needed for that startup.
+- If locale-relevant source code changes while kittyhack is already running, the new texts are applied on the next service start.
 
-##### Update mo file:
-```
-msgfmt -o locales/de/LC_MESSAGES/messages.mo locales/de/LC_MESSAGES/messages.po
-msgfmt -o locales/en/LC_MESSAGES/messages.mo locales/en/LC_MESSAGES/messages.po
+# Manual fallback commands
+
+Run these from the project root when you want to update the German source translation file manually:
+
+```bash
+xgettext -d messages -o /tmp/messages.pot --from-code UTF-8 app.py $(find src -type f -name '*.py' | sort)
+msgmerge --update --backup=none locales/de/LC_MESSAGES/messages.po /tmp/messages.pot
 ```

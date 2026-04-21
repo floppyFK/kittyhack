@@ -431,6 +431,7 @@ install_full() {
         python3-venv
         python3-dev
         python3-pip
+        gettext
     )
     echo -e "${GREY}Installing all Python packages...${NC}"
     # Wait for any existing package operations to complete
@@ -593,7 +594,7 @@ install_remote_mode() {
         echo -e "  - AMD64 (normale 64-bit Intel/AMD PCs, nicht Raspberry Pi/ARM)"
         echo -e "  - Mindestens 2GB RAM"
         echo -e "Folgende Pakete werden installiert:"
-        echo -e "  - python3, python3-venv, python3-pip"
+        echo -e "  - python3, python3-venv, python3-pip, gettext"
         echo -e "  - rsync, git, curl, ca-certificates"
         echo -e "  - libgl1, libglib2.0-0"
         echo -e "Zusatzlich: Es wird ein Python 3.11 Virtualenv erstellt und die Abhangigkeiten aus requirements_remote.txt installiert."
@@ -607,7 +608,7 @@ install_remote_mode() {
         echo -e "  - AMD64 (regular 64-bit Intel/AMD PCs, not Raspberry Pi/ARM)"
         echo -e "  - At least 2GB RAM"
         echo -e "The following packages will be installed:"
-        echo -e "  - python3, python3-venv, python3-pip"
+        echo -e "  - python3, python3-venv, python3-pip, gettext"
         echo -e "  - rsync, git, curl, ca-certificates"
         echo -e "  - libgl1, libglib2.0-0"
         echo -e "Additionally: A Python 3.11 virtualenv will be created and dependencies from requirements_remote.txt will be installed."
@@ -683,7 +684,7 @@ install_remote_mode() {
         exit 1
     fi
     # libgl1 is required by some OpenCV wheels (even in headless/container setups)
-    if ! apt-get install -y python3 python3-venv python3-pip rsync git curl ca-certificates libgl1 libglib2.0-0; then
+    if ! apt-get install -y python3 python3-venv python3-pip gettext rsync git curl ca-certificates libgl1 libglib2.0-0; then
         echo -e "${RED}Failed to install required system packages.${NC}"
         exit 1
     fi

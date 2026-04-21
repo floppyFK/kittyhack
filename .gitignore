@@ -3,6 +3,8 @@ kittyhack.log*
 *.db
 .venv/
 *.po~
+locales/*/LC_MESSAGES/messages.mo
+locales/.runtime_locale_state.json
 config.ini
 sync-to-kittyflap.sh
 *.code-workspace

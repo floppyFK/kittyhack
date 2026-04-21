@@ -13,7 +13,7 @@ from typing import Any
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-from src.baseconfig import CONFIG, configure_logging, set_language
+from src.baseconfig import CONFIG, CONFIGFILE, configure_logging, load_config, set_language
 from src.helper import sigterm_monitor
 from src.magnets_rfid import Magnets, Rfid
 from src.pir import Pir
@@ -91,6 +91,40 @@ _internal_cam_stream: VideoStream | None = None
 _internal_cam_last_error: str = ""
 _internal_cam_stream_source: str = ""
 _internal_cam_stream_url: str = ""
+
+# Track config.ini mtime so runtime setting changes can be applied without
+# restarting kittyhack_control.service.
+_configfile_last_mtime: float | None = None
+
+
+def _reload_runtime_config_if_changed() -> None:
+    """Reload config.ini only when the file changed on disk.
+
+    The WLAN watchdog reads CONFIG values every loop tick. Without a config
+    reload, changes saved by server.py stay invisible in this process until a
+    service restart. This lightweight mtime gate keeps overhead low.
+    """
+    global _configfile_last_mtime
+
+    try:
+        mtime = os.path.getmtime(CONFIGFILE)
+    except Exception:
+        return
+
+    # First observation initializes the cache without forcing a reload.
+    if _configfile_last_mtime is None:
+        _configfile_last_mtime = mtime
+        return
+
+    if mtime == _configfile_last_mtime:
+        return
+
+    try:
+        load_config()
+        _configfile_last_mtime = mtime
+        logging.info("[CONTROL] Reloaded config.ini after on-disk changes.")
+    except Exception as e:
+        logging.warning(f"[CONTROL] Failed to reload changed config.ini: {e}")
 
 
 def _ensure_internal_camera_stream() -> tuple[bool, str]:
@@ -1527,6 +1561,10 @@ async def _wlan_watchdog_loop():
 
     while not sigterm_monitor.stop_now:
         await asyncio.sleep(5.0)
+
+        # Apply runtime config updates saved by server.py (e.g. enabling/disabling
+        # WLAN_WATCHDOG_ENABLED) without requiring a service restart.
+        _reload_runtime_config_if_changed()
 
         if not bool(CONFIG.get("WLAN_WATCHDOG_ENABLED", True)):
             wlan_disconnect_counter = 0

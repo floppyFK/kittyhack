@@ -841,6 +841,7 @@ reload_trigger_photos = reactive.Value(0)
 reload_trigger_ai = reactive.Value(0)
 reload_trigger_config = reactive.Value(0)
 reload_trigger_api_tokens = reactive.Value(0)
+reload_trigger_webhooks = reactive.Value(0)
 
 # Label Studio project choices map (id -> title), populated by the async project selector
 ls_project_choices = reactive.Value({})
@@ -4782,6 +4783,308 @@ def server(input, output, session):
             ui.notification_show(_("Token not found — it may have been revoked already."), duration=5, type="warning")
         reload_trigger_api_tokens.set(reload_trigger_api_tokens.get() + 1)
 
+    # ------------------------------------------------------------------
+    # Webhooks management (Configuration tab)
+    # ------------------------------------------------------------------
+
+    _webhook_registered_ids: set[str] = set()
+    webhook_editor_state = reactive.Value({"id": None})
+    webhook_pending_delete_id = reactive.Value(None)
+
+    def _webhook_event_choices():
+        from src.helper import EventType
+        return {
+            EventType.CAT_WENT_INSIDE: EventType.to_pretty_string(EventType.CAT_WENT_INSIDE),
+            EventType.CAT_WENT_PROBABLY_INSIDE: EventType.to_pretty_string(EventType.CAT_WENT_PROBABLY_INSIDE),
+            EventType.CAT_WENT_OUTSIDE: EventType.to_pretty_string(EventType.CAT_WENT_OUTSIDE),
+            EventType.CAT_WENT_INSIDE_WITH_MOUSE: EventType.to_pretty_string(EventType.CAT_WENT_INSIDE_WITH_MOUSE),
+            EventType.MOTION_OUTSIDE_ONLY: EventType.to_pretty_string(EventType.MOTION_OUTSIDE_ONLY),
+            EventType.MOTION_OUTSIDE_WITH_MOUSE: EventType.to_pretty_string(EventType.MOTION_OUTSIDE_WITH_MOUSE),
+            EventType.MANUALLY_UNLOCKED: EventType.to_pretty_string(EventType.MANUALLY_UNLOCKED),
+            EventType.MANUALLY_LOCKED: EventType.to_pretty_string(EventType.MANUALLY_LOCKED),
+        }
+
+    def _webhook_headers_to_text(headers: dict) -> str:
+        return "\n".join(f"{k}: {v}" for k, v in (headers or {}).items())
+
+    def _webhook_headers_from_text(text: str) -> dict:
+        result = {}
+        for line in (text or "").splitlines():
+            line = line.strip()
+            if not line or ":" not in line:
+                continue
+            k, _sep, v = line.partition(":")
+            k = k.strip()
+            v = v.strip()
+            if k:
+                result[k] = v
+        return result
+
+    def _build_webhook_modal(hook: dict | None):
+        from src.notify import _normalize_hook
+        h = _normalize_hook(hook or {})
+        event_choices = _webhook_event_choices()
+        title = _("Edit webhook") if hook else _("Add webhook")
+        return ui.modal(
+            ui.div(
+                ui.input_text("hook_name", _("Name"), value=h["name"], width="100%"),
+                ui.input_text(
+                    "hook_url", _("URL"),
+                    value=h["url"],
+                    placeholder="https://example.com/hook?cat={cat_name}",
+                    width="100%",
+                ),
+                ui.row(
+                    ui.column(4, ui.input_select("hook_method", _("Method"), {"POST": "POST", "GET": "GET"}, selected=h["method"])),
+                    ui.column(4, ui.input_numeric("hook_timeout", _("Timeout (s)"), value=h["timeout_seconds"], min=1, max=30)),
+                    ui.column(4, ui.input_switch("hook_enabled", _("Enabled"), h["enabled"])),
+                ),
+                ui.input_checkbox_group("hook_events", _("Trigger events"), choices=event_choices, selected=h["events"]),
+                ui.input_text_area(
+                    "hook_headers",
+                    _("Custom headers (one 'Key: Value' per line)"),
+                    value=_webhook_headers_to_text(h["headers"]),
+                    placeholder="Authorization: Bearer abc123\nContent-Type: application/json",
+                    width="100%",
+                    rows=3,
+                ),
+                ui.input_text_area(
+                    "hook_payload",
+                    _("Payload template (POST body)"),
+                    value=h["payload_template"],
+                    placeholder='{"cat": "{cat_name}", "event": "{event_pretty}"}',
+                    width="100%",
+                    rows=5,
+                ),
+            ),
+            title=title,
+            easy_close=False,
+            footer=ui.div(
+                ui.input_action_button("btn_save_webhook", _("Save"), class_="btn-primary"),
+                ui.input_action_button("btn_test_webhook_draft", _("Test"), class_="btn-default"),
+                ui.input_action_button("btn_modal_cancel", _("Cancel"), class_="btn-default"),
+                style_="display:flex; gap:0.5rem;",
+            ),
+            size="l",
+        )
+
+    def _read_webhook_form():
+        return {
+            "id": webhook_editor_state.get().get("id"),
+            "enabled": bool(input.hook_enabled()),
+            "name": (input.hook_name() or "").strip(),
+            "url": (input.hook_url() or "").strip(),
+            "method": (input.hook_method() or "POST").upper(),
+            "events": list(input.hook_events() or []),
+            "headers": _webhook_headers_from_text(input.hook_headers() or ""),
+            "payload_template": input.hook_payload() or "",
+            "timeout_seconds": float(input.hook_timeout() or 5.0),
+        }
+
+    @output
+    @render.ui
+    def ui_webhooks_list():
+        reload_trigger_webhooks.get()
+        try:
+            from src.notify import load_webhooks
+            from src.helper import EventType
+            hooks = load_webhooks()
+        except Exception as e:
+            logging.exception("[NOTIFY] failed to load webhooks")
+            return ui.tags.em(_("Failed to load webhooks: ") + str(e))
+        if not hooks:
+            return ui.tags.em(_("No webhooks configured yet."))
+        rows = []
+        for hook in hooks:
+            hid = hook.get("id", "")
+            try:
+                events_pretty = ", ".join(EventType.to_pretty_string(e) for e in (hook.get("events") or [])) or _("(none)")
+            except Exception:
+                events_pretty = ", ".join(hook.get("events") or [])
+            status = _("Enabled") if hook.get("enabled") else _("Disabled")
+            rows.append(ui.tags.tr(
+                ui.tags.td(hook.get("name") or "?"),
+                ui.tags.td(ui.tags.code(hook.get("url") or "", style_="word-break:break-all;")),
+                ui.tags.td(hook.get("method") or "POST"),
+                ui.tags.td(events_pretty),
+                ui.tags.td(status),
+                ui.tags.td(
+                    ui.div(
+                        ui.input_action_button(f"webhook_edit_{hid}", _("Edit"), icon=icon_svg("pencil"), class_="btn-narrow"),
+                        ui.input_action_button(f"webhook_test_{hid}", _("Test"), icon=icon_svg("bolt"), class_="btn-narrow"),
+                        ui.input_action_button(f"webhook_delete_{hid}", _("Delete"), icon=icon_svg("trash"), class_="btn-narrow"),
+                        style_="display:flex; gap:0.25rem; flex-wrap:wrap;",
+                    ),
+                ),
+            ))
+        return ui.tags.table(
+            ui.tags.thead(ui.tags.tr(
+                ui.tags.th(_("Name")),
+                ui.tags.th(_("URL")),
+                ui.tags.th(_("Method")),
+                ui.tags.th(_("Events")),
+                ui.tags.th(_("Status")),
+                ui.tags.th(_("Actions")),
+            )),
+            ui.tags.tbody(*rows),
+            class_="dataframe shiny-table table w-auto",
+        )
+
+    def _register_webhook_row(hid: str):
+        @reactive.effect
+        @reactive.event(input[f"webhook_edit_{hid}"])
+        def _on_edit():
+            from src.notify import load_webhooks
+            hooks = load_webhooks()
+            hook = next((h for h in hooks if h.get("id") == hid), None)
+            if not hook:
+                return
+            webhook_editor_state.set({"id": hid})
+            ui.modal_show(_build_webhook_modal(hook))
+
+        @reactive.effect
+        @reactive.event(input[f"webhook_test_{hid}"])
+        def _on_test():
+            from src.notify import load_webhooks, send_test
+            hooks = load_webhooks()
+            hook = next((h for h in hooks if h.get("id") == hid), None)
+            if not hook:
+                return
+            ok, status = send_test(hook)
+            ui.notification_show(
+                _("Webhook '{}': {}").format(hook.get("name", "?"), status),
+                type="message" if ok else "error",
+                duration=8,
+            )
+
+        @reactive.effect
+        @reactive.event(input[f"webhook_delete_{hid}"])
+        def _on_delete():
+            webhook_pending_delete_id.set(hid)
+            m = ui.modal(
+                _("Delete this webhook? This cannot be undone."),
+                title=_("Delete webhook"),
+                easy_close=False,
+                footer=ui.div(
+                    ui.input_action_button("btn_modal_webhook_delete_ok", _("Delete")),
+                    ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                ),
+            )
+            ui.modal_show(m)
+
+    @reactive.effect
+    def _register_webhook_row_handlers():
+        reload_trigger_webhooks.get()
+        try:
+            from src.notify import load_webhooks
+            hooks = load_webhooks()
+        except Exception:
+            return
+        current_ids = {h.get("id") for h in hooks if h.get("id")}
+        new_ids = current_ids - _webhook_registered_ids
+        for hid in new_ids:
+            _webhook_registered_ids.add(hid)
+            _register_webhook_row(hid)
+
+    @reactive.effect
+    @reactive.event(input.btn_add_webhook)
+    def on_btn_add_webhook():
+        webhook_editor_state.set({"id": None})
+        ui.modal_show(_build_webhook_modal(None))
+
+    @reactive.effect
+    @reactive.event(input.btn_save_webhook)
+    def on_btn_save_webhook():
+        from src.notify import load_webhooks, save_webhooks
+        form = _read_webhook_form()
+        if not form["url"]:
+            ui.notification_show(_("URL is required."), duration=5, type="warning")
+            return
+        hooks = load_webhooks()
+        if form["id"] and any(h.get("id") == form["id"] for h in hooks):
+            hooks = [form if h.get("id") == form["id"] else h for h in hooks]
+        else:
+            form["id"] = None  # _normalize_hook assigns a fresh id on save
+            hooks.append(form)
+        try:
+            save_webhooks(hooks)
+        except Exception as e:
+            logging.exception("[NOTIFY] save failed")
+            ui.notification_show(_("Failed to save webhook: ") + str(e), duration=10, type="error")
+            return
+        ui.modal_remove()
+        ui.notification_show(_("Webhook saved."), duration=5, type="message")
+        reload_trigger_webhooks.set(reload_trigger_webhooks.get() + 1)
+
+    @reactive.effect
+    @reactive.event(input.btn_test_webhook_draft)
+    def on_btn_test_webhook_draft():
+        from src.notify import send_test
+        form = _read_webhook_form()
+        if not form["url"]:
+            ui.notification_show(_("Fill URL before testing."), duration=5, type="warning")
+            return
+        ok, status = send_test(form)
+        ui.notification_show(
+            _("Test: {}").format(status),
+            type="message" if ok else "error",
+            duration=8,
+        )
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_webhook_delete_ok)
+    def on_webhook_delete_confirm():
+        hid = webhook_pending_delete_id.get()
+        ui.modal_remove()
+        if not hid:
+            return
+        from src.notify import load_webhooks, save_webhooks
+        remaining = [h for h in load_webhooks() if h.get("id") != hid]
+        try:
+            save_webhooks(remaining)
+        except Exception as e:
+            logging.exception("[NOTIFY] delete save failed")
+            ui.notification_show(_("Failed to delete webhook: ") + str(e), duration=10, type="error")
+            return
+        logging.info(f"[NOTIFY] Deleted webhook {hid}")
+        ui.notification_show(_("Webhook deleted."), duration=5, type="message")
+        reload_trigger_webhooks.set(reload_trigger_webhooks.get() + 1)
+
+    @reactive.effect
+    @reactive.event(input.btn_show_webhook_variables)
+    def on_btn_show_webhook_variables():
+        from src.notify import TEMPLATE_VARIABLES
+        rows = [
+            ui.tags.tr(
+                ui.tags.td(ui.tags.code("{" + name + "}")),
+                ui.tags.td(desc),
+                ui.tags.td(ui.tags.code(str(example))),
+            )
+            for (name, desc, example) in TEMPLATE_VARIABLES
+        ]
+        body = ui.div(
+            ui.markdown(_(
+                "Use any of these placeholders in the URL, custom headers, or payload template. "
+                "Unknown names are left as-is, so you can use templating defensively."
+            )),
+            ui.tags.table(
+                ui.tags.thead(ui.tags.tr(
+                    ui.tags.th(_("Variable")),
+                    ui.tags.th(_("Description")),
+                    ui.tags.th(_("Example")),
+                )),
+                ui.tags.tbody(*rows),
+                class_="dataframe shiny-table table w-auto",
+            ),
+        )
+        ui.modal_show(ui.modal(
+            body,
+            title=_("Available webhook variables"),
+            easy_close=True,
+            size="l",
+            footer=ui.input_action_button("btn_modal_cancel", _("Close")),
+        ))
+
     @reactive.Effect
     @reactive.event(input.bRestartKittyflap)
     def on_action_restart_system():
@@ -7565,6 +7868,73 @@ def server(input, output, session):
                     ),
                 ),
 
+                # --- Outgoing webhooks ---
+                collapsible_section(
+                    "webhooks_settings",
+                    _("Webhooks"),
+                    _("Send HTTP notifications to external services when events occur."),
+                    ui.div(
+                        ui.br(),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.input_switch(
+                                    "btnWebhooksEnabled",
+                                    _("Enable webhooks"),
+                                    CONFIG.get('WEBHOOKS_ENABLED', True),
+                                ),
+                                ui.help_text(
+                                    _("Global kill switch. When disabled, no webhook fires regardless of per-hook settings.")
+                                ),
+                            ),
+                        ),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(12, ui.h5(_("Configured webhooks"))),
+                            ui.column(12, ui.output_ui("ui_webhooks_list")),
+                        ),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.div(
+                                    ui.input_action_button(
+                                        "btn_add_webhook",
+                                        _("Add webhook"),
+                                        icon=icon_svg("plus"),
+                                        class_="btn-default",
+                                    ),
+                                    ui.input_action_button(
+                                        "btn_show_webhook_variables",
+                                        _("Show available variables"),
+                                        icon=icon_svg("circle-info"),
+                                        class_="btn-default",
+                                    ),
+                                    style_="display:flex; gap:0.5rem; flex-wrap:wrap;",
+                                ),
+                            ),
+                        ),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _(
+                                        "Each webhook fires when one of its selected events occurs. "
+                                        "Supports `GET` and `POST`; the URL, headers, and (for POST) body "
+                                        "are templates — reference values like `{cat_name}` or `{event_type}`. "
+                                        "Use **Show available variables** for the full list. "
+                                        "Per-hook configuration survives Kittyhack updates."
+                                    )
+                                ),
+                                style_="color: grey;",
+                            ),
+                        ),
+                        class_="generic-container align-left",
+                        style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                    ),
+                ),
+
                 # --- Advanced settings ---
                 collapsible_section(
                     "advanced_settings",
@@ -8042,6 +8412,7 @@ def server(input, output, session):
             CONFIG['WLAN_WATCHDOG_ENABLED'] = input.btnWlanWatchdogEnabled()
         else:
             CONFIG['WLAN_WATCHDOG_ENABLED'] = False
+        CONFIG['WEBHOOKS_ENABLED'] = bool(input.btnWebhooksEnabled())
         CONFIG['DISABLE_RFID_READER'] = input.btnDisableRfidReader()
 
         if not is_remote_mode():

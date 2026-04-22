@@ -16,17 +16,23 @@ At startup, kittyhack performs a locale refresh check and regenerates catalogs o
 
 This keeps the tracked translation source clean while still creating up-to-date runtime catalogs.
 
+# Updating German Translations During Development
+
+Whenever gettext source strings `_("...")` are added or changed in code, update the German PO file before committing.
+
+Run these commands from the project root:
+
+```bash
+xgettext -d messages -o /tmp/messages.pot --from-code UTF-8 --no-location app.py $(find src -type f -name '*.py' | sort)
+msgmerge --update --backup=none --no-location locales/de/LC_MESSAGES/messages.po /tmp/messages.pot
+```
+
+This workflow should be repeated regularly while developing features that touch user-visible text.
+
+After merging, open `locales/de/LC_MESSAGES/messages.po` and translate new or changed entries.
+
 # Runtime behavior
 
 - Locale regeneration runs before translations are loaded on process startup.
 - No extra restart is needed for that startup.
 - If locale-relevant source code changes while kittyhack is already running, the new texts are applied on the next service start.
-
-# Manual fallback commands
-
-Run these from the project root when you want to update the German source translation file manually:
-
-```bash
-xgettext -d messages -o /tmp/messages.pot --from-code UTF-8 app.py $(find src -type f -name '*.py' | sort)
-msgmerge --update --backup=none locales/de/LC_MESSAGES/messages.po /tmp/messages.pot
-```

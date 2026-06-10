@@ -79,6 +79,42 @@ def ensure_ffmpeg_installed() -> bool:
         logging.error("[CAMERA] ffmpeg installation command finished, but ffmpeg is still unavailable.")
     return installed
 
+
+def ensure_openvino_installed() -> bool:
+    """Ensure the openvino package is available. Try to install it via pip if missing."""
+    import importlib.util
+    try:
+        if importlib.util.find_spec("openvino") is not None:
+            return True
+    except Exception:
+        pass
+
+    logging.warning("[MODEL] openvino package not found. Attempting to install via pip...")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "openvino"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=600,
+            check=False,
+        )
+        if result.returncode != 0:
+            logging.error(f"[MODEL] Failed to install openvino: {result.stderr.strip()}")
+            return False
+    except Exception as e:
+        logging.error(f"[MODEL] Error while installing openvino: {e}")
+        return False
+
+    try:
+        if importlib.util.find_spec("openvino") is not None:
+            logging.info("[MODEL] openvino installed successfully.")
+            return True
+        logging.error("[MODEL] openvino installation finished but package is still not importable.")
+        return False
+    except Exception:
+        return False
+
 def systemctl(mode: str, service: str, simulate_operations=False, timeout: float = 15.0):
     """
     Start, stop or restart a service using systemctl.

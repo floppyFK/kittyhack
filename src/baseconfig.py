@@ -238,6 +238,7 @@ DEFAULT_CONFIG = {
         "user_name": "",
         "model_training": "",
         "yolo_model": "",
+        "inference_device": "cpu",
         "startup_shutdown_flag": False,
         "not_graceful_shutdowns": 0,
         "use_camera_for_cat_detection": False,
@@ -502,6 +503,7 @@ def load_config():
         "USER_NAME": safe_str("USER_NAME", d['user_name']),
         "MODEL_TRAINING": safe_str("MODEL_TRAINING", d['model_training']),
         "YOLO_MODEL": safe_str("YOLO_MODEL", d['yolo_model']),
+        "INFERENCE_DEVICE": safe_str("INFERENCE_DEVICE", d.get('inference_device', 'cpu')),
         "STARTUP_SHUTDOWN_FLAG": safe_bool("STARTUP_SHUTDOWN_FLAG", d['startup_shutdown_flag']),
         "NOT_GRACEFUL_SHUTDOWNS": safe_int("NOT_GRACEFUL_SHUTDOWNS", int(d['not_graceful_shutdowns'])),
         "USE_CAMERA_FOR_CAT_DETECTION": safe_bool("USE_CAMERA_FOR_CAT_DETECTION", d['use_camera_for_cat_detection']),
@@ -677,6 +679,7 @@ def save_config():
     settings['user_name'] = CONFIG['USER_NAME']
     settings['model_training'] = CONFIG['MODEL_TRAINING']
     settings['yolo_model'] = CONFIG['YOLO_MODEL']
+    settings['inference_device'] = CONFIG.get('INFERENCE_DEVICE', 'cpu')
     settings['startup_shutdown_flag'] = CONFIG['STARTUP_SHUTDOWN_FLAG']
     settings['not_graceful_shutdowns'] = CONFIG['NOT_GRACEFUL_SHUTDOWNS']
     settings['use_camera_for_cat_detection'] = CONFIG['USE_CAMERA_FOR_CAT_DETECTION']

@@ -89,6 +89,7 @@ from src.system import (
     upgrade_base_system_packages,
     ensure_target_boot_service_semantics,
     ensure_ffmpeg_installed,
+    ensure_openvino_installed,
     apply_wlan_runtime_settings,
 )
 from src.paths import pictures_original_dir, kittyhack_root
@@ -7714,6 +7715,47 @@ def server(input, output, session):
                             )
                         ),
                         ui.hr(),
+                        (
+                            ui.row(
+                                ui.column(
+                                    12,
+                                    ui.input_select(
+                                        "inference_device",
+                                        _("Inference device (Experimental!)"),
+                                        {
+                                            "cpu": _("CPU (default)"),
+                                            "cuda:0": _("NVIDIA GPU (CUDA)"),
+                                            "intel:gpu": _("Intel GPU (OpenVINO)"),
+                                        },
+                                        selected=(
+                                            "intel:gpu"
+                                            if str(CONFIG.get('INFERENCE_DEVICE', 'cpu') or 'cpu').strip().lower() == 'gpu'
+                                            else CONFIG.get('INFERENCE_DEVICE', 'cpu')
+                                        ),
+                                    ),
+                                ),
+                                ui.column(12, info_toggle(
+                                    "inference_device_info",
+                                    _("Show inference device info"),
+                                    "- **" + _("CPU (default):") + "** " + _("Uses the NCNN model format, optimised for ARM/x86 without a dedicated GPU. Recommended for the Kittyflap hardware.") + "\n\n" +
+                                    "- **" + _("NVIDIA GPU (CUDA):") + "** " + _("Uses the PyTorch `.pt` model with CUDA. Requires a CUDA-capable NVIDIA GPU and PyTorch built with CUDA support.") + "\n\n" +
+                                    "- **" + _("Intel GPU (OpenVINO):") + "** " + _("Uses an exported OpenVINO model via the `openvino` runtime. Suitable for Intel Arc and Intel integrated GPUs.") + "\n\n" +
+                                    "> " + _("GPU inference only works with custom YOLO models, not with the original Kittyflap TFLite models.") + "\n\n" +
+                                    "> " + _("Note: This is an experimental feature. While it can significantly speed up inference and reduce CPU load, it may also cause instability on unsupported hardware or with incompatible model formats.")
+                                )),
+                            )
+                            if is_remote_mode()
+                            else ui.row(
+                                ui.column(
+                                    12,
+                                    ui.markdown(
+                                        "> " + _("Inference device is fixed to **CPU** on Kittyflap hardware. GPU inference is only available in remote-mode.")
+                                    ),
+                                    style_="color: grey;",
+                                ),
+                            )
+                        ),
+                        ui.hr(),
                         ui.row(
                             ui.column(
                                 12,
@@ -7982,6 +8024,11 @@ def server(input, output, session):
         else:
             img_processing_cores_changed = CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] != input.btnUseAllCoresForImageProcessing()
 
+        inference_device_changed = (
+            is_remote_mode() and
+            CONFIG.get('INFERENCE_DEVICE', 'cpu') != input.inference_device()
+        )
+
         # Update the configuration dictionary with the new values
         CONFIG['LANGUAGE'] = input.txtLanguage()
         CONFIG['TIMEZONE'] = input.txtConfigTimezone()
@@ -8005,6 +8052,20 @@ def server(input, output, session):
         elif (input.selectedModel().startswith("tflite::")):
             CONFIG['TFLITE_MODEL_VERSION'] = input.selectedModel().replace("tflite::", "")
             CONFIG['YOLO_MODEL'] = ""
+
+        CONFIG['INFERENCE_DEVICE'] = input.inference_device() if is_remote_mode() else 'cpu'
+
+        if is_remote_mode() and str(input.inference_device() or '').strip().lower().startswith('intel:'):
+            openvino_ok = ensure_openvino_installed()
+            if not openvino_ok:
+                ui.notification_show(
+                    _("OpenVINO: ") +
+                    _("The `openvino` package could not be installed automatically. "
+                      "Please run `pip install openvino` manually and try again. "
+                      "Changes were not saved."),
+                    duration=None, type="error",
+                )
+                return
         
         CONFIG['USE_CAMERA_FOR_CAT_DETECTION'] = input.btnUseCameraForCatDetection()
         CONFIG['CAT_THRESHOLD'] = float(input.sldCatThreshold())
@@ -8123,7 +8184,7 @@ def server(input, output, session):
             ui.notification_show(_("Kittyhack configuration updated successfully."), duration=5, type="message")
             model_reload_failed = False
 
-            if selected_model_changed:
+            if selected_model_changed or inference_device_changed:
                 try:
                     reload_ok, active_model_handler = reload_model_handler_runtime()
                     if reload_ok:
@@ -8150,7 +8211,7 @@ def server(input, output, session):
 
             restart_modal_shown = False
             if (
-                (selected_model_changed and model_reload_failed) or
+                ((selected_model_changed or inference_device_changed) and model_reload_failed) or
                 hostname_changed or
                 img_processing_cores_changed or
                 rfid_state_changed

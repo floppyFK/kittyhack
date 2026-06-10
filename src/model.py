@@ -1036,10 +1036,24 @@ class ModelHandler:
 
         self.labelfile = os.path.join(modeldir, labelfile)
         self.model = model
+        self._model_rootdir = modeldir
+        self.inference_device = str(CONFIG.get('INFERENCE_DEVICE', 'cpu') or 'cpu').strip()
+        if not is_remote_mode():
+            # GPU inference is only supported in remote-mode (i.e. on a capable Linux PC).
+            # On the Kittyflap hardware (target-mode) always use CPU / NCNN.
+            self.inference_device = 'cpu'
         if self.model == "tflite":
             self.modeldir = modeldir
         else:
-            self.modeldir = os.path.join(modeldir, "best_ncnn_model")
+            if self._uses_openvino_backend():
+                # OpenVINO uses the exported IR model directory.
+                self.modeldir = os.path.join(modeldir, "model_openvino_model")
+            elif self.inference_device.lower() == 'cpu':
+                # NCNN model: CPU-optimised, best for ARM / Pi
+                self.modeldir = os.path.join(modeldir, "best_ncnn_model")
+            else:
+                # PyTorch model.pt: required for CUDA inference.
+                self.modeldir = os.path.join(modeldir, "model.pt")
         self.graph = graph
         self.resolution = resolution
         self.framerate = framerate
@@ -1061,6 +1075,50 @@ class ModelHandler:
         # accessed the camera API during startup.
         self.labels: list[str] = []
         self._load_labels()
+
+    def _uses_openvino_backend(self) -> bool:
+        device = str(self.inference_device or "").strip().lower()
+        return device in {"gpu", "intel:gpu", "intel:cpu", "intel:npu"}
+
+    def _resolved_inference_device(self) -> str:
+        device = str(self.inference_device or "cpu").strip().lower()
+        if device == "gpu":
+            return "intel:gpu"
+        return device or "cpu"
+
+    def _ensure_openvino_model_export(self) -> None:
+        """Export model.pt to OpenVINO IR on demand and verify the output exists."""
+        if not self._uses_openvino_backend():
+            return
+
+        xml_exists = os.path.isdir(self.modeldir) and any(
+            name.endswith(".xml") for name in os.listdir(self.modeldir)
+        )
+        if xml_exists:
+            return
+
+        pt_model_path = os.path.join(self._model_rootdir, "model.pt")
+        if not os.path.exists(pt_model_path):
+            raise FileNotFoundError(f"OpenVINO export requires '{pt_model_path}'")
+
+        logging.info(f"[MODEL] OpenVINO export missing. Exporting '{pt_model_path}' to '{self.modeldir}'...")
+
+        from ultralytics import YOLO
+
+        export_model = YOLO(pt_model_path, task="detect", verbose=False)
+        export_result = export_model.export(
+            format="openvino",
+            imgsz=self.input_size,
+        )
+
+        if isinstance(export_result, str) and export_result.strip():
+            self.modeldir = export_result
+
+        xml_exists = os.path.isdir(self.modeldir) and any(
+            name.endswith(".xml") for name in os.listdir(self.modeldir)
+        )
+        if not xml_exists:
+            raise RuntimeError(f"OpenVINO export did not produce a valid model directory: {self.modeldir}")
 
     def _load_labels(self) -> None:
         try:
@@ -1098,23 +1156,48 @@ class ModelHandler:
             import os
             from src.baseconfig import configure_logging
 
+            if self._uses_openvino_backend():
+                self._ensure_openvino_model_export()
+
+            resolved_inference_device = self._resolved_inference_device()
+
             # Check if we're using all available cores
             all_cores = multiprocessing.cpu_count()
-            using_all_cores = self.num_threads >= all_cores
+            # GPU devices always use the direct inference path (GPU handles its own parallelism)
+            using_all_cores = self.num_threads >= all_cores or self.inference_device.lower() != 'cpu'
 
-            # If using all cores, run the model directly for better performance
+            # If using all cores (or GPU), run the model directly for better performance
             if using_all_cores:
-                logging.info(f"[MODEL] Loading YOLO model directly in main process using all available cores")
+                if self.inference_device.lower() == 'cpu':
+                    _device_label = 'cpu (NCNN)'
+                elif self._uses_openvino_backend():
+                    _device_label = f'{self.inference_device} via OpenVINO AUTO'
+                else:
+                    _device_label = self.inference_device
+                logging.info(f"[MODEL] Loading YOLO model directly in main process (device={_device_label})")
                 logging.getLogger("ultralytics").setLevel(logging.WARNING)
                 logging.getLogger("ultralytics.yolo.engine.model").setLevel(logging.WARNING)
                 self._yolo_model = YOLO(self.modeldir, task="detect", verbose=False)
                 # Re-Configure logging to silence the model's output
                 configure_logging(CONFIG['LOGLEVEL'])
-                
+
+                # Capture device info for the closure
+                _inference_device = resolved_inference_device
+                _is_openvino = self._uses_openvino_backend()
+
                 # Create a wrapper function to match the expected interface
                 def direct_inference(frame, input_size):
-                    # Run inference directly
-                    results = self._yolo_model(frame, stream=True, imgsz=input_size, verbose=False)
+                    # Run inference directly.
+                    # For OpenVINO models, do NOT pass device: Ultralytics hardcodes
+                    # device_name="AUTO" internally, and select_device() does not
+                    # understand Intel GPU strings (it only knows CUDA/CPU/MPS).
+                    # OpenVINO AUTO mode automatically selects the best available
+                    # device (GPU if available, CPU as fallback).
+                    # For CUDA, pass the device explicitly as usual.
+                    _predict_kwargs: dict = dict(stream=True, imgsz=input_size, verbose=False)
+                    if _inference_device != 'cpu' and not _is_openvino:
+                        _predict_kwargs['device'] = _inference_device
+                    results = self._yolo_model(frame, **_predict_kwargs)
                     
                     # Process results
                     mouse_probability = 0
@@ -1171,7 +1254,7 @@ class ModelHandler:
                 self._model_worker = None
             else:
                 # Use the multiprocessing approach for limited CPU cores
-                def model_worker_process(model_path, input_queue, output_queue, num_threads=1):
+                def model_worker_process(model_path, input_queue, output_queue, num_threads=1, inference_device='cpu'):
                     try:
                         # Set CPU affinity for this process based on num_threads
                         import psutil
@@ -1219,7 +1302,10 @@ class ModelHandler:
                             job_id, frame, input_size, pad_x, pad_y, scale, labels, cat_names, min_threshold = job
                             
                             # Perform inference
-                            results = model(frame, stream=True, imgsz=input_size)
+                            _worker_kwargs: dict = dict(stream=True, imgsz=input_size)
+                            if inference_device != 'cpu':
+                                _worker_kwargs['device'] = inference_device
+                            results = model(frame, **_worker_kwargs)
                             
                             # Process results
                             mouse_probability = 0
@@ -1284,7 +1370,7 @@ class ModelHandler:
                 # Start the worker process with the specified number of threads
                 self._model_worker = multiprocessing.Process(
                     target=model_worker_process,
-                    args=(self.modeldir, self._input_queue, self._output_queue, self.num_threads)
+                    args=(self.modeldir, self._input_queue, self._output_queue, self.num_threads, resolved_inference_device)
                 )
                 self._model_worker.daemon = True
                 self._model_worker.start()

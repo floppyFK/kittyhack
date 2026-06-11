@@ -1751,6 +1751,16 @@ class ModelHandler:
                     except Exception:
                         effective_fps = float(self.framerate or 10)
 
+                # Apply IP camera FPS cap independent of the decode+scale pipeline setting.
+                # This keeps model processing aligned with camera cadence in non-pipeline mode.
+                if str(CONFIG.get('CAMERA_SOURCE') or '').strip().lower() == 'ip_camera':
+                    try:
+                        ip_camera_fps_limit = float(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', effective_fps) or effective_fps)
+                    except Exception:
+                        ip_camera_fps_limit = effective_fps
+                    if ip_camera_fps_limit > 0:
+                        effective_fps = min(effective_fps, ip_camera_fps_limit)
+
                 # Clamp to sane values to avoid division-by-zero or extreme sleeps.
                 if effective_fps < 1.0:
                     effective_fps = 1.0

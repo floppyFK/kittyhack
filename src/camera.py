@@ -366,6 +366,12 @@ class VideoStream:
                     tm.sleep(retry_delay)
                     continue
 
+                # Reduce internal buffering to keep latency and stale-frame processing low.
+                try:
+                    self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
+
                 # Get the actual resolution of the IP camera
                 width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -381,10 +387,43 @@ class VideoStream:
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, max_w)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, max_h)
 
+                capture_fps_limit = self._normalized_pipeline_fps_limit()
+                capture_frame_interval = (1.0 / float(capture_fps_limit)) if capture_fps_limit > 0 else 0.0
+                next_capture_deadline_mono = tm.monotonic()
+                sample_corruption_check_every = 15
+                sample_stride = 16
+                frame_index = 0
+
+                if capture_fps_limit > 0:
+                    logging.info(f"[CAMERA] Applying IP camera capture FPS limit: {capture_fps_limit}")
+
                 self.camera_state = self.STATE_RUNNING
                 while not self.stopped:
+                    if capture_frame_interval > 0.0:
+                        now_mono = tm.monotonic()
+                        if now_mono < next_capture_deadline_mono:
+                            tm.sleep(next_capture_deadline_mono - now_mono)
+
                     ret, frame = self.cap.read()
-                    if not ret or frame is None or frame.size == 0 or np.count_nonzero(frame) < frame.size * 0.01:
+
+                    if capture_frame_interval > 0.0:
+                        next_capture_deadline_mono = max(next_capture_deadline_mono + capture_frame_interval, tm.monotonic())
+
+                    frame_invalid = False
+                    if not ret or frame is None or frame.size == 0:
+                        frame_invalid = True
+                    else:
+                        frame_index += 1
+                        if (frame_index % sample_corruption_check_every) == 0:
+                            sampled = frame[::sample_stride, ::sample_stride]
+                            if sampled.size == 0:
+                                frame_invalid = True
+                            else:
+                                non_zero_ratio = float(np.count_nonzero(sampled)) / float(sampled.size)
+                                if non_zero_ratio < 0.01:
+                                    frame_invalid = True
+
+                    if frame_invalid:
                         corrupt_frame_count += 1
                         logging.warning(f"[CAMERA] Corrupt frame detected from IP camera (count={corrupt_frame_count})")
                         if corrupt_frame_count >= max_corrupt_frames:
@@ -392,8 +431,8 @@ class VideoStream:
                             self.camera_state = self.STATE_ERROR
                             break  # Break inner loop to reconnect
                         continue
-                    else:
-                        corrupt_frame_count = 0  # Reset on good frame
+
+                    corrupt_frame_count = 0  # Reset on good frame
 
                     with self.lock:
                         self.frames.append(frame)

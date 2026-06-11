@@ -399,20 +399,22 @@ class VideoStream:
 
                 self.camera_state = self.STATE_RUNNING
                 while not self.stopped:
-                    if capture_frame_interval > 0.0:
-                        now_mono = tm.monotonic()
-                        if now_mono < next_capture_deadline_mono:
-                            tm.sleep(next_capture_deadline_mono - now_mono)
-
                     ret, frame = self.cap.read()
-
-                    if capture_frame_interval > 0.0:
-                        next_capture_deadline_mono = max(next_capture_deadline_mono + capture_frame_interval, tm.monotonic())
 
                     frame_invalid = False
                     if not ret or frame is None or frame.size == 0:
                         frame_invalid = True
                     else:
+                        # Keep draining the decoder continuously and only forward frames
+                        # at the configured cadence. This avoids H264 decode instability
+                        # on some streams when reads are artificially delayed.
+                        if capture_frame_interval > 0.0:
+                            now_mono = tm.monotonic()
+                            if now_mono < next_capture_deadline_mono:
+                                corrupt_frame_count = 0
+                                continue
+                            next_capture_deadline_mono = max(next_capture_deadline_mono + capture_frame_interval, now_mono)
+
                         frame_index += 1
                         if (frame_index % sample_corruption_check_every) == 0:
                             sampled = frame[::sample_stride, ::sample_stride]

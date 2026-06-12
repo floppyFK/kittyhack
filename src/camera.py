@@ -74,12 +74,11 @@ def build_ip_camera_ffmpeg_cmd(
     ip_camera_url: str,
     target_w: int,
     target_h: int,
-    fps_limit: int,
+    _fps_limit: int,
     hw_decode: str,
 ) -> tuple[list[str], str]:
     """Build an FFmpeg decode+scale command for IP camera raw BGR output."""
     hw = resolve_ip_camera_hw_decode(hw_decode)
-    fps_suffix = f",fps={fps_limit}" if fps_limit > 0 else ""
 
     ffmpeg_cmd = [
         "ffmpeg",
@@ -87,13 +86,14 @@ def build_ip_camera_ffmpeg_cmd(
         "-loglevel", "error",
         "-fflags", "nobuffer",
         "-flags", "low_delay",
+        "-vsync", "0",
     ]
     if str(ip_camera_url).lower().startswith("rtsp://"):
         ffmpeg_cmd.extend(["-rtsp_transport", "tcp"])
 
     if hw == "cuda":
         ffmpeg_cmd.extend(["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"])
-        vf_arg = f"scale_cuda={target_w}:{target_h},hwdownload,format=bgr24{fps_suffix}"
+        vf_arg = f"scale_cuda={target_w}:{target_h},hwdownload,format=bgr24"
         hw_label = "cuda"
     elif hw == "vaapi":
         ffmpeg_cmd.extend([
@@ -106,19 +106,18 @@ def build_ip_camera_ffmpeg_cmd(
         vf_arg = (
             f"hwdownload,format=nv12,"
             f"scale={target_w}:{target_h}:flags=fast_bilinear,"
-            f"format=bgr24{fps_suffix}"
+            f"format=bgr24"
         )
         hw_label = "vaapi"
     elif hw == "qsv":
         ffmpeg_cmd.extend(["-init_hw_device", "qsv=hw", "-filter_hw_device", "hw"])
         vf_arg = (
             f"hwmap=derive_device=qsv,scale_qsv=w={target_w}:h={target_h},"
-            f"hwdownload,format=bgr24{fps_suffix}"
+            f"hwdownload,format=bgr24"
         )
         hw_label = "qsv"
     else:
-        fps_prefix = f"fps={fps_limit}," if fps_limit > 0 else ""
-        vf_arg = f"{fps_prefix}scale={target_w}:{target_h}:flags=fast_bilinear"
+        vf_arg = f"scale={target_w}:{target_h}:flags=fast_bilinear"
         hw_label = "software"
 
     ffmpeg_cmd.extend([
@@ -164,6 +163,7 @@ class VideoStream:
         self.tuning_file = tuning_file  # Path to the tuning file
         self.stopped = False
         self.frames = []
+        self.frame_ids = []
         self.buffer_size = 30
         self.process = None
         self.lock = threading.Lock()
@@ -175,7 +175,36 @@ class VideoStream:
         self.ip_camera_hw_decode = ip_camera_hw_decode
         self.cap = None  # For IP camera
         self.thread = None
+        self._stderr_drain_thread = None
+        self._next_frame_id = 1
+        self._last_read_oldest_frame_id = 0
         self.camera_state = self.STATE_INITIALIZING  # <-- Add this line
+
+    def _append_frame_locked(self, frame: np.ndarray) -> None:
+        """Append a frame and trim the FIFO while preserving frame identity."""
+        self.frames.append(frame)
+        self.frame_ids.append(self._next_frame_id)
+        self._next_frame_id += 1
+        if len(self.frames) > self.buffer_size:
+            self.frames.pop(0)
+            self.frame_ids.pop(0)
+
+    def _start_process_stderr_drain(self, process: subprocess.Popen, label: str) -> None:
+        """Continuously drain process stderr to avoid pipe backpressure stalls."""
+        if process is None or process.stderr is None:
+            return
+
+        def _drain() -> None:
+            try:
+                while not self.stopped and process.poll() is None:
+                    chunk = process.stderr.read(4096)
+                    if not chunk:
+                        break
+            except Exception as e:
+                logging.debug(f"[CAMERA] Stderr drain for {label} stopped: {e}")
+
+        self._stderr_drain_thread = threading.Thread(target=_drain, daemon=True)
+        self._stderr_drain_thread.start()
 
     def _parse_target_resolution(self) -> tuple[int, int]:
         """Parse WxH target resolution string with a safe fallback."""
@@ -219,6 +248,7 @@ class VideoStream:
             if len(self.frames) > self.buffer_size:
                 # Remove oldest frames to fit the new buffer size
                 self.frames = self.frames[-self.buffer_size:]
+                self.frame_ids = self.frame_ids[-self.buffer_size:]
         logging.info(f"[CAMERA] Buffer size set to {self.buffer_size}")
 
 
@@ -322,9 +352,7 @@ class VideoStream:
                         if frame is not None:
                             frame = cv2.rotate(frame, cv2.ROTATE_180)
                             with self.lock:
-                                self.frames.append(frame)
-                                if len(self.frames) > self.buffer_size:
-                                    self.frames.pop(0)  # Remove oldest frame
+                                self._append_frame_locked(frame)
                         else:
                             logging.error("[CAMERA] Failed to decode frame")
             except Exception as e:
@@ -424,9 +452,7 @@ class VideoStream:
                                 try:
                                     frame = np.frombuffer(raw, dtype=np.uint8).reshape((target_h, target_w, 3))
                                     with self.lock:
-                                        self.frames.append(frame)
-                                        if len(self.frames) > self.buffer_size:
-                                            self.frames.pop(0)
+                                        self._append_frame_locked(frame)
                                     first_frame_ok = True
                                     break
                                 except Exception:
@@ -436,6 +462,7 @@ class VideoStream:
                             tm.sleep(0.05)
 
                         if first_frame_ok:
+                            self._start_process_stderr_drain(self.process, f"ffmpeg-{hw_label}")
                             pipeline_started = True
                             break
 
@@ -473,6 +500,12 @@ class VideoStream:
                         continue
 
                     self.camera_state = self.STATE_RUNNING
+                    capture_fps_limit = self._normalized_pipeline_fps_limit()
+                    capture_frame_interval = (1.0 / float(capture_fps_limit)) if capture_fps_limit > 0 else 0.0
+                    next_capture_deadline_mono = tm.monotonic()
+
+                    if capture_fps_limit > 0:
+                        logging.info(f"[CAMERA] Applying FFmpeg pipeline FPS limit in Python: {capture_fps_limit}")
 
                     while not self.stopped:
                         try:
@@ -503,11 +536,16 @@ class VideoStream:
                                 break
                             continue
 
+                        if capture_frame_interval > 0.0:
+                            now_mono = tm.monotonic()
+                            if now_mono < next_capture_deadline_mono:
+                                corrupt_frame_count = 0
+                                continue
+                            next_capture_deadline_mono = max(next_capture_deadline_mono + capture_frame_interval, now_mono)
+
                         corrupt_frame_count = 0
                         with self.lock:
-                            self.frames.append(frame)
-                            if len(self.frames) > self.buffer_size:
-                                self.frames.pop(0)
+                            self._append_frame_locked(frame)
 
                     try:
                         if self.process:
@@ -612,9 +650,7 @@ class VideoStream:
                     corrupt_frame_count = 0  # Reset on good frame
 
                     with self.lock:
-                        self.frames.append(frame)
-                        if len(self.frames) > self.buffer_size:
-                            self.frames.pop(0)
+                        self._append_frame_locked(frame)
                 self.cap.release()
                 if self.stopped:
                     break
@@ -648,7 +684,9 @@ class VideoStream:
 
             with self.lock:
                 self.frames = [final_frame]
-            with self.lock:
+                self.frame_ids = [self._next_frame_id]
+                self._next_frame_id += 1
+                self._last_read_oldest_frame_id = 0
                 self.frame = final_frame
             logging.info("[CAMERA] Added final frame to indicate stream ended.")
 
@@ -657,15 +695,36 @@ class VideoStream:
         with self.lock:
             return self.frames[-1] if self.frames else None
 
-    def read_oldest(self):
-        # Return and remove the oldest frame from the list, but keep the last frame
+    def get_latest_frame_id(self) -> int:
+        """Return the frame id of the latest buffered frame, or 0 if unavailable."""
         with self.lock:
-            if len(self.frames) > 1:
-                return self.frames.pop(0)
-            elif len(self.frames) == 1:
-                return self.frames[0]
-            else:
+            return int(self.frame_ids[-1]) if self.frame_ids else 0
+
+    def read_oldest(self):
+        # Return and remove the oldest unread frame from the list, but keep the latest frame buffered.
+        with self.lock:
+            if not self.frames:
                 return None
+
+            # Drop already-consumed stale heads once a newer frame exists.
+            while len(self.frames) > 1 and self.frame_ids and self.frame_ids[0] <= self._last_read_oldest_frame_id:
+                self.frames.pop(0)
+                self.frame_ids.pop(0)
+
+            if not self.frames:
+                return None
+
+            frame_id = self.frame_ids[0]
+            if frame_id <= self._last_read_oldest_frame_id:
+                return None
+
+            self._last_read_oldest_frame_id = frame_id
+            if len(self.frames) > 1:
+                self.frame_ids.pop(0)
+                return self.frames.pop(0)
+
+            # Keep the single latest frame buffered for read(), but mark it consumed for read_oldest().
+            return self.frames[0]
 
     def stop(self):
         # Stop the video stream

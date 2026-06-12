@@ -1110,6 +1110,7 @@ class ModelHandler:
         self.paused = False
         self._live_frame_lock = threading.Lock()
         self._live_frame_jpg: bytes | None = None
+        self._live_frame_jpg_ts: float = 0.0
         self.last_log_time = 0
         self._videostream_not_ready_last_log: dict[str, float] = {}
         self.input_size = int(model_image_size)
@@ -1501,8 +1502,14 @@ class ModelHandler:
             # Recovery watchdog for rare camera handover races (e.g. remote-control takeover timeout).
             no_frame_reinit_after_s = 8.0
             no_frame_reinit_cooldown_s = 10.0
+            no_frame_warn_after_s = 3.0
             last_good_frame_ts = tm.time()
             last_no_frame_reinit_ts = 0.0
+            no_frame_since_ts = 0.0
+            try:
+                last_seen_camera_frame_id = int(videostream.get_latest_frame_id()) if videostream is not None else 0
+            except Exception:
+                last_seen_camera_frame_id = 0
 
             while not sigterm_monitor.stop_now and not self._stop_requested.is_set():
                 # --- Detect camera config changes and re-init videostream if needed ---
@@ -1562,6 +1569,13 @@ class ModelHandler:
 
                 if frame is not None:
                     last_good_frame_ts = tm.time()
+                    no_frame_since_ts = 0.0
+                    try:
+                        current_latest_id = int(videostream.get_latest_frame_id()) if videostream is not None else 0
+                        if current_latest_id > last_seen_camera_frame_id:
+                            last_seen_camera_frame_id = current_latest_id
+                    except Exception:
+                        pass
                     # Run the CPU intensive model inference only if not paused
                     timestamp = tm.time()
                     try:
@@ -1610,6 +1624,7 @@ class ModelHandler:
                         if frame_jpg is not None:
                             with self._live_frame_lock:
                                 self._live_frame_jpg = frame_jpg
+                                self._live_frame_jpg_ts = tm.monotonic()
                             image_buffer.append(
                                 timestamp, frame_jpg, None,
                                 mouse_probability, no_mouse_probability, own_cat_probability,
@@ -1664,14 +1679,38 @@ class ModelHandler:
                     first_run = False
 
                 else:
-                    # Log warning only once every 10 seconds to avoid flooding the log
                     current_time = tm.time()
-                    if current_time - self.last_log_time > 10:
+                    # Distinguish between "no unread frame yet" and a truly stalled stream.
+                    # read_oldest() may return None while the stream is still progressing.
+                    stream_progressed = False
+                    try:
+                        current_latest_id = int(videostream.get_latest_frame_id()) if videostream is not None else 0
+                        if current_latest_id > last_seen_camera_frame_id:
+                            last_seen_camera_frame_id = current_latest_id
+                            last_good_frame_ts = current_time
+                            stream_progressed = True
+                    except Exception:
+                        pass
+
+                    if stream_progressed:
+                        no_frame_since_ts = 0.0
+                    else:
+                        if no_frame_since_ts <= 0.0:
+                            no_frame_since_ts = current_time
+
+                    if (
+                        (not stream_progressed)
+                        and (no_frame_since_ts > 0.0)
+                        and ((current_time - no_frame_since_ts) >= no_frame_warn_after_s)
+                        and (current_time - self.last_log_time > 20)
+                    ):
                         logging.warning("[CAMERA] No frame received!")
                         self.last_log_time = current_time
 
                     # Auto-recover if stream got stuck after startup/handover.
                     if (
+                        (not stream_progressed)
+                        and
                         (current_time - last_good_frame_ts) >= no_frame_reinit_after_s
                         and (current_time - last_no_frame_reinit_ts) >= no_frame_reinit_cooldown_s
                     ):
@@ -1936,16 +1975,26 @@ class ModelHandler:
         return None
 
     def get_camera_frame_jpg(self, jpeg_quality: int | None = None) -> bytes | None:
-        """Return a JPEG for the latest processed frame, encoding on demand if needed."""
+        """Return a JPEG for the latest camera frame.
+
+        Keep a short-lived cache, but refresh on demand so live-view cadence is not
+        bound to model inference throughput.
+        """
+        max_cache_age_s = 0.2
+        now_mono = tm.monotonic()
         with self._live_frame_lock:
-            if self._live_frame_jpg is not None:
+            if self._live_frame_jpg is not None and (now_mono - float(self._live_frame_jpg_ts or 0.0)) <= max_cache_age_s:
                 return self._live_frame_jpg
         frame = self.get_camera_frame()
         if frame is None:
             return None
         quality = int(jpeg_quality if jpeg_quality is not None else self.jpeg_quality)
         try:
-            return encode_frame_jpg(frame, jpeg_quality=quality)
+            jpg = encode_frame_jpg(frame, jpeg_quality=quality)
+            with self._live_frame_lock:
+                self._live_frame_jpg = jpg
+                self._live_frame_jpg_ts = now_mono
+            return jpg
         except Exception as e:
             logging.error(f"[MODEL] Failed to encode live-view JPEG: {e}")
             return None

@@ -1989,6 +1989,34 @@ msgstr ""
 "Standard ist `10 FPS`. Setze auf `Unbegrenzt`, um die FPS-Begrenzung beim "
 "Herunterskalieren zu deaktivieren (kann zu höherer CPU-Auslastung führen)."
 
+msgid "IP camera hardware decode"
+msgstr "Hardware-Decodierung für IP-Kamera"
+
+msgid "Auto (detect GPU)"
+msgstr "Automatisch (GPU erkennen)"
+
+msgid "Software only"
+msgstr "Nur Software"
+
+msgid "NVIDIA CUDA"
+msgstr "NVIDIA CUDA"
+
+msgid "VAAPI (Intel/AMD)"
+msgstr "VAAPI (Intel/AMD)"
+
+msgid "Intel Quick Sync"
+msgstr "Intel Quick Sync"
+
+msgid ""
+"Hardware decode offloads H.264/H.265 decoding from the CPU when using the "
+"downscale pipeline. Requires FFmpeg with the matching hardware support. Falls "
+"back to software decode automatically."
+msgstr ""
+"Hardware-Decodierung entlastet die CPU bei H.264/H.265-Streams, wenn die "
+"Herunterskalierungs-Pipeline aktiv ist. Erfordert FFmpeg mit passender "
+"Hardware-Unterstützung. Fällt bei Problemen automatisch auf Software-"
+"Decodierung zurück."
+
 msgid "Door control settings"
 msgstr "Einstellungen für die Klappensteuerung"
 

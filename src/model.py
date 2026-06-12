@@ -18,7 +18,7 @@ import multiprocessing
 import threading
 from src.baseconfig import CONFIG, set_language, update_single_config_parameter, UserNotifications
 from src.mode import is_remote_mode
-from src.camera import videostream, image_buffer, VideoStream, DetectedObject
+from src.camera import videostream, image_buffer, VideoStream, DetectedObject, encode_frame_jpg
 from src.helper import sigterm_monitor, get_timezone, is_valid_uuid4
 from src.database import get_cat_names_list
 from src.paths import models_yolo_root
@@ -31,6 +31,55 @@ if TYPE_CHECKING:
 _ = set_language(CONFIG['LANGUAGE'])
 
 _MODEL_DL_STATE_PATH = "/tmp/kittyhack_model_download_state.json"
+
+
+def _parse_yolo_detection_results(
+    results,
+    labels: list[str],
+    cat_names: list[str],
+    min_threshold: float,
+) -> tuple[int, int, list[dict]]:
+    """Convert Ultralytics detection results to kittyhack object dicts (percent coords)."""
+    mouse_probability = 0
+    own_cat_probability = 0
+    detected_objects: list[dict] = []
+    detected_info: list[str] = []
+    probability_threshold_exceeded = False
+
+    for r in results:
+        boxes = getattr(r, "boxes", None)
+        if boxes is None or len(boxes) == 0:
+            continue
+        for box_xyxyn, conf, cls in zip(boxes.xyxyn, boxes.conf, boxes.cls):
+            x1, y1, x2, y2 = (float(v) for v in box_xyxyn.tolist())
+            cls_idx = int(cls)
+            object_name = labels[cls_idx] if 0 <= cls_idx < len(labels) else str(cls_idx)
+            probability = float(conf * 100)
+            detected_info.append(f"{object_name} ({probability:.1f}%)")
+            if probability >= min_threshold:
+                probability_threshold_exceeded = True
+
+            detected_objects.append({
+                'x': x1 * 100.0,
+                'y': y1 * 100.0,
+                'w': (x2 - x1) * 100.0,
+                'h': (y2 - y1) * 100.0,
+                'name': object_name,
+                'probability': probability,
+            })
+
+            if object_name.lower() in ["prey", "beute"]:
+                mouse_probability = int(probability)
+            elif object_name.lower() in cat_names:
+                own_cat_probability = int(probability)
+
+    if detected_info and probability_threshold_exceeded:
+        logging.info(
+            f"[MODEL] Detected {len(detected_info)} objects in image: "
+            f"{', '.join(detected_info)} (MIN_THRESHOLD={min_threshold})"
+        )
+
+    return mouse_probability, own_cat_probability, detected_objects
 
 
 def _remote_internal_proxy_url() -> str | None:
@@ -1059,6 +1108,8 @@ class ModelHandler:
         self.framerate = framerate
         self.jpeg_quality = jpeg_quality
         self.paused = False
+        self._live_frame_lock = threading.Lock()
+        self._live_frame_jpg: bytes | None = None
         self.last_log_time = 0
         self._videostream_not_ready_last_log: dict[str, float] = {}
         self.input_size = int(model_image_size)
@@ -1187,7 +1238,7 @@ class ModelHandler:
 
                 # Create a wrapper function to match the expected interface
                 def direct_inference(frame, input_size):
-                    # Run inference directly.
+                    # Run inference directly. Ultralytics handles letterboxing internally.
                     # For OpenVINO models, do NOT pass device: Ultralytics hardcodes
                     # device_name="AUTO" internally, and select_device() does not
                     # understand Intel GPU strings (it only knows CUDA/CPU/MPS).
@@ -1198,57 +1249,12 @@ class ModelHandler:
                     if _inference_device != 'cpu' and not _is_openvino:
                         _predict_kwargs['device'] = _inference_device
                     results = self._yolo_model(frame, **_predict_kwargs)
-                    
-                    # Process results
-                    mouse_probability = 0
-                    own_cat_probability = 0
-                    detected_objects = []
-                    detected_info = []
-                    probability_threshold_exceeded = False
-                    min_threshold = CONFIG.get('MIN_THRESHOLD', 0)
-
-                    for r in results:
-                        for i, (box, conf, cls) in enumerate(zip(r.boxes.xyxy, r.boxes.conf, r.boxes.cls)):
-                            xmin, ymin, xmax, ymax = box
-                            cls_idx = int(cls)
-                            object_name = self.labels[cls_idx] if 0 <= cls_idx < len(self.labels) else str(cls_idx)
-                            probability = float(conf * 100)
-                            detected_info.append(f"{object_name} ({probability:.1f}%)")
-                            if probability >= min_threshold:
-                                probability_threshold_exceeded = True
-
-                            # Calculate original dimensions from the scale
-                            imH, imW = frame.shape[:2]
-                            scale = int(input_size) / max(imW, imH)
-                            pad_x = (input_size - imW * scale) / 2
-                            pad_y = (input_size - imH * scale) / 2
-
-                            # Map bounding box coordinates back to original size
-                            xmin_orig = float((xmin - pad_x) / scale)
-                            ymin_orig = float((ymin - pad_y) / scale)
-                            xmax_orig = float((xmax - pad_x) / scale)
-                            ymax_orig = float((ymax - pad_y) / scale)
-
-                            detected_object = {
-                                'x': float(xmin_orig / imW * 100),
-                                'y': float(ymin_orig / imH * 100),
-                                'w': float((xmax_orig - xmin_orig) / imW * 100),
-                                'h': float((ymax_orig - ymin_orig) / imH * 100),
-                                'name': object_name,
-                                'probability': probability
-                            }
-
-                            detected_objects.append(detected_object)
-
-                            if object_name.lower() in ["prey", "beute"]:
-                                mouse_probability = int(probability)
-                            elif object_name.lower() in self.cat_names:
-                                own_cat_probability = int(probability)
-
-                    if detected_info and probability_threshold_exceeded:
-                        logging.info(f"[MODEL] Detected {len(detected_info)} objects in image: {', '.join(detected_info)} (MIN_THRESHOLD={min_threshold})")
-
-                    return (mouse_probability, own_cat_probability, detected_objects)
+                    return _parse_yolo_detection_results(
+                        results,
+                        self.labels,
+                        self.cat_names,
+                        CONFIG.get('MIN_THRESHOLD', 0),
+                    )
                 
                 self._yolo = direct_inference
                 self._model_worker = None
@@ -1299,61 +1305,20 @@ class ModelHandler:
                             if job is None:  # None is our signal to exit
                                 break
                                 
-                            job_id, frame, input_size, pad_x, pad_y, scale, labels, cat_names, min_threshold = job
-                            
-                            # Perform inference
+                            job_id, frame, input_size, labels, cat_names, min_threshold = job
+
                             _worker_kwargs: dict = dict(stream=True, imgsz=input_size)
                             if inference_device != 'cpu':
                                 _worker_kwargs['device'] = inference_device
                             results = model(frame, **_worker_kwargs)
-                            
-                            # Process results
-                            mouse_probability = 0
-                            own_cat_probability = 0
-                            detected_objects = []
-                            
-                            for r in results:
-                                detected_info = []
-                                probability_threshold_exceeded = False
-                                for i, (box, conf, cls) in enumerate(zip(r.boxes.xyxy, r.boxes.conf, r.boxes.cls)):
-                                    xmin, ymin, xmax, ymax = box
-                                    cls_idx = int(cls)
-                                    object_name = labels[cls_idx] if 0 <= cls_idx < len(labels) else str(cls_idx)
-                                    probability = float(conf * 100)
-                                    detected_info.append(f"{object_name} ({probability:.1f}%)")
-                                    if probability >= min_threshold:
-                                        probability_threshold_exceeded = True
-                                    
-                                    # Map bounding box coordinates back to original size
-                                    xmin_orig = float((xmin - pad_x) / scale)
-                                    ymin_orig = float((ymin - pad_y) / scale)
-                                    xmax_orig = float((xmax - pad_x) / scale)
-                                    ymax_orig = float((ymax - pad_y) / scale)
-                                    
-                                    # Calculate original image dimensions from the scale
-                                    imW = int(frame.shape[1] / scale)
-                                    imH = int(frame.shape[0] / scale)
-                                    
-                                    detected_object = {
-                                        'x': float(xmin_orig / imW * 100),
-                                        'y': float(ymin_orig / imH * 100),
-                                        'w': float((xmax_orig - xmin_orig) / imW * 100),
-                                        'h': float((ymax_orig - ymin_orig) / imH * 100),
-                                        'name': object_name,
-                                        'probability': probability
-                                    }
-                                    
-                                    detected_objects.append(detected_object)
-                                    
-                                    if object_name.lower() in ["prey", "beute"]:
-                                        mouse_probability = int(probability)
-                                    elif object_name.lower() in cat_names:
-                                        own_cat_probability = int(probability)
 
-                                if detected_info and probability_threshold_exceeded:
-                                    logging.info(f"[MODEL] Detected {len(detected_info)} objects in image: {', '.join(detected_info)} (MIN_THRESHOLD={min_threshold})")
-                            
-                            # Return results through the output queue
+                            mouse_probability, own_cat_probability, detected_objects = _parse_yolo_detection_results(
+                                results,
+                                labels,
+                                cat_names,
+                                min_threshold,
+                            )
+
                             output_queue.put((job_id, mouse_probability, own_cat_probability, detected_objects))
                             
                     except Exception as e:
@@ -1387,15 +1352,9 @@ class ModelHandler:
         """Send a frame to the worker process and return a job ID"""
         job_id = self._next_job_id
         self._next_job_id += 1
-        
-        # Calculate letterbox parameters
-        imH, imW = frame.shape[:2]
-        scale = int(input_size) / max(imW, imH)
-        pad_x = (input_size - imW * scale) / 2
-        pad_y = (input_size - imH * scale) / 2
-        
-        # Put the job in the queue
-        self._input_queue.put((job_id, frame, input_size, pad_x, pad_y, scale, self.labels, self.cat_names, CONFIG['MIN_THRESHOLD']))
+        self._input_queue.put((
+            job_id, frame, input_size, self.labels, self.cat_names, CONFIG['MIN_THRESHOLD'],
+        ))
         return job_id
     
     def _get_result(self, job_id, timeout=1.0):
@@ -1447,6 +1406,7 @@ class ModelHandler:
         last_enable_ip_camera_decode_scale_pipeline = CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False)
         last_ip_camera_target_resolution = CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360')
         last_ip_camera_pipeline_fps_limit = int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10)
+        last_ip_camera_hw_decode = str(CONFIG.get('IP_CAMERA_HW_DECODE', 'auto') or 'auto')
 
         # Check if the model is a YOLO model
         if self.model == "tflite":
@@ -1516,6 +1476,7 @@ class ModelHandler:
                 use_ip_camera_decode_scale_pipeline=use_decode_scale_pipeline,
                 ip_camera_target_resolution=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360'),
                 ip_camera_pipeline_fps_limit=int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10),
+                ip_camera_hw_decode=str(CONFIG.get('IP_CAMERA_HW_DECODE', 'auto') or 'auto'),
             ).start()
             logging.info(f"[CAMERA] Starting video stream...")
 
@@ -1534,11 +1495,6 @@ class ModelHandler:
             if frame is not None:
                 logging.info("[CAMERA] Camera stream started successfully.")
 
-        # Calculate padding for letterbox resizing
-        #scale = int(self.input_size) / max(imW, imH)
-        #pad_x = (self.input_size - imW * scale) / 2  # Horizontal padding
-        #pad_y = (self.input_size - imH * scale) / 2  # Vertical padding
-
             # Flag to ensure we run at least one inference to initialize the model
             first_run = True
             
@@ -1554,12 +1510,14 @@ class ModelHandler:
                 current_enable_ip_camera_decode_scale_pipeline = CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False)
                 current_ip_camera_target_resolution = CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360')
                 current_ip_camera_pipeline_fps_limit = int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10)
+                current_ip_camera_hw_decode = str(CONFIG.get('IP_CAMERA_HW_DECODE', 'auto') or 'auto')
                 if (
                     (current_camera_source != last_camera_source)
                     or (current_ip_camera_url != last_ip_camera_url)
                     or (current_enable_ip_camera_decode_scale_pipeline != last_enable_ip_camera_decode_scale_pipeline)
                     or (current_ip_camera_target_resolution != last_ip_camera_target_resolution)
                     or (current_ip_camera_pipeline_fps_limit != last_ip_camera_pipeline_fps_limit)
+                    or (current_ip_camera_hw_decode != last_ip_camera_hw_decode)
                 ):
                     tm.sleep(0.2)
                     logging.info(
@@ -1571,6 +1529,7 @@ class ModelHandler:
                     last_enable_ip_camera_decode_scale_pipeline = current_enable_ip_camera_decode_scale_pipeline
                     last_ip_camera_target_resolution = current_ip_camera_target_resolution
                     last_ip_camera_pipeline_fps_limit = current_ip_camera_pipeline_fps_limit
+                    last_ip_camera_hw_decode = current_ip_camera_hw_decode
                     # Wait for the new stream to warm up
                     frame = None
                     stream_start_time = tm.time()
@@ -1614,44 +1573,49 @@ class ModelHandler:
                         own_cat_probability = 0 # Not supported in the original Kittyflap TFLite models
                         mouse_probability, no_mouse_probability, detected_objects = self._process_frame_tflite(frame, interpreter)
                     elif self.model == "yolo":
-                        # Resize the frame to the model input size (keeping aspect ratio)
-                        resized_frame = self.letterbox(frame, self.input_size)
-                        
                         if hasattr(self, '_model_worker') and self._model_worker:
-                            # Using multiprocessing approach
-                            job_id = self._yolo(resized_frame, self.input_size)
+                            job_id = self._yolo(frame, self.input_size)
                             result = self._get_result(job_id)
-                            
+
                             if result:
                                 mouse_probability, own_cat_probability, obj_list = result
                                 no_mouse_probability = 0
-                                
+
                                 detected_objects = []
                                 for obj in obj_list:
                                     detected_objects.append(DetectedObject(
                                         obj['x'], obj['y'], obj['w'], obj['h'], obj['name'], obj['probability']
                                     ))
                             else:
-                                # No result available yet
                                 mouse_probability = 0
                                 no_mouse_probability = 0
                                 own_cat_probability = 0
                                 detected_objects = []
                         else:
-                            # Direct inference approach
-                            mouse_probability, own_cat_probability, obj_list = self._yolo(resized_frame, self.input_size)
+                            mouse_probability, own_cat_probability, obj_list = self._yolo(frame, self.input_size)
                             no_mouse_probability = 0
-                            
+
                             detected_objects = []
                             for obj in obj_list:
                                 detected_objects.append(DetectedObject(
                                     obj['x'], obj['y'], obj['w'], obj['h'], obj['name'], obj['probability']
                                 ))
-                    
+
                     if not first_run:
-                        image_buffer.append(timestamp, self.encode_jpg_image(frame), None, 
-                                            mouse_probability, no_mouse_probability, own_cat_probability, detected_objects=detected_objects,
-                                            timestamp_mono=timestamp_mono)
+                        try:
+                            frame_jpg = encode_frame_jpg(frame, jpeg_quality=self.jpeg_quality)
+                        except Exception as e:
+                            logging.error(f"[MODEL] Failed to encode frame to JPEG: {e}")
+                            frame_jpg = None
+                        if frame_jpg is not None:
+                            with self._live_frame_lock:
+                                self._live_frame_jpg = frame_jpg
+                            image_buffer.append(
+                                timestamp, frame_jpg, None,
+                                mouse_probability, no_mouse_probability, own_cat_probability,
+                                detected_objects=detected_objects,
+                                timestamp_mono=timestamp_mono,
+                            )
 
                     # Calculate framerate
                     t2 = cv2.getTickCount()
@@ -1859,6 +1823,7 @@ class ModelHandler:
             use_ip_camera_decode_scale_pipeline=use_decode_scale_pipeline,
             ip_camera_target_resolution=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360'),
             ip_camera_pipeline_fps_limit=int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10),
+            ip_camera_hw_decode=str(CONFIG.get('IP_CAMERA_HW_DECODE', 'auto') or 'auto'),
         ).start()
         if is_remote_mode() and str(CONFIG.get('CAMERA_SOURCE') or '').strip().lower() == 'internal' and effective_camera_source == 'ip_camera':
             logging.info(f"[MODEL] Re-initialized videostream with implicit remote MJPEG relay source: {effective_ip_camera_url}.")
@@ -1967,8 +1932,22 @@ class ModelHandler:
     def get_camera_frame(self):
         if videostream is not None:
             return videostream.read()
-        else:
-            self._log_videostream_not_ready("Get Frame")
+        self._log_videostream_not_ready("Get Frame")
+        return None
+
+    def get_camera_frame_jpg(self, jpeg_quality: int | None = None) -> bytes | None:
+        """Return a JPEG for the latest processed frame, encoding on demand if needed."""
+        with self._live_frame_lock:
+            if self._live_frame_jpg is not None:
+                return self._live_frame_jpg
+        frame = self.get_camera_frame()
+        if frame is None:
+            return None
+        quality = int(jpeg_quality if jpeg_quality is not None else self.jpeg_quality)
+        try:
+            return encode_frame_jpg(frame, jpeg_quality=quality)
+        except Exception as e:
+            logging.error(f"[MODEL] Failed to encode live-view JPEG: {e}")
             return None
         
     def get_camera_state(self):
@@ -2009,29 +1988,4 @@ class ModelHandler:
         Returns:
             bytes: The encoded image in JPG format as a byte array.
         """
-        # Encode the image as JPG
-        _, buffer = cv2.imencode('.jpg', decoded_image)
-        blob_data = buffer.tobytes()
-        
-        return blob_data
-    
-    def letterbox(self, img, target_size):
-        """
-        Resize the image to the target size while maintaining the aspect ratio.
-        Pads the image with a gray background if necessary.
-        Args:
-            img (np.ndarray): The input image to be resized.
-            target_size (int): The target size for the output image.
-        Returns:
-            np.ndarray: The resized image with padding if necessary.
-        """
-
-        h, w = img.shape[:2]
-        scale = target_size / max(h, w)
-        new_w, new_h = int(w * scale), int(h * scale)
-        resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-        canvas = np.full((target_size, target_size, 3), 114, dtype=np.uint8)
-        top = (target_size - new_h) // 2
-        left = (target_size - new_w) // 2
-        canvas[top:top+new_h, left:left+new_w] = resized
-        return canvas
+        return encode_frame_jpg(decoded_image, jpeg_quality=self.jpeg_quality)

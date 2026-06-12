@@ -5,6 +5,7 @@
 # Import packages
 import cv2
 import numpy as np
+import os
 import subprocess
 import re
 import shlex
@@ -14,6 +15,125 @@ import time as tm
 from typing import List, Optional
 from src.baseconfig import CONFIG
 from src.system import ensure_ffmpeg_installed
+
+
+def encode_frame_jpg(frame: np.ndarray, jpeg_quality: int = 75) -> bytes:
+    """Encode a BGR frame as JPEG bytes."""
+    quality = max(1, min(100, int(jpeg_quality)))
+    ok, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not ok:
+        raise RuntimeError("cv2.imencode failed for frame")
+    return buffer.tobytes()
+
+
+def resolve_ip_camera_hw_decode(mode: str) -> str:
+    """Resolve configured hw-decode mode to a concrete backend (or 'none')."""
+    normalized = str(mode or "auto").strip().lower()
+    if normalized in {"none", "cuda", "vaapi", "qsv"}:
+        return normalized
+    if normalized != "auto":
+        return "none"
+    ffmpeg_hwaccels = set()
+    try:
+        hwaccel_probe = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-hwaccels"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if hwaccel_probe.returncode == 0 and hwaccel_probe.stdout:
+            ffmpeg_hwaccels = {
+                line.strip().lower()
+                for line in hwaccel_probe.stdout.splitlines()
+                if line.strip() and not line.lower().startswith("hardware acceleration")
+            }
+    except Exception:
+        ffmpeg_hwaccels = set()
+
+    try:
+        probe = subprocess.run(
+            ["nvidia-smi"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+            check=False,
+        )
+        if probe.returncode == 0:
+            if not ffmpeg_hwaccels or "cuda" in ffmpeg_hwaccels:
+                return "cuda"
+    except Exception:
+        pass
+    if os.path.exists("/dev/dri/renderD128") and (not ffmpeg_hwaccels or "vaapi" in ffmpeg_hwaccels):
+        return "vaapi"
+    return "none"
+
+
+def build_ip_camera_ffmpeg_cmd(
+    ip_camera_url: str,
+    target_w: int,
+    target_h: int,
+    fps_limit: int,
+    hw_decode: str,
+) -> tuple[list[str], str]:
+    """Build an FFmpeg decode+scale command for IP camera raw BGR output."""
+    hw = resolve_ip_camera_hw_decode(hw_decode)
+    fps_suffix = f",fps={fps_limit}" if fps_limit > 0 else ""
+
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-fflags", "nobuffer",
+        "-flags", "low_delay",
+    ]
+    if str(ip_camera_url).lower().startswith("rtsp://"):
+        ffmpeg_cmd.extend(["-rtsp_transport", "tcp"])
+
+    if hw == "cuda":
+        ffmpeg_cmd.extend(["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"])
+        vf_arg = f"scale_cuda={target_w}:{target_h},hwdownload,format=bgr24{fps_suffix}"
+        hw_label = "cuda"
+    elif hw == "vaapi":
+        ffmpeg_cmd.extend([
+            "-hwaccel", "vaapi",
+            "-hwaccel_device", "/dev/dri/renderD128",
+            "-hwaccel_output_format", "vaapi",
+        ])
+        # Keep decode on VAAPI, then download to system memory and scale in software.
+        # This is more broadly compatible across Intel drivers/FFmpeg builds than scale_vaapi.
+        vf_arg = (
+            f"hwdownload,format=nv12,"
+            f"scale={target_w}:{target_h}:flags=fast_bilinear,"
+            f"format=bgr24{fps_suffix}"
+        )
+        hw_label = "vaapi"
+    elif hw == "qsv":
+        ffmpeg_cmd.extend(["-init_hw_device", "qsv=hw", "-filter_hw_device", "hw"])
+        vf_arg = (
+            f"hwmap=derive_device=qsv,scale_qsv=w={target_w}:h={target_h},"
+            f"hwdownload,format=bgr24{fps_suffix}"
+        )
+        hw_label = "qsv"
+    else:
+        fps_prefix = f"fps={fps_limit}," if fps_limit > 0 else ""
+        vf_arg = f"{fps_prefix}scale={target_w}:{target_h}:flags=fast_bilinear"
+        hw_label = "software"
+
+    ffmpeg_cmd.extend([
+        "-i", ip_camera_url,
+        "-an",
+        "-sn",
+        "-dn",
+        "-vf", vf_arg,
+        "-pix_fmt", "bgr24",
+        "-f", "rawvideo",
+        "pipe:1",
+    ])
+    return ffmpeg_cmd, hw_label
+
+
 class VideoStream:
     """Camera object that controls video streaming from the Picamera or an IP camera"""
 
@@ -36,6 +156,7 @@ class VideoStream:
         use_ip_camera_decode_scale_pipeline: bool = False,
         ip_camera_target_resolution: str = "640x360",
         ip_camera_pipeline_fps_limit: int = 10,
+        ip_camera_hw_decode: str = "auto",
     ):
         self.resolution = resolution
         self.framerate = framerate
@@ -51,6 +172,7 @@ class VideoStream:
         self.use_ip_camera_decode_scale_pipeline = use_ip_camera_decode_scale_pipeline
         self.ip_camera_target_resolution = ip_camera_target_resolution
         self.ip_camera_pipeline_fps_limit = ip_camera_pipeline_fps_limit
+        self.ip_camera_hw_decode = ip_camera_hw_decode
         self.cap = None  # For IP camera
         self.thread = None
         self.camera_state = self.STATE_INITIALIZING  # <-- Add this line
@@ -253,50 +375,103 @@ class VideoStream:
 
                     target_w, target_h = self._parse_target_resolution()
                     fps_limit = self._normalized_pipeline_fps_limit()
-                    if fps_limit > 0:
-                        vf_arg = f"fps={fps_limit},scale={target_w}:{target_h}:flags=fast_bilinear"
-                    else:
-                        vf_arg = f"scale={target_w}:{target_h}:flags=fast_bilinear"
-                    ffmpeg_cmd = [
-                        "ffmpeg",
-                        "-hide_banner",
-                        "-loglevel", "error",
-                        "-fflags", "nobuffer",
-                        "-flags", "low_delay",
-                    ]
-                    if str(self.ip_camera_url).lower().startswith("rtsp://"):
-                        ffmpeg_cmd.extend(["-rtsp_transport", "tcp"])
-                    ffmpeg_cmd.extend([
-                        "-i", self.ip_camera_url,
-                        "-an",
-                        "-sn",
-                        "-dn",
-                        "-vf", vf_arg,
-                        "-pix_fmt", "bgr24",
-                        "-f", "rawvideo",
-                        "pipe:1",
-                    ])
+                    hw_modes_to_try: list[str] = []
+                    resolved_hw = resolve_ip_camera_hw_decode(self.ip_camera_hw_decode)
+                    if resolved_hw != "none":
+                        hw_modes_to_try.append(self.ip_camera_hw_decode)
+                    if str(self.ip_camera_hw_decode or "").strip().lower() == "auto":
+                        if resolved_hw != "vaapi":
+                            hw_modes_to_try.append("vaapi")
+                    hw_modes_to_try.append("none")
 
-                    logging.info(
-                        f"[CAMERA] Starting FFmpeg pipeline for IP camera at target resolution {target_w}x{target_h}, fps_limit={'unlimited' if fps_limit == 0 else fps_limit}"
-                    )
-                    try:
-                        self.process = subprocess.Popen(
-                            ffmpeg_cmd,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            bufsize=target_w * target_h * 3 * 2,
+                    pipeline_started = False
+                    for hw_mode in hw_modes_to_try:
+                        ffmpeg_cmd, hw_label = build_ip_camera_ffmpeg_cmd(
+                            self.ip_camera_url,
+                            target_w,
+                            target_h,
+                            fps_limit,
+                            hw_mode,
                         )
-                    except Exception as e:
-                        logging.error(f"[CAMERA] Failed to start FFmpeg IP pipeline: {e}")
+                        logging.info(
+                            f"[CAMERA] Starting FFmpeg pipeline for IP camera at "
+                            f"{target_w}x{target_h}, fps_limit="
+                            f"{'unlimited' if fps_limit == 0 else fps_limit}, "
+                            f"hw_decode={hw_label}"
+                        )
+                        try:
+                            self.process = subprocess.Popen(
+                                ffmpeg_cmd,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                bufsize=target_w * target_h * 3 * 2,
+                            )
+                        except Exception as e:
+                            logging.error(f"[CAMERA] Failed to start FFmpeg IP pipeline ({hw_label}): {e}")
+                            self.process = None
+                            continue
+
+                        self.resolution = (target_w, target_h)
+                        frame_bytes = target_w * target_h * 3
+                        startup_deadline = tm.monotonic() + 5.0
+                        first_frame_ok = False
+                        while tm.monotonic() < startup_deadline and not self.stopped:
+                            try:
+                                raw = self.process.stdout.read(frame_bytes) if self.process.stdout else b""
+                            except Exception:
+                                raw = b""
+                            if len(raw) == frame_bytes:
+                                try:
+                                    frame = np.frombuffer(raw, dtype=np.uint8).reshape((target_h, target_w, 3))
+                                    with self.lock:
+                                        self.frames.append(frame)
+                                        if len(self.frames) > self.buffer_size:
+                                            self.frames.pop(0)
+                                    first_frame_ok = True
+                                    break
+                                except Exception:
+                                    pass
+                            if self.process.poll() is not None:
+                                break
+                            tm.sleep(0.05)
+
+                        if first_frame_ok:
+                            pipeline_started = True
+                            break
+
+                        stderr_tail = b""
+                        try:
+                            if self.process.stderr is not None:
+                                stderr_tail = self.process.stderr.read() or b""
+                        except Exception:
+                            pass
+                        try:
+                            if self.process:
+                                self.process.terminate()
+                                self.process.wait(timeout=2)
+                        except Exception:
+                            try:
+                                if self.process:
+                                    self.process.kill()
+                            except Exception:
+                                pass
+                        finally:
+                            self.process = None
+                        if hw_mode != "none":
+                            logging.warning(
+                                f"[CAMERA] FFmpeg hardware decode ({hw_label}) failed to produce frames; "
+                                f"falling back to software decode. "
+                                f"{stderr_tail.decode('utf-8', errors='replace')[-1200:]}"
+                            )
+
+                    if not pipeline_started:
+                        logging.error("[CAMERA] FFmpeg IP pipeline failed to start.")
                         self.camera_state = self.STATE_ERROR
                         if self.stopped:
                             break
                         tm.sleep(retry_delay)
                         continue
 
-                    self.resolution = (target_w, target_h)
-                    frame_bytes = target_w * target_h * 3
                     self.camera_state = self.STATE_RUNNING
 
                     while not self.stopped:

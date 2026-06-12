@@ -249,6 +249,7 @@ DEFAULT_CONFIG = {
         "enable_ip_camera_decode_scale_pipeline": False,
         "ip_camera_target_resolution": "640x360",
         "ip_camera_pipeline_fps_limit": 10,
+        "ip_camera_hw_decode": "auto",
         "mqtt_device_id": "",
         "mqtt_broker_address": "",
         "mqtt_broker_port": 1883,
@@ -523,6 +524,10 @@ def load_config():
             "IP_CAMERA_PIPELINE_FPS_LIMIT",
             int(d.get('ip_camera_pipeline_fps_limit', 10)),
         ),
+        "IP_CAMERA_HW_DECODE": safe_str(
+            "IP_CAMERA_HW_DECODE",
+            d.get('ip_camera_hw_decode', "auto"),
+        ),
         "MQTT_DEVICE_ID": safe_str("MQTT_DEVICE_ID", d['mqtt_device_id']),
         "MQTT_BROKER_ADDRESS": safe_str("MQTT_BROKER_ADDRESS", d['mqtt_broker_address']),
         "MQTT_BROKER_PORT": safe_int("MQTT_BROKER_PORT", int(d['mqtt_broker_port'])),
@@ -690,6 +695,7 @@ def save_config():
     settings['enable_ip_camera_decode_scale_pipeline'] = CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False)
     settings['ip_camera_target_resolution'] = CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360')
     settings['ip_camera_pipeline_fps_limit'] = int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10)
+    settings['ip_camera_hw_decode'] = CONFIG.get('IP_CAMERA_HW_DECODE', 'auto')
     settings['mqtt_device_id'] = CONFIG['MQTT_DEVICE_ID']
     settings['mqtt_broker_address'] = CONFIG['MQTT_BROKER_ADDRESS']
     settings['mqtt_broker_port'] = CONFIG['MQTT_BROKER_PORT']

@@ -170,6 +170,7 @@ def _ensure_internal_camera_stream() -> tuple[bool, str]:
                 use_ip_camera_decode_scale_pipeline=CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False),
                 ip_camera_target_resolution=CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '800x600'),
                 ip_camera_pipeline_fps_limit=int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10),
+                ip_camera_hw_decode=str(CONFIG.get('IP_CAMERA_HW_DECODE', 'auto') or 'auto'),
             ).start()
             _internal_cam_stream_source = stream_source
             _internal_cam_stream_url = stream_url

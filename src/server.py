@@ -3130,7 +3130,7 @@ def server(input, output, session):
                     )
             else:
                 live_view_image.no_frame_since = None
-                frame_jpg = model_handler.encode_jpg_image(frame)
+                frame_jpg = model_handler.get_camera_frame_jpg()
                 frame_hash = hashlib.md5(frame_jpg).hexdigest() if frame_jpg else None
 
                 if frame_jpg:
@@ -6931,6 +6931,36 @@ def server(input, output, session):
                                             style_="color: grey;",
                                         ),
                                     ),
+                                    (
+                                        ui.row(
+                                            ui.column(
+                                                12,
+                                                ui.input_select(
+                                                    "ip_camera_hw_decode",
+                                                    _("IP camera hardware decode"),
+                                                    {
+                                                        "auto": _("Auto (detect GPU)"),
+                                                        "none": _("Software only"),
+                                                        "cuda": _("NVIDIA CUDA"),
+                                                        "vaapi": _("VAAPI (Intel/AMD)"),
+                                                        "qsv": _("Intel Quick Sync"),
+                                                    },
+                                                    selected=str(CONFIG.get('IP_CAMERA_HW_DECODE', 'auto') or 'auto'),
+                                                    width="100%",
+                                                ),
+                                            ),
+                                            ui.column(
+                                                12,
+                                                ui.markdown(
+                                                    _("Hardware decode offloads H.264/H.265 decoding from the CPU when using the downscale pipeline. "
+                                                      "Requires FFmpeg with the matching hardware support. Falls back to software decode automatically.")
+                                                ),
+                                                style_="color: grey;",
+                                            ),
+                                        )
+                                        if is_remote_mode()
+                                        else ui.HTML("")
+                                    ),
                                 ),
                                 id="ip_camera_pipeline_settings_body",
                                 class_="collapse info-toggle-body",
@@ -7875,7 +7905,11 @@ def server(input, output, session):
             CONFIG.get('IP_CAMERA_URL') != input.ip_camera_url() or
             CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False) != input.btnEnableIpCameraDecodeScalePipeline() or
             CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360') != input.ip_camera_target_resolution() or
-            int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10) != int(input.ip_camera_pipeline_fps_limit())
+            int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10) != int(input.ip_camera_pipeline_fps_limit()) or
+            (
+                is_remote_mode() and
+                str(CONFIG.get('IP_CAMERA_HW_DECODE', 'auto') or 'auto') != str(input.ip_camera_hw_decode() or 'auto')
+            )
         )
 
         # Check the time ranges for allowed to exit
@@ -8112,6 +8146,13 @@ def server(input, output, session):
             CONFIG['IP_CAMERA_PIPELINE_FPS_LIMIT'] = int(input.ip_camera_pipeline_fps_limit())
         except Exception:
             CONFIG['IP_CAMERA_PIPELINE_FPS_LIMIT'] = 10
+        try:
+            # Only available in remote-mode UI; target-mode defaults to 'auto'
+            CONFIG['IP_CAMERA_HW_DECODE'] = str(input.ip_camera_hw_decode() or 'auto').strip().lower()
+        except Exception:
+            CONFIG['IP_CAMERA_HW_DECODE'] = 'auto'
+        if CONFIG['IP_CAMERA_HW_DECODE'] not in {'auto', 'none', 'cuda', 'vaapi', 'qsv'}:
+            CONFIG['IP_CAMERA_HW_DECODE'] = 'auto'
 
         if camera_settings_changed:
             # Ensure live view reacts immediately (do not keep showing an old frame).

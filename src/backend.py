@@ -316,6 +316,48 @@ def cleanup_mqtt():
 # Capture startup state (does not change at runtime)
 DISABLE_RFID_READER_STARTUP = CONFIG.get('DISABLE_RFID_READER', False)
 
+
+def _identified_tag_for_entry(tag_id, tag_id_from_video, known_rfid_tags):
+    """RFID reader identification takes priority over video identification."""
+    if tag_id and tag_id in known_rfid_tags:
+        return tag_id, "RFID"
+    if tag_id_from_video and tag_id_from_video in known_rfid_tags:
+        return tag_id_from_video, "video"
+    return None, None
+
+
+def _compute_tag_id_valid_for_entry(allowed_to_enter, tag_id, identified_tag, cat_settings_map):
+    if allowed_to_enter == AllowedToEnter.CONFIGURE_PER_CAT:
+        if not identified_tag:
+            return False
+        per_cat_allowed = (
+            cat_settings_map[identified_tag].get('allow_entry', True)
+            if identified_tag in cat_settings_map
+            else False
+        )
+        return bool(per_cat_allowed)
+    if allowed_to_enter == AllowedToEnter.KNOWN:
+        return identified_tag is not None
+    if allowed_to_enter == AllowedToEnter.ALL_RFIDS:
+        return tag_id is not None
+    if allowed_to_enter == AllowedToEnter.NONE:
+        return False
+    if allowed_to_enter == AllowedToEnter.ALL:
+        return True
+    return False
+
+
+def _set_per_cat_entry_verdict_flag(additional_verdict_infos, tag_id_valid):
+    allowed = str(EventType.ENTRY_PER_CAT_ALLOWED)
+    denied = str(EventType.ENTRY_PER_CAT_DENIED)
+    for flag in (allowed, denied):
+        while flag in additional_verdict_infos:
+            additional_verdict_infos.remove(flag)
+    new_flag = allowed if tag_id_valid else denied
+    additional_verdict_infos.append(new_flag)
+    return new_flag
+
+
 def backend_main(simulate_kittyflap = False):
 
     global manual_door_override
@@ -865,6 +907,56 @@ def backend_main(simulate_kittyflap = False):
                     rfid.set_field(False)
                     logging.info(f"[BACKEND] Detected RFID tag {tag_id} matches a known tag. Disabled RFID field.")
 
+            # RFID overrides a prior video identification when both tags disagree.
+            # In per-cat mode, any newly read RFID must be authoritative, even if
+            # the tag is unknown, to avoid keeping a stale video-based allow decision.
+            if (
+                motion_outside
+                and tag_id
+                and tag_id != previous_tag_id
+                and not exit_in_progress
+                and unlock_inside_decision_made
+                and tag_id_from_video
+                and tag_id != tag_id_from_video
+                and (
+                    CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.CONFIGURE_PER_CAT
+                    or tag_id in known_rfid_tags
+                )
+            ):
+                if CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.CONFIGURE_PER_CAT:
+                    identified_tag, id_source = tag_id, "RFID"
+                else:
+                    identified_tag, id_source = _identified_tag_for_entry(tag_id, tag_id_from_video, known_rfid_tags)
+                old_tag_id_valid = tag_id_valid
+                tag_id_valid = _compute_tag_id_valid_for_entry(
+                    CONFIG['ALLOWED_TO_ENTER'], tag_id, identified_tag, cat_settings_map
+                )
+                logging.info(
+                    f"[BACKEND] RFID tag '{tag_id}' overrides video tag '{tag_id_from_video}' "
+                    f"for entry decision (source: {id_source})."
+                )
+                if CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.CONFIGURE_PER_CAT:
+                    new_flag = _set_per_cat_entry_verdict_flag(additional_verdict_infos, tag_id_valid)
+                    logging.info(
+                        f"[BACKEND] Per-cat entry: updated verdict info '{new_flag}' "
+                        f"for tag '{identified_tag}' (source: {id_source})."
+                    )
+                    if tag_id_valid:
+                        logging.info("[BACKEND] Per-cat mode: entry allowed for this cat.")
+                    else:
+                        logging.info("[BACKEND] Per-cat mode: entry not allowed (unknown or disabled).")
+                if old_tag_id_valid and not tag_id_valid:
+                    if (
+                        magnets.get_inside_state()
+                        and magnets.check_queued("lock_inside") == False
+                        and inside_manually_unlocked == False
+                    ):
+                        magnets.queue_command("lock_inside")
+                        unlock_inside_tm = 0.0
+                        logging.info(
+                            "[BACKEND] Entry denied after RFID overrode video identification; locking inside door."
+                        )
+
             # Handle pending per-cat exit decision while inside motion remains active
             if pending_exit_rfid_check:
                 if motion_inside == 0:
@@ -906,23 +998,22 @@ def backend_main(simulate_kittyflap = False):
                     unlock_inside_decision_made = True
                     logging.info("[BACKEND] Skipping entry decision because exit is in progress for this motion block.")
                 else:
-                    # Determine identified tag (RFID preferred, else camera tag)
-                    identified_tag = tag_id if tag_id in known_rfid_tags else (tag_id_from_video if tag_id_from_video in known_rfid_tags else None)
+                    identified_tag, id_source = _identified_tag_for_entry(
+                        tag_id, tag_id_from_video, known_rfid_tags
+                    )
 
                     # Decide by mode
                     if CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.CONFIGURE_PER_CAT and identified_tag is not None:
-                        per_cat_entry_allowed = False
-                        if identified_tag in cat_settings_map:
-                            per_cat_entry_allowed = cat_settings_map[identified_tag].get('allow_entry', True)
-                        # Only allow entry if identified and per-cat says True
-                        tag_id_valid = bool(identified_tag) and per_cat_entry_allowed
+                        tag_id_valid = _compute_tag_id_valid_for_entry(
+                            CONFIG['ALLOWED_TO_ENTER'], tag_id, identified_tag, cat_settings_map
+                        )
                         unlock_inside_decision_made = True
-                        # Annotate per-cat entry decision
                         try:
-                            flag = str(EventType.ENTRY_PER_CAT_ALLOWED) if tag_id_valid else str(EventType.ENTRY_PER_CAT_DENIED)
-                            if flag not in additional_verdict_infos:
-                                additional_verdict_infos.append(flag)
-                                logging.info(f"[BACKEND] Per-cat entry: added verdict info '{flag}' for RFID tag '{identified_tag}'.")
+                            flag = _set_per_cat_entry_verdict_flag(additional_verdict_infos, tag_id_valid)
+                            logging.info(
+                                f"[BACKEND] Per-cat entry: set verdict info '{flag}' "
+                                f"for tag '{identified_tag}' (source: {id_source})."
+                            )
                         except Exception:
                             pass
                         if tag_id_valid:
@@ -977,7 +1068,11 @@ def backend_main(simulate_kittyflap = False):
                             flag = str(EventType.PER_CAT_PREY_DISABLED)
                             if flag not in additional_verdict_infos:
                                 additional_verdict_infos.append(flag)
-                                logging.info(f"[BACKEND] Per-cat prey detection: added verdict info '{flag}' for RFID tag '{current_tag_any}'.")
+                                id_source = "RFID" if tag_id else "video"
+                                logging.info(
+                                    f"[BACKEND] Per-cat prey detection: added verdict info '{flag}' "
+                                    f"for tag '{current_tag_any}' (source: {id_source})."
+                                )
                         except Exception:
                             pass
             except Exception:

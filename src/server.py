@@ -73,6 +73,7 @@ from src.database import *
 from src.event_timeline import (
     timeline_entries_to_html,
     timeline_fallback_from_event_type,
+    timeline_extract_latest_event,
 )
 from src.system import (
     switch_wlan_connection,
@@ -4305,6 +4306,8 @@ def server(input, output, session):
                     timeline_entries = timeline_fallback_from_event_type(
                         row['event_type'], CONFIG['TIMEZONE'], row['created_at']
                     )
+                else:
+                    timeline_entries = timeline_extract_latest_event(timeline_entries)
                 timeline_html = timeline_entries_to_html(timeline_entries, CONFIG['TIMEZONE'])
                 html += (
                     f'<td><div class="event-icons-cell">'

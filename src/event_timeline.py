@@ -159,3 +159,33 @@ def parse_timeline_json(timeline_json: str | None) -> list:
         return data if isinstance(data, list) else []
     except Exception:
         return []
+
+
+def timeline_extract_latest_event(entries: list) -> list:
+    """
+    Return only the latest completed event segment from a timeline list.
+
+    Some development snapshots contained concatenated timeline data from
+    multiple motion blocks. A completed block always ends with
+    TimelineAction.EVENT_CONCLUSION, so we keep only the slice after the
+    previous conclusion up to the latest one.
+    """
+    if not entries:
+        return []
+
+    latest_conclusion_idx = -1
+    for idx, entry in enumerate(entries):
+        if isinstance(entry, dict) and entry.get("action") == TimelineAction.EVENT_CONCLUSION:
+            latest_conclusion_idx = idx
+
+    if latest_conclusion_idx < 0:
+        return entries
+
+    start_idx = 0
+    for idx in range(latest_conclusion_idx - 1, -1, -1):
+        entry = entries[idx]
+        if isinstance(entry, dict) and entry.get("action") == TimelineAction.EVENT_CONCLUSION:
+            start_idx = idx + 1
+            break
+
+    return entries[start_idx:latest_conclusion_idx + 1]

@@ -848,6 +848,8 @@ def backend_main(simulate_kittyflap = False):
 
                 # Forget the video tag id
                 tag_id_from_video = None
+                # The current event is finished. Start the next event with a fresh timeline.
+                motion_timeline_entries = []
                 if tag_id is not None:
                     rfid.set_tag(None, 0.0)
                     logging.info("[BACKEND] Forget the tag ID from the RFID reader.")

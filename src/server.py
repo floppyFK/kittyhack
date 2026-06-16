@@ -4312,8 +4312,7 @@ def server(input, output, session):
                     f'<button type="button" class="btn btn-link btn-sm event-timeline-toggle p-0 ms-1" '
                     f'data-bs-toggle="collapse" data-bs-target="#{panel_id}" '
                     f'aria-expanded="false" aria-controls="{panel_id}" title="{info_btn_title}">'
-                    f'{info_icon_html}</button></div>'
-                    f'<div class="event-timeline-panel collapse" id="{panel_id}">{timeline_html}</div></td>'
+                    f'{info_icon_html}</button></div></td>'
                 )
                 html += f'<td>{row["cat_name"]}</td>'
                 unique_id = hashlib.md5(os.urandom(16)).hexdigest()
@@ -4321,6 +4320,12 @@ def server(input, output, session):
                 html += f'<td><div>{btn_show_event(btn_id)}</div></td>'
                 show_event_server(btn_id, row['block_id'])
                 html += '</tr>'
+                html += (
+                    f'<tr class="event-timeline-row">'
+                    f'<td colspan="4" class="event-timeline-row-cell">'
+                    f'<div class="event-timeline-panel collapse" id="{panel_id}">{timeline_html}</div>'
+                    f'</td></tr>'
+                )
 
             html += '</tbody></table>'
             return ui.HTML(html)

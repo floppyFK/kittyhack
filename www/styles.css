@@ -1116,6 +1116,21 @@ html[data-bs-theme="dark"] .date-separator-row td {
   width: 100%;
 }
 
+.event-timeline-row td {
+    border-top: 0 !important;
+    border-bottom: 0 !important;
+    padding-top: 0 !important;
+}
+
+.event-timeline-row-cell {
+    text-align: left !important;
+    padding: 0.2rem 0.5rem 0.55rem 0.5rem !important;
+}
+
+.event-timeline-row .event-timeline-panel {
+    margin-top: 0;
+}
+
 .event-timeline-list {
   list-style: none;
   padding: 0;
@@ -1143,12 +1158,31 @@ html[data-bs-theme="dark"] .date-separator-row td {
 .event-timeline-text {
   flex: 1 1 auto;
   text-align: left;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    min-width: 0;
 }
 
 .event-timeline-empty {
   margin: 0;
   font-size: 0.875rem;
   color: var(--bs-secondary-color, #6c757d);
+}
+
+@media (max-width: 768px) {
+    .event-timeline-time {
+        flex-basis: 4.2rem;
+    }
+
+    .event-timeline-item {
+        gap: 0.5rem;
+    }
+
+    .event-timeline-row-cell {
+        padding-left: 0.3rem !important;
+        padding-right: 0.3rem !important;
+    }
 }
 
 .tooltip-wrapper {

@@ -9,6 +9,7 @@ from shiny import render, ui, reactive, module
 from shiny.types import FileInfo
 import logging
 import base64
+import html as html_module
 from zoneinfo import ZoneInfo
 from faicons import icon_svg
 import math
@@ -69,6 +70,10 @@ from src.helper import (
     sigterm_monitor
 )
 from src.database import *
+from src.event_timeline import (
+    timeline_entries_to_html,
+    timeline_fallback_from_event_type,
+)
 from src.system import (
     switch_wlan_connection,
     get_wlan_connections,
@@ -520,6 +525,10 @@ if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "img_
 if not check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "effective_fps"):
     logging.warning("Column 'effective_fps' not found in the 'events' table. Adding it...")
     add_column_to_table(CONFIG['KITTYHACK_DATABASE_PATH'], "events", "effective_fps", "REAL")
+
+if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "motion_timeline"):
+    logging.warning("Table 'motion_timeline' not found in the kittyhack database. Creating it...")
+    create_motion_timeline_table(CONFIG['KITTYHACK_DATABASE_PATH'])
 
 if not check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
     logging.warning(f"Legacy table 'photo' not found in the kittyhack database. Creating it...")
@@ -4243,6 +4252,11 @@ def server(input, output, session):
 
             df_events['cat_name'] = df_events['rfid'].apply(cat_name_with_icon)
 
+            block_ids = [int(b) for b in df_events['block_id'].tolist()]
+            timelines_by_block = db_get_motion_timelines(CONFIG['KITTYHACK_DATABASE_PATH'], block_ids)
+            info_icon_html = str(icon_svg("circle-info", margin_left="0", margin_right="0"))
+            info_btn_title = html_module.escape(_("Show event details"))
+
             # Process event types into HTML with icons
             event_icons = {}
             for __, row in df_events.iterrows():
@@ -4284,7 +4298,23 @@ def server(input, output, session):
                 html += '<tr>'
                 html += f'<td>{row["time"]}</td>'
                 event_info = event_icons[idx]
-                html += f'<td><div class="tooltip-wrapper" title="{event_info["tooltip_text"]}"><div>{event_info["icons_html"]}</div></div></td>'
+                block_id = int(row['block_id'])
+                panel_id = f"event-timeline-{block_id}"
+                timeline_entries = timelines_by_block.get(block_id)
+                if not timeline_entries:
+                    timeline_entries = timeline_fallback_from_event_type(
+                        row['event_type'], CONFIG['TIMEZONE'], row['created_at']
+                    )
+                timeline_html = timeline_entries_to_html(timeline_entries, CONFIG['TIMEZONE'])
+                html += (
+                    f'<td><div class="event-icons-cell">'
+                    f'<div class="event-icons">{event_info["icons_html"]}</div>'
+                    f'<button type="button" class="btn btn-link btn-sm event-timeline-toggle p-0 ms-1" '
+                    f'data-bs-toggle="collapse" data-bs-target="#{panel_id}" '
+                    f'aria-expanded="false" aria-controls="{panel_id}" title="{info_btn_title}">'
+                    f'{info_icon_html}</button></div>'
+                    f'<div class="event-timeline-panel collapse" id="{panel_id}">{timeline_html}</div></td>'
+                )
                 html += f'<td>{row["cat_name"]}</td>'
                 unique_id = hashlib.md5(os.urandom(16)).hexdigest()
                 btn_id = f"btn_show_event_{unique_id}"

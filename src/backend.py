@@ -534,6 +534,30 @@ def backend_main(simulate_kittyflap = False):
             source=source_label,
         )
 
+    def _timeline_start_motion_block(start_with_inside: bool = False):
+        nonlocal additional_verdict_infos
+        nonlocal motion_timeline_entries
+        nonlocal timeline_inside_reported
+        nonlocal timeline_prey_logged
+        nonlocal timeline_no_prey_logged
+        nonlocal timeline_video_cat_logged
+        nonlocal timeline_rfid_cat_logged
+        nonlocal timeline_outside_reported
+
+        # Start a fresh verdict-info and timeline collection for this motion block.
+        additional_verdict_infos = []
+        motion_timeline_entries = []
+        timeline_inside_reported = "open" if magnets.get_inside_state() else "closed"
+        timeline_prey_logged = False
+        timeline_no_prey_logged = False
+        timeline_video_cat_logged = None
+        timeline_rfid_cat_logged = None
+        timeline_outside_reported = "open" if magnets.get_outside_state() else "closed"
+        timeline_append(
+            motion_timeline_entries,
+            TimelineAction.MOTION_INSIDE if start_with_inside else TimelineAction.MOTION_OUTSIDE,
+        )
+
     # Periodically persist effective FPS into the active YOLO model metadata.
     last_fps_metadata_write_mono = 0.0
     last_written_effective_fps: float | None = None
@@ -849,18 +873,12 @@ def backend_main(simulate_kittyflap = False):
             # Outside motion detected
             if last_outside == 0 and motion_outside == 1:
                 motion_block_id += 1
-                # Start a fresh verdict-info collection for this motion block.
-                # This prevents stale manual/debug infos from previous idle periods
-                # from being attached to a later unrelated event.
-                additional_verdict_infos = []
-                motion_timeline_entries = []
-                timeline_inside_reported = "open" if magnets.get_inside_state() else "closed"
-                timeline_prey_logged = False
-                timeline_no_prey_logged = False
-                timeline_video_cat_logged = None
-                timeline_rfid_cat_logged = None
-                timeline_outside_reported = "open" if magnets.get_outside_state() else "closed"
-                timeline_append(motion_timeline_entries, TimelineAction.MOTION_OUTSIDE)
+                # If this block was already started by an inside-motion trigger,
+                # keep the collected timeline and only append the outside motion step.
+                if not motion_timeline_entries:
+                    _timeline_start_motion_block(start_with_inside=False)
+                else:
+                    timeline_append(motion_timeline_entries, TimelineAction.MOTION_OUTSIDE)
                 # If we use the camera for motion detection, set the first motion timestamp a bit earlier to avoid missing the first motion
                 if use_camera_for_motion:
                     first_motion_outside_tm = wall_time() - 0.5
@@ -886,7 +904,11 @@ def backend_main(simulate_kittyflap = False):
 
             if last_inside == 0 and motion_inside == 1: # Inside motion detected
                 logging.info("[BACKEND] Motion detected INSIDE")
-                if first_motion_outside_mono > 0.0:
+                # For exit flows, inside motion can happen before outside motion.
+                # Start the timeline early so the order is logical in the UI.
+                if first_motion_outside_mono <= 0.0 and not motion_timeline_entries:
+                    _timeline_start_motion_block(start_with_inside=True)
+                else:
                     timeline_append(motion_timeline_entries, TimelineAction.MOTION_INSIDE)
                 cat_settings_map = get_cat_settings_map(CONFIG['KITTYHACK_DATABASE_PATH'])
                 logging.info(f"[BACKEND] cat_settings_map: {cat_settings_map}")
@@ -1251,7 +1273,12 @@ def backend_main(simulate_kittyflap = False):
                         logging.info(f"[BACKEND] Mouse check condition '{key}' changed to {value}.")
                 
                 # If the prey detection is enabled, check if this is the first iteration with detected prey
-                if mouse_check == False and mouse_check_conditions["no_mouse_detected"] == False and backend_main.previous_mouse_check_conditions["no_mouse_detected"] == True:
+                if (
+                    mouse_check == False
+                    and mouse_check_conditions["no_mouse_detected"] == False
+                    and backend_main.previous_mouse_check_conditions["no_mouse_detected"] == True
+                    and not exit_in_progress
+                ):
                     backend_main.prey_detection_mono = monotonic_time()
                     backend_main.prey_detection_tm = wall_time()
                     if not timeline_prey_logged:
@@ -1288,6 +1315,7 @@ def backend_main(simulate_kittyflap = False):
                 and prey_detection_enabled
                 and not timeline_no_prey_logged
                 and first_motion_outside_mono > 0.0
+                and not exit_in_progress
             ):
                 timeline_no_prey_logged = True
                 timeline_append(motion_timeline_entries, TimelineAction.NO_PREY_DETECTED)

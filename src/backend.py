@@ -317,10 +317,16 @@ def cleanup_mqtt():
 DISABLE_RFID_READER_STARTUP = CONFIG.get('DISABLE_RFID_READER', False)
 
 
-def _identified_tag_for_entry(tag_id, tag_id_from_video, known_rfid_tags):
+def _identified_tag_for_entry(tag_id, tag_id_from_video, known_rfid_tags, allowed_to_enter=None):
     """RFID reader identification takes priority over video identification."""
     if tag_id and tag_id in known_rfid_tags:
         return tag_id, "RFID"
+    if allowed_to_enter == AllowedToEnter.CONFIGURE_PER_CAT and tag_id:
+        # Any present RFID is authoritative; validity is resolved via cat_settings_map.
+        return tag_id, "RFID"
+    if allowed_to_enter == AllowedToEnter.KNOWN and tag_id:
+        # Unknown chip is not a registered cat; do not fall back to video.
+        return None, "RFID"
     if tag_id_from_video and tag_id_from_video in known_rfid_tags:
         return tag_id_from_video, "video"
     return None, None
@@ -908,8 +914,8 @@ def backend_main(simulate_kittyflap = False):
                     logging.info(f"[BACKEND] Detected RFID tag {tag_id} matches a known tag. Disabled RFID field.")
 
             # RFID overrides a prior video identification when both tags disagree.
-            # In per-cat mode, any newly read RFID must be authoritative, even if
-            # the tag is unknown, to avoid keeping a stale video-based allow decision.
+            # In per-cat and known-cat modes, any newly read RFID must be authoritative,
+            # even if the tag is unknown, to avoid keeping a stale video-based allow decision.
             if (
                 motion_outside
                 and tag_id
@@ -919,14 +925,13 @@ def backend_main(simulate_kittyflap = False):
                 and tag_id_from_video
                 and tag_id != tag_id_from_video
                 and (
-                    CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.CONFIGURE_PER_CAT
+                    CONFIG['ALLOWED_TO_ENTER'] in (AllowedToEnter.CONFIGURE_PER_CAT, AllowedToEnter.KNOWN)
                     or tag_id in known_rfid_tags
                 )
             ):
-                if CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.CONFIGURE_PER_CAT:
-                    identified_tag, id_source = tag_id, "RFID"
-                else:
-                    identified_tag, id_source = _identified_tag_for_entry(tag_id, tag_id_from_video, known_rfid_tags)
+                identified_tag, id_source = _identified_tag_for_entry(
+                    tag_id, tag_id_from_video, known_rfid_tags, CONFIG['ALLOWED_TO_ENTER']
+                )
                 old_tag_id_valid = tag_id_valid
                 tag_id_valid = _compute_tag_id_valid_for_entry(
                     CONFIG['ALLOWED_TO_ENTER'], tag_id, identified_tag, cat_settings_map
@@ -999,7 +1004,7 @@ def backend_main(simulate_kittyflap = False):
                     logging.info("[BACKEND] Skipping entry decision because exit is in progress for this motion block.")
                 else:
                     identified_tag, id_source = _identified_tag_for_entry(
-                        tag_id, tag_id_from_video, known_rfid_tags
+                        tag_id, tag_id_from_video, known_rfid_tags, CONFIG['ALLOWED_TO_ENTER']
                     )
 
                     # Decide by mode
@@ -1024,6 +1029,10 @@ def backend_main(simulate_kittyflap = False):
                         tag_id_valid = True
                         unlock_inside_decision_made = True
                         logging.info("[BACKEND] Detected RFID tag is in the database. Kitty is allowed to enter...")
+                    elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.KNOWN and tag_id and tag_id not in known_rfid_tags:
+                        tag_id_valid = False
+                        unlock_inside_decision_made = True
+                        logging.info("[BACKEND] Unknown RFID tag is not registered. Entry denied.")
                     elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.ALL_RFIDS and tag_id is not None:
                         tag_id_valid = True
                         unlock_inside_decision_made = True

@@ -738,6 +738,72 @@ def create_kittyhack_events_table(database: str):
         logging.info(f"[DATABASE] Successfully created the 'events' table in the database '{database}'.")
     return result
 
+
+def create_motion_timeline_table(database: str):
+    """Create the motion_timeline table (one JSON timeline per motion block)."""
+    stmt = """
+        CREATE TABLE IF NOT EXISTS motion_timeline (
+            block_id INTEGER PRIMARY KEY,
+            timeline_json TEXT NOT NULL DEFAULT '[]'
+        )
+    """
+    result = write_stmt_to_database(database, stmt)
+    if result.success:
+        logging.info(f"[DATABASE] Successfully created the 'motion_timeline' table in '{database}'.")
+    return result
+
+
+def write_motion_timeline(database: str, block_id: int, timeline_entries: list) -> Result:
+    """Persist the action timeline for a motion block."""
+    if not timeline_entries:
+        return Result(True, "")
+    result = lock_database()
+    if not result.success:
+        return result
+    try:
+        conn = sqlite3.connect(database, timeout=30)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR REPLACE INTO motion_timeline (block_id, timeline_json) VALUES (?, ?)",
+            (int(block_id), json.dumps(timeline_entries, ensure_ascii=False)),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        error_message = f"[DATABASE] Failed to write motion timeline for block {block_id}: {e}"
+        logging.error(error_message)
+        return Result(False, error_message)
+    finally:
+        release_database()
+    return Result(True, "")
+
+
+def delete_motion_timeline_by_block_id(database: str, block_id: int) -> Result:
+    stmt = f"DELETE FROM motion_timeline WHERE block_id = {int(block_id)}"
+    return write_stmt_to_database(database, stmt)
+
+
+def db_get_motion_timelines(database: str, block_ids: list[int]) -> dict:
+    """Return {block_id: timeline_entries} for the given block IDs."""
+    if not block_ids:
+        return {}
+    if not check_if_table_exists(database, "motion_timeline"):
+        return {}
+    ids = ",".join(str(int(b)) for b in block_ids)
+    stmt = f"SELECT block_id, timeline_json FROM motion_timeline WHERE block_id IN ({ids})"
+    df = read_df_from_database(database, stmt)
+    result = {}
+    if df is None or df.empty:
+        return result
+    for __, row in df.iterrows():
+        try:
+            entries = json.loads(row["timeline_json"] or "[]")
+            result[int(row["block_id"])] = entries if isinstance(entries, list) else []
+        except Exception:
+            result[int(row["block_id"])] = []
+    return result
+
+
 def create_kittyhack_photo_table(database: str):
     """
     This function creates the 'photo' table (kittyhack specific style) in 
@@ -1052,6 +1118,7 @@ def delete_photos_by_block_id(database: str, block_id: int) -> Result:
             f"[DATABASE] Photos with block ID '{block_id}' deleted "
             f"(filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}, bundles={removed_bundles})."
         )
+        delete_motion_timeline_by_block_id(database, block_id)
     return result
 
 def create_json_from_event(detected_objects: List[DetectedObject]) -> str:
@@ -1110,7 +1177,14 @@ def get_detected_object_by_index(detected_objects: List[DetectedObject], index: 
         return detected_objects[index]
     return None
 
-def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: str = "image", delete_from_buffer: bool = True, generate_thumbnails: bool = True):
+def write_motion_block_to_db(
+    database: str,
+    buffer_block_id: int,
+    event_type: str = "image",
+    delete_from_buffer: bool = True,
+    generate_thumbnails: bool = True,
+    timeline_entries: list | None = None,
+):
     """
     This function writes an image block from the image buffer to the database.
     """
@@ -1142,6 +1216,13 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
         except Exception:
             has_dims = False
             has_effective_fps = False
+
+        # Check for motion_timeline table using the open cursor (avoids re-acquiring the lock).
+        try:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='motion_timeline'")
+            has_motion_timeline = bool(cursor.fetchone())
+        except Exception:
+            has_motion_timeline = False
 
         # Decide the max number of pictures to write to the database, based on the content of the first element.tag_id
         # (every element of the block has the same tag_id)
@@ -1266,6 +1347,22 @@ def write_motion_block_to_db(database: str, buffer_block_id: int, event_type: st
                     f"[DATABASE] Purged oldest photos "
                     f"(filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}, bundles={removed_bundles})."
                 )
+                if blocks_to_invalidate and has_motion_timeline:
+                    unique_blocks = sorted({int(b) for b in blocks_to_invalidate})
+                    placeholders = ",".join("?" for _ in unique_blocks)
+                    cursor.execute(
+                        f"DELETE FROM motion_timeline WHERE block_id IN ({placeholders})",
+                        unique_blocks,
+                    )
+
+        if timeline_entries and has_motion_timeline:
+            try:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO motion_timeline (block_id, timeline_json) VALUES (?, ?)",
+                    (int(db_block_id), json.dumps(timeline_entries, ensure_ascii=False)),
+                )
+            except Exception as e:
+                logging.warning(f"[DATABASE] Could not store motion timeline for block {db_block_id}: {e}")
 
         conn.commit()
         conn.close()

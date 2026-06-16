@@ -3711,6 +3711,81 @@ msgstr "Theme wechseln"
 msgid "Theme: Auto"
 msgstr "Theme: Auto"
 
+msgid "Show event details"
+msgstr "Ereignisdetails anzeigen"
+
+msgid "Unknown cat"
+msgstr "Unbekannte Katze"
+
+msgid "Motion detected outside"
+msgstr "Bewegung draußen erkannt"
+
+msgid "Motion outside ended"
+msgstr "Bewegung draußen beendet"
+
+msgid "Motion detected inside"
+msgstr "Bewegung drinnen erkannt"
+
+msgid "{cat} detected via video"
+msgstr "{cat} per Video erkannt"
+
+msgid "{cat} detected via RFID"
+msgstr "{cat} per RFID erkannt"
+
+msgid "RFID identification ({rfid_cat}) overrides video ({video_cat})"
+msgstr "RFID-Identifikation ({rfid_cat}) überschreibt Video ({video_cat})"
+
+msgid "Entry allowed for {cat}"
+msgstr "Eintritt erlaubt für {cat}"
+
+msgid "Entry denied for {cat}"
+msgstr "Eintritt verweigert für {cat}"
+
+msgid "video"
+msgstr "Video"
+
+msgid "No prey detected"
+msgstr "Keine Beute erkannt"
+
+msgid "Prey detection disabled for {cat}"
+msgstr "Beuteerkennung deaktiviert für {cat}"
+
+msgid "Inside opened"
+msgstr "Innenseite geöffnet"
+
+msgid "Inside opened (manual)"
+msgstr "Innenseite geöffnet (manuell)"
+
+msgid "Inside closed"
+msgstr "Innenseite geschlossen"
+
+msgid "Inside closed (prey detected)"
+msgstr "Innenseite geschlossen (Beute erkannt)"
+
+msgid "Inside closed (entry denied)"
+msgstr "Innenseite geschlossen (Eintritt verweigert)"
+
+msgid "Inside closed (motion ended)"
+msgstr "Innenseite geschlossen (Bewegung beendet)"
+
+msgid "Inside closed (maximum unlock time exceeded)"
+msgstr "Innenseite geschlossen (maximale Öffnungszeit überschritten)"
+
+msgid "Inside closed (manual)"
+msgstr "Innenseite geschlossen (manuell)"
+
+msgid "Outside opened"
+msgstr "Außenseite geöffnet"
+
+msgid "Outside closed"
+msgstr "Außenseite geschlossen"
+
+msgid "Entry decision skipped (exit in progress)"
+msgstr "Eintrittsentscheidung übersprungen (Ausgang läuft)"
+
+msgid "No detailed timeline recorded for this event."
+msgstr "Für dieses Ereignis wurde keine detaillierte Zeitleiste aufgezeichnet."
+
 #~ msgid "5. Copy the token, paste it here below and click Save"
 #~ msgstr "5. Kopiere den Token, füge ihn unten ein und klicke auf Speichern"
 

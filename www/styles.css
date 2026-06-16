@@ -1094,6 +1094,63 @@ html[data-bs-theme="dark"] .date-separator-row td {
   text-align: center;
 }
 
+.event-icons-cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.event-timeline-toggle {
+  line-height: 1;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.event-timeline-toggle:hover,
+.event-timeline-toggle:focus {
+  color: var(--bs-primary, #0d6efd);
+}
+
+.event-timeline-panel {
+  margin-top: 0.35rem;
+  width: 100%;
+}
+
+.event-timeline-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.event-timeline-item {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+}
+
+.event-timeline-item:last-child {
+  border-bottom: none;
+}
+
+.event-timeline-time {
+  flex: 0 0 4.5rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.event-timeline-text {
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.event-timeline-empty {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
 .tooltip-wrapper {
   cursor: default;
 }

@@ -16,6 +16,7 @@ else:
     from src.magnets_rfid import Magnets, Rfid, RfidRunState
 from src.camera import image_buffer
 from src.helper import sigterm_monitor, EventType, check_allowed_to_exit
+from src.event_timeline import TimelineAction, timeline_append
 from src.model import ModelHandler, YoloModel
 from src.mqtt import MQTTClient, StatePublisher
 
@@ -415,6 +416,13 @@ def backend_main(simulate_kittyflap = False):
     backend_main.prey_detection_tm = 0.0
     backend_main.prey_detection_mono = 0.0
     additional_verdict_infos = []
+    motion_timeline_entries = []
+    timeline_inside_reported = None
+    timeline_prey_logged = False
+    timeline_no_prey_logged = False
+    timeline_video_cat_logged = None
+    timeline_rfid_cat_logged = None
+    timeline_outside_reported = None
     previous_use_camera_for_motion = None
     exit_in_progress = False
 
@@ -483,6 +491,48 @@ def backend_main(simulate_kittyflap = False):
             return cat_rfid_name_dict.get(rfid_tag, f"{_('Unknown RFID')}: {rfid_tag}")
         else:
             return _("No RFID found")
+
+    def _timeline_log_inside_open(manual=False):
+        nonlocal timeline_inside_reported
+        if timeline_inside_reported == "open":
+            return
+        timeline_inside_reported = "open"
+        timeline_append(
+            motion_timeline_entries,
+            TimelineAction.INSIDE_OPENED_MANUAL if manual else TimelineAction.INSIDE_OPENED,
+        )
+
+    def _timeline_log_inside_close(close_action):
+        nonlocal timeline_inside_reported
+        if timeline_inside_reported == "closed":
+            return
+        timeline_inside_reported = "closed"
+        timeline_append(motion_timeline_entries, close_action)
+
+    def _timeline_log_outside_open():
+        nonlocal timeline_outside_reported
+        if timeline_outside_reported == "open":
+            return
+        timeline_outside_reported = "open"
+        timeline_append(motion_timeline_entries, TimelineAction.OUTSIDE_OPENED)
+
+    def _timeline_log_outside_close():
+        nonlocal timeline_outside_reported
+        if timeline_outside_reported == "closed":
+            return
+        timeline_outside_reported = "closed"
+        timeline_append(motion_timeline_entries, TimelineAction.OUTSIDE_CLOSED)
+
+    def _timeline_log_entry_decision(identified_tag, id_source, allowed, rfid_for_name=None):
+        name_tag = identified_tag or rfid_for_name
+        cat_name = get_cat_name(name_tag) if name_tag else _("Unknown cat")
+        source_label = {"RFID": _("RFID"), "video": _("video")}.get(id_source or "", id_source or "")
+        timeline_append(
+            motion_timeline_entries,
+            TimelineAction.ENTRY_ALLOWED if allowed else TimelineAction.ENTRY_DENIED,
+            cat_name=cat_name,
+            source=source_label,
+        )
 
     # Periodically persist effective FPS into the active YOLO model metadata.
     last_fps_metadata_write_mono = 0.0
@@ -659,10 +709,12 @@ def backend_main(simulate_kittyflap = False):
                 last_motion_outside_tm = wall_time()
                 last_motion_outside_mono = monotonic_time()
                 logging.info(f"[BACKEND] {motion_source}-based motion detection: Motion stopped OUTSIDE (Block ID: '{motion_block_id}')")
+                timeline_append(motion_timeline_entries, TimelineAction.MOTION_OUTSIDE_END)
                 # Reset exit flag on block end
                 exit_in_progress = False
                 if (magnets.get_inside_state() == True and magnets.check_queued("lock_inside") == False and inside_manually_unlocked == False):
                     magnets.queue_command("lock_inside")
+                    _timeline_log_inside_close(TimelineAction.INSIDE_CLOSED_MOTION_END)
 
                 # Decide if the cat went in or out:
                 if first_motion_inside_raw_mono == 0.0 or (first_motion_outside_mono - first_motion_inside_raw_mono) > 60.0:
@@ -685,6 +737,12 @@ def backend_main(simulate_kittyflap = False):
                 else:
                     logging.info("[BACKEND] Motion event conclusion: Cat went outside.")
                     event_type = EventType.CAT_WENT_OUTSIDE
+
+                timeline_append(
+                    motion_timeline_entries,
+                    TimelineAction.EVENT_CONCLUSION,
+                    conclusion=str(event_type),
+                )
 
                 if use_camera_for_motion:
                     if event_type == EventType.CAT_WENT_OUTSIDE:
@@ -733,8 +791,13 @@ def backend_main(simulate_kittyflap = False):
                         elif tag_id_from_video is not None:
                             image_buffer.update_tag_id(element, tag_id_from_video)
                     logging.info(f"[BACKEND] Minimal threshold exceeded or tag ID detected. Images will be written to the database. Updated block ID for {len(img_ids_for_motion_block)} elements to '{motion_block_id}' and tag ID to '{tag_id if tag_id is not None else ''}'")
-                    # Write to the database in a separate thread
-                    db_thread = threading.Thread(target=write_motion_block_to_db, args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, all_events), daemon=True)
+                    timeline_snapshot = list(motion_timeline_entries)
+                    db_thread = threading.Thread(
+                        target=write_motion_block_to_db,
+                        args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, all_events),
+                        kwargs={"timeline_entries": timeline_snapshot},
+                        daemon=True,
+                    )
                     db_thread.start()
                 else:
                     logging.info(f"[BACKEND] No elements found that exceed the minimal threshold '{CONFIG['MIN_THRESHOLD']}' and no tag ID was detected. No database entry will be created.")
@@ -790,6 +853,14 @@ def backend_main(simulate_kittyflap = False):
                 # This prevents stale manual/debug infos from previous idle periods
                 # from being attached to a later unrelated event.
                 additional_verdict_infos = []
+                motion_timeline_entries = []
+                timeline_inside_reported = "open" if magnets.get_inside_state() else "closed"
+                timeline_prey_logged = False
+                timeline_no_prey_logged = False
+                timeline_video_cat_logged = None
+                timeline_rfid_cat_logged = None
+                timeline_outside_reported = "open" if magnets.get_outside_state() else "closed"
+                timeline_append(motion_timeline_entries, TimelineAction.MOTION_OUTSIDE)
                 # If we use the camera for motion detection, set the first motion timestamp a bit earlier to avoid missing the first motion
                 if use_camera_for_motion:
                     first_motion_outside_tm = wall_time() - 0.5
@@ -815,6 +886,8 @@ def backend_main(simulate_kittyflap = False):
 
             if last_inside == 0 and motion_inside == 1: # Inside motion detected
                 logging.info("[BACKEND] Motion detected INSIDE")
+                if first_motion_outside_mono > 0.0:
+                    timeline_append(motion_timeline_entries, TimelineAction.MOTION_INSIDE)
                 cat_settings_map = get_cat_settings_map(CONFIG['KITTYHACK_DATABASE_PATH'])
                 logging.info(f"[BACKEND] cat_settings_map: {cat_settings_map}")
                 first_motion_inside_tm = wall_time()
@@ -857,6 +930,7 @@ def backend_main(simulate_kittyflap = False):
                             if magnets.check_queued("unlock_outside") == False:
                                 magnets.queue_command("unlock_outside")
                                 unlock_outside_tm = monotonic_time()
+                                _timeline_log_outside_open()
                                 # Mark this motion block as exit
                                 exit_in_progress = True
                     else:
@@ -880,6 +954,7 @@ def backend_main(simulate_kittyflap = False):
                 ((monotonic_time() - last_motion_inside_mono) > OPEN_OUTSIDE_TIMEOUT) and
                 (magnets.check_queued("lock_outside") == False) ):
                     magnets.queue_command("lock_outside")
+                    _timeline_log_outside_close()
 
             # Check also for a cat via the camera, if the option is enabled and no RFID tag is detected
             if CONFIG['USE_CAMERA_FOR_CAT_DETECTION'] and tag_id_from_video is None and motion_outside == 1:
@@ -903,12 +978,26 @@ def backend_main(simulate_kittyflap = False):
                         if matching_tag:
                             tag_id_from_video = matching_tag
                             logging.info(f"[BACKEND] Detected cat '{detected_cat}' matches RFID tag '{tag_id_from_video}'")
+                            if timeline_video_cat_logged != matching_tag:
+                                timeline_video_cat_logged = matching_tag
+                                timeline_append(
+                                    motion_timeline_entries,
+                                    TimelineAction.CAT_DETECTED_VIDEO,
+                                    cat_name=get_cat_name(matching_tag),
+                                )
                 
             # Check for a valid RFID tag
             if ( tag_id and
                 tag_id != previous_tag_id and 
                 rfid.get_field() ):
                 logging.info(f"[BACKEND] RFID tag detected: '{tag_id}'.")
+                if timeline_rfid_cat_logged != tag_id:
+                    timeline_rfid_cat_logged = tag_id
+                    timeline_append(
+                        motion_timeline_entries,
+                        TimelineAction.CAT_DETECTED_RFID,
+                        cat_name=get_cat_name(tag_id),
+                    )
                 if tag_id in known_rfid_tags:
                     rfid.set_field(False)
                     logging.info(f"[BACKEND] Detected RFID tag {tag_id} matches a known tag. Disabled RFID field.")
@@ -940,6 +1029,18 @@ def backend_main(simulate_kittyflap = False):
                     f"[BACKEND] RFID tag '{tag_id}' overrides video tag '{tag_id_from_video}' "
                     f"for entry decision (source: {id_source})."
                 )
+                timeline_append(
+                    motion_timeline_entries,
+                    TimelineAction.RFID_OVERRIDES_VIDEO,
+                    rfid_cat_name=get_cat_name(tag_id),
+                    video_cat_name=get_cat_name(tag_id_from_video),
+                )
+                _timeline_log_entry_decision(
+                    identified_tag,
+                    id_source,
+                    tag_id_valid,
+                    rfid_for_name=tag_id,
+                )
                 if CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.CONFIGURE_PER_CAT:
                     new_flag = _set_per_cat_entry_verdict_flag(additional_verdict_infos, tag_id_valid)
                     logging.info(
@@ -958,6 +1059,7 @@ def backend_main(simulate_kittyflap = False):
                     ):
                         magnets.queue_command("lock_inside")
                         unlock_inside_tm = 0.0
+                        _timeline_log_inside_close(TimelineAction.INSIDE_CLOSED_ENTRY_DENIED)
                         logging.info(
                             "[BACKEND] Entry denied after RFID overrode video identification; locking inside door."
                         )
@@ -982,6 +1084,7 @@ def backend_main(simulate_kittyflap = False):
                                 if magnets.check_queued("unlock_outside") == False:
                                     magnets.queue_command("unlock_outside")
                                     unlock_outside_tm = monotonic_time()
+                                    _timeline_log_outside_open()
                                     # Mark this motion block as exit
                                     exit_in_progress = True
                             else:
@@ -1001,6 +1104,7 @@ def backend_main(simulate_kittyflap = False):
                 # Skip entry decision if this motion block represents an exit
                 if exit_in_progress:
                     unlock_inside_decision_made = True
+                    timeline_append(motion_timeline_entries, TimelineAction.EXIT_SKIPPED_ENTRY)
                     logging.info("[BACKEND] Skipping entry decision because exit is in progress for this motion block.")
                 else:
                     identified_tag, id_source = _identified_tag_for_entry(
@@ -1025,13 +1129,16 @@ def backend_main(simulate_kittyflap = False):
                             logging.info("[BACKEND] Per-cat mode: entry allowed for this cat.")
                         else:
                             logging.info("[BACKEND] Per-cat mode: entry not allowed (unknown or disabled).")
+                        _timeline_log_entry_decision(identified_tag, id_source, tag_id_valid, rfid_for_name=tag_id)
                     elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.KNOWN and identified_tag is not None:
                         tag_id_valid = True
                         unlock_inside_decision_made = True
+                        _timeline_log_entry_decision(identified_tag, id_source, True, rfid_for_name=tag_id)
                         logging.info("[BACKEND] Detected RFID tag is in the database. Kitty is allowed to enter...")
                     elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.KNOWN and tag_id and tag_id not in known_rfid_tags:
                         tag_id_valid = False
                         unlock_inside_decision_made = True
+                        _timeline_log_entry_decision(None, "RFID", False, rfid_for_name=tag_id)
                         logging.info("[BACKEND] Unknown RFID tag is not registered. Entry denied.")
                     elif CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.ALL_RFIDS and tag_id is not None:
                         tag_id_valid = True
@@ -1081,6 +1188,11 @@ def backend_main(simulate_kittyflap = False):
                                 logging.info(
                                     f"[BACKEND] Per-cat prey detection: added verdict info '{flag}' "
                                     f"for tag '{current_tag_any}' (source: {id_source})."
+                                )
+                                timeline_append(
+                                    motion_timeline_entries,
+                                    TimelineAction.PER_CAT_PREY_DISABLED,
+                                    cat_name=get_cat_name(current_tag_any),
                                 )
                         except Exception:
                             pass
@@ -1142,6 +1254,9 @@ def backend_main(simulate_kittyflap = False):
                 if mouse_check == False and mouse_check_conditions["no_mouse_detected"] == False and backend_main.previous_mouse_check_conditions["no_mouse_detected"] == True:
                     backend_main.prey_detection_mono = monotonic_time()
                     backend_main.prey_detection_tm = wall_time()
+                    if not timeline_prey_logged:
+                        timeline_prey_logged = True
+                        timeline_append(motion_timeline_entries, TimelineAction.PREY_DETECTED)
                     logging.info(
                         f"[BACKEND] Detected prey in the images. Set prey detection times (mono={backend_main.prey_detection_mono}, wall={backend_main.prey_detection_tm})."
                     )
@@ -1168,10 +1283,20 @@ def backend_main(simulate_kittyflap = False):
 
             unlock_inside = all(unlock_inside_conditions.values())
 
+            if (
+                mouse_check
+                and prey_detection_enabled
+                and not timeline_no_prey_logged
+                and first_motion_outside_mono > 0.0
+            ):
+                timeline_no_prey_logged = True
+                timeline_append(motion_timeline_entries, TimelineAction.NO_PREY_DETECTED)
+
             # Lock the inside if there was a mouse detected after the door was already unlocked
             if (mouse_check == False and magnets.get_inside_state() and magnets.check_queued("lock_inside") == False and inside_manually_unlocked == False):
                     magnets.queue_command("lock_inside")
                     unlock_inside_tm = 0.0
+                    _timeline_log_inside_close(TimelineAction.INSIDE_CLOSED_PREY)
 
             if unlock_inside or manual_door_override['unlock_inside']:
                 logging.info(f"[BACKEND] Door unlock requested {'(manual override)' if manual_door_override['unlock_inside'] else ''}")
@@ -1182,6 +1307,7 @@ def backend_main(simulate_kittyflap = False):
                     magnets.empty_queue()
                     magnets.queue_command("unlock_inside")
                     unlock_inside_tm = monotonic_time()
+                    _timeline_log_inside_open(manual=bool(manual_door_override['unlock_inside']))
                     if manual_door_override['unlock_inside']:
                         inside_manually_unlocked = True
                         # Only annotate if a real motion event is currently active.
@@ -1203,6 +1329,7 @@ def backend_main(simulate_kittyflap = False):
                     magnets.empty_queue()
                     magnets.queue_command("unlock_outside")
                     unlock_outside_tm = monotonic_time()
+                    _timeline_log_outside_open()
                 
                 manual_door_override['unlock_outside'] = False
 
@@ -1210,6 +1337,7 @@ def backend_main(simulate_kittyflap = False):
                 if magnets.get_inside_state():
                     logging.info("[BACKEND] Manual override: Locking inside door")
                     magnets.empty_queue()
+                    _timeline_log_inside_close(TimelineAction.INSIDE_CLOSED_MANUAL)
                 else:
                     logging.info("[BACKEND] Manual override: Inside door is already locked.")
                 inside_manually_unlocked = False
@@ -1226,6 +1354,7 @@ def backend_main(simulate_kittyflap = False):
             if magnets.get_inside_state() and (monotonic_time() - unlock_inside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_inside") == False:
                 logging.warning("[BACKEND] Maximum unlock time exceeded for inside door. Forcing lock.")
                 magnets.queue_command("lock_inside")
+                _timeline_log_inside_close(TimelineAction.INSIDE_CLOSED_MAX_TIME)
                 if inside_manually_unlocked:
                     inside_manually_unlocked = False
                 # Only annotate if a real motion event is currently active.
@@ -1238,6 +1367,7 @@ def backend_main(simulate_kittyflap = False):
             if magnets.get_outside_state() and (monotonic_time() - unlock_outside_tm > MAX_UNLOCK_TIME) and magnets.check_queued("lock_outside") == False:
                 logging.warning("[BACKEND] Maximum unlock time exceeded for outside door. Forcing lock.")
                 magnets.queue_command("lock_outside")
+                _timeline_log_outside_close()
                 
         except Exception as e:
             # Log full traceback to identify the real call site in case of an exception in the backend loop

@@ -1141,7 +1141,8 @@ html[data-bs-theme="dark"] .date-separator-row td {
 .event-timeline-item {
   display: flex;
   gap: 0.75rem;
-  padding: 0.25rem 0;
+  padding: 0.25rem;
+  padding-left: 8%;
   border-bottom: 1px solid var(--bs-border-color, #dee2e6);
 }
 

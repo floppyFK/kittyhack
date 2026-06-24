@@ -213,6 +213,7 @@ DEFAULT_CONFIG = {
         "kittyhack_database_backup_path": "../kittyhack_backup.db",
         "pir_outside_threshold": 0.5,
         "pir_inside_threshold": 3.0,
+        "immediate_lock_after_passage": False,
         "wlan_tx_power": 7,
         "group_pictures_to_events": True,
         "tflite_model_version": "original_kittyflap_model_v2",
@@ -479,6 +480,7 @@ def load_config():
         "KITTYHACK_DATABASE_BACKUP_PATH": safe_str("KITTYHACK_DATABASE_BACKUP_PATH", d['kittyhack_database_backup_path']),
         "PIR_OUTSIDE_THRESHOLD": safe_float("PIR_OUTSIDE_THRESHOLD", float(d['pir_outside_threshold'])),
         "PIR_INSIDE_THRESHOLD": safe_float("PIR_INSIDE_THRESHOLD", float(d['pir_inside_threshold'])),
+        "IMMEDIATE_LOCK_AFTER_PASSAGE": safe_bool("IMMEDIATE_LOCK_AFTER_PASSAGE", d.get('immediate_lock_after_passage', False)),
         "WLAN_TX_POWER": safe_int("WLAN_TX_POWER", int(d['wlan_tx_power'])),
         "GROUP_PICTURES_TO_EVENTS": safe_bool("GROUP_PICTURES_TO_EVENTS", d['group_pictures_to_events']),
         "TFLITE_MODEL_VERSION": safe_str("TFLITE_MODEL_VERSION", d['tflite_model_version']),
@@ -659,6 +661,7 @@ def save_config():
     settings['kittyhack_database_backup_path'] = CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']
     settings['pir_outside_threshold'] = CONFIG['PIR_OUTSIDE_THRESHOLD']
     settings['pir_inside_threshold'] = CONFIG['PIR_INSIDE_THRESHOLD']
+    settings['immediate_lock_after_passage'] = CONFIG['IMMEDIATE_LOCK_AFTER_PASSAGE']
     settings['wlan_tx_power'] = CONFIG['WLAN_TX_POWER']
     settings['group_pictures_to_events'] = CONFIG['GROUP_PICTURES_TO_EVENTS']
     settings['tflite_model_version'] = CONFIG['TFLITE_MODEL_VERSION']

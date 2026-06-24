@@ -4526,3 +4526,46 @@ msgstr "Für dieses Ereignis wurde keine detaillierte Zeitleiste aufgezeichnet."
 
 #~ msgid "Debug details"
 #~ msgstr "Debug Details"
+
+msgid "Immediate locking after passage"
+msgstr "Sofortige Verriegelung nach Durchgang"
+
+msgid "About this feature"
+msgstr "Erklärung zu diesem Feature"
+
+msgid ""
+"When enabled, the flap locks again and the motion event is finalized as "
+"soon as motion is detected on the opposite side of the flap (cat has "
+"crossed)."
+msgstr ""
+"Wenn aktiviert, wird die Klappe wieder verriegelt und das Bewegungsereignis "
+"abgeschlossen, sobald auf der gegenüberliegenden Seite der Klappe eine "
+"Bewegung erkannt wird (Katze hat die Klappe passiert)."
+
+msgid ""
+"This feature is useful if your cat is very fast and the flap should not remain "
+"open for too long. Will help prevent multiple cats from using the flap in "
+"quick succession."
+msgstr ""
+"Dieses Feature ist nützlich, wenn deine Katze sehr schnell ist und die Klappe "
+"nicht zu lange offen bleiben sollte. Es kann dabei helfen, zu verhindern, dass "
+"mehrere Katzen die Klappe kurz nacheinander benutzen."
+
+msgid ""
+"If your cat is shy or just needs several attempts to cross, you should not "
+"enable this feature. Otherwise, the flap could be accidentally locked while "
+"your cat is still trying to cross."
+msgstr ""
+"Wenn deine Katze schüchtern ist oder mehrere Versuche benötigt, um die Klappe "
+"zu passieren, solltest du dieses Feature nicht aktivieren. Andernfalls könnte "
+"die Klappe versehentlich verriegelt werden, während deine Katze noch versucht, "
+"sie zu passieren."
+
+msgid "Cat crossed the flap"
+msgstr "Katze hat die Klappe passiert"
+
+msgid "Inside locked (after passage)"
+msgstr "Innen verriegelt (nach Durchgang)"
+
+msgid "Outside locked (after passage)"
+msgstr "Außen verriegelt (nach Durchgang)"

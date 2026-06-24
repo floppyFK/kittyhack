@@ -7380,6 +7380,28 @@ def server(input, output, session):
                                 )
                             )
                         ),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.input_switch(
+                                    "btnImmediateLockAfterPassage",
+                                    _("Immediate locking after passage"),
+                                    CONFIG['IMMEDIATE_LOCK_AFTER_PASSAGE'],
+                                    width="90%",
+                                )
+                            ),
+                            ui.column(
+                                12,
+                                info_toggle(
+                                    "immediate_lock_after_passage_info",
+                                    _("About this feature"),
+                                    _("When enabled, the flap locks again and the motion event is finalized as soon as motion is detected on the opposite side of the flap (cat has crossed).") + "  \n\n" +
+                                    _("This feature is useful if your cat is very fast and the flap should not remain open for too long. Will help prevent multiple cats from using the flap in quick succession.") + "  \n\n" +
+                                    _("If your cat is shy or just needs several attempts to cross, you should not enable this feature. Otherwise, the flap could be accidentally locked while your cat is still trying to cross.")
+                                )
+                            )
+                        ),
                         full_screen=False,
                         class_="generic-container align-left",
                         style_="padding-left: 1rem !important; padding-right: 1rem !important;",
@@ -8158,6 +8180,7 @@ def server(input, output, session):
         # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
         #CONFIG['PIR_OUTSIDE_THRESHOLD'] = 10-int(input.sldPirOutsideThreshold())
         CONFIG['PIR_INSIDE_THRESHOLD'] = float(input.sldPirInsideThreshold())
+        CONFIG['IMMEDIATE_LOCK_AFTER_PASSAGE'] = input.btnImmediateLockAfterPassage()
         if not is_remote_mode():
             CONFIG['WLAN_TX_POWER'] = int(input.sldWlanTxPower())
         CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'] = int(input.sldLockAfterPreyDetect())

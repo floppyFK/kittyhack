@@ -427,8 +427,9 @@ def backend_main(simulate_kittyflap = False):
     exit_in_progress = False
     motion_block_active = False
     suppress_outside_motion_block = False
-    last_outside_sensor = 0
-    motion_outside_sensor = 0
+    suppress_inside_motion_block = False
+    last_outside_crossing = 0
+    last_inside_crossing = 0
 
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
@@ -580,6 +581,7 @@ def backend_main(simulate_kittyflap = False):
         nonlocal exit_in_progress
         nonlocal motion_block_active
         nonlocal suppress_outside_motion_block
+        nonlocal suppress_inside_motion_block
         nonlocal unlock_inside_tm
         nonlocal timeline_outside_reported
 
@@ -606,6 +608,7 @@ def backend_main(simulate_kittyflap = False):
                     timeline_append(motion_timeline_entries, TimelineAction.OUTSIDE_CLOSED_FAST_IN_OUT)
                 magnets.queue_command("lock_outside")
             suppress_outside_motion_block = True
+            suppress_inside_motion_block = True
         elif (
             magnets.get_inside_state() == True
             and magnets.check_queued("lock_inside") == False
@@ -829,7 +832,8 @@ def backend_main(simulate_kittyflap = False):
             last_outside = motion_outside
             last_inside = motion_inside
             last_inside_raw = motion_inside_raw
-            last_outside_sensor_prev = last_outside_sensor
+            last_outside_crossing_prev = last_outside_crossing
+            last_inside_crossing_prev = last_inside_crossing
 
             if use_camera_for_motion:
                 # Decide if motion occured currently. Look up to 5 seconds into the past for images with cats
@@ -842,10 +846,9 @@ def backend_main(simulate_kittyflap = False):
             else:
                 motion_outside, motion_inside, motion_outside_raw, motion_inside_raw = pir.get_states()
 
-            if use_camera_for_motion:
-                motion_outside_sensor = motion_outside
-            else:
-                motion_outside_sensor = motion_outside_raw
+            # Threshold-filtered motion (not raw PIR) for immediate-lock crossing detection.
+            motion_outside_crossing = motion_outside
+            motion_inside_crossing = motion_inside
 
             # Update the motion timestamps
             if motion_outside == 1:
@@ -887,8 +890,10 @@ def backend_main(simulate_kittyflap = False):
                 rfid_thread.start()
 
             # Outside motion stopped
-            if suppress_outside_motion_block and motion_outside == 0 and motion_outside_sensor == 0:
+            if suppress_outside_motion_block and motion_outside == 0 and motion_outside_crossing == 0:
                 suppress_outside_motion_block = False
+            if suppress_inside_motion_block and motion_inside == 0 and motion_inside_crossing == 0:
+                suppress_inside_motion_block = False
 
             if last_outside == 1 and motion_outside == 0:
                 if not use_camera_for_motion:
@@ -951,7 +956,48 @@ def backend_main(simulate_kittyflap = False):
                 first_motion_inside_raw_tm = wall_time()
                 first_motion_inside_raw_mono = monotonic_time()
 
-            if last_inside == 0 and motion_inside == 1: # Inside motion detected
+            if CONFIG.get('IMMEDIATE_LOCK_AFTER_PASSAGE'):
+                fast_crossing = False
+                if (
+                    motion_block_active
+                    and exit_in_progress
+                    and unlock_outside_tm > 0.0
+                    and magnets.get_outside_state()
+                    and last_outside_crossing_prev == 0
+                    and motion_outside_crossing == 1
+                    and monotonic_time() > unlock_outside_tm + 0.2
+                ):
+                    fast_crossing = True
+                    logging.info("[BACKEND] Immediate lock after passage: outside motion detected after unlock (exit crossing).")
+                elif (
+                    motion_block_active
+                    and not exit_in_progress
+                    and unlock_inside_tm > 0.0
+                    and magnets.get_inside_state()
+                    and not inside_manually_unlocked
+                    and last_inside_crossing_prev == 0
+                    and motion_inside_crossing == 1
+                    and monotonic_time() > unlock_inside_tm + 0.2
+                ):
+                    fast_crossing = True
+                    logging.info("[BACKEND] Immediate lock after passage: inside motion detected after unlock (entry crossing).")
+
+                if fast_crossing:
+                    if first_motion_outside_mono <= 0.0 and motion_outside_crossing == 1:
+                        motion_block_id += 1
+                        first_motion_outside_tm = wall_time()
+                        first_motion_outside_mono = monotonic_time()
+                        if not any(e.get("action") == TimelineAction.MOTION_OUTSIDE for e in motion_timeline_entries):
+                            timeline_append(motion_timeline_entries, TimelineAction.MOTION_OUTSIDE)
+                    if first_motion_inside_mono <= 0.0 and motion_inside_crossing == 1:
+                        first_motion_inside_tm = wall_time()
+                        first_motion_inside_mono = monotonic_time()
+                        first_motion_inside_raw_tm = first_motion_inside_tm
+                        first_motion_inside_raw_mono = first_motion_inside_mono
+                    last_motion_outside_tm = wall_time()
+                    _finalize_motion_block("fast_in_out_crossing")
+
+            if last_inside == 0 and motion_inside == 1 and not suppress_inside_motion_block: # Inside motion detected
                 logging.info("[BACKEND] Motion detected INSIDE")
                 # For exit flows, inside motion can happen before outside motion.
                 # Start the timeline early so the order is logical in the UI.
@@ -1410,45 +1456,6 @@ def backend_main(simulate_kittyflap = False):
                 
                 manual_door_override['unlock_outside'] = False
 
-            if CONFIG.get('IMMEDIATE_LOCK_AFTER_PASSAGE'):
-                fast_crossing = False
-                if (
-                    motion_block_active
-                    and exit_in_progress
-                    and unlock_outside_tm > 0.0
-                    and magnets.get_outside_state()
-                    and last_outside_sensor_prev == 0
-                    and motion_outside_sensor == 1
-                    and monotonic_time() > unlock_outside_tm + 0.2
-                ):
-                    fast_crossing = True
-                    logging.info("[BACKEND] Immediate lock after passage: outside motion detected after unlock (exit crossing).")
-                elif (
-                    motion_block_active
-                    and not exit_in_progress
-                    and unlock_inside_tm > 0.0
-                    and magnets.get_inside_state()
-                    and not inside_manually_unlocked
-                    and last_inside_raw == 0
-                    and motion_inside_raw == 1
-                    and monotonic_time() > unlock_inside_tm + 0.2
-                ):
-                    fast_crossing = True
-                    logging.info("[BACKEND] Immediate lock after passage: inside motion detected after unlock (entry crossing).")
-
-                if fast_crossing:
-                    if first_motion_outside_mono <= 0.0 and motion_outside_sensor == 1:
-                        motion_block_id += 1
-                        first_motion_outside_tm = wall_time()
-                        first_motion_outside_mono = monotonic_time()
-                        if not any(e.get("action") == TimelineAction.MOTION_OUTSIDE for e in motion_timeline_entries):
-                            timeline_append(motion_timeline_entries, TimelineAction.MOTION_OUTSIDE)
-                    if first_motion_inside_raw_mono <= 0.0 and motion_inside_raw == 1:
-                        first_motion_inside_raw_tm = wall_time()
-                        first_motion_inside_raw_mono = monotonic_time()
-                    last_motion_outside_tm = wall_time()
-                    _finalize_motion_block("fast_in_out_crossing")
-
             if manual_door_override['lock_inside']:
                 if magnets.get_inside_state():
                     logging.info("[BACKEND] Manual override: Locking inside door")
@@ -1485,7 +1492,8 @@ def backend_main(simulate_kittyflap = False):
                 magnets.queue_command("lock_outside")
                 _timeline_log_outside_close()
 
-            last_outside_sensor = motion_outside_sensor
+            last_outside_crossing = motion_outside_crossing
+            last_inside_crossing = motion_inside_crossing
                 
         except Exception as e:
             # Log full traceback to identify the real call site in case of an exception in the backend loop

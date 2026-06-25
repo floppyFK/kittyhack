@@ -309,6 +309,58 @@ document.addEventListener("DOMContentLoaded", function() {
 
     initLiveViewPlaceholderAutoFit();
 
+    // --- Events table: row click toggles timeline details ---
+    // Use explicit click handling so nested action buttons (open modal, etc.)
+    // do not conflict with Bootstrap's delegated collapse data API.
+    function khToggleEventTimelineRow(row) {
+        if (!row || !row.getAttribute) return;
+        const panelId = row.getAttribute('data-kh-panel-id');
+        if (!panelId) return;
+
+        const panel = document.getElementById(panelId);
+        if (!panel) return;
+
+        const isShown = panel.classList.contains('show');
+        if (window.bootstrap && window.bootstrap.Collapse) {
+            try {
+                const inst = window.bootstrap.Collapse.getOrCreateInstance(panel, { toggle: false });
+                if (isShown) {
+                    inst.hide();
+                } else {
+                    inst.show();
+                }
+            } catch (e) {
+                panel.classList.toggle('show', !isShown);
+            }
+        } else {
+            panel.classList.toggle('show', !isShown);
+        }
+
+        row.setAttribute('aria-expanded', isShown ? 'false' : 'true');
+    }
+
+    function khShouldIgnoreEventRowToggle(target) {
+        if (!target || !target.closest) return false;
+        return !!target.closest(
+            'a, button, input, select, textarea, label, .event-action-cell, [data-bs-toggle="tooltip"]'
+        );
+    }
+
+    document.addEventListener('click', function(ev) {
+        const row = ev.target && ev.target.closest ? ev.target.closest('.kh-event-row-toggle') : null;
+        if (!row) return;
+        if (khShouldIgnoreEventRowToggle(ev.target)) return;
+        khToggleEventTimelineRow(row);
+    }, false);
+
+    document.addEventListener('keydown', function(ev) {
+        const row = ev.target && ev.target.closest ? ev.target.closest('.kh-event-row-toggle') : null;
+        if (!row) return;
+        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+        ev.preventDefault();
+        khToggleEventTimelineRow(row);
+    }, false);
+
     // --- Event modal: show spinner until first image is rendered ---
     function syncEventModalSpinner(root) {
         const scope = root && root.querySelector ? root : document;

@@ -1101,14 +1101,21 @@ html[data-bs-theme="dark"] .date-separator-row td {
   gap: 0.25rem;
 }
 
-.event-timeline-toggle {
-  line-height: 1;
-  color: var(--bs-secondary-color, #6c757d);
+.event-data-row {
+  cursor: pointer;
 }
 
-.event-timeline-toggle:hover,
-.event-timeline-toggle:focus {
-  color: var(--bs-primary, #0d6efd);
+.event-data-row:hover {
+  background-color: var(--bs-tertiary-bg, rgba(0, 0, 0, 0.03));
+}
+
+.event-data-row:focus-visible {
+    outline: 2px solid var(--bs-primary, #0d6efd);
+    outline-offset: -2px;
+}
+
+.event-data-row .event-action-cell {
+  cursor: default;
 }
 
 .event-timeline-panel {

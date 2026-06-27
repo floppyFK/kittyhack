@@ -26,6 +26,7 @@ OPEN_OUTSIDE_TIMEOUT = 6.0 + CONFIG['PIR_INSIDE_THRESHOLD'] # Keep the magnet to
 MAX_UNLOCK_TIME = 60.0           # Maximum time the door is allowed to stay open
 LAZY_CAT_DELAY_PIR_MOTION = 6.0  # Keep the PIR active for an additional 6 seconds after the last detected motion when using PIR-based motion detection
 LAZY_CAT_DELAY_CAM_MOTION = 12.0 # Keep the PIR active for an additional 12 seconds after the last detected motion when using camera-based motion detection
+FAST_EXIT_POST_CAPTURE_SECONDS = 6.0  # Extra recording after fast-lock exit crossing before finalizing the event
 
 # Prepare gettext for translations based on the configured language
 _ = set_language(CONFIG['LANGUAGE'])
@@ -428,8 +429,10 @@ def backend_main(simulate_kittyflap = False):
     motion_block_active = False
     suppress_outside_motion_block = False
     suppress_inside_motion_block = False
+    suppress_entry_decision_after_fast_exit = False
     last_outside_crossing = 0
     last_inside_crossing = 0
+    pending_fast_exit_finalize_mono = 0.0
 
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
@@ -565,7 +568,29 @@ def backend_main(simulate_kittyflap = False):
         )
         motion_block_active = True
 
-    def _finalize_motion_block(trigger_source: str = "outside_motion_end"):
+    def _apply_fast_crossing_locks():
+        nonlocal exit_in_progress
+        nonlocal suppress_outside_motion_block
+        nonlocal suppress_inside_motion_block
+        nonlocal suppress_entry_decision_after_fast_exit
+        nonlocal unlock_inside_tm
+        nonlocal timeline_outside_reported
+
+        timeline_append(motion_timeline_entries, TimelineAction.FAST_IN_OUT_CROSSING)
+        suppress_entry_decision_after_fast_exit = True
+        if magnets.get_inside_state() and magnets.check_queued("lock_inside") == False and inside_manually_unlocked == False:
+            magnets.queue_command("lock_inside")
+            unlock_inside_tm = 0.0
+            _timeline_log_inside_close(TimelineAction.INSIDE_CLOSED_FAST_IN_OUT)
+        if magnets.get_outside_state() and magnets.check_queued("lock_outside") == False:
+            if timeline_outside_reported != "closed":
+                timeline_outside_reported = "closed"
+                timeline_append(motion_timeline_entries, TimelineAction.OUTSIDE_CLOSED_FAST_IN_OUT)
+            magnets.queue_command("lock_outside")
+        suppress_outside_motion_block = True
+        suppress_inside_motion_block = True
+
+    def _finalize_motion_block(trigger_source: str = "outside_motion_end", locks_already_applied: bool = False):
         nonlocal unlock_inside_decision_made
         nonlocal tag_id_valid
         nonlocal additional_verdict_infos
@@ -582,33 +607,27 @@ def backend_main(simulate_kittyflap = False):
         nonlocal motion_block_active
         nonlocal suppress_outside_motion_block
         nonlocal suppress_inside_motion_block
+        nonlocal suppress_entry_decision_after_fast_exit
         nonlocal unlock_inside_tm
         nonlocal timeline_outside_reported
+        nonlocal pending_fast_exit_finalize_mono
 
         if not motion_block_active:
             return
 
+        pending_fast_exit_finalize_mono = 0.0
+
         if trigger_source == "outside_motion_end":
             timeline_append(motion_timeline_entries, TimelineAction.MOTION_OUTSIDE_END)
-        else:
+        elif not locks_already_applied:
             timeline_append(motion_timeline_entries, TimelineAction.FAST_IN_OUT_CROSSING)
 
         exit_in_progress = False
         unlock_inside_decision_made = False
         tag_id_valid = False
 
-        if trigger_source == "fast_in_out_crossing":
-            if magnets.get_inside_state() and magnets.check_queued("lock_inside") == False and inside_manually_unlocked == False:
-                magnets.queue_command("lock_inside")
-                unlock_inside_tm = 0.0
-                _timeline_log_inside_close(TimelineAction.INSIDE_CLOSED_FAST_IN_OUT)
-            if magnets.get_outside_state() and magnets.check_queued("lock_outside") == False:
-                if timeline_outside_reported != "closed":
-                    timeline_outside_reported = "closed"
-                    timeline_append(motion_timeline_entries, TimelineAction.OUTSIDE_CLOSED_FAST_IN_OUT)
-                magnets.queue_command("lock_outside")
-            suppress_outside_motion_block = True
-            suppress_inside_motion_block = True
+        if trigger_source == "fast_in_out_crossing" and not locks_already_applied:
+            _apply_fast_crossing_locks()
         elif (
             magnets.get_inside_state() == True
             and magnets.check_queued("lock_inside") == False
@@ -895,16 +914,32 @@ def backend_main(simulate_kittyflap = False):
             if suppress_inside_motion_block and motion_inside == 0 and motion_inside_crossing == 0:
                 suppress_inside_motion_block = False
 
+            if pending_fast_exit_finalize_mono > 0.0 and monotonic_time() >= pending_fast_exit_finalize_mono:
+                pending_fast_exit_finalize_mono = 0.0
+                last_motion_outside_tm = wall_time()
+                logging.info(
+                    f"[BACKEND] Fast-exit post-capture finished. Finalizing motion block '{motion_block_id}'."
+                )
+                _finalize_motion_block("fast_in_out_crossing", locks_already_applied=True)
+
             if last_outside == 1 and motion_outside == 0:
-                if not use_camera_for_motion:
+                if not use_camera_for_motion and pending_fast_exit_finalize_mono <= 0.0:
                     if model_handler.get_run_state() == True:
                         model_handler.pause()
                         # Wait for the last image to be processed
                         tm.sleep(0.5)
                 last_motion_outside_tm = wall_time()
                 last_motion_outside_mono = monotonic_time()
-                logging.info(f"[BACKEND] {motion_source}-based motion detection: Motion stopped OUTSIDE (Block ID: '{motion_block_id}')")
-                _finalize_motion_block("outside_motion_end")
+                if pending_fast_exit_finalize_mono > 0.0:
+                    logging.debug(
+                        "[BACKEND] Motion stopped OUTSIDE during fast-exit post-capture; "
+                        "waiting for capture timer before finalizing."
+                    )
+                else:
+                    logging.info(f"[BACKEND] {motion_source}-based motion detection: Motion stopped OUTSIDE (Block ID: '{motion_block_id}')")
+                    _finalize_motion_block("outside_motion_end")
+                if motion_inside == 0 and motion_inside_raw == 0:
+                    suppress_entry_decision_after_fast_exit = False
 
             if last_inside_raw == 1 and motion_inside_raw == 0: # Inside motion stopped (raw)
                 last_motion_inside_raw_mono = motion_inside_raw_mono
@@ -916,6 +951,8 @@ def backend_main(simulate_kittyflap = False):
                 # Publish the inside motion state to MQTT
                 if mqtt_publisher:
                     mqtt_publisher.publish_motion_inside(False)
+                if motion_outside == 0 and motion_inside_raw == 0:
+                    suppress_entry_decision_after_fast_exit = False
 
             # Start the RFID thread with infinite read cycles, if it is not running and motion is detected outside or inside
             # Note: Check this here to enable the RFID reader as soon as motion is detected
@@ -995,7 +1032,15 @@ def backend_main(simulate_kittyflap = False):
                         first_motion_inside_raw_tm = first_motion_inside_tm
                         first_motion_inside_raw_mono = first_motion_inside_mono
                     last_motion_outside_tm = wall_time()
-                    _finalize_motion_block("fast_in_out_crossing")
+                    if exit_in_progress:
+                        _apply_fast_crossing_locks()
+                        pending_fast_exit_finalize_mono = monotonic_time() + FAST_EXIT_POST_CAPTURE_SECONDS
+                        logging.info(
+                            "[BACKEND] Immediate lock after exit passage: flap locked, "
+                            f"continuing capture for {FAST_EXIT_POST_CAPTURE_SECONDS:.1f}s before finalizing event."
+                        )
+                    else:
+                        _finalize_motion_block("fast_in_out_crossing")
 
             if last_inside == 0 and motion_inside == 1 and not suppress_inside_motion_block: # Inside motion detected
                 logging.info("[BACKEND] Motion detected INSIDE")
@@ -1217,7 +1262,7 @@ def backend_main(simulate_kittyflap = False):
                         pending_exit_rfid_check = False
 
             # Check if we are allowed to open the inside direction
-            if motion_outside and not unlock_inside_decision_made:
+            if motion_outside and not unlock_inside_decision_made and not suppress_entry_decision_after_fast_exit:
                 # Skip entry decision if this motion block represents an exit
                 if exit_in_progress:
                     unlock_inside_decision_made = True

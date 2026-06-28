@@ -27,6 +27,7 @@ MAX_UNLOCK_TIME = 60.0           # Maximum time the door is allowed to stay open
 LAZY_CAT_DELAY_PIR_MOTION = 6.0  # Keep the PIR active for an additional 6 seconds after the last detected motion when using PIR-based motion detection
 LAZY_CAT_DELAY_CAM_MOTION = 12.0 # Keep the PIR active for an additional 12 seconds after the last detected motion when using camera-based motion detection
 FAST_EXIT_POST_CAPTURE_SECONDS = 6.0  # Extra recording after fast-lock exit crossing before finalizing the event
+EVENT_COOLDOWN_SECONDS = 3.0     # After an event is finalized, ignore all new motion triggers for this long (PIR settling)
 
 # Prepare gettext for translations based on the configured language
 _ = set_language(CONFIG['LANGUAGE'])
@@ -433,6 +434,13 @@ def backend_main(simulate_kittyflap = False):
     last_outside_crossing = 0
     last_inside_crossing = 0
     pending_fast_exit_finalize_mono = 0.0
+    # Immediate-lock-after-passage state:
+    #   entry_unlocked_in_block  -> an entry was granted (inside auto-unlocked) during the current motion block
+    #   entry_unlocked_mono      -> monotonic time of that entry unlock (debounce reference, survives prey re-lock)
+    #   event_cooldown_until_mono-> while now < this value, no new motion triggers are accepted (PIR settling)
+    entry_unlocked_in_block = False
+    entry_unlocked_mono = 0.0
+    event_cooldown_until_mono = 0.0
 
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
@@ -611,6 +619,10 @@ def backend_main(simulate_kittyflap = False):
         nonlocal unlock_inside_tm
         nonlocal timeline_outside_reported
         nonlocal pending_fast_exit_finalize_mono
+        nonlocal entry_unlocked_in_block
+        nonlocal entry_unlocked_mono
+        nonlocal event_cooldown_until_mono
+        nonlocal pending_exit_rfid_check
 
         if not motion_block_active:
             return
@@ -619,8 +631,8 @@ def backend_main(simulate_kittyflap = False):
 
         if trigger_source == "outside_motion_end":
             timeline_append(motion_timeline_entries, TimelineAction.MOTION_OUTSIDE_END)
-        elif not locks_already_applied:
-            timeline_append(motion_timeline_entries, TimelineAction.FAST_IN_OUT_CROSSING)
+        # Note: the "Cat crossed the flap" (FAST_IN_OUT_CROSSING) timeline entry is added exactly
+        # once by _apply_fast_crossing_locks(), which is the single source for fast-crossing locks.
 
         exit_in_progress = False
         unlock_inside_decision_made = False
@@ -725,6 +737,14 @@ def backend_main(simulate_kittyflap = False):
         first_motion_inside_raw_mono = 0.0
         motion_block_active = False
 
+        # Reset per-block passage state and start the post-event cooldown so that trailing PIR
+        # motion (cat settling on the other side, sensor ghosting) cannot spawn a phantom event.
+        entry_unlocked_in_block = False
+        entry_unlocked_mono = 0.0
+        pending_exit_rfid_check = False
+        if CONFIG.get('IMMEDIATE_LOCK_AFTER_PASSAGE'):
+            event_cooldown_until_mono = monotonic_time() + EVENT_COOLDOWN_SECONDS
+
         if mqtt_publisher:
             if tag_id is not None:
                 cat_name = get_cat_name(tag_id)
@@ -738,6 +758,19 @@ def backend_main(simulate_kittyflap = False):
         if tag_id is not None:
             rfid.set_tag(None, 0.0)
             logging.info("[BACKEND] Forget the tag ID from the RFID reader.")
+
+    def _motion_processing_suspended() -> bool:
+        """While True, the backend must ignore every new motion trigger (new motion blocks,
+        entry/exit unlocks and fast-crossing detection).
+
+        This is active in two situations, both only relevant when IMMEDIATE_LOCK_AFTER_PASSAGE is on:
+          1. During the fast-exit post-capture window (flap already locked, still recording).
+          2. During the post-event cooldown right after an event was finalized (PIR settling)."""
+        if pending_fast_exit_finalize_mono > 0.0:
+            return True
+        if event_cooldown_until_mono > 0.0 and monotonic_time() < event_cooldown_until_mono:
+            return True
+        return False
 
     # Periodically persist effective FPS into the active YOLO model metadata.
     last_fps_metadata_write_mono = 0.0
@@ -962,7 +995,7 @@ def backend_main(simulate_kittyflap = False):
                     logging.info(f"[BACKEND] Enabled RFID field.")
             
             # Outside motion detected
-            if last_outside == 0 and motion_outside == 1 and not suppress_outside_motion_block:
+            if last_outside == 0 and motion_outside == 1 and not suppress_outside_motion_block and not _motion_processing_suspended():
                 motion_block_id += 1
                 # If this block was already started by an inside-motion trigger,
                 # keep the collected timeline and only append the outside motion step.
@@ -993,9 +1026,12 @@ def backend_main(simulate_kittyflap = False):
                 first_motion_inside_raw_tm = wall_time()
                 first_motion_inside_raw_mono = monotonic_time()
 
-            if CONFIG.get('IMMEDIATE_LOCK_AFTER_PASSAGE'):
-                fast_crossing = False
-                if (
+            # Immediate lock after passage: detect that the cat has crossed to the other side of the
+            # flap and lock + finalize the event right away. Crossing detection uses the threshold-
+            # filtered PIR signals (motion_*_crossing), never the raw PIR, to avoid ghost triggers.
+            if CONFIG.get('IMMEDIATE_LOCK_AFTER_PASSAGE') and not _motion_processing_suspended():
+                # Exit passage: outside motion appears while an exit is in progress and the outside is unlocked.
+                fast_exit_crossing = (
                     motion_block_active
                     and exit_in_progress
                     and unlock_outside_tm > 0.0
@@ -1003,23 +1039,29 @@ def backend_main(simulate_kittyflap = False):
                     and last_outside_crossing_prev == 0
                     and motion_outside_crossing == 1
                     and monotonic_time() > unlock_outside_tm + 0.2
-                ):
-                    fast_crossing = True
-                    logging.info("[BACKEND] Immediate lock after passage: outside motion detected after unlock (exit crossing).")
-                elif (
+                )
+                # Entry passage: inside motion appears after an entry was granted in this block.
+                # This intentionally does NOT require the inside to still be unlocked, so that a late
+                # (often false-positive) prey re-lock cannot turn the cat finishing its entry into a
+                # spurious exit. entry_unlocked_mono is the debounce reference and survives the re-lock.
+                fast_entry_crossing = (
                     motion_block_active
                     and not exit_in_progress
-                    and unlock_inside_tm > 0.0
-                    and magnets.get_inside_state()
+                    and entry_unlocked_in_block
                     and not inside_manually_unlocked
                     and last_inside_crossing_prev == 0
                     and motion_inside_crossing == 1
-                    and monotonic_time() > unlock_inside_tm + 0.2
-                ):
-                    fast_crossing = True
-                    logging.info("[BACKEND] Immediate lock after passage: inside motion detected after unlock (entry crossing).")
+                    and monotonic_time() > entry_unlocked_mono + 0.2
+                )
 
-                if fast_crossing:
+                if fast_exit_crossing or fast_entry_crossing:
+                    if fast_exit_crossing:
+                        logging.info("[BACKEND] Immediate lock after passage: outside motion detected after unlock (exit crossing).")
+                    else:
+                        logging.info("[BACKEND] Immediate lock after passage: inside motion detected after unlock (entry crossing).")
+
+                    # Make sure both motion timestamps exist so the event conclusion and the image
+                    # capture window are computed correctly.
                     if first_motion_outside_mono <= 0.0 and motion_outside_crossing == 1:
                         motion_block_id += 1
                         first_motion_outside_tm = wall_time()
@@ -1032,17 +1074,24 @@ def backend_main(simulate_kittyflap = False):
                         first_motion_inside_raw_tm = first_motion_inside_tm
                         first_motion_inside_raw_mono = first_motion_inside_mono
                     last_motion_outside_tm = wall_time()
-                    if exit_in_progress:
-                        _apply_fast_crossing_locks()
+
+                    # Lock the flap immediately. This is the single source of the "Cat crossed the flap"
+                    # timeline entry and of the suppression flags.
+                    _apply_fast_crossing_locks()
+
+                    if fast_exit_crossing:
+                        # Keep recording for a short while so the outside camera captures the cat that
+                        # just left, then finalize. The post-capture window also blocks every new
+                        # trigger via _motion_processing_suspended().
                         pending_fast_exit_finalize_mono = monotonic_time() + FAST_EXIT_POST_CAPTURE_SECONDS
                         logging.info(
                             "[BACKEND] Immediate lock after exit passage: flap locked, "
                             f"continuing capture for {FAST_EXIT_POST_CAPTURE_SECONDS:.1f}s before finalizing event."
                         )
                     else:
-                        _finalize_motion_block("fast_in_out_crossing")
+                        _finalize_motion_block("fast_in_out_crossing", locks_already_applied=True)
 
-            if last_inside == 0 and motion_inside == 1 and not suppress_inside_motion_block: # Inside motion detected
+            if last_inside == 0 and motion_inside == 1 and not suppress_inside_motion_block and not _motion_processing_suspended(): # Inside motion detected
                 logging.info("[BACKEND] Motion detected INSIDE")
                 # For exit flows, inside motion can happen before outside motion.
                 # Start the timeline early so the order is logical in the UI.
@@ -1227,7 +1276,7 @@ def backend_main(simulate_kittyflap = False):
                         )
 
             # Handle pending per-cat exit decision while inside motion remains active
-            if pending_exit_rfid_check:
+            if pending_exit_rfid_check and not _motion_processing_suspended():
                 if motion_inside == 0:
                     pending_exit_rfid_check = False
                     logging.info("[BACKEND] Inside motion ended before RFID tag was detected; outside will remain locked.")
@@ -1466,7 +1515,7 @@ def backend_main(simulate_kittyflap = False):
                     unlock_inside_tm = 0.0
                     _timeline_log_inside_close(TimelineAction.INSIDE_CLOSED_PREY)
 
-            if unlock_inside or manual_door_override['unlock_inside']:
+            if (unlock_inside and not _motion_processing_suspended()) or manual_door_override['unlock_inside']:
                 logging.info(f"[BACKEND] Door unlock requested {'(manual override)' if manual_door_override['unlock_inside'] else ''}")
                 logging.debug(f"[BACKEND] Motion outside: {motion_outside}, Motion inside: {motion_inside}, Tag ID: {tag_id}, Tag valid: {tag_id_valid}, Motion block ID: {motion_block_id}, Images with mouse: {len(ids_with_mouse)}, Images in current block: {len(ids_of_current_motion_block)} ({ids_of_current_motion_block})")
                 if manual_door_override['unlock_inside'] and magnets.get_inside_state():
@@ -1486,6 +1535,10 @@ def backend_main(simulate_kittyflap = False):
                                 logging.info(f"[BACKEND] Added verdict info '{flag}' due to manual inside unlock.")
                     else:
                         inside_manually_unlocked = False
+                        # Remember that an entry was granted in this block. Used by the immediate-lock
+                        # entry-passage detection so the cat finishing its entry is not mistaken for an exit.
+                        entry_unlocked_in_block = True
+                        entry_unlocked_mono = monotonic_time()
                 
                 manual_door_override['unlock_inside'] = False
 

@@ -433,6 +433,7 @@ def backend_main(simulate_kittyflap = False):
     suppress_entry_decision_after_fast_exit = False
     last_outside_crossing = 0
     last_inside_crossing = 0
+    last_inside_raw_crossing = 0
     pending_fast_exit_finalize_mono = 0.0
     # Immediate-lock-after-passage state:
     #   entry_unlocked_in_block  -> an entry was granted (inside auto-unlocked) during the current motion block
@@ -886,6 +887,7 @@ def backend_main(simulate_kittyflap = False):
             last_inside_raw = motion_inside_raw
             last_outside_crossing_prev = last_outside_crossing
             last_inside_crossing_prev = last_inside_crossing
+            last_inside_raw_crossing_prev = last_inside_raw_crossing
 
             if use_camera_for_motion:
                 # Decide if motion occured currently. Look up to 5 seconds into the past for images with cats
@@ -901,6 +903,10 @@ def backend_main(simulate_kittyflap = False):
             # Threshold-filtered motion (not raw PIR) for immediate-lock crossing detection.
             motion_outside_crossing = motion_outside
             motion_inside_crossing = motion_inside
+            # Raw inside PIR (pre-lazy, pre-threshold) is additionally tracked for entry crossings:
+            # very fast cats can trigger the inside PIR too briefly to pass the threshold filter, so
+            # relying on the filtered signal alone would miss them.
+            motion_inside_raw_crossing = motion_inside_raw
 
             # Update the motion timestamps
             if motion_outside == 1:
@@ -1027,8 +1033,9 @@ def backend_main(simulate_kittyflap = False):
                 first_motion_inside_raw_mono = monotonic_time()
 
             # Immediate lock after passage: detect that the cat has crossed to the other side of the
-            # flap and lock + finalize the event right away. Crossing detection uses the threshold-
-            # filtered PIR signals (motion_*_crossing), never the raw PIR, to avoid ghost triggers.
+            # flap and lock + finalize the event right away. The exit crossing uses the threshold-
+            # filtered PIR/camera signal to avoid ghost triggers; the entry crossing additionally
+            # accepts the raw inside PIR so very fast cats are not missed.
             if CONFIG.get('IMMEDIATE_LOCK_AFTER_PASSAGE') and not _motion_processing_suspended():
                 # Exit passage: outside motion appears while an exit is in progress and the outside is unlocked.
                 fast_exit_crossing = (
@@ -1044,13 +1051,19 @@ def backend_main(simulate_kittyflap = False):
                 # This intentionally does NOT require the inside to still be unlocked, so that a late
                 # (often false-positive) prey re-lock cannot turn the cat finishing its entry into a
                 # spurious exit. entry_unlocked_mono is the debounce reference and survives the re-lock.
+                # We accept a rising edge on EITHER the filtered inside PIR OR the raw inside PIR: for
+                # very fast cats the inside motion is often too brief to pass the threshold filter, so
+                # the raw signal is required to not miss the passage.
+                inside_crossing_rising = (
+                    (last_inside_crossing_prev == 0 and motion_inside_crossing == 1)
+                    or (last_inside_raw_crossing_prev == 0 and motion_inside_raw_crossing == 1)
+                )
                 fast_entry_crossing = (
                     motion_block_active
                     and not exit_in_progress
                     and entry_unlocked_in_block
                     and not inside_manually_unlocked
-                    and last_inside_crossing_prev == 0
-                    and motion_inside_crossing == 1
+                    and inside_crossing_rising
                     and monotonic_time() > entry_unlocked_mono + 0.2
                 )
 
@@ -1068,7 +1081,7 @@ def backend_main(simulate_kittyflap = False):
                         first_motion_outside_mono = monotonic_time()
                         if not any(e.get("action") == TimelineAction.MOTION_OUTSIDE for e in motion_timeline_entries):
                             timeline_append(motion_timeline_entries, TimelineAction.MOTION_OUTSIDE)
-                    if first_motion_inside_mono <= 0.0 and motion_inside_crossing == 1:
+                    if first_motion_inside_mono <= 0.0 and (motion_inside_crossing == 1 or motion_inside_raw_crossing == 1):
                         first_motion_inside_tm = wall_time()
                         first_motion_inside_mono = monotonic_time()
                         first_motion_inside_raw_tm = first_motion_inside_tm
@@ -1592,6 +1605,7 @@ def backend_main(simulate_kittyflap = False):
 
             last_outside_crossing = motion_outside_crossing
             last_inside_crossing = motion_inside_crossing
+            last_inside_raw_crossing = motion_inside_raw_crossing
                 
         except Exception as e:
             # Log full traceback to identify the real call site in case of an exception in the backend loop

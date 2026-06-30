@@ -38,6 +38,9 @@ class TimelineAction:
     OUTSIDE_CLOSED = "outside_closed"
     EVENT_CONCLUSION = "event_conclusion"
     EXIT_SKIPPED_ENTRY = "exit_skipped_entry"
+    FAST_IN_OUT_CROSSING = "fast_in_out_crossing"
+    INSIDE_CLOSED_FAST_IN_OUT = "inside_closed_fast_in_out"
+    OUTSIDE_CLOSED_FAST_IN_OUT = "outside_closed_fast_in_out"
 
 
 def timeline_append(entries: list, action: str, **detail) -> None:
@@ -102,6 +105,9 @@ def timeline_format_message(entry: dict) -> str:
         TimelineAction.OUTSIDE_OPENED: _("Outside opened"),
         TimelineAction.OUTSIDE_CLOSED: _("Outside closed"),
         TimelineAction.EXIT_SKIPPED_ENTRY: _("Entry decision skipped (exit in progress)"),
+        TimelineAction.FAST_IN_OUT_CROSSING: _("Cat crossed the flap"),
+        TimelineAction.INSIDE_CLOSED_FAST_IN_OUT: _("Inside locked (after passage)"),
+        TimelineAction.OUTSIDE_CLOSED_FAST_IN_OUT: _("Outside locked (after passage)"),
     }
 
     if action == TimelineAction.EVENT_CONCLUSION and conclusion:

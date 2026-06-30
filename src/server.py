@@ -4255,8 +4255,7 @@ def server(input, output, session):
 
             block_ids = [int(b) for b in df_events['block_id'].tolist()]
             timelines_by_block = db_get_motion_timelines(CONFIG['KITTYHACK_DATABASE_PATH'], block_ids)
-            info_icon_html = str(icon_svg("circle-info", margin_left="0", margin_right="0"))
-            info_btn_title = html_module.escape(_("Show event details"))
+            event_row_title = html_module.escape(_("Show event details"))
 
             # Process event types into HTML with icons
             event_icons = {}
@@ -4296,8 +4295,6 @@ def server(input, output, session):
                     html += f'<tr class="date-separator-row"><td colspan="4" class="event-date-separator">{row["date_display"]}</td></tr>'
                     last_date = row['date_display']
                 
-                html += '<tr>'
-                html += f'<td>{row["time"]}</td>'
                 event_info = event_icons[idx]
                 block_id = int(row['block_id'])
                 panel_id = f"event-timeline-{block_id}"
@@ -4310,17 +4307,20 @@ def server(input, output, session):
                     timeline_entries = timeline_extract_latest_event(timeline_entries)
                 timeline_html = timeline_entries_to_html(timeline_entries, CONFIG['TIMEZONE'])
                 html += (
+                    f'<tr class="event-data-row kh-event-row-toggle" data-kh-panel-id="{panel_id}" '
+                    f'role="button" tabindex="0" aria-expanded="false" aria-controls="{panel_id}" '
+                    f'title="{event_row_title}">'
+                )
+                html += f'<td>{row["time"]}</td>'
+                html += (
                     f'<td><div class="event-icons-cell">'
                     f'<div class="event-icons">{event_info["icons_html"]}</div>'
-                    f'<button type="button" class="btn btn-link btn-sm event-timeline-toggle p-0 ms-1" '
-                    f'data-bs-toggle="collapse" data-bs-target="#{panel_id}" '
-                    f'aria-expanded="false" aria-controls="{panel_id}" title="{info_btn_title}">'
-                    f'{info_icon_html}</button></div></td>'
+                    f'</div></td>'
                 )
                 html += f'<td>{row["cat_name"]}</td>'
                 unique_id = hashlib.md5(os.urandom(16)).hexdigest()
                 btn_id = f"btn_show_event_{unique_id}"
-                html += f'<td><div>{btn_show_event(btn_id)}</div></td>'
+                html += f'<td class="event-action-cell"><div>{btn_show_event(btn_id)}</div></td>'
                 show_event_server(btn_id, row['block_id'])
                 html += '</tr>'
                 html += (
@@ -7380,6 +7380,28 @@ def server(input, output, session):
                                 )
                             )
                         ),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.input_switch(
+                                    "btnImmediateLockAfterPassage",
+                                    _("Immediate locking after passage"),
+                                    CONFIG['IMMEDIATE_LOCK_AFTER_PASSAGE'],
+                                    width="90%",
+                                )
+                            ),
+                            ui.column(
+                                12,
+                                info_toggle(
+                                    "immediate_lock_after_passage_info",
+                                    _("About this feature"),
+                                    _("When enabled, the flap locks again and the motion event is finalized as soon as motion is detected on the opposite side of the flap (cat has crossed).") + "  \n\n" +
+                                    _("This feature is useful if your cat is very fast and the flap should not remain open for too long. Will help prevent multiple cats from using the flap in quick succession.") + "  \n\n" +
+                                    _("If your cat is shy or just needs several attempts to cross, you should not enable this feature. Otherwise, the flap could be accidentally locked while your cat is still trying to cross.")
+                                )
+                            )
+                        ),
                         full_screen=False,
                         class_="generic-container align-left",
                         style_="padding-left: 1rem !important; padding-right: 1rem !important;",
@@ -8158,6 +8180,7 @@ def server(input, output, session):
         # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
         #CONFIG['PIR_OUTSIDE_THRESHOLD'] = 10-int(input.sldPirOutsideThreshold())
         CONFIG['PIR_INSIDE_THRESHOLD'] = float(input.sldPirInsideThreshold())
+        CONFIG['IMMEDIATE_LOCK_AFTER_PASSAGE'] = input.btnImmediateLockAfterPassage()
         if not is_remote_mode():
             CONFIG['WLAN_TX_POWER'] = int(input.sldWlanTxPower())
         CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION'] = int(input.sldLockAfterPreyDetect())

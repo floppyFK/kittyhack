@@ -431,6 +431,9 @@ def backend_main(simulate_kittyflap = False):
     suppress_outside_motion_block = False
     suppress_inside_motion_block = False
     suppress_entry_decision_after_fast_exit = False
+    # If entry was skipped because an exit was active earlier in the same motion block,
+    # keep this marker so we can log the skip once and re-evaluate later if exit ends.
+    deferred_entry_due_to_exit = False
     last_outside_crossing = 0
     last_inside_crossing = 0
     last_inside_raw_crossing = 0
@@ -624,6 +627,7 @@ def backend_main(simulate_kittyflap = False):
         nonlocal entry_unlocked_mono
         nonlocal event_cooldown_until_mono
         nonlocal pending_exit_rfid_check
+        nonlocal deferred_entry_due_to_exit
 
         if not motion_block_active:
             return
@@ -636,6 +640,7 @@ def backend_main(simulate_kittyflap = False):
         # once by _apply_fast_crossing_locks(), which is the single source for fast-crossing locks.
 
         exit_in_progress = False
+        deferred_entry_due_to_exit = False
         unlock_inside_decision_made = False
         tag_id_valid = False
 
@@ -1178,6 +1183,10 @@ def backend_main(simulate_kittyflap = False):
                 ((monotonic_time() - last_motion_inside_mono) > OPEN_OUTSIDE_TIMEOUT) and
                 (magnets.check_queued("lock_outside") == False) ):
                     magnets.queue_command("lock_outside")
+                    # Exit passage has ended from the control perspective. Keep the current
+                    # motion block alive but allow a fresh entry decision if outside motion
+                    # persists and turns into a valid entry attempt.
+                    exit_in_progress = False
                     _timeline_log_outside_close()
 
             # Check also for a cat via the camera, if the option is enabled and no RFID tag is detected
@@ -1327,10 +1336,14 @@ def backend_main(simulate_kittyflap = False):
             if motion_outside and not unlock_inside_decision_made and not suppress_entry_decision_after_fast_exit:
                 # Skip entry decision if this motion block represents an exit
                 if exit_in_progress:
-                    unlock_inside_decision_made = True
-                    timeline_append(motion_timeline_entries, TimelineAction.EXIT_SKIPPED_ENTRY)
-                    logging.info("[BACKEND] Skipping entry decision because exit is in progress for this motion block.")
+                    if not deferred_entry_due_to_exit:
+                        deferred_entry_due_to_exit = True
+                        timeline_append(motion_timeline_entries, TimelineAction.EXIT_SKIPPED_ENTRY)
+                        logging.info("[BACKEND] Skipping entry decision because exit is in progress for this motion block.")
                 else:
+                    if deferred_entry_due_to_exit:
+                        logging.info("[BACKEND] Exit flow ended while outside motion persists. Re-evaluating entry decision for current motion block.")
+                        deferred_entry_due_to_exit = False
                     identified_tag, id_source = _identified_tag_for_entry(
                         tag_id, tag_id_from_video, known_rfid_tags, CONFIG['ALLOWED_TO_ENTER']
                     )

@@ -28,6 +28,7 @@ LAZY_CAT_DELAY_PIR_MOTION = 6.0  # Keep the PIR active for an additional 6 secon
 LAZY_CAT_DELAY_CAM_MOTION = 12.0 # Keep the PIR active for an additional 12 seconds after the last detected motion when using camera-based motion detection
 FAST_EXIT_POST_CAPTURE_SECONDS = 6.0  # Extra recording after fast-lock exit crossing before finalizing the event
 EVENT_COOLDOWN_SECONDS = 3.0     # After an event is finalized, ignore all new motion triggers for this long (PIR settling)
+MAX_MOTION_BLOCK_SECONDS = 90.0  # Finalize a motion block after this time even if outside motion never falls cleanly
 
 # Prepare gettext for translations based on the configured language
 _ = set_language(CONFIG['LANGUAGE'])
@@ -434,6 +435,10 @@ def backend_main(simulate_kittyflap = False):
     # If entry was skipped because an exit was active earlier in the same motion block,
     # keep this marker so we can log the skip once and re-evaluate later if exit ends.
     deferred_entry_due_to_exit = False
+    # After an exit timeout closes the outside lock, require a fresh outside-motion rising edge
+    # before allowing any new entry decision. This prevents reusing the same continuous
+    # outside motion (and stale RFID) as a phantom re-entry in the same block.
+    wait_for_outside_rising_after_exit = False
     last_outside_crossing = 0
     last_inside_crossing = 0
     last_inside_raw_crossing = 0
@@ -620,6 +625,7 @@ def backend_main(simulate_kittyflap = False):
         nonlocal suppress_outside_motion_block
         nonlocal suppress_inside_motion_block
         nonlocal suppress_entry_decision_after_fast_exit
+        nonlocal wait_for_outside_rising_after_exit
         nonlocal unlock_inside_tm
         nonlocal timeline_outside_reported
         nonlocal pending_fast_exit_finalize_mono
@@ -641,6 +647,7 @@ def backend_main(simulate_kittyflap = False):
 
         exit_in_progress = False
         deferred_entry_due_to_exit = False
+        wait_for_outside_rising_after_exit = False
         unlock_inside_decision_made = False
         tag_id_valid = False
 
@@ -681,13 +688,34 @@ def backend_main(simulate_kittyflap = False):
             conclusion=str(event_type),
         )
 
+        # Guard against state combinations where an outside-motion block is finalized
+        # without a properly initialized outside start timestamp (e.g. block started from
+        # inside motion first). Without this fallback, the image window can expand to epoch 0.
+        outside_start_tm = first_motion_outside_tm if first_motion_outside_tm > 0.0 else first_motion_inside_tm
+        outside_start_mono = first_motion_outside_mono if first_motion_outside_mono > 0.0 else first_motion_inside_mono
+        if outside_start_tm <= 0.0:
+            outside_start_tm = wall_time()
+        if outside_start_mono <= 0.0:
+            outside_start_mono = monotonic_time()
+
+        if first_motion_outside_tm <= 0.0:
+            logging.warning(
+                "[BACKEND] Missing first outside-motion timestamp while finalizing block; "
+                f"using fallback start time {outside_start_tm}."
+            )
+            first_motion_outside_tm = outside_start_tm
+            first_motion_outside_mono = outside_start_mono
+
         if use_camera_for_motion:
             if event_type == EventType.CAT_WENT_OUTSIDE:
-                log_start_tm = min(first_motion_outside_tm, first_motion_inside_tm + 2.5)
+                if first_motion_inside_tm > 0.0:
+                    log_start_tm = min(outside_start_tm, first_motion_inside_tm + 2.5)
+                else:
+                    log_start_tm = outside_start_tm
             else:
-                log_start_tm = first_motion_outside_tm - 2.5
+                log_start_tm = outside_start_tm - 2.5
         else:
-            log_start_tm = first_motion_outside_tm if first_motion_outside_tm > 0.0 else first_motion_inside_raw_tm
+            log_start_tm = outside_start_tm if outside_start_tm > 0.0 else first_motion_inside_raw_tm
 
         if trigger_source == "fast_in_out_crossing" and last_motion_outside_tm <= 0.0:
             last_motion_outside_tm = wall_time()
@@ -966,6 +994,20 @@ def backend_main(simulate_kittyflap = False):
                 )
                 _finalize_motion_block("fast_in_out_crossing", locks_already_applied=True)
 
+            # Safety net: finalize very long motion blocks even when outside motion never
+            # cleanly falls to 0 (continuous movement near flap, camera noise).
+            if motion_block_active and pending_fast_exit_finalize_mono <= 0.0:
+                block_start_mono = first_motion_outside_mono if first_motion_outside_mono > 0.0 else first_motion_inside_raw_mono
+                if block_start_mono <= 0.0:
+                    block_start_mono = first_motion_inside_mono
+                if block_start_mono > 0.0 and (monotonic_time() - block_start_mono) >= MAX_MOTION_BLOCK_SECONDS:
+                    last_motion_outside_tm = wall_time()
+                    logging.warning(
+                        f"[BACKEND] Motion block '{motion_block_id}' exceeded {MAX_MOTION_BLOCK_SECONDS:.0f}s. "
+                        "Finalizing to prevent endless block growth."
+                    )
+                    _finalize_motion_block("outside_motion_timeout")
+
             if last_outside == 1 and motion_outside == 0:
                 if not use_camera_for_motion and pending_fast_exit_finalize_mono <= 0.0:
                     if model_handler.get_run_state() == True:
@@ -1007,6 +1049,8 @@ def backend_main(simulate_kittyflap = False):
             
             # Outside motion detected
             if last_outside == 0 and motion_outside == 1 and not suppress_outside_motion_block and not _motion_processing_suspended():
+                if wait_for_outside_rising_after_exit:
+                    wait_for_outside_rising_after_exit = False
                 motion_block_id += 1
                 # If this block was already started by an inside-motion trigger,
                 # keep the collected timeline and only append the outside motion step.
@@ -1187,6 +1231,7 @@ def backend_main(simulate_kittyflap = False):
                     # motion block alive but allow a fresh entry decision if outside motion
                     # persists and turns into a valid entry attempt.
                     exit_in_progress = False
+                    wait_for_outside_rising_after_exit = True
                     _timeline_log_outside_close()
 
             # Check also for a cat via the camera, if the option is enabled and no RFID tag is detected
@@ -1333,7 +1378,12 @@ def backend_main(simulate_kittyflap = False):
                         pending_exit_rfid_check = False
 
             # Check if we are allowed to open the inside direction
-            if motion_outside and not unlock_inside_decision_made and not suppress_entry_decision_after_fast_exit:
+            if (
+                motion_outside
+                and not unlock_inside_decision_made
+                and not suppress_entry_decision_after_fast_exit
+                and not wait_for_outside_rising_after_exit
+            ):
                 # Skip entry decision if this motion block represents an exit
                 if exit_in_progress:
                     if not deferred_entry_due_to_exit:

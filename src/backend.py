@@ -519,6 +519,11 @@ def backend_main(simulate_kittyflap = False):
 
     def _timeline_log_inside_open(manual=False):
         nonlocal timeline_inside_reported
+        # Never mutate the timeline buffer outside an active motion block. Door state that
+        # changes between blocks (e.g. trailing/forced locks) is re-synced from the actual
+        # magnet state when the next block starts (see _timeline_start_motion_block).
+        if not motion_block_active:
+            return
         if timeline_inside_reported == "open":
             return
         timeline_inside_reported = "open"
@@ -529,6 +534,8 @@ def backend_main(simulate_kittyflap = False):
 
     def _timeline_log_inside_close(close_action):
         nonlocal timeline_inside_reported
+        if not motion_block_active:
+            return
         if timeline_inside_reported == "closed":
             return
         timeline_inside_reported = "closed"
@@ -536,6 +543,8 @@ def backend_main(simulate_kittyflap = False):
 
     def _timeline_log_outside_open():
         nonlocal timeline_outside_reported
+        if not motion_block_active:
+            return
         if timeline_outside_reported == "open":
             return
         timeline_outside_reported = "open"
@@ -543,6 +552,8 @@ def backend_main(simulate_kittyflap = False):
 
     def _timeline_log_outside_close():
         nonlocal timeline_outside_reported
+        if not motion_block_active:
+            return
         if timeline_outside_reported == "closed":
             return
         timeline_outside_reported = "closed"
@@ -1052,9 +1063,11 @@ def backend_main(simulate_kittyflap = False):
                 if wait_for_outside_rising_after_exit:
                     wait_for_outside_rising_after_exit = False
                 motion_block_id += 1
-                # If this block was already started by an inside-motion trigger,
-                # keep the collected timeline and only append the outside motion step.
-                if not motion_timeline_entries:
+                # Start a fresh block unless one is already active (e.g. started by an
+                # inside-motion trigger in the same block). Keying this off motion_block_active
+                # (not the timeline buffer) guarantees the block is activated even if a stale
+                # timeline entry lingered from a previous, already-finalized block.
+                if not motion_block_active:
                     _timeline_start_motion_block(start_with_inside=False)
                 else:
                     timeline_append(motion_timeline_entries, TimelineAction.MOTION_OUTSIDE)
@@ -1157,7 +1170,7 @@ def backend_main(simulate_kittyflap = False):
                 logging.info("[BACKEND] Motion detected INSIDE")
                 # For exit flows, inside motion can happen before outside motion.
                 # Start the timeline early so the order is logical in the UI.
-                if first_motion_outside_mono <= 0.0 and not motion_timeline_entries:
+                if first_motion_outside_mono <= 0.0 and not motion_block_active:
                     _timeline_start_motion_block(start_with_inside=True)
                 else:
                     timeline_append(motion_timeline_entries, TimelineAction.MOTION_INSIDE)

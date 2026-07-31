@@ -1,8 +1,4 @@
-"""Label Studio API integration for Kittyhack.
-
-This module uses token-based authentication because current Label Studio API
-endpoints are designed for API keys/tokens, not username/password login.
-"""
+"""Label Studio HTTP API client and convenience helpers for AI training."""
 
 import io
 import logging
@@ -20,7 +16,7 @@ import requests
 from src.baseconfig import CONFIG
 
 class LabelStudioAPI:
-    """Client for Label Studio API interactions."""
+    """Token-authenticated client for a local Label Studio instance."""
     
     # Default Label Studio instance on localhost
     DEFAULT_HOST = "127.0.0.1"
@@ -35,14 +31,7 @@ class LabelStudioAPI:
     )
     
     def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, timeout: int = 10):
-        """
-        Initialize Label Studio API client.
-        
-        Args:
-            host: Label Studio server host
-            port: Label Studio server port
-            timeout: Request timeout in seconds
-        """
+        """Create a client for ``http://host:port``."""
         self.host = host
         self.port = port
         self.base_url = f"http://{host}:{port}"
@@ -196,16 +185,7 @@ class LabelStudioAPI:
         return time.time() + 240  # 4-minute fallback
 
     def authenticate(self, token: Optional[str] = None) -> bool:
-        """Authenticate against Label Studio using an API token.
-
-        Supports both:
-        - **Legacy Tokens** – simple hex hash, used with ``Token`` scheme.
-        - **Personal Access Tokens (PAT)** – JWT *refresh* token that is first
-          exchanged for a short-lived access token via
-          ``POST /api/token/refresh``, then used with ``Bearer`` scheme.
-
-        The token format is auto-detected so the correct scheme is tried first.
-        """
+        """Validate token (legacy Token or PAT/Bearer) against whoami."""
         self.token = self._resolve_token(token)
         self._access_token = None
         self._access_token_expires = 0.0
@@ -254,16 +234,11 @@ class LabelStudioAPI:
             return False
     
     def is_authenticated(self) -> bool:
-        """Check if currently authenticated."""
+        """True if a token has been set on this client."""
         return bool(self.token)
     
     def get_projects(self) -> Optional[List[Dict[str, Any]]]:
-        """
-        Get list of all projects.
-        
-        Returns:
-            List of projects on success, None on error
-        """
+        """Return all Label Studio projects, or None on error."""
         if not self.is_authenticated():
             logging.error("[LABELSTUDIO] Not authenticated")
             return None
@@ -291,12 +266,7 @@ class LabelStudioAPI:
             return None
     
     def export_project_as_yolo(self, project_id: int, output_path: str) -> bool:
-        """Export a project as YOLO format with images and save to *output_path*.
-
-        Downloads YOLO labels from Label Studio, then fetches every task image
-        individually via the ``/data/`` proxy and packages everything into a
-        single ZIP.
-        """
+        """Export project as YOLO ZIP (labels + images) to ``output_path``."""
         if not self.is_authenticated():
             logging.error("[LABELSTUDIO] Not authenticated")
             return False
@@ -578,15 +548,7 @@ class LabelStudioAPI:
         return False
     
     def get_project_details(self, project_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Get details of a specific project.
-        
-        Args:
-            project_id: Project ID
-            
-        Returns:
-            Project details on success, None on error
-        """
+        """Return project metadata dict, or None on error."""
         if not self.is_authenticated():
             logging.error("[LABELSTUDIO] Not authenticated")
             return None
@@ -611,17 +573,7 @@ class LabelStudioAPI:
             return None
     
     def upload_image(self, project_id: int, image_bytes: bytes, filename: str) -> bool:
-        """
-        Upload an image to a Label Studio project as a new task.
-
-        Args:
-            project_id: Target project ID
-            image_bytes: Raw JPEG/PNG image bytes
-            filename: Filename for the uploaded image
-
-        Returns:
-            True if upload succeeded, False otherwise
-        """
+        """Upload one image as a new task in the project."""
         if not self.is_authenticated():
             logging.error("[LABELSTUDIO] Not authenticated")
             return False
@@ -649,17 +601,7 @@ class LabelStudioAPI:
 
     @staticmethod
     def is_labelstudio_available(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, timeout: int = 5) -> bool:
-        """
-        Check if Label Studio is available at the given host:port.
-        
-        Args:
-            host: Label Studio server host
-            port: Label Studio server port
-            timeout: Request timeout in seconds
-            
-        Returns:
-            True if Label Studio is available, False otherwise
-        """
+        """True if Label Studio responds on host:port (auth optional)."""
         try:
             # /api/version is generally available without auth and is a stable probe.
             url = f"http://{host}:{port}/api/version"
@@ -669,7 +611,7 @@ class LabelStudioAPI:
             return False
     
     def close(self):
-        """Close the session."""
+        """Close the underlying requests session."""
         if self.session:
             self.session.close()
 
@@ -679,17 +621,7 @@ def get_labelstudio_projects_list(
     port: int = LabelStudioAPI.DEFAULT_PORT,
     token: Optional[str] = None,
 ) -> Optional[List[Dict[str, Any]]]:
-    """
-    Helper function to get list of Label Studio projects.
-    Handles authentication automatically.
-    
-    Args:
-        host: Label Studio server host
-        port: Label Studio server port
-        
-    Returns:
-        List of projects or None on error
-    """
+    """Authenticate and return Label Studio projects, or None on error."""
     try:
         if not LabelStudioAPI.is_labelstudio_available(host, port):
             logging.warning("[LABELSTUDIO] Label Studio is not available")
@@ -716,18 +648,7 @@ def export_labelstudio_project_as_zip(
     port: int = LabelStudioAPI.DEFAULT_PORT,
     token: Optional[str] = None,
 ) -> bool:
-    """
-    Helper function to export a Label Studio project as YOLO format ZIP.
-    
-    Args:
-        project_id: Project ID to export
-        output_path: Path where to save the ZIP file
-        host: Label Studio server host
-        port: Label Studio server port
-        
-    Returns:
-        True if successful, False otherwise
-    """
+    """Authenticate and export a project as a YOLO ZIP to ``output_path``."""
     try:
         if not LabelStudioAPI.is_labelstudio_available(host, port):
             logging.warning("[LABELSTUDIO] Label Studio is not available")
@@ -753,14 +674,7 @@ def get_labelstudio_project_task_summary(
     port: int = LabelStudioAPI.DEFAULT_PORT,
     token: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Return task statistics for a Label Studio project.
-
-    Returns a dict with keys:
-    - ``total_tasks``: total number of tasks
-    - ``annotated_tasks``: number of tasks with at least one annotation
-    - ``unannotated_tasks``: tasks without annotations
-    - ``ready``: True if all tasks are annotated and total > 0
-    """
+    """Return task counts (total/annotated/unannotated/ready) for a project."""
     try:
         if not LabelStudioAPI.is_labelstudio_available(host, port):
             return None
@@ -793,20 +707,7 @@ def upload_image_to_labelstudio_project(
     port: int = LabelStudioAPI.DEFAULT_PORT,
     token: Optional[str] = None,
 ) -> bool:
-    """
-    Upload a single image to a Label Studio project.
-
-    Args:
-        project_id: Target project ID
-        image_bytes: Raw image bytes (JPEG/PNG)
-        filename: Filename for the uploaded image
-        host: Label Studio server host
-        port: Label Studio server port
-        token: Optional API token override
-
-    Returns:
-        True if successful, False otherwise
-    """
+    """Authenticate and upload one image to a Label Studio project."""
     try:
         if not LabelStudioAPI.is_labelstudio_available(host, port):
             logging.warning("[LABELSTUDIO] Label Studio is not available")

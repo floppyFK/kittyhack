@@ -1,3 +1,5 @@
+"""MQTT client, topic map, and Home Assistant–oriented state publishing."""
+
 from paho.mqtt import client as mqtt
 import json
 import logging
@@ -7,9 +9,14 @@ import base64
 import cv2
 import numpy as np
 from src.baseconfig import CONFIG, AllowedToEnter, AllowedToExit, update_single_config_parameter
-from src.helper import get_git_version, EventType
+from src.helper import (
+    Versioning,
+    EventType,
+)
 
 class MQTTConfig:
+    """Device id and topic path constants for Kittyhack MQTT."""
+
     device_id = CONFIG['MQTT_DEVICE_ID']
     topics = {
         "event_type": f"kittyhack/{device_id}/events",
@@ -27,6 +34,8 @@ class MQTTConfig:
     }
 
 class MQTTClient:
+    """Thin paho-mqtt wrapper with LWT online/offline status."""
+
     def __init__(self, broker_address, broker_port, username=None, password=None, client_name=None):
         self.broker_address = broker_address
         self.broker_port = int(broker_port)
@@ -48,6 +57,7 @@ class MQTTClient:
         self.client.on_message = self.on_message
 
     def connect(self):
+        """Connect, start the network loop, and publish online status."""
         try:
             self.client.connect(self.broker_address, self.broker_port, 60)
             self.client.loop_start()
@@ -65,6 +75,7 @@ class MQTTClient:
             return False
 
     def publish(self, topic, message, retain=False):
+        """JSON-encode ``message`` and publish to ``topic``."""
         if not self.connected:
             self.connect()
         try:
@@ -73,7 +84,7 @@ class MQTTClient:
             logging.warning(f"[MQTT] Could not publish to {topic}: {e}")
             
     def subscribe(self, topic, callback=None):
-        """Subscribe to a topic and optionally register a callback for it"""
+        """Subscribe to ``topic`` and optionally register a per-topic callback."""
         if not self.connected:
             self.connect()
             
@@ -88,7 +99,7 @@ class MQTTClient:
             logging.warning(f"[MQTT] Could not subscribe to {topic}: {e}")
     
     def on_message(self, client, userdata, message):
-        """Callback for when a message is received"""
+        """Dispatch an inbound message to the registered topic callback."""
         topic = message.topic
         try:
             payload = json.loads(message.payload.decode())
@@ -110,7 +121,7 @@ class MQTTClient:
             logging.warning(f"[MQTT] Error handling message on {topic}: {e}")
 
     def disconnect(self):
-        """Disconnect from the MQTT broker, publishing offline status first"""
+        """Publish offline status, then stop the loop and disconnect."""
         try:
             # First publish offline status
             if self.connected:
@@ -127,6 +138,8 @@ class MQTTClient:
             logging.error(f"[MQTT] Error during graceful disconnect: {e}")
 
 class StatePublisher:
+    """Publish flap/motion/config state and HA discovery; handle inbound sets."""
+
     def __init__(self, mqtt_client, inside_lock_state=None, outside_lock_state=None, 
                 motion_inside_state=None, motion_outside_state=None, prey_detected_state=None):
         self.mqtt_client = mqtt_client
@@ -167,47 +180,47 @@ class StatePublisher:
         self.register_config_handlers()
 
     def publish_lock_inside(self, locked: bool):
+        """Publish inside lock state (``locked`` / ``unlocked``)."""
         topic = MQTTConfig.topics["inside_lock_state"]
         state = "locked" if locked else "unlocked"
         if self.mqtt_client.connected:
             self.mqtt_client.client.publish(topic, state, retain=True)
 
     def publish_lock_outside(self, locked: bool):
+        """Publish outside lock state (``locked`` / ``unlocked``)."""
         topic = MQTTConfig.topics["outside_lock_state"]
         state = "locked" if locked else "unlocked"
         if self.mqtt_client.connected:
             self.mqtt_client.client.publish(topic, state, retain=True)
 
     def publish_motion_outside(self, detected: bool):
+        """Publish outside PIR motion state."""
         topic = MQTTConfig.topics["motion_outside_state"]
         state = "detected" if detected else "not_detected"
         if self.mqtt_client.connected:
             self.mqtt_client.client.publish(topic, state, retain=True)
 
     def publish_motion_inside(self, detected: bool):
+        """Publish inside PIR motion state."""
         topic = MQTTConfig.topics["motion_inside_state"]
         state = "detected" if detected else "not_detected"
         if self.mqtt_client.connected:
             self.mqtt_client.client.publish(topic, state, retain=True)
 
     def publish_prey_detected(self, detected: bool):
+        """Publish prey-detection state."""
         topic = MQTTConfig.topics["prey_detected"]
         state = "detected" if detected else "not_detected"
         if self.mqtt_client.connected:
             self.mqtt_client.client.publish(topic, state, retain=True)
         
     def register_manual_override_handler(self, callback_function):
-        """Register a callback function to handle manual override commands
-        
-        Args:
-            callback_function: Function that will be called when a manual override message 
-                              is received. The function should accept one parameter (the message payload).
-        """
+        """Subscribe to the manual-override topic with ``callback_function``."""
         topic = MQTTConfig.topics["manual_override"]
         self.mqtt_client.subscribe(topic, callback_function)
 
     def publish_allowed_to_exit(self, allowed: AllowedToExit):
-        """Publish the current state of ALLOWED_TO_EXIT config parameter (enum)"""
+        """Publish the current ALLOWED_TO_EXIT value (localized label)."""
         topic = MQTTConfig.topics["allowed_to_exit"]
         translations = {
             AllowedToExit.ALLOW: {"en": "Allow exit", "de": "Ausgang erlauben"},
@@ -220,13 +233,13 @@ class StatePublisher:
             logging.info(f"[MQTT] Published ALLOWED_TO_EXIT: {friendly} (raw: {allowed.value})")
     
     def register_config_handlers(self):
-        """Register handlers for configuration topics"""
+        """Subscribe to entry/exit config set topics."""
         # Subscribe to config set topics
         self.mqtt_client.subscribe(MQTTConfig.topics["allowed_to_exit_set"], self.handle_allowed_to_exit_change)
         self.mqtt_client.subscribe(MQTTConfig.topics["allowed_to_enter_set"], self.handle_allowed_to_enter_change)
     
     def handle_allowed_to_exit_change(self, payload):
-        """Handle changes to the ALLOWED_TO_EXIT configuration parameter"""
+        """Apply an inbound ALLOWED_TO_EXIT change from MQTT."""
         try:
             # Accept dict or str payload
             raw = payload.get('state') if isinstance(payload, dict) else payload
@@ -258,6 +271,7 @@ class StatePublisher:
             logging.error(f"[MQTT] Error handling ALLOWED_TO_EXIT change: {e}")
     
     def handle_allowed_to_enter_change(self, payload):
+        """Apply an inbound ALLOWED_TO_ENTER change from MQTT."""
         try:
             # Get the received value
             if isinstance(payload, dict):
@@ -312,13 +326,7 @@ class StatePublisher:
             logging.error(f"[MQTT] Error handling ALLOWED_TO_ENTER change: {e}")
 
     def publish_image(self, image_data, retain=False, max_size=1280):
-        """Publish an image to the camera image topic
-        
-        Args:
-            image_data (numpy.ndarray or bytes): The image data to publish
-            retain (bool): Whether to retain the message
-            max_size (int): Maximum size for the largest dimension of the image
-        """
+        """Resize/encode an image and publish it to the camera topic."""
         try:            
             # If image_data is a numpy array (cv2 image), use it directly
             if isinstance(image_data, np.ndarray):
@@ -355,12 +363,7 @@ class StatePublisher:
             logging.warning(f"[MQTT] Could not publish image: {e}")
     
     def start_periodic_image_publishing(self, interval=None):
-        """Start a thread that periodically publishes the latest camera image
-        
-        Args:
-            interval (float, optional): The interval in seconds between image publications. 
-                                    If None, use the value from CONFIG.
-        """
+        """Start a daemon thread that periodically publishes the latest camera frame."""
         from src.model import ModelHandler  # Import here to avoid circular imports
         
         if interval is None:
@@ -402,14 +405,14 @@ class StatePublisher:
         logging.info(f"[MQTT] Started periodic image publishing thread (interval: {interval}s)")
     
     def stop_periodic_image_publishing(self):
-        """Stop the periodic image publishing thread"""
+        """Stop the periodic image-publishing thread."""
         self.stop_image_thread = True
         if self.image_publish_thread and self.image_publish_thread.is_alive():
             self.image_publish_thread.join(timeout=1.0)
             logging.info("[MQTT] Stopped periodic image publishing thread")
 
     def cleanup_old_discovery_topics(self):
-        """Publish empty retained payloads to remove deprecated HA discovery entries"""
+        """Clear deprecated Home Assistant discovery topics (empty retain)."""
         try:
             device_id = CONFIG['MQTT_DEVICE_ID']
             discovery_prefix = "homeassistant"
@@ -427,7 +430,7 @@ class StatePublisher:
             logging.warning(f"[MQTT] Could not clean old discovery topics: {e}")
 
     def publish_discovery_topics(self):
-        """Publish Home Assistant MQTT discovery topics for auto-configuration"""
+        """Publish Home Assistant MQTT discovery configs for this device."""
         # First, clean up deprecated discovery topics (e.g., old switch for allow_exit)
         self.cleanup_old_discovery_topics()
 
@@ -440,7 +443,7 @@ class StatePublisher:
             "name": f"{device_id}",
             "model": "KittyHack",
             "manufacturer": "FloppyFK",
-            "sw_version": get_git_version()
+            "sw_version": Versioning.get_git_version()
         }
         
         # Availability configuration to add to all entities
@@ -598,7 +601,7 @@ class StatePublisher:
                 logging.info(f"[MQTT] Published discovery topic: {discovery_topic}")
 
     def publish_allowed_to_enter(self, allowed: AllowedToEnter):
-        """Publish the current state of ALLOWED_TO_ENTER config parameter with friendly name"""
+        """Publish the current ALLOWED_TO_ENTER value (localized label)."""
         topic = MQTTConfig.topics["allowed_to_enter"]
         
         # Map enum values to friendly names
@@ -633,7 +636,7 @@ class StatePublisher:
             logging.info(f"[MQTT] Published ALLOWED_TO_ENTER: {friendly_name} (raw: {allowed.value})")
 
     def update_language_dependent_topics(self):
-        """Update all language-dependent MQTT topics after language change"""
+        """Republish discovery and localized config topics after a language change."""
         logging.info("[MQTT] Updating language-dependent MQTT topics")
         
         # Republish discovery topics with new language-specific labels
@@ -645,14 +648,7 @@ class StatePublisher:
         logging.info("[MQTT] Language-dependent MQTT topics updated")
 
     def publish_event_type(self, event_type, cat_name=None):
-        """
-        Publish an event type to MQTT
-        
-        Args:
-            event_type (str): The event type to publish (can contain multiple event types separated by commas)
-            cat_name (str, optional): The detected cat name
-        """
-        from src.helper import EventType
+        """Publish a motion-block event type (and optional cat name) to MQTT."""
         topic = MQTTConfig.topics["event_type"]
         
         # First publish a dummy event with retain=False to force a state change

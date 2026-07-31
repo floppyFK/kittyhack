@@ -1,3 +1,4 @@
+"""GPIO magnets and RFID reader with a shared safety-delayed command queue."""
 import logging
 import random
 import select
@@ -71,6 +72,7 @@ class HardwareCommandQueue:
             logging.info("[HW_QUEUE] Started shared command queue processor thread.")
     
     def _process_commands(self):
+        """Worker loop: dequeue magnet/RFID ops with MAG_RFID_CMD_DELAY between them."""
         # Register task in the sigterm_monitor object
         sigterm_monitor.register_task()
 
@@ -181,12 +183,15 @@ class HardwareCommandQueue:
                 logging.info("[HW_QUEUE] Command queue emptied.")
 
 class MagnetController:
+    """Holds inside/outside magnet unlock flags (True = unlocked)."""
+
     def __init__(self):
         self._magnet_state_outside = False  # False = locked, True = unlocked
         self._magnet_state_inside = False  # False = locked, True = unlocked
 
     @property
     def magnet_state_outside(self):
+        """True if the outside direction is unlocked."""
         return self._magnet_state_outside
 
     @magnet_state_outside.setter
@@ -195,6 +200,7 @@ class MagnetController:
 
     @property
     def magnet_state_inside(self):
+        """True if the inside direction is unlocked."""
         return self._magnet_state_inside
 
     @magnet_state_inside.setter
@@ -202,15 +208,19 @@ class MagnetController:
         self._magnet_state_inside = state
 
 class Magnets:
+    """Door magnets: queue unlock/lock commands with shared magnet/RFID safety delays."""
+
     instance = None
     
     def __init__(self, simulate_kittyflap=False):
+        """Create magnet controller; call ``init()`` then ``start_magnet_control()``."""
         self.magnet_controller = MagnetController()
         self.simulate_kittyflap = simulate_kittyflap
         # Use the shared command queue
         self.command_queue = HardwareCommandQueue()
 
     def init(self):
+        """Register singleton, configure GPIO, start the shared queue, and lock both sides."""
         Magnets.instance = self
 
         if self.simulate_kittyflap:
@@ -319,9 +329,7 @@ class Magnets:
         return self.magnet_controller.magnet_state_inside
     
     def start_magnet_control(self):
-        """
-        Initializes and starts the magnet control thread.
-        """
+        """Start the shared HardwareCommandQueue processor (magnet + RFID safety delays)."""
         # Start the shared command processor
         self.command_queue.start_command_processor()
 
@@ -388,7 +396,10 @@ class Magnets:
 
     def empty_queue(self, shutdown=False):
         """
-        Checks for remaining commands in the command queue and empties it to return magnets to idle state.
+        Drop pending magnet commands and immediately lock any unlocked direction.
+
+        Args:
+            shutdown: If True, log messages note shutdown (same locking behavior).
         """
         try:
             with self.command_queue.execution_lock:
@@ -435,12 +446,17 @@ class Magnets:
             logging.error(f"[MAGNETS] Error emptying queue: {e}")
 
 class RfidRunState(Enum):
+    """Lifecycle of the RFID reader thread: stopped, running, or stop requested."""
+
     stopped = 0
     running = 1
     stop_requested = 2
 
 class Rfid:
+    """RFID reader power/field control and serial tag capture (shared queue with magnets)."""
+
     def __init__(self, simulate_kittyflap=False):
+        """Create reader state and call ``init()`` immediately."""
         self.simulate_kittyflap = simulate_kittyflap
         self.tag_id = None
         self.timestamp = 0.0
@@ -452,9 +468,7 @@ class Rfid:
         self.init()
 
     def init(self):
-        """
-        Enable RFID reader.
-        """
+        """Configure RFID GPIO/I2C, start the shared queue, and power-cycle the module."""
         if self.simulate_kittyflap:
             logging.info("[RFID] Simulation mode enabled. RFID is not powered on.")
         else:
@@ -548,33 +562,20 @@ class Rfid:
             logging.info(f"[RFID] RFID field {'enabled' if state else 'disabled'}.")
 
     def get_field(self):
-        """
-        Returns the current state of the RFID field.
-        """
+        """Return whether the RFID field is enabled (software flag; may be ahead of GPIO)."""
         return self.field_state
     
     def remove_non_printable_chars(self, line):
+        """Strip non-printable characters from a serial line."""
         # Remove all non-printable characters
         return ''.join(filter(lambda x: x in string.printable, line))
 
     def run(self, read_cycles=0):
         """
-        Reads RFID tags either from a simulated environment or from a real RFID reader.
-        
+        Read RFID tags from serial (or simulate) until stopped or ``read_cycles`` is reached.
+
         Args:
-            read_cycles (int): The number of read cycles to perform. If set to 0, the function will read indefinitely.
-        
-        Simulated Mode:
-            If SIMULATE_KITTYFLAP is True, the function will simulate reading an RFID tag by generating a fixed tag ID
-            and waiting for a random delay between 0.5 and 15.0 seconds between reads.
-        
-        Real Mode:
-            If SIMULATE_KITTYFLAP is False, the function will read from the RFID reader specified by RFID_READ_PATH.
-            It waits for a tag to be detected and reads the tag ID, removing any non-hexadecimal characters from the ID.
-            The function logs the tag ID and the timestamp of each read operation.
-        
-        Raises:
-            Exception: If an error occurs while reading from the RFID reader, it logs the error and returns None.
+            read_cycles: Number of select/read iterations; ``0`` means run until stop/shutdown.
         """
         if self.get_run_state() in [RfidRunState.running, RfidRunState.stop_requested]:
             logging.error("[RFID] Another RFID read operation is already running.")

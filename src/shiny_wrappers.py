@@ -1,3 +1,5 @@
+"""Shiny UI helpers with small fixes (e.g. file input scroll behavior)."""
+
 from __future__ import annotations
 
 __all__ = ("input_file",)
@@ -11,7 +13,7 @@ from shiny._namespaces import resolve_id
 from shiny.ui._utils import shiny_input_label
 
 class uix:
-    """A wrapper class for the shiny ui module."""
+    """Namespace for patched Shiny UI input helpers."""
 
     #@add_example()
     @staticmethod
@@ -26,64 +28,7 @@ class uix:
         placeholder: str = "No file selected",
         capture: Optional[Literal["environment", "user"]] = None,
     ) -> Tag:
-        """
-        Fixed version of ui.input_file: This function prevents the scrolling to the top of the
-        page when the file input is clicked.
-
-        Create a file upload control that can be used to upload one or more files.
-
-        Parameters
-        ----------
-        id
-            An input id.
-        label
-            An input label.
-        multiple
-            Whether the user should be allowed to select and upload multiple files at once.
-        accept
-            Unique file type specifier(s) which give the browser a hint as to the type of
-            file the server expects. Many browsers use this to prevent the user from
-            selecting an invalid file. Examples of valid values include a case insensitive
-            extension (e.g. ``.csv`` or ``.rds``), a valid MIME type (e.g. ``text/plain`` or
-            ``application/pdf``) or one of ``audio/*``, ``video/*``, or ``image/*`` meaning
-            any audio, video, or image type, respectively.
-        width
-            The CSS width, e.g. '400px', or '100%'
-        button_label
-            The label used on the button.
-        placeholder
-            The text to show on the input before a file has been uploaded.
-        capture
-            On mobile devices, this can be used to open the device's camera for input. If
-            "environment", it will open the rear-facing camera. If "user", it will open the
-            front-facing camera. By default, it will accept either still photos or video. To
-            accept only still photos, use ``accept="image/*"``; to accept only video, use
-            ``accept="video/*"``.
-
-        Returns
-        -------
-        :
-            A UI element.
-
-        Notes
-        -----
-
-        ::: {.callout-note title="Server value"}
-        A list of dictionaries (one for each file upload) with the following keys:
-
-        * ``name``: The filename provided by the web browser. This is *not* the path to read
-            to get at the actual data that was uploaded (see 'datapath').
-        * ``size``: The size of the uploaded data, in bytes.
-        * ``type``: The MIME type reported by the browser (for example, 'text/plain'), or
-            empty string if the browser didn't know.
-        * ``datapath``: The path to a temp file that contains the data that was uploaded.
-            This file may be deleted if the user performs another upload operation.
-        :::
-
-        See Also
-        --------
-        * :func:`~shiny.ui.download_button`
-        """
+        """File upload control that does not scroll the page to the top on click."""
 
         if isinstance(accept, str):
             accept = [accept]

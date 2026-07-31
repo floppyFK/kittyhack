@@ -1,0 +1,4 @@
+# Test-only dependencies (install with: uv pip install -r requirements-dev.txt)
+# Production Kittyflap installs requirements.txt only — do not merge these there.
+pytest>=8.0
+pytest-timeout>=2.3

@@ -1,1534 +1,55 @@
+"""OS / hardware helpers for Kittyhack.
+
+Grouped into `DependencyInstaller`, `ServiceOps`, `WlanManager`,
+`KittyhackUpdater`, and `LabelStudioInstall`. Existing `I2C`/`Gpio` classes
+unchanged. Module-level aliases preserve call sites.
+"""
 from enum import Enum
-import fcntl
+
+try:
+    import fcntl
+except ImportError:  # Windows / non-POSIX (local unit tests)
+    fcntl = None  # type: ignore
+
 import json
+
 import logging
+
 import subprocess
+
 import os
+
 import shutil
+
 import re
+
 import sys
+
 import requests
+
 import threading
+
 import time as tm
 
 from src.baseconfig import CONFIG, set_language
+
 from src.paths import kittyhack_root, labelstudio_root
+
 from src.mode import is_remote_mode
 
 GPIO_BASE_PATH = "/sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/"
 
 LABELSTUDIO_PATH = os.path.join(labelstudio_root(), "")
+
 LABELSTUDIO_VENV = "venv/"
 
-# Cache for latest Label Studio version fetched from PyPI.
-# Avoid repeated network calls when the UI is re-rendered (e.g. tab switches).
 _labelstudio_latest_cache: dict | None = None
 
 _ = set_language(CONFIG['LANGUAGE'])
 
-def ensure_ffmpeg_installed() -> bool:
-    """Ensure ffmpeg is available. Try to install it on Debian-based systems if missing."""
-    if shutil.which("ffmpeg"):
-        return True
-
-    logging.warning("[CAMERA] ffmpeg not found. Attempting to install it...")
-
-    apt_update_cmd = ["apt-get", "update"]
-    apt_install_cmd = ["apt-get", "install", "-y", "ffmpeg"]
-
-    if os.geteuid() != 0:
-        if shutil.which("sudo"):
-            apt_update_cmd = ["sudo", *apt_update_cmd]
-            apt_install_cmd = ["sudo", *apt_install_cmd]
-        else:
-            logging.error("[CAMERA] ffmpeg is missing and sudo is not available for installation.")
-            return False
-
-    try:
-        update_proc = subprocess.run(
-            apt_update_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=300,
-            check=False,
-        )
-        if update_proc.returncode != 0:
-            logging.error(f"[CAMERA] Failed to update package index for ffmpeg install: {update_proc.stderr.strip()}")
-            return False
-
-        install_proc = subprocess.run(
-            apt_install_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=900,
-            check=False,
-        )
-        if install_proc.returncode != 0:
-            logging.error(f"[CAMERA] Failed to install ffmpeg: {install_proc.stderr.strip()}")
-            return False
-    except Exception as e:
-        logging.error(f"[CAMERA] Error while installing ffmpeg: {e}")
-        return False
-
-    installed = shutil.which("ffmpeg") is not None
-    if installed:
-        logging.info("[CAMERA] ffmpeg installed successfully.")
-    else:
-        logging.error("[CAMERA] ffmpeg installation command finished, but ffmpeg is still unavailable.")
-    return installed
-
-
-def ensure_openvino_installed() -> bool:
-    """Ensure the openvino package is available. Try to install it via pip if missing."""
-    import importlib.util
-    try:
-        if importlib.util.find_spec("openvino") is not None:
-            return True
-    except Exception:
-        pass
-
-    logging.warning("[MODEL] openvino package not found. Attempting to install via pip...")
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "openvino"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=600,
-            check=False,
-        )
-        if result.returncode != 0:
-            logging.error(f"[MODEL] Failed to install openvino: {result.stderr.strip()}")
-            return False
-    except Exception as e:
-        logging.error(f"[MODEL] Error while installing openvino: {e}")
-        return False
-
-    try:
-        if importlib.util.find_spec("openvino") is not None:
-            logging.info("[MODEL] openvino installed successfully.")
-            return True
-        logging.error("[MODEL] openvino installation finished but package is still not importable.")
-        return False
-    except Exception:
-        return False
-
-def systemctl(mode: str, service: str, simulate_operations=False, timeout: float = 15.0):
-    """
-    Start, stop or restart a service using systemctl.
-
-    Parameters:
-    - mode: start, stop, restart, disable, enable, mask
-    - service: The name of the service, e.g. 'kwork'
-    - timeout: seconds before the subprocess call is aborted (default 15 s).
-
-    Returns:
-    - True, if the action succeeded
-    - False in case of an exception or timeout
-    """
-    # stop kwork process
-    if simulate_operations == True:
-        logging.info(f"kittyhack is in development mode. Skip 'systemctl {mode} {service}'.")
-    else:
-        try:
-            result = subprocess.run(
-                ["/usr/bin/systemctl", mode, service],
-                check=True,
-                text=True,
-                capture_output=True,
-                timeout=timeout,
-            )
-            logging.info(f"service {service} {mode}: {result.stdout}")
-        except subprocess.TimeoutExpired:
-            # Without a timeout a hung systemd operation (common when the network
-            # stack is in a bad state) would freeze callers like the WLAN watchdog
-            # indefinitely and prevent the emergency reboot from firing.
-            logging.error(f"systemctl {mode} {service} timed out after {timeout}s")
-            return False
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Failed to {mode} {service}: {e.stderr}")
-            return False
-
-    return True
-
-def run_with_progress(command, progress_callback, step, message, detail):
-    """
-    Run a command and stream its stdout to the progress_callback.
-    """
-    logging.info(f"Running command: {' '.join(command)}")
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1
-    )
-    output_lines = []
-    # Limit the length of callback messages to avoid flooding the UI
-    max_detail_length = 120
-    for line in process.stdout:
-        line_stripped = line.strip()
-        output_lines.append(line)
-        logging.info(f"[SYSTEM] {line_stripped}")
-        if progress_callback:
-            # Send the latest line as detail, truncated if necessary
-            if len(line_stripped) > max_detail_length:
-                truncated_detail = line_stripped[:max_detail_length] + "..."
-                progress_callback(step, message, truncated_detail)
-            else:
-                progress_callback(step, message, line_stripped)
-    process.wait()
-    if process.returncode != 0:
-        logging.error(f"Command failed with return code {process.returncode}")
-    return process.returncode == 0, ''.join(output_lines)
-
-def is_service_running(service: str, simulate_operations=False, log_output=True):
-    """
-    Check if a service is running.
-
-    Parameters:
-    - service: The name of the service, e.g. 'kwork'
-    - log_output: Whether to log the output of the command
-
-    Returns:
-    - True, if the service is running
-    - False, if the service is not running
-    """
-    if simulate_operations == True:
-        if log_output:
-            logging.info(f"kittyhack is in development mode. Skip 'is_service_running {service}'.")
-        return True
-    
-    try:
-        result = subprocess.run(
-            ["/usr/bin/systemctl", "is-active", service],
-            check=True,
-            text=True,
-            capture_output=True
-        )
-        if log_output:
-            logging.info(f"service {service} is active: {result.stdout.strip()}")
-        return True
-    except subprocess.CalledProcessError as e:
-        if log_output:
-            logging.info(f"service {service} is not active. {e.stderr.strip()}")
-        return False
-    
-def is_service_masked(service: str, simulate_operations=False):
-    """
-    Check if a service is masked.
-
-    Parameters:
-    - service: The name of the service, e.g. 'kwork'
-
-    Returns:
-    - True, if the service is masked
-    - False, if the service is not masked
-    """
-    if simulate_operations:
-        logging.info(f"kittyhack is in development mode. Skip 'is_service_running {service}'.")
-        return True
-
-    try:
-        # Run the `systemctl is-enabled` command
-        result = subprocess.run(
-            ["/usr/bin/systemctl", "is-enabled", service],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False
-        )
-        # Check the output for "masked"
-        if result.returncode != 0 or "masked" in result.stdout:
-            return True
-        return False
-    except Exception as e:
-        logging.error(f"Failed to check if service {service} is masked: {e}")
-        return False
-
-def systemcmd(command: list[str], simulate_operations=False):
-    """
-    Run any command on the system shell.
-
-    Parameters:
-    - commands: list of (tokenized) commands
-
-    Returns:
-    - True, if the action succeeded
-    - False in case of an exception
-    """
-    
-    cString = ' '.join(command)
-    # run command
-    if simulate_operations == True:
-        logging.info(f"kittyhack is in development mode. Skip 'systemcmd {cString}'.")
-    else:
-        try:
-            result = subprocess.run(
-                command,
-                check=True,
-                text=True,
-                capture_output=True
-            )
-            logging.info(f"systemcmd '{cString}': {result.stdout}")
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Failed to run command '{cString}': {e.stderr}")
-            return False
-        except FileNotFoundError as e:
-            logging.error(f"Failed to run command '{cString}': {e}")
-            return False
-    
-    return True
-
-def manage_and_switch_wlan(ssid, password="", priority=-1, update_password=False):
-    """
-    Add or update a WLAN connection using NetworkManager and set its priority.
-
-    Parameters:
-    - ssid: The SSID of the WLAN network.
-    - password: The password for the WLAN network.
-    - priority: The priority of the WLAN connection. Use -1 for highest priority (default), or specific value.
-    - update_password: Boolean flag to indicate if the password should be updated for an existing connection.
-
-    Returns:
-    - True if the WLAN configuration was successful.
-    - False if there was an error.
-    """
-    if is_remote_mode():
-        logging.info("[SYSTEM] WLAN management is not available in remote-mode.")
-        return False
-    if priority == -1:
-        try:
-            result = subprocess.run(
-                ["/usr/bin/nmcli", "-g", "AUTOCONNECT-PRIORITY", "connection", "show"],
-                stdout=subprocess.PIPE,
-                text=True,
-                check=True
-            )
-            existing_priorities = [int(p) for p in result.stdout.split('\n') if p.strip()]
-            priority = max(existing_priorities, default=0) + 1
-        except subprocess.CalledProcessError:
-            priority = 999
-
-    if password == "":
-        wifi_sec_params = []
-    else:
-        wifi_sec_params = ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
-
-    try:
-        # Check if the connection already exists
-        result = subprocess.run(
-            ["/usr/bin/nmcli", "-t", "-f", "NAME", "connection", "show"],
-            stdout=subprocess.PIPE, text=True
-        )
-        existing_connections = [conn for conn in result.stdout.splitlines() 
-                              if conn not in ["lo", "Wired connection 1"]]
-        
-
-        if ssid in existing_connections:
-            if update_password:
-                # Update the password for the existing connection
-                subprocess.run(
-                    ["/usr/bin/nmcli", "connection", "modify", ssid, "wifi-sec.psk", password],
-                    check=True,
-                )
-                logging.info(f"[SYSTEM] Updated password for WLAN {ssid}.")
-            else:
-                logging.info(f"[SYSTEM] Skipping password update for WLAN {ssid}.")
-        else:
-            subprocess.run(
-                [
-                    "/usr/bin/nmcli", "connection", "add", "type", "wifi", 
-                    "ifname", "wlan0", "con-name", ssid, "ssid", ssid,
-                    *wifi_sec_params, "802-11-wireless.hidden", "yes",
-                    "connection.autoconnect", "yes",
-                ],
-                check=True,
-            )
-            logging.info(f"[SYSTEM] Added WLAN configuration for {ssid}.")
-
-        # Set the priority for the connection
-        subprocess.run(
-            ["/usr/bin/nmcli", "connection", "modify", ssid, "connection.autoconnect-priority", str(priority)],
-            check=True,
-        )
-        logging.info(f"[SYSTEM] Set priority {priority} for {ssid}.")
-
-        # Restart NetworkManager to apply changes
-        subprocess.run(["/usr/bin/systemctl", "restart", "NetworkManager"], check=True)
-        logging.info(f"[SYSTEM] Restarted NetworkManager to apply changes.")
-        # Wait for the network to be up before returning
-        for x in range(20):
-            result = subprocess.run(
-                ["/usr/bin/nmcli", "-t", "-f", "NETWORKING"],
-                stdout=subprocess.PIPE,
-                text=True,
-                check=True
-            )
-            if "wlan0: connected to" in result.stdout:
-                logging.info(f"[SYSTEM] Network is up and connected.")
-                return True
-            tm.sleep(2)
-        logging.error(f"[SYSTEM] Network did not come up in time.")
-        return False
-
-    except subprocess.CalledProcessError as e:
-        logging.info(f"[SYSTEM] Error managing WLAN: {e}")
-        return False
-    
-def switch_wlan_connection(ssid: str):
-    """
-    Switch to an already configured WLAN network.
-
-    Parameters:
-    - ssid: The SSID of the WLAN network to connect to.
-
-    Returns:
-    - True if the switch was successful
-    - False if there was an error or timeout
-
-    Subprocess calls have explicit timeouts: without them, `nmcli connection up`
-    blocks indefinitely when the AP is physically unreachable, freezing the
-    async WLAN watchdog in kittyhack_control and preventing its emergency reboot.
-    """
-    if is_remote_mode():
-        logging.info("[SYSTEM] WLAN management is not available in remote-mode.")
-        return False
-    try:
-        subprocess.run(
-            ["/usr/bin/nmcli", "connection", "up", ssid],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        # Wait for the network to be up before returning
-        for x in range(20):
-            try:
-                result = subprocess.run(
-                    ["/usr/bin/nmcli", "-t", "-f", "NETWORKING"],
-                    stdout=subprocess.PIPE,
-                    text=True,
-                    check=True,
-                    timeout=5,
-                )
-            except subprocess.TimeoutExpired:
-                logging.warning("[SYSTEM] nmcli NETWORKING probe timed out; retrying...")
-                continue
-            if "wlan0: connected to" in result.stdout:
-                logging.info(f"[SYSTEM] Network is up and connected.")
-                return True
-            tm.sleep(2)
-        logging.error(f"[SYSTEM] Network did not come up in time.")
-        return False
-    except subprocess.TimeoutExpired:
-        logging.error(f"[SYSTEM] 'nmcli connection up {ssid}' timed out after 20s")
-        return False
-    except subprocess.CalledProcessError as e:
-        logging.error(f"[SYSTEM] Error switching to WLAN network {ssid}: {e.stderr}")
-        return False
-
-
-def apply_wlan_runtime_settings():
-    """Apply TX-Power and power-save settings to the wlan0 interface.
-
-    Called both at boot and after a successful reconnect from the WLAN watchdog.
-    Some Broadcom chipsets (BCM43xx on Raspberry Pi) revert these settings after
-    a WiFi re-association, so we re-apply them whenever the link comes up.
-
-    All calls are best-effort and bounded by timeouts to keep the watchdog loop
-    responsive even if the wireless stack is partially wedged.
-    """
-    tx_power = CONFIG.get('WLAN_TX_POWER')
-    simulate = CONFIG.get('SIMULATE_KITTYFLAP', False)
-    if simulate:
-        logging.info(f"[SYSTEM] (simulate) Would set wlan0 txpower={tx_power}, power_save=off")
-        return
-
-    try:
-        logging.info(f"[SYSTEM] Applying WLAN runtime settings: txpower={tx_power} dBm, power_save=off")
-        subprocess.run(
-            ["/usr/sbin/iwconfig", "wlan0", "txpower", f"{tx_power}"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        subprocess.run(
-            ["/usr/sbin/iw", "dev", "wlan0", "set", "power_save", "off"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except subprocess.TimeoutExpired as e:
-        logging.warning(f"[SYSTEM] WLAN runtime settings command timed out: {e}")
-    except Exception as e:
-        logging.warning(f"[SYSTEM] Failed to apply WLAN runtime settings: {e}")
-    
-def delete_wlan_connection(ssid):
-    """
-    Delete a WLAN network configuration.
-
-    Parameters:
-    - ssid: The SSID of the WLAN network to delete.
-
-    Returns:
-    - True if the deletion was successful
-    - False if there was an error
-    """
-    if is_remote_mode():
-        logging.info("[SYSTEM] WLAN management is not available in remote-mode.")
-        return False
-    try:
-        subprocess.run(
-            ["/usr/bin/nmcli", "connection", "delete", ssid],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        logging.info(f"[SYSTEM] Successfully deleted WLAN network configuration: {ssid}")
-        return True
-    except subprocess.CalledProcessError as e:
-        logging.error(f"[SYSTEM] Error deleting WLAN network configuration {ssid}: {e.stderr}")
-        return False
-    
-def scan_wlan_networks():
-    # Added channel to the scan results
-    """
-    Scans for available WLAN networks using the `nmcli` command-line tool.
-
-    Returns:
-        list: A list of dictionaries, each containing information about a WLAN network.
-              Each dictionary has the following keys:
-              - "ssid" (str): The SSID of the WLAN network (or BSSID if SSID is not available).
-              - "signal" (int): The signal strength of the WLAN network.
-              - "security" (str): The security type of the WLAN network.
-              - "bars" (int): The number of bars indicating signal strength (0-4).
-              - "channel" (int): The channel number of the WLAN network.
-
-    Raises:
-        subprocess.CalledProcessError: If the `nmcli` command fails to execute.
-
-    Logs:
-        An error message if there is an issue scanning WLAN networks.
-    """
-    if is_remote_mode():
-        logging.info("[SYSTEM] WLAN scan is not available in remote-mode.")
-        return []
-    try:
-        result = subprocess.run(
-            ["/usr/bin/nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,BARS,CHAN,BSSID", "device", "wifi", "list"],
-            stdout=subprocess.PIPE,
-            text=True,
-            check=True
-        )
-        networks = {}
-        for line in result.stdout.split('\n'):
-            if not line:
-                continue
-                
-            # Use regex to split on unescaped colons
-            parts = re.split(r'(?<!\\):', line, maxsplit=5)
-            if len(parts) != 6:
-                continue
-                
-            # Unescape any escaped characters
-            parts = [p.replace('\\:', ':').replace('\\\\', '\\') for p in parts]
-            ssid, signal, security, bars, channel, bssid = parts
-            if not ssid or ssid == "":
-                ssid = bssid.replace("\\", "")
-            bar_count = len([c for c in bars if c not in ('_', ' ')])
-            if ssid not in networks:
-                networks[ssid] = {
-                    "ssid": ssid,
-                    "signal": int(signal),
-                    "security": security,
-                    "bars": bar_count,
-                    "channel": str(channel)
-                }
-            else:
-                networks[ssid]["signal"] = max(networks[ssid]["signal"], int(signal))
-                networks[ssid]["bars"] = max(networks[ssid]["bars"], bar_count)
-                if str(channel) not in networks[ssid]["channel"].split(','):
-                    networks[ssid]["channel"] = f"{networks[ssid]['channel']}, {channel}"
-        networks = list(networks.values())
-        return networks
-    except Exception as e:
-        logging.error(f"[SYSTEM] Error scanning WLAN networks: {e}")
-        return []
-    
-def get_wlan_connections():
-    """
-    Get a list of configured WLAN networks.
-
-    Returns:
-    - A list of dictionaries, each containing the SSID, connection status, and priority of a WLAN network.
-    """
-    if is_remote_mode():
-        logging.info("[SYSTEM] WLAN connections are not available in remote-mode.")
-        return []
-    try:
-        result = subprocess.run(
-            ["/usr/bin/nmcli", "-t", "-f", "NAME,DEVICE,AUTOCONNECT-PRIORITY,STATE", "connection", "show"],
-            stdout=subprocess.PIPE,
-            text=True,
-            check=True
-        )
-        connections = []
-        for line in result.stdout.split('\n'):
-            if line:
-                # Use regex to split on unescaped colons
-                parts = re.split(r'(?<!\\):', line, maxsplit=3)
-                if len(parts) != 4:
-                    continue
-                
-                # Unescape any escaped characters
-                parts = [p.replace('\\:', ':').replace('\\\\', '\\') for p in parts]
-                ssid, device, priority, state = parts
-                # Skip loopback and wired connections
-                if ssid not in ["lo", "Wired connection 1"]:
-                    connections.append({
-                        "ssid": ssid,
-                        "connected": state == "activated",
-                        "priority": int(priority)
-                    })
-        return connections
-    except subprocess.CalledProcessError as e:
-        logging.error(f"[SYSTEM] Error getting WLAN connections: {e.stderr}")
-        return []
-    
-def get_default_gateways():
-    gateways = []
-    # IPv4
-    try:
-        result = subprocess.run(["ip", "route"], capture_output=True, text=True, check=True)
-        for line in result.stdout.splitlines():
-            if line.startswith("default"):
-                gateways.append(line.split()[2])
-    except Exception:
-        pass
-    # IPv6
-    try:
-        result = subprocess.run(["ip", "-6", "route"], capture_output=True, text=True, check=True)
-        for line in result.stdout.splitlines():
-            if line.startswith("default"):
-                gateways.append(line.split()[2])
-    except Exception:
-        pass
-    return gateways
-
-def is_gateway_reachable():
-    gateways = get_default_gateways()
-    for gw in gateways:
-        if ":" in gw:  # IPv6
-            ping_cmd = ["ping", "-6", "-c", "1", "-W", "2", gw]
-        else:  # IPv4
-            ping_cmd = ["ping", "-c", "1", "-W", "2", gw]
-        try:
-            ping = subprocess.run(ping_cmd, capture_output=True)
-            if ping.returncode == 0:
-                return True
-        except Exception:
-            continue
-    return False
-    
-def get_labelstudio_installed_version():
-    """
-    Get the installed version of Label Studio.
-    
-    Returns:
-        str | None: The installed version of Label Studio, or None if not found.
-    """
-    try:
-        venv_python = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV, "bin", "python")
-        
-        # Check if Label Studio is installed
-        if not os.path.exists(LABELSTUDIO_PATH) or not os.path.exists(venv_python):
-            logging.info("[SYSTEM] Label Studio is not installed.")
-            return None
-        
-        # Get the installed version using the venv Python binary
-        result = subprocess.run(
-            [venv_python, "-m", "pip", "show", "label-studio"],
-            stdout=subprocess.PIPE,
-            text=True,
-            check=True
-        )
-        
-        # Parse the output to find the version
-        for line in result.stdout.splitlines():
-            if line.startswith("Version:"):
-                version = line.split(":", 1)[1].strip()
-                logging.info(f"[SYSTEM] Label Studio version: {version}")
-                return version
-        
-        logging.info("[SYSTEM] Label Studio version not found in pip output.")
-        return None
-    except Exception as e:
-        logging.error(f"[SYSTEM] Error getting Label Studio version: {e}")
-        return None
-    
-def get_labelstudio_latest_version():
-    global _labelstudio_latest_cache
-    ttl_seconds = 60 * 60 * 24
-
-    try:
-        now = tm.time()
-    except Exception:
-        now = 0
-
-    if _labelstudio_latest_cache is not None:
-        ts = float(_labelstudio_latest_cache.get("ts", 0) or 0)
-        if (now - ts) < ttl_seconds:
-            return _labelstudio_latest_cache.get("version")
-
-    version_str: str | None = None
-    try:
-        response = requests.get(
-            "https://pypi.org/pypi/label-studio/json",
-            timeout=4,
-        )
-        response.raise_for_status()
-        data = response.json()
-        version = data.get("info", {}).get("version")
-        if version:
-            version_str = str(version)
-        else:
-            logging.info("[SYSTEM] Latest Label Studio version not found in PyPI response.")
-    except Exception as e:
-        logging.error(f"[SYSTEM] Error fetching latest Label Studio version: {e}")
-
-    # Cache the result (including failures) to avoid repeated network calls on tab switches.
-    _labelstudio_latest_cache = {"ts": now, "version": version_str}
-    return version_str
-    
-def get_labelstudio_status():
-    """
-    Check if Label Studio is running.
-
-    Returns:
-        bool: True if Label Studio is running, False otherwise.
-    """
-    try:
-        result = subprocess.run(
-            ["/usr/bin/systemctl", "is-active", "labelstudio"],
-            stdout=subprocess.PIPE,
-            text=True,
-            check=True
-        )
-        return result.stdout.strip() == "active"
-    except subprocess.CalledProcessError:
-        return False
-
-def update_kittyhack(
-    progress_callback=None,
-    latest_version=None,
-    current_version=None,
-    *,
-    halt_backend_first: bool = True,
-    defer_service_updates: bool = False,
-):
-    """
-    Update Kittyhack to the latest version, reporting progress via callback.
-
-    Args:
-        progress_callback (callable): Function(step, message, detail) for UI progress.
-        latest_version (str): The version to update to.
-        current_version (str): The current version (for rollback).
-
-    Returns:
-        bool: True if update succeeded, False otherwise.
-    """
-
-    def _sha256_file(path: str) -> str | None:
-        try:
-            import hashlib
-            with open(path, "rb") as f:
-                return hashlib.sha256(f.read()).hexdigest()
-        except Exception:
-            return None
-
-    def _run_step(step_no: int, msg: str, cmd: list[str]):
-        if progress_callback:
-            progress_callback(step_no, msg, "")
-        logging.info(msg)
-
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        output_lines: list[str] = []
-        max_detail_length = 120
-
-        assert process.stdout is not None
-        for line in process.stdout:
-            line_stripped = (line or "").strip()
-            output_lines.append(line)
-            logging.info(f"[UPDATE] {line_stripped}")
-            if progress_callback:
-                if len(line_stripped) > max_detail_length:
-                    progress_callback(step_no, msg, line_stripped[:max_detail_length] + "...")
-                else:
-                    progress_callback(step_no, msg, line_stripped)
-
-        process.wait()
-        if process.returncode != 0:
-            output = "".join(output_lines)
-            logging.error(f"Command failed with return code {process.returncode}:\n{output}")
-            raise subprocess.CalledProcessError(process.returncode, cmd, output=output)
-
-    def _install_kittyhack_service_file() -> None:
-        template_path = os.path.join(kittyhack_root(), "setup", "kittyhack.service")
-        target_path = "/etc/systemd/system/kittyhack.service"
-        with open(template_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        content = content.replace("/root/kittyhack", kittyhack_root())
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(content)
-
-    def _install_kittyhack_control_service_file() -> None:
-        template_path = os.path.join(kittyhack_root(), "setup", "kittyhack_control.service")
-        target_path = "/etc/systemd/system/kittyhack_control.service"
-        if not os.path.exists(template_path):
-            return
-        with open(template_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        content = content.replace("/root/kittyhack", kittyhack_root())
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(content)
-
-    def _remove_kittyhack_control_service_file() -> None:
-        target_path = "/etc/systemd/system/kittyhack_control.service"
-        try:
-            if os.path.exists(target_path):
-                os.remove(target_path)
-        except Exception:
-            pass
-
-    def _apply_target_boot_service_semantics() -> None:
-        """Best-effort migration of systemd enable/disable state.
-
-        This is important for devices updating from older versions where only kittyhack.service
-        existed and was enabled. We want:
-        - target-mode: enable kittyhack_control, disable kittyhack
-        - remote-mode: enable kittyhack, disable kittyhack_control
-        """
-        try:
-            is_remote = bool(is_remote_mode())
-        except Exception:
-            is_remote = False
-
-        try:
-            # Ensure service files exist before enabling.
-            _install_kittyhack_service_file()
-            if is_remote:
-                _remove_kittyhack_control_service_file()
-            else:
-                _install_kittyhack_control_service_file()
-        except Exception:
-            pass
-
-        try:
-            subprocess.run(["/bin/systemctl", "daemon-reload"], check=False)
-        except Exception:
-            pass
-
-        if is_remote:
-            # Remote-mode: kittyhack.service is the primary service.
-            try:
-                subprocess.run(["/bin/systemctl", "enable", "kittyhack.service"], check=False)
-            except Exception:
-                pass
-            try:
-                subprocess.run(["/bin/systemctl", "disable", "kittyhack_control.service"], check=False)
-                subprocess.run(["/bin/systemctl", "stop", "kittyhack_control.service"], check=False)
-            except Exception:
-                pass
-            return
-
-        # Target-mode: kittyhack_control is the boot supervisor.
-        try:
-            subprocess.run(["/bin/systemctl", "enable", "kittyhack_control.service"], check=False)
-        except Exception:
-            pass
-        try:
-            # Do not stop kittyhack here (we are currently running inside it).
-            subprocess.run(["/bin/systemctl", "disable", "kittyhack.service"], check=False)
-        except Exception:
-            pass
-        try:
-            subprocess.run(["/bin/systemctl", "start", "kittyhack_control.service"], check=False)
-        except Exception:
-            pass
-
-    # Step 0: Stop backend process (only for local kittyhack.service updates).
-    if halt_backend_first:
-        if progress_callback:
-            progress_callback(0, "Stopping backend process", "")
-        try:
-            from src.helper import sigterm_monitor
-            import time as tm
-            sigterm_monitor.halt_backend()
-            tm.sleep(1.0)
-        except Exception as e:
-            logging.error(f"Failed to stop backend process: {e}")
-
-    requirements_path = os.path.join(kittyhack_root(), "requirements.txt")
-    venv_activate = os.path.join(kittyhack_root(), ".venv", "bin", "activate")
-    pip_install_cmd = [
-        "/bin/bash",
-        "-c",
-        f"source {venv_activate} && pip install --timeout 120 --retries 10 -r {requirements_path}",
-    ]
-
-    req_hash_before: str | None = None
-    req_hash_after: str | None = None
-    did_update_deps = False
-
-    # Resolve the configured update source (standard vs custom repo / branch).
-    try:
-        from src.helper import resolved_update_repo
-        update_owner, update_repo, update_ref, update_git_url, update_mode = resolved_update_repo()
-    except Exception as e:
-        logging.debug(f"[UPDATE] resolved_update_repo not available ({e}); using existing origin")
-        update_git_url = None
-        update_ref = None
-        update_mode = "standard"
-
-    try:
-        # 1
-        _run_step(1, "Reverting local changes", ["/bin/git", "restore", "."])
-        # 2
-        _run_step(2, "Cleaning untracked files", ["/bin/git", "clean", "-fd"])
-
-        # Hash current requirements after a clean tree, so the comparison is meaningful.
-        req_hash_before = _sha256_file(requirements_path)
-
-        # Point origin at the configured update source (best-effort).
-        if update_git_url:
-            try:
-                subprocess.run(
-                    ["/bin/git", "remote", "set-url", "origin", update_git_url],
-                    cwd=kittyhack_root(),
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-                logging.info(f"[UPDATE] origin URL set to {update_git_url} (mode={update_mode})")
-            except Exception as e:
-                logging.warning(f"[UPDATE] Failed to update origin URL to {update_git_url}: {e}")
-
-        # 3
-        _run_step(3, f"Fetching latest version {latest_version}", ["/bin/git", "fetch", "--all", "--tags"])
-        # 4 — checkout either a tag (standard / custom+tag) or a branch (custom+branch).
-        if update_ref is not None:
-            # Branch mode: create/reset a local branch tracking origin/<ref> to HEAD.
-            _run_step(
-                4,
-                f"Checking out branch {update_ref}",
-                ["/bin/git", "checkout", "-B", update_ref, f"origin/{update_ref}"],
-            )
-        else:
-            _run_step(4, f"Checking out {latest_version}", ["/bin/git", "checkout", latest_version])
-
-        req_hash_after = _sha256_file(requirements_path)
-        requirements_unchanged = (
-            req_hash_before is not None and req_hash_after is not None and req_hash_before == req_hash_after
-        )
-
-        # 5
-        if requirements_unchanged:
-            msg = "Python dependencies unchanged (requirements.txt); skipping reinstall"
-            if progress_callback:
-                progress_callback(5, msg, "")
-            logging.info(msg)
-        else:
-            _run_step(5, "Updating python dependencies", pip_install_cmd)
-            did_update_deps = True
-
-        # 6-8 (service/unit changes) can be deferred when update is executed from
-        # kittyhack_control on the target device to avoid self-restart during update.
-        if defer_service_updates:
-            if progress_callback:
-                progress_callback(6, "Deferring systemd service updates until reboot", "")
-            logging.info("Deferring systemd service/unit updates until reboot")
-        else:
-            # 6
-            if progress_callback:
-                progress_callback(6, "Updating systemd service file", "")
-            logging.info("Updating systemd service file")
-            _install_kittyhack_service_file()
-            try:
-                _is_remote_now = bool(is_remote_mode())
-            except Exception:
-                _is_remote_now = False
-            if _is_remote_now:
-                _remove_kittyhack_control_service_file()
-            else:
-                _install_kittyhack_control_service_file()
-            # 7
-            _run_step(7, "Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"])
-
-            # 8
-            if progress_callback:
-                progress_callback(8, "Updating systemd enable/disable state", "")
-            logging.info("Updating systemd enable/disable state")
-            _apply_target_boot_service_semantics()
-    except Exception as e:
-        logging.error(f"Update step failed: {e}")
-        # Rollback logic
-        if current_version:
-            try:
-                subprocess.run(["/bin/git", "checkout", current_version], check=True)
-                # Only reinstall deps on rollback if we actually modified them during the update.
-                if did_update_deps:
-                    subprocess.run(pip_install_cmd, check=True)
-                _install_kittyhack_service_file()
-                try:
-                    _is_remote_now = bool(is_remote_mode())
-                except Exception:
-                    _is_remote_now = False
-                if _is_remote_now:
-                    _remove_kittyhack_control_service_file()
-                else:
-                    _install_kittyhack_control_service_file()
-                subprocess.run(["/bin/systemctl", "daemon-reload"], check=True)
-                # Best-effort: keep service enablement consistent even after rollback.
-                try:
-                    _apply_target_boot_service_semantics()
-                except Exception:
-                    pass
-            except Exception as rollback_e:
-                logging.error(f"Rollback failed: {rollback_e}")
-        return False, str(e)
-    return True, "Update completed"
-
-
-def ensure_target_boot_service_semantics() -> None:
-    """Ensure systemd services match the target-mode boot concept.
-
-    This is a runtime migration hook: devices updating from pre-remote versions
-    may still have kittyhack.service enabled and kittyhack_control missing/disabled.
-    Running this on the target device fixes the next reboot.
-    """
-    if is_remote_mode():
-        return
-
-    def _pick_systemctl() -> str:
-        # Prefer common absolute paths to avoid PATH issues under systemd.
-        for candidate in ("/usr/bin/systemctl", "/bin/systemctl"):
-            try:
-                if os.path.exists(candidate):
-                    return candidate
-            except Exception:
-                continue
-        return "systemctl"
-
-    systemctl = _pick_systemctl()
-
-    def _run_systemctl(*args: str) -> subprocess.CompletedProcess:
-        try:
-            return subprocess.run([systemctl, *args], check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        except Exception:
-            # Return a dummy object-like fallback.
-            return subprocess.CompletedProcess(args=[systemctl, *args], returncode=1, stdout="")
-
-    def _systemctl_stdout(*args: str) -> str:
-        return (_run_systemctl(*args).stdout or "").strip()
-
-    def _is_enabled(service_name: str) -> bool:
-        out = _systemctl_stdout("is-enabled", service_name)
-        # 'static' services can't be enabled, but are still valid.
-        return out in {"enabled", "enabled-runtime", "static"}
-
-    def _is_active(service_name: str) -> bool:
-        out = _systemctl_stdout("is-active", service_name)
-        return out in {"active", "activating"}
-
-    def _is_disabled(service_name: str) -> bool:
-        out = _systemctl_stdout("is-enabled", service_name)
-        return out in {"disabled", "masked", "indirect", "generated", "transient", ""}
-
-    # Fast-path: if we're already in the desired state, do nothing.
-    try:
-        if _is_enabled("kittyhack_control.service") and _is_active("kittyhack_control.service") and _is_disabled("kittyhack.service"):
-            return
-    except Exception:
-        pass
-
-    template_path = os.path.join(kittyhack_root(), "setup", "kittyhack_control.service")
-    target_path = "/etc/systemd/system/kittyhack_control.service"
-    did_update_unit_file = False
-
-    try:
-        if os.path.exists(template_path):
-            with open(template_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            content = content.replace("/root/kittyhack", kittyhack_root())
-
-            existing: str | None = None
-            try:
-                if os.path.exists(target_path):
-                    with open(target_path, "r", encoding="utf-8") as f:
-                        existing = f.read()
-            except Exception:
-                existing = None
-
-            if existing != content:
-                with open(target_path, "w", encoding="utf-8") as f:
-                    f.write(content)
-                did_update_unit_file = True
-    except Exception as e:
-        logging.warning(f"[SYSTEM] Could not install kittyhack_control.service: {e}")
-
-    # Only daemon-reload if we updated/installed the unit file.
-    if did_update_unit_file:
-        try:
-            _run_systemctl("daemon-reload")
-        except Exception:
-            pass
-
-    # Ensure kittyhack_control is enabled + running (best-effort).
-    try:
-        if not _is_enabled("kittyhack_control.service"):
-            _run_systemctl("enable", "kittyhack_control.service")
-    except Exception:
-        pass
-    try:
-        if not _is_active("kittyhack_control.service"):
-            _run_systemctl("start", "kittyhack_control.service")
-    except Exception:
-        pass
-
-    # Prevent kittyhack.service from being the primary boot service going forward.
-    try:
-        if not _is_disabled("kittyhack.service"):
-            _run_systemctl("disable", "kittyhack.service")
-    except Exception:
-        pass
-
-def upgrade_base_system_packages(packages: list[str] | None = None) -> tuple[bool, str]:
-    """
-    Refresh APT lists and upgrade a curated set of base-system packages.
-
-    Args:
-        packages: Optional explicit list of package names to --only-upgrade.
-                  If None, a safe default list is used. Held packages are skipped.
-
-    Returns:
-        (success, message) where message contains the full stdout of the performed steps.
-    """
-    # Pre-flight recovery: clear stale locks and finish incomplete configurations
-    def preflight_recovery(env) -> str:
-        out = []
-        try:
-            # Kill stray apt/dpkg processes and remove locks
-            subprocess.run(["/usr/bin/fuser", "-kv", "/var/lib/dpkg/lock"], check=False, text=True, capture_output=True)
-            subprocess.run(["/usr/bin/fuser", "-kv", "/var/lib/apt/lists/lock"], check=False, text=True, capture_output=True)
-            subprocess.run(["/usr/bin/fuser", "-kv", "/var/cache/apt/archives/lock"], check=False, text=True, capture_output=True)
-            for lock in ["/var/lib/dpkg/lock", "/var/lib/apt/lists/lock", "/var/cache/apt/archives/lock"]:
-                try:
-                    if os.path.exists(lock):
-                        os.remove(lock)
-                        out.append(f"[APT] Removed stale lock: {lock}\n")
-                except Exception as e:
-                    out.append(f"[APT] Could not remove lock {lock}: {e}\n")
-            # Fix broken installs and configure pending packages
-            res_cfg = subprocess.run(["/usr/bin/dpkg", "--configure", "-a"], check=False, text=True, capture_output=True, env=env)
-            if res_cfg.stdout:
-                out.append("=== dpkg --configure -a ===\n" + res_cfg.stdout + "\n")
-            if res_cfg.stderr:
-                out.append("[stderr]\n" + res_cfg.stderr + "\n")
-            res_fix = subprocess.run(["/usr/bin/apt-get", "-y", "-f", "install"], check=False, text=True, capture_output=True, env=env)
-            if res_fix.stdout:
-                out.append("=== apt-get -f install ===\n" + res_fix.stdout + "\n")
-            if res_fix.stderr:
-                out.append("[stderr]\n" + res_fix.stderr + "\n")
-        except Exception as e:
-            out.append(f"[APT] Preflight recovery error: {e}\n")
-        return ''.join(out)
-
-    # Default set focuses on core runtime and update tooling
-    default_packages = [
-        "apt",
-        "bash",
-        "ca-certificates",
-        "dpkg",
-        "git",
-        "gnupg",
-        "gpg",
-        "libc6",
-        "libssl3",
-        "libstdc++6",
-        "openssl",
-        "python3",
-        "python3-pip",
-        "sudo",
-        "systemd",
-        "systemd-sysv",
-        "tzdata",
-        "wget",
-    ]
-    pkgs = packages or default_packages
-
-    # Remove duplicates while preserving order
-    seen = set()
-    pkgs = [p for p in pkgs if not (p in seen or seen.add(p))]
-
-    env = os.environ.copy()
-    env["DEBIAN_FRONTEND"] = "noninteractive"
-    env.setdefault("APT_LISTCHANGES_FRONTEND", "none")
-
-    full_output = []
-
-    full_output.append(preflight_recovery(env))
-
-    # Skip held packages
-    try:
-        held_res = subprocess.run(
-            ["/usr/bin/apt-mark", "showhold"],
-            check=False, text=True, capture_output=True, env=env
-        )
-        held = {h.strip() for h in held_res.stdout.splitlines() if h.strip()}
-        if held:
-            before = set(pkgs)
-            pkgs = [p for p in pkgs if p not in held]
-            skipped = list(before - set(pkgs))
-            if skipped:
-                logging.info(f"[APT] Skipping held packages: {', '.join(skipped)}")
-                full_output.append(f"[APT] Skipping held packages: {', '.join(skipped)}\n")
-    except Exception as e:
-        logging.debug(f"[APT] Could not query held packages: {e}")
-
-    if not pkgs:
-        return True, "[APT] Nothing to upgrade (all requested packages are held or none specified)."
-
-    # apt-get update
-    try:
-        logging.info("[APT] Running apt-get update...")
-        res = subprocess.run(
-            ["/usr/bin/apt-get", "update"],
-            check=True, text=True, capture_output=True, env=env
-        )
-        full_output.append("=== apt-get update ===\n")
-        full_output.append(res.stdout or "")
-        if res.stderr:
-            full_output.append("\n[stderr]\n" + res.stderr)
-        logging.info("[APT] apt-get update done.")
-    except subprocess.CalledProcessError as e:
-        msg = (e.stdout or "") + ("\n" if e.stdout else "") + (e.stderr or str(e))
-        logging.error(f"[APT] apt-get update failed: {e.stderr or e}")
-        return False, msg
-
-    def try_selected_upgrade(package_list: list[str]) -> tuple[bool, str]:
-        upgrade_cmd = [
-            "/usr/bin/apt-get", "-y",
-            "--option", "Dpkg::Options::=--force-confnew",
-            "--option", "Acquire::Retries=3",
-            "--no-install-recommends",
-            "install", "--only-upgrade",
-            *package_list
-        ]
-        logging.info(f"[APT] Upgrading selected packages: {', '.join(package_list)}")
-        try:
-            res = subprocess.run(
-                upgrade_cmd,
-                check=True, text=True, capture_output=True, env=env
-            )
-            out = "\n=== apt-get install --only-upgrade (selected) ===\n" + (res.stdout or "")
-            if res.stderr:
-                out += "\n[stderr]\n" + res.stderr
-            logging.info("[APT] Selected upgrades completed.")
-            return True, out
-        except subprocess.CalledProcessError as e:
-            msg = (e.stdout or "") + ("\n" if e.stdout else "") + (e.stderr or str(e))
-            logging.error(f"[APT] Selected upgrades failed: {e.stderr or e}")
-            return False, msg
-
-    ok, out = try_selected_upgrade(pkgs)
-    full_output.append("\n" + out)
-    if not ok:
-        try:
-            subprocess.run(["/usr/bin/apt-get", "autoremove", "-y"], check=False, text=True, capture_output=True, env=env)
-            subprocess.run(["/usr/bin/apt-get", "autoclean"], check=False, text=True, capture_output=True, env=env)
-        except Exception:
-            pass
-        return False, ''.join(full_output)
-
-    # Cleanup
-    try:
-        res1 = subprocess.run(["/usr/bin/apt-get", "autoremove", "-y"], check=False, text=True, capture_output=True, env=env)
-        res2 = subprocess.run(["/usr/bin/apt-get", "autoclean"], check=False, text=True, capture_output=True, env=env)
-        full_output.append("\n=== apt-get autoremove ===\n")
-        full_output.append(res1.stdout or "")
-        if res1.stderr:
-            full_output.append("\n[stderr]\n" + res1.stderr)
-        full_output.append("\n=== apt-get autoclean ===\n")
-        full_output.append(res2.stdout or "")
-        if res2.stderr:
-            full_output.append("\n[stderr]\n" + res2.stderr)
-    except Exception as e:
-        logging.debug(f"[APT] Cleanup ignored error: {e}")
-
-    try:
-        if os.path.exists("/var/run/reboot-required"):
-            reboot_msg = "[APT] Reboot recommended by the system (reboot-required file present)."
-            logging.info(reboot_msg)
-            full_output.append("\n" + reboot_msg + "\n")
-    except Exception:
-        pass
-
-    return True, ''.join(full_output)
-
-def get_hostname():
-    """
-    Get the hostname of the system.
-
-    Returns:
-        str: The hostname.
-    """
-    try:
-        hostname = subprocess.check_output(["hostname"], text=True).strip()
-        logging.info(f"[SYSTEM] Hostname: {hostname}")
-        return hostname
-    except Exception as e:
-        logging.error(f"[SYSTEM] Error getting hostname: {e}")
-        return ""
-
-def set_hostname(hostname):
-    """
-    Set the hostname of the system.
-
-    Args:
-        hostname (str): The new hostname to set.
-
-    Returns:
-        bool: True if the hostname was set successfully, False otherwise.
-    """
-    try:
-        subprocess.run(["hostnamectl", "set-hostname", hostname], check=True)
-        # Update /etc/hosts file
-        with open("/etc/hosts", "r") as f:
-            lines = f.readlines()
-        with open("/etc/hosts", "w") as f:
-            for line in lines:
-                if "127.0.1.1" in line:
-                    f.write(f"127.0.1.1\t{hostname}\n")
-                else:
-                    f.write(line)
-        # Update /etc/hostname file
-        with open("/etc/hostname", "w") as f:
-            f.write(f"{hostname}\n")
-        logging.info(f"[SYSTEM] Hostname set to: {hostname}")
-        return True
-    except Exception as e:
-        logging.error(f"[SYSTEM] Error setting hostname: {e}")
-        return False
-
-def install_labelstudio(progress_callback=None):
-    """
-    Install Label Studio by creating a virtual environment, installing the package,
-    and setting up a systemd service.
-
-    Args:
-        progress_callback (callable, optional): A callback function to report progress.
-            The function should accept (step, message, detail) parameters.
-
-    Returns:
-        bool: True if installation is successful, False otherwise.
-    """
-    venv_path = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV)
-    venv_python = os.path.join(venv_path, "bin", "python")
-    service_template_path = os.path.join(kittyhack_root(), "setup", "labelstudio.service")
-    service_file_path = "/etc/systemd/system/labelstudio.service"
-
-    # Stop the service if it's running
-    try:
-        if os.path.exists(service_file_path):
-            if is_service_running("labelstudio"):
-                logging.info("[SYSTEM] Stopping existing Label Studio service...")
-                if progress_callback:
-                    progress_callback(0, _("Stopping existing Label Studio service..."), "")
-                systemctl("stop", "labelstudio")
-            subprocess.run(["rm", "-f", service_file_path], check=True)
-            logging.info("[SYSTEM] Label Studio systemd service file removed.")
-    except Exception as e:
-        logging.error(f"[SYSTEM] Error stopping Label Studio service: {e}")
-    
-    # Remove the installation directory if it exists
-    if os.path.exists(LABELSTUDIO_PATH):
-        logging.info("[SYSTEM] Removing existing Label Studio installation...")
-        if progress_callback:
-            progress_callback(0, _("Removing existing Label Studio installation..."), "")
-        try:
-            subprocess.run(["rm", "-rf", LABELSTUDIO_PATH], check=True)
-        except Exception as e:
-            logging.error(f"[SYSTEM] Error removing existing Label Studio installation: {e}")
-
-    if progress_callback:
-        progress_callback(0, _("Starting Label Studio installation..."), _("This may take a few minutes..."))
-        logging.info("[SYSTEM] Starting Label Studio installation...")
-    
-    try:
-        # Step 1: Create a virtual environment        
-        if not os.path.exists(venv_path):
-            ok, output = run_with_progress(
-                ["python3", "-m", "venv", venv_path],
-                progress_callback,
-                1,
-                _("Creating virtual environment..."),
-                _("This may take a moment...")
-            )
-            if not ok:
-                logging.error("[SYSTEM] Virtual environment creation failed:\n" + output)
-                return False
-            logging.info("[SYSTEM] Label Studio virtual environment created.")
-        else:
-            logging.info("[SYSTEM] Virtual environment already exists, skipping creation.")
-            if progress_callback:
-                progress_callback(1, _("Virtual environment already exists"), _("Skipping creation..."))
-
-        # Step 2: Install pip and dependencies
-        ok, pip_upgrade_output = run_with_progress(
-            [venv_python, "-m", "pip", "install", "--upgrade", "pip"],
-            progress_callback,
-            2,
-            _("Upgrading pip..."),
-            _("This may take a few minutes...")
-        )
-        if not ok:
-            logging.error("[SYSTEM] Pip upgrade failed:\n" + pip_upgrade_output)
-            return False
-        logging.info("[SYSTEM] Pip upgraded successfully.")
-        
-        # Step 3: Install Label Studio
-        ok, pip_output = run_with_progress(
-            [venv_python, "-m", "pip", "install", "label-studio"],
-            progress_callback,
-            3,
-            _("Installing Label Studio..."),
-            _("This takes several minutes... Do not turn off the power or reload the page!")
-        )
-        if not ok:
-            logging.error("[SYSTEM] Label Studio installation failed:\n" + pip_output)
-            return False
-        logging.info("[SYSTEM] Label Studio installed in virtual environment.")
-
-        # Step 4: Create a systemd service file        
-        if progress_callback:
-            progress_callback(4, _("Creating systemd service..."), _("Almost done..."))
-            
-        if os.path.exists(service_template_path):
-            try:
-                with open(service_template_path, "r") as template_file:
-                    service_content = template_file.read().replace("{{VENV_PATH}}", venv_path)
-                with open(service_file_path, "w") as service_file:
-                    service_file.write(service_content)
-                logging.info("[SYSTEM] Label Studio systemd service file created.")
-                if progress_callback:
-                    progress_callback(4, _("Creating systemd service..."), _("Service file created successfully."))
-            except Exception as e:
-                logging.error(f"[SYSTEM] Error creating systemd service file: {e}")
-                if progress_callback:
-                    progress_callback(4, _("Creating systemd service..."), f"Error: {str(e)}")
-                return False
-        else:
-            logging.error("[SYSTEM] Service template file not found.")
-            if progress_callback:
-                progress_callback(4, _("Creating systemd service..."), _("Error: Template file not found."))
-            return False
-
-        # Step 5: Reload systemd daemon
-        ok, systemd_output = run_with_progress(
-            ["/usr/bin/systemctl", "daemon-reload"],
-            progress_callback,
-            5,
-            _("Reloading systemd services..."),
-            _("Almost done...")
-        )
-        if not ok:
-            logging.error("[SYSTEM] Systemd daemon reload failed:\n" + systemd_output)
-            return False
-        logging.info("[SYSTEM] Label Studio systemd daemon reloaded.")
-
-        return True
-    except Exception as e:
-        logging.error(f"[SYSTEM] Error installing Label Studio: {e}")
-        return False
-    
-def update_labelstudio(progress_callback=None):
-    """
-    Update Label Studio by upgrading the package in the virtual environment.
-
-    Args:
-        progress_callback (callable, optional): A callback function to report progress.
-            The function should accept (step, message, detail) parameters.
-
-    Returns:
-        bool: True if update is successful, False otherwise.
-    """
-
-    if progress_callback:
-        progress_callback(0, _("Starting Label Studio update..."), _("This may take a few minutes..."))
-
-    try:
-        systemctl("stop", "labelstudio")
-        logging.info("[SYSTEM] Label Studio service stopped.")
-    except Exception as e:
-        logging.error(f"[SYSTEM] Error stopping Label Studio service: {e}")
-
-    try:
-        # Step 1: Upgrade Label Studio
-        venv_python = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV, "bin", "python")
-        ok, pip_output = run_with_progress(
-            [venv_python, "-m", "pip", "install", "--upgrade", "label-studio"],
-            progress_callback,
-            1,
-            _("Upgrading Label Studio..."),
-            _("This takes several minutes... Do not turn off the power or reload the page!")
-        )
-        if not ok:
-            logging.error("[SYSTEM] Label Studio upgrade failed:\n" + pip_output)
-            return False
-        logging.info("[SYSTEM] Label Studio upgraded in virtual environment.")
-
-        return True
-    except Exception as e:
-        logging.error(f"[SYSTEM] Error updating Label Studio: {e}")
-        return False
-    
-def remove_labelstudio():
-    """
-    Remove Label Studio by deleting the virtual environment and systemd service.
-
-    Returns:
-        bool: True if removal is successful, False otherwise.
-    """
-    try:
-        systemctl("stop", "labelstudio")
-        logging.info("[SYSTEM] Label Studio service stopped.")
-    except Exception as e:
-        logging.error(f"[SYSTEM] Error stopping Label Studio service: {e}")
-    
-    try:
-        # Remove the virtual environment
-        venv_path = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV)
-        if os.path.exists(venv_path):
-            subprocess.run(["rm", "-rf", venv_path], check=True)
-            logging.info("[SYSTEM] Label Studio virtual environment removed.")
-
-        # Remove the systemd service
-        service_file_path = "/etc/systemd/system/labelstudio.service"
-        if os.path.exists(service_file_path):
-            subprocess.run(["rm", "-f", service_file_path], check=True)
-            logging.info("[SYSTEM] Label Studio systemd service file removed.")
-
-        return True
-    except Exception as e:
-        logging.error(f"[SYSTEM] Error removing Label Studio: {e}")
-        return False
-
 class I2C:
+    """PCA6408 I2C expander helpers to open/close the periphery logic gate."""
+
     # Fixed constants
     I2C_PORT = "0"
     PE_ADDR = "0x20"
@@ -1536,42 +57,39 @@ class I2C:
     PE_OUTREG = "0x01"
 
     def __init__(self, i2c_port=I2C_PORT, pe_addr=PE_ADDR, pe_dirreg=PE_DIRREG, pe_outreg=PE_OUTREG):
+        """Store I2C bus/port and PCA6408 register addresses."""
         self.I2C_PORT = i2c_port
         self.PE_ADDR = pe_addr
         self.PE_DIRREG = pe_dirreg
         self.PE_OUTREG = pe_outreg
 
     def enable_gate(self, simulate_operations=False):
-        """
-        Enable the gate logic by configuring the PCA6408AHKX.
-        Sets the direction and output registers to open the logic gate.
-        """
+        """Open the periphery logic gate via PCA6408 direction/output registers."""
         commands = [
             ["/usr/sbin/i2cset", "-y", self.I2C_PORT, self.PE_ADDR, self.PE_DIRREG, "0x00"],
             ["/usr/sbin/i2cset", "-y", self.I2C_PORT, self.PE_ADDR, self.PE_OUTREG, "0x00"]
         ]
         for command in commands:
-            if not systemcmd(command, simulate_operations=simulate_operations):
+            if not ServiceOps.systemcmd(command, simulate_operations=simulate_operations):
                 logging.error("[I2C] Failed to enable gate")
                 return
         logging.info("[I2C] Gate enabled: logic gate to periphery is open")
 
     def disable_gate(self, simulate_operations=False):
-        """
-        Disable the gate logic by configuring the PCA6408AHKX.
-        Sets the direction and output registers to close the logic gate.
-        """
+        """Close the periphery logic gate via PCA6408 direction/output registers."""
         commands = [
             ["/usr/sbin/i2cset", "-y", self.I2C_PORT, self.PE_ADDR, self.PE_DIRREG, "0x00"],
             ["/usr/sbin/i2cset", "-y", self.I2C_PORT, self.PE_ADDR, self.PE_OUTREG, "0x01"]
         ]
         for command in commands:
-            if not systemcmd(command, simulate_operations=simulate_operations):
+            if not ServiceOps.systemcmd(command, simulate_operations=simulate_operations):
                 logging.error("[I2C] Failed to disable gate")
                 return
         logging.info("[I2C] Gate disabled: logic gate to periphery is closed")
 
 class Gpio:
+    """Sysfs GPIO export/configure/read/write with a cross-process write safety delay."""
+
     BASE_PATH = "/sys/devices/platform/soc/fe200000.gpio/gpiochip0/gpio/"
     SAFETY_DELAY_S = 1.0
     SAFETY_LOCK_FILE = "/tmp/kittyhack_gpio_safety.lock"
@@ -1579,19 +97,11 @@ class Gpio:
     _safety_thread_lock = threading.Lock()
 
     def __init__(self, base_path=BASE_PATH):
+        """Use ``base_path`` as the sysfs GPIO chip directory."""
         self.base_path = base_path
 
     def configure(self, gpio_number, gpio_direction="out"):
-        """
-        Configures a GPIO pin with the specified parameters.
-
-        Args:
-            gpio_number (int): The GPIO number to configure.
-            gpio_direction (str): Direction of the GPIO ('in' or 'out'). Defaults to 'out'.
-
-        Returns:
-            bool: True if the configuration is successful, False otherwise.
-        """
+        """Export a GPIO and set its direction (defaults output to 0)."""
         try:
             # Export GPIO
             with open("/sys/class/gpio/export", "w") as export_file:
@@ -1620,11 +130,7 @@ class Gpio:
         return True
 
     def _get_boot_id(self) -> str | None:
-        """Return a stable boot identifier for the current Linux boot.
-
-        This allows us to discard persisted monotonic timestamps from a previous
-        boot, where the monotonic clock has reset.
-        """
+        """Return the current Linux boot_id (used to invalidate cross-boot timestamps)."""
         for path in ("/proc/sys/kernel/random/boot_id",):
             try:
                 if os.path.exists(path):
@@ -1636,10 +142,7 @@ class Gpio:
         return None
 
     def _read_last_write_mono(self) -> float:
-        """Read last write timestamp in monotonic seconds.
-
-        Returns 0.0 if no state exists.
-        """
+        """Read last GPIO write monotonic timestamp (0.0 if missing/stale boot)."""
         try:
             with open(self.SAFETY_STATE_FILE, "r", encoding="utf-8") as state_file:
                 data = json.load(state_file) or {}
@@ -1662,6 +165,7 @@ class Gpio:
             return 0.0
 
     def _write_last_write_state(self, gpio_number: int, value: int) -> None:
+        """Persist last GPIO write monotonic time + boot_id for the safety delay."""
         try:
             now_mono = tm.monotonic()
         except Exception:
@@ -1691,6 +195,7 @@ class Gpio:
             logging.warning(f"[GPIO] Failed to persist GPIO safety timestamp: {e}")
 
     def _set_raw(self, gpio_number, value):
+        """Write a GPIO value without enforcing the safety delay."""
         value_path = os.path.join(self.base_path, f"gpio{gpio_number}", "value")
         try:
             with open(value_path, "w") as value_file:
@@ -1703,6 +208,7 @@ class Gpio:
         return True
 
     def _set_with_safety_delay(self, gpio_number, value):
+        """Write GPIO after waiting for the shared cross-process safety delay."""
         os.makedirs(os.path.dirname(self.SAFETY_LOCK_FILE), exist_ok=True)
         with open(self.SAFETY_LOCK_FILE, "a+", encoding="utf-8") as lock_file:
             fcntl.flock(lock_file, fcntl.LOCK_EX)
@@ -1725,28 +231,11 @@ class Gpio:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)
 
     def set(self, gpio_number, value):
-        """
-        Sets the value of a GPIO pin.
-
-        Args:
-            gpio_number (int): The GPIO number to set.
-            value (int): The value to set (0 or 1).
-
-        Returns:
-            bool: True if the operation is successful, False otherwise.
-        """
+        """Set a GPIO to 0/1, enforcing the shared write safety delay."""
         return self._set_with_safety_delay(gpio_number, value)
 
     def get(self, gpio_number):
-        """
-        Gets the value of a GPIO pin.
-
-        Args:
-            gpio_number (int): The GPIO number to read.
-
-        Returns:
-            int: The value of the GPIO pin (0 or 1), or None on error.
-        """
+        """Read a GPIO value (0/1), or None on error."""
         value_path = os.path.join(self.base_path, f"gpio{gpio_number}", "value")
         try:
             with open(value_path, "r") as value_file:
@@ -1755,3 +244,1394 @@ class Gpio:
         except IOError as e:
             logging.error(f"Error reading value for GPIO{gpio_number}: {e}")
             return None
+
+class DependencyInstaller:
+    """Ensure optional system packages (ffmpeg, OpenVINO) are present."""
+
+    @staticmethod
+    def ensure_ffmpeg_installed() -> bool:
+        """Ensure ffmpeg is available. Try to install it on Debian-based systems if missing."""
+        if shutil.which("ffmpeg"):
+            return True
+
+        logging.warning("[CAMERA] ffmpeg not found. Attempting to install it...")
+
+        apt_update_cmd = ["apt-get", "update"]
+        apt_install_cmd = ["apt-get", "install", "-y", "ffmpeg"]
+
+        if os.geteuid() != 0:
+            if shutil.which("sudo"):
+                apt_update_cmd = ["sudo", *apt_update_cmd]
+                apt_install_cmd = ["sudo", *apt_install_cmd]
+            else:
+                logging.error("[CAMERA] ffmpeg is missing and sudo is not available for installation.")
+                return False
+
+        try:
+            update_proc = subprocess.run(
+                apt_update_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+            if update_proc.returncode != 0:
+                logging.error(f"[CAMERA] Failed to update package index for ffmpeg install: {update_proc.stderr.strip()}")
+                return False
+
+            install_proc = subprocess.run(
+                apt_install_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=900,
+                check=False,
+            )
+            if install_proc.returncode != 0:
+                logging.error(f"[CAMERA] Failed to install ffmpeg: {install_proc.stderr.strip()}")
+                return False
+        except Exception as e:
+            logging.error(f"[CAMERA] Error while installing ffmpeg: {e}")
+            return False
+
+        installed = shutil.which("ffmpeg") is not None
+        if installed:
+            logging.info("[CAMERA] ffmpeg installed successfully.")
+        else:
+            logging.error("[CAMERA] ffmpeg installation command finished, but ffmpeg is still unavailable.")
+        return installed
+
+    @staticmethod
+    def ensure_openvino_installed() -> bool:
+        """Ensure the openvino package is available. Try to install it via pip if missing."""
+        import importlib.util
+        try:
+            if importlib.util.find_spec("openvino") is not None:
+                return True
+        except Exception:
+            pass
+
+        logging.warning("[MODEL] openvino package not found. Attempting to install via pip...")
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "openvino"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=600,
+                check=False,
+            )
+            if result.returncode != 0:
+                logging.error(f"[MODEL] Failed to install openvino: {result.stderr.strip()}")
+                return False
+        except Exception as e:
+            logging.error(f"[MODEL] Error while installing openvino: {e}")
+            return False
+
+        try:
+            if importlib.util.find_spec("openvino") is not None:
+                logging.info("[MODEL] openvino installed successfully.")
+                return True
+            logging.error("[MODEL] openvino installation finished but package is still not importable.")
+            return False
+        except Exception:
+            return False
+
+class ServiceOps:
+    """systemctl/systemcmd wrappers and service status helpers."""
+
+    @staticmethod
+    def systemctl(mode: str, service: str, simulate_operations=False, timeout: float = 15.0):
+        """Run ``systemctl {mode} {service}`` with an explicit timeout (default 15s)."""
+        # stop kwork process
+        if simulate_operations == True:
+            logging.info(f"kittyhack is in development mode. Skip 'systemctl {mode} {service}'.")
+        else:
+            try:
+                result = subprocess.run(
+                    ["/usr/bin/systemctl", mode, service],
+                    check=True,
+                    text=True,
+                    capture_output=True,
+                    timeout=timeout,
+                )
+                logging.info(f"service {service} {mode}: {result.stdout}")
+            except subprocess.TimeoutExpired:
+                # Without a timeout a hung systemd operation (common when the network
+                # stack is in a bad state) would freeze callers like the WLAN watchdog
+                # indefinitely and prevent the emergency reboot from firing.
+                logging.error(f"systemctl {mode} {service} timed out after {timeout}s")
+                return False
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Failed to {mode} {service}: {e.stderr}")
+                return False
+
+        return True
+
+    @staticmethod
+    def run_with_progress(command, progress_callback, step, message, detail):
+        """Run a command, stream stdout to ``progress_callback``, return (ok, output)."""
+        logging.info(f"Running command: {' '.join(command)}")
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+        output_lines = []
+        # Limit the length of callback messages to avoid flooding the UI
+        max_detail_length = 120
+        for line in process.stdout:
+            line_stripped = line.strip()
+            output_lines.append(line)
+            logging.info(f"[SYSTEM] {line_stripped}")
+            if progress_callback:
+                # Send the latest line as detail, truncated if necessary
+                if len(line_stripped) > max_detail_length:
+                    truncated_detail = line_stripped[:max_detail_length] + "..."
+                    progress_callback(step, message, truncated_detail)
+                else:
+                    progress_callback(step, message, line_stripped)
+        process.wait()
+        if process.returncode != 0:
+            logging.error(f"Command failed with return code {process.returncode}")
+        return process.returncode == 0, ''.join(output_lines)
+
+    @staticmethod
+    def is_service_running(service: str, simulate_operations=False, log_output=True):
+        """True if ``systemctl is-active`` reports the service as active."""
+        if simulate_operations == True:
+            if log_output:
+                logging.info(f"kittyhack is in development mode. Skip 'is_service_running {service}'.")
+            return True
+
+        try:
+            result = subprocess.run(
+                ["/usr/bin/systemctl", "is-active", service],
+                check=True,
+                text=True,
+                capture_output=True
+            )
+            if log_output:
+                logging.info(f"service {service} is active: {result.stdout.strip()}")
+            return True
+        except subprocess.CalledProcessError as e:
+            if log_output:
+                logging.info(f"service {service} is not active. {e.stderr.strip()}")
+            return False
+
+    @staticmethod
+    def is_service_masked(service: str, simulate_operations=False):
+        """True if the service is masked (or ``is-enabled`` fails)."""
+        if simulate_operations:
+            logging.info(f"kittyhack is in development mode. Skip 'is_service_running {service}'.")
+            return True
+
+        try:
+            # Run the `systemctl is-enabled` command
+            result = subprocess.run(
+                ["/usr/bin/systemctl", "is-enabled", service],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False
+            )
+            # Check the output for "masked"
+            if result.returncode != 0 or "masked" in result.stdout:
+                return True
+            return False
+        except Exception as e:
+            logging.error(f"Failed to check if service {service} is masked: {e}")
+            return False
+
+    @staticmethod
+    def systemcmd(command: list[str], simulate_operations=None):
+        """Run a tokenized shell command; True on success.
+
+        When ``simulate_operations`` is None, uses ``is_simulate_mode()``.
+        """
+        if simulate_operations is None:
+            from src.runtime_flags import is_simulate_mode
+            simulate_operations = is_simulate_mode()
+        cString = ' '.join(command)
+        # run command
+        if simulate_operations == True:
+            logging.info(f"kittyhack is in development mode. Skip 'ServiceOps.systemcmd {cString}'.")
+        else:
+            try:
+                result = subprocess.run(
+                    command,
+                    check=True,
+                    text=True,
+                    capture_output=True
+                )
+                logging.info(f"ServiceOps.systemcmd '{cString}': {result.stdout}")
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Failed to run command '{cString}': {e.stderr}")
+                return False
+            except FileNotFoundError as e:
+                logging.error(f"Failed to run command '{cString}': {e}")
+                return False
+
+        return True
+
+class WlanManager:
+    """WLAN scan/switch/delete and runtime txpower/power-save settings."""
+
+    @staticmethod
+    def manage_and_switch_wlan(ssid, password="", priority=-1, update_password=False):
+        """Add/update an nmcli Wi‑Fi connection, set priority, and bring it up."""
+        if is_remote_mode():
+            logging.info("[SYSTEM] WLAN management is not available in remote-mode.")
+            return False
+        if priority == -1:
+            try:
+                result = subprocess.run(
+                    ["/usr/bin/nmcli", "-g", "AUTOCONNECT-PRIORITY", "connection", "show"],
+                    stdout=subprocess.PIPE,
+                    text=True,
+                    check=True
+                )
+                existing_priorities = [int(p) for p in result.stdout.split('\n') if p.strip()]
+                priority = max(existing_priorities, default=0) + 1
+            except subprocess.CalledProcessError:
+                priority = 999
+
+        if password == "":
+            wifi_sec_params = []
+        else:
+            wifi_sec_params = ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+
+        try:
+            # Check if the connection already exists
+            result = subprocess.run(
+                ["/usr/bin/nmcli", "-t", "-f", "NAME", "connection", "show"],
+                stdout=subprocess.PIPE, text=True
+            )
+            existing_connections = [conn for conn in result.stdout.splitlines() 
+                                  if conn not in ["lo", "Wired connection 1"]]
+
+            if ssid in existing_connections:
+                if update_password:
+                    # Update the password for the existing connection
+                    subprocess.run(
+                        ["/usr/bin/nmcli", "connection", "modify", ssid, "wifi-sec.psk", password],
+                        check=True,
+                    )
+                    logging.info(f"[SYSTEM] Updated password for WLAN {ssid}.")
+                else:
+                    logging.info(f"[SYSTEM] Skipping password update for WLAN {ssid}.")
+            else:
+                subprocess.run(
+                    [
+                        "/usr/bin/nmcli", "connection", "add", "type", "wifi", 
+                        "ifname", "wlan0", "con-name", ssid, "ssid", ssid,
+                        *wifi_sec_params, "802-11-wireless.hidden", "yes",
+                        "connection.autoconnect", "yes",
+                    ],
+                    check=True,
+                )
+                logging.info(f"[SYSTEM] Added WLAN configuration for {ssid}.")
+
+            # Set the priority for the connection
+            subprocess.run(
+                ["/usr/bin/nmcli", "connection", "modify", ssid, "connection.autoconnect-priority", str(priority)],
+                check=True,
+            )
+            logging.info(f"[SYSTEM] Set priority {priority} for {ssid}.")
+
+            # Restart NetworkManager to apply changes
+            subprocess.run(["/usr/bin/systemctl", "restart", "NetworkManager"], check=True)
+            logging.info(f"[SYSTEM] Restarted NetworkManager to apply changes.")
+            # Wait for the network to be up before returning
+            for x in range(20):
+                result = subprocess.run(
+                    ["/usr/bin/nmcli", "-t", "-f", "NETWORKING"],
+                    stdout=subprocess.PIPE,
+                    text=True,
+                    check=True
+                )
+                if "wlan0: connected to" in result.stdout:
+                    logging.info(f"[SYSTEM] Network is up and connected.")
+                    return True
+                tm.sleep(2)
+            logging.error(f"[SYSTEM] Network did not come up in time.")
+            return False
+
+        except subprocess.CalledProcessError as e:
+            logging.info(f"[SYSTEM] Error managing WLAN: {e}")
+            return False
+
+    @staticmethod
+    def switch_wlan_connection(ssid: str):
+        """Bring up an existing nmcli Wi‑Fi connection (timeout-bounded for watchdog)."""
+        if is_remote_mode():
+            logging.info("[SYSTEM] WLAN management is not available in remote-mode.")
+            return False
+        try:
+            subprocess.run(
+                ["/usr/bin/nmcli", "connection", "up", ssid],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            # Wait for the network to be up before returning
+            for x in range(20):
+                try:
+                    result = subprocess.run(
+                        ["/usr/bin/nmcli", "-t", "-f", "NETWORKING"],
+                        stdout=subprocess.PIPE,
+                        text=True,
+                        check=True,
+                        timeout=5,
+                    )
+                except subprocess.TimeoutExpired:
+                    logging.warning("[SYSTEM] nmcli NETWORKING probe timed out; retrying...")
+                    continue
+                if "wlan0: connected to" in result.stdout:
+                    logging.info(f"[SYSTEM] Network is up and connected.")
+                    return True
+                tm.sleep(2)
+            logging.error(f"[SYSTEM] Network did not come up in time.")
+            return False
+        except subprocess.TimeoutExpired:
+            logging.error(f"[SYSTEM] 'nmcli connection up {ssid}' timed out after 20s")
+            return False
+        except subprocess.CalledProcessError as e:
+            logging.error(f"[SYSTEM] Error switching to WLAN network {ssid}: {e.stderr}")
+            return False
+
+    @staticmethod
+    def apply_wlan_runtime_settings():
+        """Re-apply wlan0 TX-Power and power_save=off (best-effort, timeout-bounded)."""
+        from src.runtime_flags import is_simulate_mode
+        tx_power = CONFIG.get('WLAN_TX_POWER')
+        if is_simulate_mode():
+            logging.info(f"[SYSTEM] (simulate) Would set wlan0 txpower={tx_power}, power_save=off")
+            return
+
+        try:
+            logging.info(f"[SYSTEM] Applying WLAN runtime settings: txpower={tx_power} dBm, power_save=off")
+            subprocess.run(
+                ["/usr/sbin/iwconfig", "wlan0", "txpower", f"{tx_power}"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            subprocess.run(
+                ["/usr/sbin/iw", "dev", "wlan0", "set", "power_save", "off"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except subprocess.TimeoutExpired as e:
+            logging.warning(f"[SYSTEM] WLAN runtime settings command timed out: {e}")
+        except Exception as e:
+            logging.warning(f"[SYSTEM] Failed to apply WLAN runtime settings: {e}")
+
+    @staticmethod
+    def delete_wlan_connection(ssid):
+        """Delete an nmcli Wi‑Fi connection profile by SSID."""
+        if is_remote_mode():
+            logging.info("[SYSTEM] WLAN management is not available in remote-mode.")
+            return False
+        try:
+            subprocess.run(
+                ["/usr/bin/nmcli", "connection", "delete", ssid],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            logging.info(f"[SYSTEM] Successfully deleted WLAN network configuration: {ssid}")
+            return True
+        except subprocess.CalledProcessError as e:
+            logging.error(f"[SYSTEM] Error deleting WLAN network configuration {ssid}: {e.stderr}")
+            return False
+
+    @staticmethod
+    def scan_wlan_networks():
+        """Scan nearby Wi‑Fi networks via nmcli; return list of dicts (ssid/signal/…)."""
+        if is_remote_mode():
+            logging.info("[SYSTEM] WLAN scan is not available in remote-mode.")
+            return []
+        try:
+            result = subprocess.run(
+                ["/usr/bin/nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,BARS,CHAN,BSSID", "device", "wifi", "list"],
+                stdout=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            networks = {}
+            for line in result.stdout.split('\n'):
+                if not line:
+                    continue
+
+                # Use regex to split on unescaped colons
+                parts = re.split(r'(?<!\\):', line, maxsplit=5)
+                if len(parts) != 6:
+                    continue
+
+                # Unescape any escaped characters
+                parts = [p.replace('\\:', ':').replace('\\\\', '\\') for p in parts]
+                ssid, signal, security, bars, channel, bssid = parts
+                if not ssid or ssid == "":
+                    ssid = bssid.replace("\\", "")
+                bar_count = len([c for c in bars if c not in ('_', ' ')])
+                if ssid not in networks:
+                    networks[ssid] = {
+                        "ssid": ssid,
+                        "signal": int(signal),
+                        "security": security,
+                        "bars": bar_count,
+                        "channel": str(channel)
+                    }
+                else:
+                    networks[ssid]["signal"] = max(networks[ssid]["signal"], int(signal))
+                    networks[ssid]["bars"] = max(networks[ssid]["bars"], bar_count)
+                    if str(channel) not in networks[ssid]["channel"].split(','):
+                        networks[ssid]["channel"] = f"{networks[ssid]['channel']}, {channel}"
+            networks = list(networks.values())
+            return networks
+        except Exception as e:
+            logging.error(f"[SYSTEM] Error scanning WLAN networks: {e}")
+            return []
+
+    @staticmethod
+    def get_wlan_connections():
+        """Return configured Wi‑Fi profiles as dicts with ssid/connected/priority."""
+        if is_remote_mode():
+            logging.info("[SYSTEM] WLAN connections are not available in remote-mode.")
+            return []
+        try:
+            result = subprocess.run(
+                ["/usr/bin/nmcli", "-t", "-f", "NAME,DEVICE,AUTOCONNECT-PRIORITY,STATE", "connection", "show"],
+                stdout=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            connections = []
+            for line in result.stdout.split('\n'):
+                if line:
+                    # Use regex to split on unescaped colons
+                    parts = re.split(r'(?<!\\):', line, maxsplit=3)
+                    if len(parts) != 4:
+                        continue
+
+                    # Unescape any escaped characters
+                    parts = [p.replace('\\:', ':').replace('\\\\', '\\') for p in parts]
+                    ssid, device, priority, state = parts
+                    # Skip loopback and wired connections
+                    if ssid not in ["lo", "Wired connection 1"]:
+                        connections.append({
+                            "ssid": ssid,
+                            "connected": state == "activated",
+                            "priority": int(priority)
+                        })
+            return connections
+        except subprocess.CalledProcessError as e:
+            logging.error(f"[SYSTEM] Error getting WLAN connections: {e.stderr}")
+            return []
+
+    @staticmethod
+    def get_default_gateways():
+        """Return IPv4/IPv6 default gateway addresses from ``ip route``."""
+        gateways = []
+        # IPv4
+        try:
+            result = subprocess.run(["ip", "route"], capture_output=True, text=True, check=True)
+            for line in result.stdout.splitlines():
+                if line.startswith("default"):
+                    gateways.append(line.split()[2])
+        except Exception:
+            pass
+        # IPv6
+        try:
+            result = subprocess.run(["ip", "-6", "route"], capture_output=True, text=True, check=True)
+            for line in result.stdout.splitlines():
+                if line.startswith("default"):
+                    gateways.append(line.split()[2])
+        except Exception:
+            pass
+        return gateways
+
+    @staticmethod
+    def is_gateway_reachable():
+        """True if any default gateway answers a short ping."""
+        gateways = WlanManager.get_default_gateways()
+        for gw in gateways:
+            if ":" in gw:  # IPv6
+                ping_cmd = ["ping", "-6", "-c", "1", "-W", "2", gw]
+            else:  # IPv4
+                ping_cmd = ["ping", "-c", "1", "-W", "2", gw]
+            try:
+                ping = subprocess.run(ping_cmd, capture_output=True)
+                if ping.returncode == 0:
+                    return True
+            except Exception:
+                continue
+        return False
+
+class KittyhackUpdater:
+    """Kittyhack update install, hostname, and base-package upgrades."""
+
+    @staticmethod
+    def update_kittyhack(
+        progress_callback=None,
+        latest_version=None,
+        current_version=None,
+        *,
+        halt_backend_first: bool = True,
+        defer_service_updates: bool = False,
+    ):
+        """Git-fetch/checkout Kittyhack, refresh deps/units; return (ok, message)."""
+
+        def _sha256_file(path: str) -> str | None:
+            try:
+                import hashlib
+                with open(path, "rb") as f:
+                    return hashlib.sha256(f.read()).hexdigest()
+            except Exception:
+                return None
+
+        def _run_step(step_no: int, msg: str, cmd: list[str]):
+            if progress_callback:
+                progress_callback(step_no, msg, "")
+            logging.info(msg)
+
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            output_lines: list[str] = []
+            max_detail_length = 120
+
+            assert process.stdout is not None
+            for line in process.stdout:
+                line_stripped = (line or "").strip()
+                output_lines.append(line)
+                logging.info(f"[UPDATE] {line_stripped}")
+                if progress_callback:
+                    if len(line_stripped) > max_detail_length:
+                        progress_callback(step_no, msg, line_stripped[:max_detail_length] + "...")
+                    else:
+                        progress_callback(step_no, msg, line_stripped)
+
+            process.wait()
+            if process.returncode != 0:
+                output = "".join(output_lines)
+                logging.error(f"Command failed with return code {process.returncode}:\n{output}")
+                raise subprocess.CalledProcessError(process.returncode, cmd, output=output)
+
+        def _install_kittyhack_service_file() -> None:
+            template_path = os.path.join(kittyhack_root(), "setup", "kittyhack.service")
+            target_path = "/etc/systemd/system/kittyhack.service"
+            with open(template_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            content = content.replace("/root/kittyhack", kittyhack_root())
+            with open(target_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+        def _install_kittyhack_control_service_file() -> None:
+            template_path = os.path.join(kittyhack_root(), "setup", "kittyhack_control.service")
+            target_path = "/etc/systemd/system/kittyhack_control.service"
+            if not os.path.exists(template_path):
+                return
+            with open(template_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            content = content.replace("/root/kittyhack", kittyhack_root())
+            with open(target_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+        def _remove_kittyhack_control_service_file() -> None:
+            target_path = "/etc/systemd/system/kittyhack_control.service"
+            try:
+                if os.path.exists(target_path):
+                    os.remove(target_path)
+            except Exception:
+                pass
+
+        def _apply_target_boot_service_semantics() -> None:
+            """Enable/disable kittyhack vs kittyhack_control for target/remote mode."""
+            try:
+                is_remote = bool(is_remote_mode())
+            except Exception:
+                is_remote = False
+
+            try:
+                # Ensure service files exist before enabling.
+                _install_kittyhack_service_file()
+                if is_remote:
+                    _remove_kittyhack_control_service_file()
+                else:
+                    _install_kittyhack_control_service_file()
+            except Exception:
+                pass
+
+            try:
+                subprocess.run(["/bin/systemctl", "daemon-reload"], check=False)
+            except Exception:
+                pass
+
+            if is_remote:
+                # Remote-mode: kittyhack.service is the primary service.
+                try:
+                    subprocess.run(["/bin/systemctl", "enable", "kittyhack.service"], check=False)
+                except Exception:
+                    pass
+                try:
+                    subprocess.run(["/bin/systemctl", "disable", "kittyhack_control.service"], check=False)
+                    subprocess.run(["/bin/systemctl", "stop", "kittyhack_control.service"], check=False)
+                except Exception:
+                    pass
+                return
+
+            # Target-mode: kittyhack_control is the boot supervisor.
+            try:
+                subprocess.run(["/bin/systemctl", "enable", "kittyhack_control.service"], check=False)
+            except Exception:
+                pass
+            try:
+                # Do not stop kittyhack here (we are currently running inside it).
+                subprocess.run(["/bin/systemctl", "disable", "kittyhack.service"], check=False)
+            except Exception:
+                pass
+            try:
+                subprocess.run(["/bin/systemctl", "start", "kittyhack_control.service"], check=False)
+            except Exception:
+                pass
+
+        # Step 0: Stop backend process (only for local kittyhack.service updates).
+        if halt_backend_first:
+            if progress_callback:
+                progress_callback(0, "Stopping backend process", "")
+            try:
+                from src.helper import sigterm_monitor
+                import time as tm
+                sigterm_monitor.halt_backend()
+                tm.sleep(1.0)
+            except Exception as e:
+                logging.error(f"Failed to stop backend process: {e}")
+
+        requirements_path = os.path.join(kittyhack_root(), "requirements.txt")
+        venv_activate = os.path.join(kittyhack_root(), ".venv", "bin", "activate")
+        pip_install_cmd = [
+            "/bin/bash",
+            "-c",
+            f"source {venv_activate} && pip install --timeout 120 --retries 10 -r {requirements_path}",
+        ]
+
+        req_hash_before: str | None = None
+        req_hash_after: str | None = None
+        did_update_deps = False
+
+        # Resolve the configured update source (standard vs custom repo / branch).
+        try:
+            from src.helper import Versioning
+            update_owner, update_repo, update_ref, update_git_url, update_mode = Versioning.resolved_update_repo()
+        except Exception as e:
+            logging.debug(f"[UPDATE] Versioning.resolved_update_repo not available ({e}); using existing origin")
+            update_git_url = None
+            update_ref = None
+            update_mode = "standard"
+
+        try:
+            # 1
+            _run_step(1, "Reverting local changes", ["/bin/git", "restore", "."])
+            # 2
+            _run_step(2, "Cleaning untracked files", ["/bin/git", "clean", "-fd"])
+
+            # Hash current requirements after a clean tree, so the comparison is meaningful.
+            req_hash_before = _sha256_file(requirements_path)
+
+            # Point origin at the configured update source (best-effort).
+            if update_git_url:
+                try:
+                    subprocess.run(
+                        ["/bin/git", "remote", "set-url", "origin", update_git_url],
+                        cwd=kittyhack_root(),
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                    logging.info(f"[UPDATE] origin URL set to {update_git_url} (mode={update_mode})")
+                except Exception as e:
+                    logging.warning(f"[UPDATE] Failed to update origin URL to {update_git_url}: {e}")
+
+            # 3
+            _run_step(3, f"Fetching latest version {latest_version}", ["/bin/git", "fetch", "--all", "--tags"])
+            # 4 — checkout either a tag (standard / custom+tag) or a branch (custom+branch).
+            if update_ref is not None:
+                # Branch mode: create/reset a local branch tracking origin/<ref> to HEAD.
+                _run_step(
+                    4,
+                    f"Checking out branch {update_ref}",
+                    ["/bin/git", "checkout", "-B", update_ref, f"origin/{update_ref}"],
+                )
+            else:
+                _run_step(4, f"Checking out {latest_version}", ["/bin/git", "checkout", latest_version])
+
+            req_hash_after = _sha256_file(requirements_path)
+            requirements_unchanged = (
+                req_hash_before is not None and req_hash_after is not None and req_hash_before == req_hash_after
+            )
+
+            # 5
+            if requirements_unchanged:
+                msg = "Python dependencies unchanged (requirements.txt); skipping reinstall"
+                if progress_callback:
+                    progress_callback(5, msg, "")
+                logging.info(msg)
+            else:
+                _run_step(5, "Updating python dependencies", pip_install_cmd)
+                did_update_deps = True
+
+            # 6-8 (service/unit changes) can be deferred when update is executed from
+            # kittyhack_control on the target device to avoid self-restart during update.
+            if defer_service_updates:
+                if progress_callback:
+                    progress_callback(6, "Deferring systemd service updates until reboot", "")
+                logging.info("Deferring systemd service/unit updates until reboot")
+            else:
+                # 6
+                if progress_callback:
+                    progress_callback(6, "Updating systemd service file", "")
+                logging.info("Updating systemd service file")
+                _install_kittyhack_service_file()
+                try:
+                    _is_remote_now = bool(is_remote_mode())
+                except Exception:
+                    _is_remote_now = False
+                if _is_remote_now:
+                    _remove_kittyhack_control_service_file()
+                else:
+                    _install_kittyhack_control_service_file()
+                # 7
+                _run_step(7, "Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"])
+
+                # 8
+                if progress_callback:
+                    progress_callback(8, "Updating systemd enable/disable state", "")
+                logging.info("Updating systemd enable/disable state")
+                _apply_target_boot_service_semantics()
+        except Exception as e:
+            logging.error(f"Update step failed: {e}")
+            # Rollback logic
+            if current_version:
+                try:
+                    subprocess.run(["/bin/git", "checkout", current_version], check=True)
+                    # Only reinstall deps on rollback if we actually modified them during the update.
+                    if did_update_deps:
+                        subprocess.run(pip_install_cmd, check=True)
+                    _install_kittyhack_service_file()
+                    try:
+                        _is_remote_now = bool(is_remote_mode())
+                    except Exception:
+                        _is_remote_now = False
+                    if _is_remote_now:
+                        _remove_kittyhack_control_service_file()
+                    else:
+                        _install_kittyhack_control_service_file()
+                    subprocess.run(["/bin/systemctl", "daemon-reload"], check=True)
+                    # Best-effort: keep service enablement consistent even after rollback.
+                    try:
+                        _apply_target_boot_service_semantics()
+                    except Exception:
+                        pass
+                except Exception as rollback_e:
+                    logging.error(f"Rollback failed: {rollback_e}")
+            return False, str(e)
+        return True, "Update completed"
+
+    @staticmethod
+    def ensure_target_boot_service_semantics() -> None:
+        """On target devices, ensure kittyhack_control is enabled and kittyhack disabled."""
+        if is_remote_mode():
+            return
+
+        def _pick_systemctl() -> str:
+            # Prefer common absolute paths to avoid PATH issues under systemd.
+            for candidate in ("/usr/bin/systemctl", "/bin/systemctl"):
+                try:
+                    if os.path.exists(candidate):
+                        return candidate
+                except Exception:
+                    continue
+            return "systemctl"
+
+        systemctl = _pick_systemctl()
+
+        def _run_systemctl(*args: str) -> subprocess.CompletedProcess:
+            try:
+                return subprocess.run([systemctl, *args], check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            except Exception:
+                # Return a dummy object-like fallback.
+                return subprocess.CompletedProcess(args=[systemctl, *args], returncode=1, stdout="")
+
+        def _systemctl_stdout(*args: str) -> str:
+            return (_run_systemctl(*args).stdout or "").strip()
+
+        def _is_enabled(service_name: str) -> bool:
+            out = _systemctl_stdout("is-enabled", service_name)
+            # 'static' services can't be enabled, but are still valid.
+            return out in {"enabled", "enabled-runtime", "static"}
+
+        def _is_active(service_name: str) -> bool:
+            out = _systemctl_stdout("is-active", service_name)
+            return out in {"active", "activating"}
+
+        def _is_disabled(service_name: str) -> bool:
+            out = _systemctl_stdout("is-enabled", service_name)
+            return out in {"disabled", "masked", "indirect", "generated", "transient", ""}
+
+        # Fast-path: if we're already in the desired state, do nothing.
+        try:
+            if _is_enabled("kittyhack_control.service") and _is_active("kittyhack_control.service") and _is_disabled("kittyhack.service"):
+                return
+        except Exception:
+            pass
+
+        template_path = os.path.join(kittyhack_root(), "setup", "kittyhack_control.service")
+        target_path = "/etc/systemd/system/kittyhack_control.service"
+        did_update_unit_file = False
+
+        try:
+            if os.path.exists(template_path):
+                with open(template_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                content = content.replace("/root/kittyhack", kittyhack_root())
+
+                existing: str | None = None
+                try:
+                    if os.path.exists(target_path):
+                        with open(target_path, "r", encoding="utf-8") as f:
+                            existing = f.read()
+                except Exception:
+                    existing = None
+
+                if existing != content:
+                    with open(target_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    did_update_unit_file = True
+        except Exception as e:
+            logging.warning(f"[SYSTEM] Could not install kittyhack_control.service: {e}")
+
+        # Only daemon-reload if we updated/installed the unit file.
+        if did_update_unit_file:
+            try:
+                _run_systemctl("daemon-reload")
+            except Exception:
+                pass
+
+        # Ensure kittyhack_control is enabled + running (best-effort).
+        try:
+            if not _is_enabled("kittyhack_control.service"):
+                _run_systemctl("enable", "kittyhack_control.service")
+        except Exception:
+            pass
+        try:
+            if not _is_active("kittyhack_control.service"):
+                _run_systemctl("start", "kittyhack_control.service")
+        except Exception:
+            pass
+
+        # Prevent kittyhack.service from being the primary boot service going forward.
+        try:
+            if not _is_disabled("kittyhack.service"):
+                _run_systemctl("disable", "kittyhack.service")
+        except Exception:
+            pass
+
+    @staticmethod
+    def upgrade_base_system_packages(packages: list[str] | None = None) -> tuple[bool, str]:
+        """APT update + curated package upgrade; return (ok, combined output)."""
+        # Pre-flight recovery: clear stale locks and finish incomplete configurations
+        def preflight_recovery(env) -> str:
+            out = []
+            try:
+                # Kill stray apt/dpkg processes and remove locks
+                subprocess.run(["/usr/bin/fuser", "-kv", "/var/lib/dpkg/lock"], check=False, text=True, capture_output=True)
+                subprocess.run(["/usr/bin/fuser", "-kv", "/var/lib/apt/lists/lock"], check=False, text=True, capture_output=True)
+                subprocess.run(["/usr/bin/fuser", "-kv", "/var/cache/apt/archives/lock"], check=False, text=True, capture_output=True)
+                for lock in ["/var/lib/dpkg/lock", "/var/lib/apt/lists/lock", "/var/cache/apt/archives/lock"]:
+                    try:
+                        if os.path.exists(lock):
+                            os.remove(lock)
+                            out.append(f"[APT] Removed stale lock: {lock}\n")
+                    except Exception as e:
+                        out.append(f"[APT] Could not remove lock {lock}: {e}\n")
+                # Fix broken installs and configure pending packages
+                res_cfg = subprocess.run(["/usr/bin/dpkg", "--configure", "-a"], check=False, text=True, capture_output=True, env=env)
+                if res_cfg.stdout:
+                    out.append("=== dpkg --configure -a ===\n" + res_cfg.stdout + "\n")
+                if res_cfg.stderr:
+                    out.append("[stderr]\n" + res_cfg.stderr + "\n")
+                res_fix = subprocess.run(["/usr/bin/apt-get", "-y", "-f", "install"], check=False, text=True, capture_output=True, env=env)
+                if res_fix.stdout:
+                    out.append("=== apt-get -f install ===\n" + res_fix.stdout + "\n")
+                if res_fix.stderr:
+                    out.append("[stderr]\n" + res_fix.stderr + "\n")
+            except Exception as e:
+                out.append(f"[APT] Preflight recovery error: {e}\n")
+            return ''.join(out)
+
+        # Default set focuses on core runtime and update tooling
+        default_packages = [
+            "apt",
+            "bash",
+            "ca-certificates",
+            "dpkg",
+            "git",
+            "gnupg",
+            "gpg",
+            "libc6",
+            "libssl3",
+            "libstdc++6",
+            "openssl",
+            "python3",
+            "python3-pip",
+            "sudo",
+            "systemd",
+            "systemd-sysv",
+            "tzdata",
+            "wget",
+        ]
+        pkgs = packages or default_packages
+
+        # Remove duplicates while preserving order
+        seen = set()
+        pkgs = [p for p in pkgs if not (p in seen or seen.add(p))]
+
+        env = os.environ.copy()
+        env["DEBIAN_FRONTEND"] = "noninteractive"
+        env.setdefault("APT_LISTCHANGES_FRONTEND", "none")
+
+        full_output = []
+
+        full_output.append(preflight_recovery(env))
+
+        # Skip held packages
+        try:
+            held_res = subprocess.run(
+                ["/usr/bin/apt-mark", "showhold"],
+                check=False, text=True, capture_output=True, env=env
+            )
+            held = {h.strip() for h in held_res.stdout.splitlines() if h.strip()}
+            if held:
+                before = set(pkgs)
+                pkgs = [p for p in pkgs if p not in held]
+                skipped = list(before - set(pkgs))
+                if skipped:
+                    logging.info(f"[APT] Skipping held packages: {', '.join(skipped)}")
+                    full_output.append(f"[APT] Skipping held packages: {', '.join(skipped)}\n")
+        except Exception as e:
+            logging.debug(f"[APT] Could not query held packages: {e}")
+
+        if not pkgs:
+            return True, "[APT] Nothing to upgrade (all requested packages are held or none specified)."
+
+        # apt-get update
+        try:
+            logging.info("[APT] Running apt-get update...")
+            res = subprocess.run(
+                ["/usr/bin/apt-get", "update"],
+                check=True, text=True, capture_output=True, env=env
+            )
+            full_output.append("=== apt-get update ===\n")
+            full_output.append(res.stdout or "")
+            if res.stderr:
+                full_output.append("\n[stderr]\n" + res.stderr)
+            logging.info("[APT] apt-get update done.")
+        except subprocess.CalledProcessError as e:
+            msg = (e.stdout or "") + ("\n" if e.stdout else "") + (e.stderr or str(e))
+            logging.error(f"[APT] apt-get update failed: {e.stderr or e}")
+            return False, msg
+
+        def try_selected_upgrade(package_list: list[str]) -> tuple[bool, str]:
+            upgrade_cmd = [
+                "/usr/bin/apt-get", "-y",
+                "--option", "Dpkg::Options::=--force-confnew",
+                "--option", "Acquire::Retries=3",
+                "--no-install-recommends",
+                "install", "--only-upgrade",
+                *package_list
+            ]
+            logging.info(f"[APT] Upgrading selected packages: {', '.join(package_list)}")
+            try:
+                res = subprocess.run(
+                    upgrade_cmd,
+                    check=True, text=True, capture_output=True, env=env
+                )
+                out = "\n=== apt-get install --only-upgrade (selected) ===\n" + (res.stdout or "")
+                if res.stderr:
+                    out += "\n[stderr]\n" + res.stderr
+                logging.info("[APT] Selected upgrades completed.")
+                return True, out
+            except subprocess.CalledProcessError as e:
+                msg = (e.stdout or "") + ("\n" if e.stdout else "") + (e.stderr or str(e))
+                logging.error(f"[APT] Selected upgrades failed: {e.stderr or e}")
+                return False, msg
+
+        ok, out = try_selected_upgrade(pkgs)
+        full_output.append("\n" + out)
+        if not ok:
+            try:
+                subprocess.run(["/usr/bin/apt-get", "autoremove", "-y"], check=False, text=True, capture_output=True, env=env)
+                subprocess.run(["/usr/bin/apt-get", "autoclean"], check=False, text=True, capture_output=True, env=env)
+            except Exception:
+                pass
+            return False, ''.join(full_output)
+
+        # Cleanup
+        try:
+            res1 = subprocess.run(["/usr/bin/apt-get", "autoremove", "-y"], check=False, text=True, capture_output=True, env=env)
+            res2 = subprocess.run(["/usr/bin/apt-get", "autoclean"], check=False, text=True, capture_output=True, env=env)
+            full_output.append("\n=== apt-get autoremove ===\n")
+            full_output.append(res1.stdout or "")
+            if res1.stderr:
+                full_output.append("\n[stderr]\n" + res1.stderr)
+            full_output.append("\n=== apt-get autoclean ===\n")
+            full_output.append(res2.stdout or "")
+            if res2.stderr:
+                full_output.append("\n[stderr]\n" + res2.stderr)
+        except Exception as e:
+            logging.debug(f"[APT] Cleanup ignored error: {e}")
+
+        try:
+            if os.path.exists("/var/run/reboot-required"):
+                reboot_msg = "[APT] Reboot recommended by the system (reboot-required file present)."
+                logging.info(reboot_msg)
+                full_output.append("\n" + reboot_msg + "\n")
+        except Exception:
+            pass
+
+        return True, ''.join(full_output)
+
+    @staticmethod
+    def get_hostname():
+        """Return the system hostname (empty string on error)."""
+        try:
+            hostname = subprocess.check_output(["hostname"], text=True).strip()
+            logging.info(f"[SYSTEM] Hostname: {hostname}")
+            return hostname
+        except Exception as e:
+            logging.error(f"[SYSTEM] Error getting hostname: {e}")
+            return ""
+
+    @staticmethod
+    def set_hostname(hostname):
+        """Set hostname via hostnamectl and update /etc/hosts + /etc/hostname."""
+        try:
+            subprocess.run(["hostnamectl", "set-hostname", hostname], check=True)
+            # Update /etc/hosts file
+            with open("/etc/hosts", "r") as f:
+                lines = f.readlines()
+            with open("/etc/hosts", "w") as f:
+                for line in lines:
+                    if "127.0.1.1" in line:
+                        f.write(f"127.0.1.1\t{hostname}\n")
+                    else:
+                        f.write(line)
+            # Update /etc/hostname file
+            with open("/etc/hostname", "w") as f:
+                f.write(f"{hostname}\n")
+            logging.info(f"[SYSTEM] Hostname set to: {hostname}")
+            return True
+        except Exception as e:
+            logging.error(f"[SYSTEM] Error setting hostname: {e}")
+            return False
+
+class LabelStudioInstall:
+    """Label Studio install/update/remove and version/status helpers."""
+
+    @staticmethod
+    def get_labelstudio_installed_version():
+        """Return installed Label Studio version from its venv, or None."""
+        try:
+            venv_python = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV, "bin", "python")
+
+            # Check if Label Studio is installed
+            if not os.path.exists(LABELSTUDIO_PATH) or not os.path.exists(venv_python):
+                logging.info("[SYSTEM] Label Studio is not installed.")
+                return None
+
+            # Get the installed version using the venv Python binary
+            result = subprocess.run(
+                [venv_python, "-m", "pip", "show", "label-studio"],
+                stdout=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+
+            # Parse the output to find the version
+            for line in result.stdout.splitlines():
+                if line.startswith("Version:"):
+                    version = line.split(":", 1)[1].strip()
+                    logging.info(f"[SYSTEM] Label Studio version: {version}")
+                    return version
+
+            logging.info("[SYSTEM] Label Studio version not found in pip output.")
+            return None
+        except Exception as e:
+            logging.error(f"[SYSTEM] Error getting Label Studio version: {e}")
+            return None
+
+    @staticmethod
+    def get_labelstudio_latest_version():
+        """Fetch latest Label Studio version from PyPI (24h cache)."""
+        global _labelstudio_latest_cache
+        ttl_seconds = 60 * 60 * 24
+
+        try:
+            now = tm.time()
+        except Exception:
+            now = 0
+
+        if _labelstudio_latest_cache is not None:
+            ts = float(_labelstudio_latest_cache.get("ts", 0) or 0)
+            if (now - ts) < ttl_seconds:
+                return _labelstudio_latest_cache.get("version")
+
+        version_str: str | None = None
+        try:
+            response = requests.get(
+                "https://pypi.org/pypi/label-studio/json",
+                timeout=4,
+            )
+            response.raise_for_status()
+            data = response.json()
+            version = data.get("info", {}).get("version")
+            if version:
+                version_str = str(version)
+            else:
+                logging.info("[SYSTEM] Latest Label Studio version not found in PyPI response.")
+        except Exception as e:
+            logging.error(f"[SYSTEM] Error fetching latest Label Studio version: {e}")
+
+        # Cache the result (including failures) to avoid repeated network calls on tab switches.
+        _labelstudio_latest_cache = {"ts": now, "version": version_str}
+        return version_str
+
+    @staticmethod
+    def get_labelstudio_status():
+        """True if the labelstudio systemd service is active."""
+        try:
+            result = subprocess.run(
+                ["/usr/bin/systemctl", "is-active", "labelstudio"],
+                stdout=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            return result.stdout.strip() == "active"
+        except subprocess.CalledProcessError:
+            return False
+
+    @staticmethod
+    def install_labelstudio(progress_callback=None):
+        """Create venv, pip-install Label Studio, and install its systemd unit."""
+        venv_path = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV)
+        venv_python = os.path.join(venv_path, "bin", "python")
+        service_template_path = os.path.join(kittyhack_root(), "setup", "labelstudio.service")
+        service_file_path = "/etc/systemd/system/labelstudio.service"
+
+        # Stop the service if it's running
+        try:
+            if os.path.exists(service_file_path):
+                if ServiceOps.is_service_running("labelstudio"):
+                    logging.info("[SYSTEM] Stopping existing Label Studio service...")
+                    if progress_callback:
+                        progress_callback(0, _("Stopping existing Label Studio service..."), "")
+                    ServiceOps.systemctl("stop", "labelstudio")
+                subprocess.run(["rm", "-f", service_file_path], check=True)
+                logging.info("[SYSTEM] Label Studio systemd service file removed.")
+        except Exception as e:
+            logging.error(f"[SYSTEM] Error stopping Label Studio service: {e}")
+
+        # Remove the installation directory if it exists
+        if os.path.exists(LABELSTUDIO_PATH):
+            logging.info("[SYSTEM] Removing existing Label Studio installation...")
+            if progress_callback:
+                progress_callback(0, _("Removing existing Label Studio installation..."), "")
+            try:
+                subprocess.run(["rm", "-rf", LABELSTUDIO_PATH], check=True)
+            except Exception as e:
+                logging.error(f"[SYSTEM] Error removing existing Label Studio installation: {e}")
+
+        if progress_callback:
+            progress_callback(0, _("Starting Label Studio installation..."), _("This may take a few minutes..."))
+            logging.info("[SYSTEM] Starting Label Studio installation...")
+
+        try:
+            # Step 1: Create a virtual environment        
+            if not os.path.exists(venv_path):
+                ok, output = ServiceOps.run_with_progress(
+                    ["python3", "-m", "venv", venv_path],
+                    progress_callback,
+                    1,
+                    _("Creating virtual environment..."),
+                    _("This may take a moment...")
+                )
+                if not ok:
+                    logging.error("[SYSTEM] Virtual environment creation failed:\n" + output)
+                    return False
+                logging.info("[SYSTEM] Label Studio virtual environment created.")
+            else:
+                logging.info("[SYSTEM] Virtual environment already exists, skipping creation.")
+                if progress_callback:
+                    progress_callback(1, _("Virtual environment already exists"), _("Skipping creation..."))
+
+            # Step 2: Install pip and dependencies
+            ok, pip_upgrade_output = ServiceOps.run_with_progress(
+                [venv_python, "-m", "pip", "install", "--upgrade", "pip"],
+                progress_callback,
+                2,
+                _("Upgrading pip..."),
+                _("This may take a few minutes...")
+            )
+            if not ok:
+                logging.error("[SYSTEM] Pip upgrade failed:\n" + pip_upgrade_output)
+                return False
+            logging.info("[SYSTEM] Pip upgraded successfully.")
+
+            # Step 3: Install Label Studio
+            ok, pip_output = ServiceOps.run_with_progress(
+                [venv_python, "-m", "pip", "install", "label-studio"],
+                progress_callback,
+                3,
+                _("Installing Label Studio..."),
+                _("This takes several minutes... Do not turn off the power or reload the page!")
+            )
+            if not ok:
+                logging.error("[SYSTEM] Label Studio installation failed:\n" + pip_output)
+                return False
+            logging.info("[SYSTEM] Label Studio installed in virtual environment.")
+
+            # Step 4: Create a systemd service file        
+            if progress_callback:
+                progress_callback(4, _("Creating systemd service..."), _("Almost done..."))
+
+            if os.path.exists(service_template_path):
+                try:
+                    with open(service_template_path, "r") as template_file:
+                        service_content = template_file.read().replace("{{VENV_PATH}}", venv_path)
+                    with open(service_file_path, "w") as service_file:
+                        service_file.write(service_content)
+                    logging.info("[SYSTEM] Label Studio systemd service file created.")
+                    if progress_callback:
+                        progress_callback(4, _("Creating systemd service..."), _("Service file created successfully."))
+                except Exception as e:
+                    logging.error(f"[SYSTEM] Error creating systemd service file: {e}")
+                    if progress_callback:
+                        progress_callback(4, _("Creating systemd service..."), f"Error: {str(e)}")
+                    return False
+            else:
+                logging.error("[SYSTEM] Service template file not found.")
+                if progress_callback:
+                    progress_callback(4, _("Creating systemd service..."), _("Error: Template file not found."))
+                return False
+
+            # Step 5: Reload systemd daemon
+            ok, systemd_output = ServiceOps.run_with_progress(
+                ["/usr/bin/systemctl", "daemon-reload"],
+                progress_callback,
+                5,
+                _("Reloading systemd services..."),
+                _("Almost done...")
+            )
+            if not ok:
+                logging.error("[SYSTEM] Systemd daemon reload failed:\n" + systemd_output)
+                return False
+            logging.info("[SYSTEM] Label Studio systemd daemon reloaded.")
+
+            return True
+        except Exception as e:
+            logging.error(f"[SYSTEM] Error installing Label Studio: {e}")
+            return False
+
+    @staticmethod
+    def update_labelstudio(progress_callback=None):
+        """Stop Label Studio and pip-upgrade it in its venv."""
+        if progress_callback:
+            progress_callback(0, _("Starting Label Studio update..."), _("This may take a few minutes..."))
+
+        try:
+            ServiceOps.systemctl("stop", "labelstudio")
+            logging.info("[SYSTEM] Label Studio service stopped.")
+        except Exception as e:
+            logging.error(f"[SYSTEM] Error stopping Label Studio service: {e}")
+
+        try:
+            # Step 1: Upgrade Label Studio
+            venv_python = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV, "bin", "python")
+            ok, pip_output = ServiceOps.run_with_progress(
+                [venv_python, "-m", "pip", "install", "--upgrade", "label-studio"],
+                progress_callback,
+                1,
+                _("Upgrading Label Studio..."),
+                _("This takes several minutes... Do not turn off the power or reload the page!")
+            )
+            if not ok:
+                logging.error("[SYSTEM] Label Studio upgrade failed:\n" + pip_output)
+                return False
+            logging.info("[SYSTEM] Label Studio upgraded in virtual environment.")
+
+            return True
+        except Exception as e:
+            logging.error(f"[SYSTEM] Error updating Label Studio: {e}")
+            return False
+
+    @staticmethod
+    def remove_labelstudio():
+        """Stop Label Studio and remove its venv plus systemd unit."""
+        try:
+            ServiceOps.systemctl("stop", "labelstudio")
+            logging.info("[SYSTEM] Label Studio service stopped.")
+        except Exception as e:
+            logging.error(f"[SYSTEM] Error stopping Label Studio service: {e}")
+
+        try:
+            # Remove the virtual environment
+            venv_path = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV)
+            if os.path.exists(venv_path):
+                subprocess.run(["rm", "-rf", venv_path], check=True)
+                logging.info("[SYSTEM] Label Studio virtual environment removed.")
+
+            # Remove the systemd service
+            service_file_path = "/etc/systemd/system/labelstudio.service"
+            if os.path.exists(service_file_path):
+                subprocess.run(["rm", "-f", service_file_path], check=True)
+                logging.info("[SYSTEM] Label Studio systemd service file removed.")
+
+            return True
+        except Exception as e:
+            logging.error(f"[SYSTEM] Error removing Label Studio: {e}")
+            return False
+
+# Compatibility aliases (preserve existing imports)
+ensure_ffmpeg_installed = DependencyInstaller.ensure_ffmpeg_installed
+ensure_openvino_installed = DependencyInstaller.ensure_openvino_installed
+systemctl = ServiceOps.systemctl
+run_with_progress = ServiceOps.run_with_progress
+is_service_running = ServiceOps.is_service_running
+is_service_masked = ServiceOps.is_service_masked
+systemcmd = ServiceOps.systemcmd
+manage_and_switch_wlan = WlanManager.manage_and_switch_wlan
+switch_wlan_connection = WlanManager.switch_wlan_connection
+apply_wlan_runtime_settings = WlanManager.apply_wlan_runtime_settings
+delete_wlan_connection = WlanManager.delete_wlan_connection
+scan_wlan_networks = WlanManager.scan_wlan_networks
+get_wlan_connections = WlanManager.get_wlan_connections
+get_default_gateways = WlanManager.get_default_gateways
+is_gateway_reachable = WlanManager.is_gateway_reachable
+update_kittyhack = KittyhackUpdater.update_kittyhack
+ensure_target_boot_service_semantics = KittyhackUpdater.ensure_target_boot_service_semantics
+upgrade_base_system_packages = KittyhackUpdater.upgrade_base_system_packages
+get_hostname = KittyhackUpdater.get_hostname
+set_hostname = KittyhackUpdater.set_hostname
+get_labelstudio_installed_version = LabelStudioInstall.get_labelstudio_installed_version
+get_labelstudio_latest_version = LabelStudioInstall.get_labelstudio_latest_version
+get_labelstudio_status = LabelStudioInstall.get_labelstudio_status
+install_labelstudio = LabelStudioInstall.install_labelstudio
+update_labelstudio = LabelStudioInstall.update_labelstudio
+remove_labelstudio = LabelStudioInstall.remove_labelstudio

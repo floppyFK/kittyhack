@@ -1,3 +1,10 @@
+"""Target-side supervisor: remote WebSocket control, boot-wait UI, WLAN watchdog.
+
+Runs as ``kittyhack_control.service`` on the Kittyflap. Refuses to start in
+remote mode. While a remote UI holds control, local ``kittyhack.service`` stays
+stopped; otherwise this process starts/supervises it.
+"""
+
 import asyncio
 import base64
 import gzip
@@ -14,30 +21,28 @@ import websockets
 from websockets.server import WebSocketServerProtocol
 
 from src.baseconfig import CONFIG, CONFIGFILE, configure_logging, load_config, set_language
-from src.helper import sigterm_monitor
-from src.magnets_rfid import Magnets, Rfid
-from src.pir import Pir
-from src.system import systemctl
-from src.system import (
-    apply_wlan_runtime_settings,
-    get_wlan_connections,
-    is_gateway_reachable,
-    switch_wlan_connection,
-    systemcmd,
-    is_service_running,
-    update_kittyhack,
+from src.helper import (
+    Versioning,
+    sigterm_monitor,
 )
+from src.system import (
+    KittyhackUpdater,
+    ServiceOps,
+    WlanManager,
+)
+from src.hardware_sim import create_hardware
 from src.paths import install_base, kittyhack_root, pictures_root, models_yolo_root
 from src.mode import is_remote_mode
+from src.runtime_flags import is_simulate_mode, set_simulate_mode
 
 from src.camera import VideoStream
-
 
 # Prepare gettext for translations based on the configured language (mainly for consistent logs)
 _ = set_language(CONFIG.get("LANGUAGE", "en"))
 
-
 class ControlState:
+    """Runtime state for remote controller session, hardware handles, and boot wait."""
+
     def __init__(self):
         self.controller: WebSocketServerProtocol | None = None
         self.controller_id: str | None = None
@@ -80,11 +85,10 @@ class ControlState:
         self.boot_wait_started_at: float = 0.0
 
     def is_controlled(self) -> bool:
+        """True while a remote WebSocket client holds exclusive control."""
         return self.controller is not None
 
-
 STATE = ControlState()
-
 
 _internal_cam_lock = threading.Lock()
 _internal_cam_stream: VideoStream | None = None
@@ -95,7 +99,6 @@ _internal_cam_stream_url: str = ""
 # Track config.ini mtime so runtime setting changes can be applied without
 # restarting kittyhack_control.service.
 _configfile_last_mtime: float | None = None
-
 
 def _reload_runtime_config_if_changed() -> None:
     """Reload config.ini only when the file changed on disk.
@@ -125,7 +128,6 @@ def _reload_runtime_config_if_changed() -> None:
         logging.info("[CONTROL] Reloaded config.ini after on-disk changes.")
     except Exception as e:
         logging.warning(f"[CONTROL] Failed to reload changed config.ini: {e}")
-
 
 def _ensure_internal_camera_stream() -> tuple[bool, str]:
     """Start (if needed) the target camera stream for MJPEG relay.
@@ -188,7 +190,6 @@ def _ensure_internal_camera_stream() -> tuple[bool, str]:
             logging.warning(f"[CONTROL] Failed to start internal camera relay: {e}")
             return False, _internal_cam_last_error
 
-
 def _internal_camera_latest_frame() -> Any:
     """Return the latest decoded BGR frame from the internal camera stream (or None)."""
     with _internal_cam_lock:
@@ -199,7 +200,6 @@ def _internal_camera_latest_frame() -> Any:
         return stream.read()
     except Exception:
         return None
-
 
 def _stop_internal_camera_stream() -> None:
     """Stop and clear the optional MJPEG relay camera stream."""
@@ -214,21 +214,20 @@ def _stop_internal_camera_stream() -> None:
         _internal_cam_stream_source = ""
         _internal_cam_stream_url = ""
 
-
 def _remote_control_marker_path() -> str:
-    # Marker: if it exists, kittyhack_control will wait for a remote control attempt after reboot.
+    """Path to the post-reboot remote-control wait marker."""
     return os.path.join(kittyhack_root(), ".remote-control-session")
 
-
 def _write_remote_control_marker() -> None:
+    """Create the remote-control session marker (enables boot wait)."""
     try:
         with open(_remote_control_marker_path(), "w", encoding="utf-8") as f:
             f.write(str(time.time()))
     except Exception:
         pass
 
-
 def _delete_remote_control_marker() -> bool:
+    """Remove the remote-control session marker. Returns True if deleted."""
     try:
         p = _remote_control_marker_path()
         if os.path.exists(p):
@@ -237,18 +236,16 @@ def _delete_remote_control_marker() -> bool:
     except Exception:
         return False
 
-
 def _remote_control_marker_exists() -> bool:
+    """True if the remote-control session marker file exists."""
     try:
         return os.path.exists(_remote_control_marker_path())
     except Exception:
         return False
 
-
 def _wlan_action_marker_path() -> str:
-    # Marker written by server.py while user-triggered WLAN actions are in progress.
+    """Path to the WebUI WLAN-action-in-progress marker."""
     return os.path.join(kittyhack_root(), ".wlan-action-in-progress")
-
 
 def _is_wlan_action_in_progress(max_age_s: float = 180.0) -> bool:
     """Return True if an intentional WLAN reconfiguration is currently ongoing.
@@ -288,19 +285,18 @@ def _is_wlan_action_in_progress(max_age_s: float = 180.0) -> bool:
     except Exception:
         return False
 
-
 def _ensure_dirs() -> None:
+    """Create pictures and YOLO model directories if missing."""
     os.makedirs(pictures_root(), exist_ok=True)
     os.makedirs(models_yolo_root(), exist_ok=True)
 
-
 def _remote_ui_url() -> str | None:
+    """HTTP URL of the connected remote UI host, if known."""
     host = STATE.controller_host
     if not host:
         return None
     # remote-mode UI listens on port 80 by default
     return f"http://{host}/"
-
 
 def _ui_language() -> str:
     """Return UI language for the standalone info pages.
@@ -315,8 +311,8 @@ def _ui_language() -> str:
         return "en"
     return "en"
 
-
 def _page_text() -> dict[str, str]:
+    """Localized strings for the standalone info / boot-wait pages."""
     lang = _ui_language()
     texts: dict[str, dict[str, str]] = {
         "en": {
@@ -384,8 +380,8 @@ def _page_text() -> dict[str, str]:
     }
     return texts.get(lang, texts["en"])
 
-
 def _build_info_page_html() -> str:
+    """HTML for the remote-controlled info page served on port 80."""
     t = _page_text()
     lang = _ui_language()
     remote_url = _remote_ui_url()
@@ -523,8 +519,8 @@ def _build_info_page_html() -> str:
         "</html>\n"
     )
 
-
 def _build_boot_wait_page_html() -> str:
+    """HTML countdown page while waiting for remote take_control after reboot."""
     # Minimal standalone UI: countdown + skip + disable.
     t = _page_text()
     lang = _ui_language()
@@ -643,8 +639,8 @@ def _build_boot_wait_page_html() -> str:
         "</html>\n"
     )
 
-
 async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Minimal HTTP handler for info / boot-wait pages and camera MJPEG."""
     try:
         # Read request line + headers (best-effort; do not block too long)
         method = "GET"
@@ -770,7 +766,7 @@ async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.Strea
                 "pending_start_active": pending_active,
                 "pending_start_remaining_s": max(0.0, float(STATE.pending_kittyhack_start_at or 0.0) - now_mono) if pending_active else 0.0,
                 "hold_start_until_reboot": bool(STATE.hold_start_until_reboot),
-                "kittyhack_running": bool(is_service_running("kittyhack", log_output=False)),
+                "kittyhack_running": bool(ServiceOps.is_service_running("kittyhack", log_output=False)),
             }
             body = json.dumps(st).encode("utf-8")
             headers = (
@@ -871,8 +867,8 @@ async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.Strea
         except Exception:
             pass
 
-
 async def _start_info_http_server() -> None:
+    """Serve boot-wait / remote-info HTML on port 80 while kittyhack is stopped."""
     if STATE.http_server is not None:
         return
     try:
@@ -882,8 +878,8 @@ async def _start_info_http_server() -> None:
         STATE.http_server = None
         logging.warning(f"[CONTROL] Could not start info page on port 80: {e}")
 
-
 async def _stop_info_http_server() -> None:
+    """Stop the port-80 info HTTP server if running."""
     if STATE.http_server is None:
         return
     try:
@@ -894,8 +890,8 @@ async def _stop_info_http_server() -> None:
     finally:
         STATE.http_server = None
 
-
 async def _start_kittyhack_from_control(reason: str) -> None:
+    """Stop info HTTP/camera, clear boot-wait, and start kittyhack.service."""
     # Ensure port 80 is free before starting kittyhack.
     try:
         STATE.boot_wait_active = False
@@ -907,12 +903,12 @@ async def _start_kittyhack_from_control(reason: str) -> None:
         pass
     logging.info(f"[CONTROL] Starting kittyhack ({reason})")
     try:
-        systemctl("start", "kittyhack")
+        ServiceOps.systemctl("start", "kittyhack")
     except Exception:
         pass
 
-
 async def _publisher(ws: WebSocketServerProtocol):
+    """Stream PIR/lock/RFID state to the active controller over WebSocket."""
     while not sigterm_monitor.stop_now and STATE.controller is ws:
         try:
             pir_outside = pir_inside = pir_outside_raw = pir_inside_raw = 0
@@ -955,8 +951,8 @@ async def _publisher(ws: WebSocketServerProtocol):
             break
         await asyncio.sleep(0.1)
 
-
 async def _release_control(reason: str):
+    """Tear down remote hardware session and optionally schedule kittyhack restart."""
     logging.warning(f"[CONTROL] Releasing control: {reason}")
 
     try:
@@ -1004,10 +1000,10 @@ async def _release_control(reason: str):
     await _stop_info_http_server()
 
     # Start kittyhack again
-    systemctl("start", "kittyhack")
-
+    ServiceOps.systemctl("start", "kittyhack")
 
 async def _take_control(ws: WebSocketServerProtocol, client_id: str, timeout_s: float):
+    """Claim exclusive remote control: stop kittyhack, init hardware, start publisher."""
     # Any successful/attempted take_control means remote control was used at least once.
     # This is used for target-mode boot behavior after reboot.
     STATE.boot_wait_takeover_attempted = True
@@ -1035,7 +1031,7 @@ async def _take_control(ws: WebSocketServerProtocol, client_id: str, timeout_s: 
     logging.info(f"[CONTROL] Taking control for client_id={client_id}")
 
     # Stop kittyhack service, wait 1s
-    systemctl("stop", "kittyhack")
+    ServiceOps.systemctl("stop", "kittyhack")
     await asyncio.sleep(1.0)
 
     # Serve an info page on port 80 while kittyhack is stopped
@@ -1046,12 +1042,10 @@ async def _take_control(ws: WebSocketServerProtocol, client_id: str, timeout_s: 
 
     import threading
     STATE._pir_stop_event = threading.Event()
-    STATE.pir = Pir(simulate_kittyflap=bool(CONFIG.get("SIMULATE_KITTYFLAP")), stop_event=STATE._pir_stop_event)
+    STATE.pir, STATE.magnets, STATE.rfid = create_hardware(stop_event=STATE._pir_stop_event)
     STATE.pir.init()
-    STATE.magnets = Magnets(simulate_kittyflap=bool(CONFIG.get("SIMULATE_KITTYFLAP")))
     STATE.magnets.init()
     STATE.magnets.start_magnet_control()
-    STATE.rfid = Rfid(simulate_kittyflap=bool(CONFIG.get("SIMULATE_KITTYFLAP")))
 
     # Start PIR read loop in a thread-like task (it is blocking/sleeping)
     loop = asyncio.get_running_loop()
@@ -1064,13 +1058,13 @@ async def _take_control(ws: WebSocketServerProtocol, client_id: str, timeout_s: 
     await ws.send(json.dumps({"type": "take_control_ack", "ok": True, "timeout": STATE.control_timeout_s}))
     return True
 
-
 async def _handle_sync_request(ws: WebSocketServerProtocol, include_labelstudio: bool = False):
+    """Stream DB/pictures (and optional Label Studio) archive chunks to the controller."""
     STATE.sync_in_progress = True
     # Safety: ensure target kittyhack service is stopped before we package/sync files.
     # This avoids copying data while files may still be modified by the running service.
     try:
-        systemctl("stop", "kittyhack")
+        ServiceOps.systemctl("stop", "kittyhack")
         await asyncio.sleep(1.0)
     except Exception as e:
         logging.error(f"[CONTROL] Failed to stop kittyhack before sync: {e}")
@@ -1184,7 +1178,6 @@ async def _handle_sync_request(ws: WebSocketServerProtocol, include_labelstudio:
     finally:
         STATE.sync_in_progress = False
 
-
 async def _handle_update_request(ws: WebSocketServerProtocol, latest_version: str = "", current_version: str = ""):
     """Run kittyhack update on target device and report begin/end status."""
     STATE.sync_in_progress = True
@@ -1196,7 +1189,7 @@ async def _handle_update_request(ws: WebSocketServerProtocol, latest_version: st
 
     try:
         ok, reason = await asyncio.to_thread(
-            lambda: update_kittyhack(
+            lambda: KittyhackUpdater.update_kittyhack(
                 None,
                 latest_version or None,
                 current_version or None,
@@ -1222,22 +1215,21 @@ async def _handle_update_request(ws: WebSocketServerProtocol, latest_version: st
     finally:
         STATE.sync_in_progress = False
 
-
 async def _reboot_later(delay_s: float = 0.2) -> None:
+    """Sleep briefly, then reboot the target."""
     await asyncio.sleep(max(0.0, float(delay_s)))
     try:
-        systemcmd(["/sbin/reboot"], bool(CONFIG.get("SIMULATE_KITTYFLAP")))
+        ServiceOps.systemcmd(["/sbin/reboot"])
     except Exception:
         pass
-
 
 async def _shutdown_later(delay_s: float = 0.2) -> None:
+    """Sleep briefly, then power off the target."""
     await asyncio.sleep(max(0.0, float(delay_s)))
     try:
-        systemcmd(["/usr/sbin/shutdown", "-H", "now"], bool(CONFIG.get("SIMULATE_KITTYFLAP")))
+        ServiceOps.systemcmd(["/usr/sbin/shutdown", "-H", "now"])
     except Exception:
         pass
-
 
 async def _handle_journal_request(ws: WebSocketServerProtocol, lines: int = 10000) -> None:
     """Return target system journal text for remote diagnostics (best-effort)."""
@@ -1304,7 +1296,6 @@ async def _handle_journal_request(ws: WebSocketServerProtocol, lines: int = 1000
     except Exception as e:
         logging.error(f"[CONTROL] Failed to send journal response: {e}")
 
-
 async def ws_send_safe_broadcast_reboot_notice() -> None:
     """Best effort: notify active remote controller that target will reboot."""
     try:
@@ -1314,8 +1305,8 @@ async def ws_send_safe_broadcast_reboot_notice() -> None:
     except Exception:
         pass
 
-
 async def _handler(ws: WebSocketServerProtocol):
+    """WebSocket message loop for remote control clients."""
     try:
         async for msg in ws:
             STATE.last_seen = time.monotonic()
@@ -1393,8 +1384,7 @@ async def _handler(ws: WebSocketServerProtocol):
 
             if t == "version_request":
                 try:
-                    from src.helper import get_git_version
-                    target_git_version = str(get_git_version() or "unknown")
+                                        target_git_version = str(Versioning.get_git_version() or "unknown")
                 except Exception:
                     target_git_version = "unknown"
                 try:
@@ -1429,8 +1419,8 @@ async def _handler(ws: WebSocketServerProtocol):
                 STATE.pending_kittyhack_start_at = time.monotonic() + 10.0
             await _release_control("controller disconnected")
 
-
 async def _watchdog():
+    """Enforce kittyhack stop while controlled; release on controller timeout."""
     while not sigterm_monitor.stop_now:
         await asyncio.sleep(0.5)
         now = time.monotonic()
@@ -1443,9 +1433,9 @@ async def _watchdog():
                 interval_s = 3.0
             STATE.next_enforce_stop_at = now + interval_s
             try:
-                if is_service_running("kittyhack", log_output=False):
+                if ServiceOps.is_service_running("kittyhack", log_output=False):
                     logging.warning("[CONTROL] kittyhack.service is active during remote control. Stopping it.")
-                    systemctl("stop", "kittyhack")
+                    ServiceOps.systemctl("stop", "kittyhack")
             except Exception as e:
                 logging.error(f"[CONTROL] Failed to enforce kittyhack stop while controlled: {e}")
 
@@ -1461,8 +1451,8 @@ async def _watchdog():
             if (now - STATE.last_seen) > float(STATE.control_timeout_s or 10.0):
                 await _release_control("controller timeout")
 
-
 async def _boot_wait_supervisor():
+    """After reboot with remote marker: wait for take_control or start kittyhack."""
     # If the marker exists, we delay starting kittyhack after reboot.
     if not _remote_control_marker_exists():
         return
@@ -1480,7 +1470,7 @@ async def _boot_wait_supervisor():
 
     # Ensure kittyhack is not running while we wait.
     try:
-        systemctl("stop", "kittyhack")
+        ServiceOps.systemctl("stop", "kittyhack")
     except Exception:
         pass
 
@@ -1499,7 +1489,6 @@ async def _boot_wait_supervisor():
             await _start_kittyhack_from_control(reason="boot wait timeout")
             return
 
-
 # Shared outage state for the thread-based hard-deadline reboot watcher.
 # The async watchdog writes here when an outage begins/ends; the thread
 # checks it from outside the asyncio event loop so that a synchronous
@@ -1512,21 +1501,20 @@ _WLAN_OUTAGE_HARD_REBOOT_SECONDS = 120.0
 # over additional SSIDs when we are already at risk of missing the deadline.
 _WLAN_RECONNECT_BUDGET_SECONDS = _WLAN_OUTAGE_HARD_REBOOT_SECONDS / 2
 
-
 def _wlan_hard_deadline_watcher():
     """Thread-based safety net for WLAN outages exceeding the hard deadline.
 
     The async `_wlan_watchdog_loop` checks the hard deadline only at the top
     of its 5 s tick. If the reconnect block is stuck inside sync subprocess
-    calls (systemctl / nmcli honouring their timeouts but each still running
+    calls (ServiceOps.systemctl / nmcli honouring their timeouts but each still running
     for tens of seconds, for multiple saved SSIDs), the top-of-loop check
     never runs — defeating the very safety net the hard deadline was meant to
     provide. This thread runs outside the event loop and checks the shared
     outage timestamp every 2 s. When the outage exceeds the hard deadline it
-    invokes `/sbin/reboot` directly, bypassing systemcmd (which has no
+    invokes `/sbin/reboot` directly, bypassing ServiceOps.systemcmd (which has no
     timeout) and the blocked coroutine.
     """
-    simulate = bool(CONFIG.get("SIMULATE_KITTYFLAP"))
+    simulate = is_simulate_mode()
     while not sigterm_monitor.stop_now:
         time.sleep(2.0)
         started = _wlan_outage_state.get("started_at")
@@ -1553,8 +1541,8 @@ def _wlan_hard_deadline_watcher():
         _wlan_outage_state["started_at"] = None
         return
 
-
 async def _wlan_watchdog_loop():
+    """Poll gateway/WLAN; reconnect then reboot on prolonged outages (target only)."""
     # Run on target device, independent from kittyhack.service.
     wlan_disconnect_counter = 0
     wlan_reconnect_attempted = False
@@ -1586,9 +1574,9 @@ async def _wlan_watchdog_loop():
 
         # Determine WLAN state
         try:
-            wlan_connections = get_wlan_connections()
+            wlan_connections = WlanManager.get_wlan_connections()
             wlan_connected = any(wlan.get("connected") for wlan in wlan_connections)
-            gateway_reachable = bool(is_gateway_reachable())
+            gateway_reachable = bool(WlanManager.is_gateway_reachable())
         except Exception as e:
             logging.error(f"[WLAN WATCHDOG] Failed to get WLAN state: {e}")
             wlan_connections = []
@@ -1622,7 +1610,7 @@ async def _wlan_watchdog_loop():
                 f"{_WLAN_OUTAGE_HARD_REBOOT_SECONDS}s) — forcing reboot."
             )
             try:
-                systemcmd(["/sbin/reboot"], bool(CONFIG.get("SIMULATE_KITTYFLAP")))
+                ServiceOps.systemcmd(["/sbin/reboot"])
             except Exception:
                 pass
             return
@@ -1665,11 +1653,11 @@ async def _wlan_watchdog_loop():
                 if not ssid:
                     continue
                 try:
-                    systemctl("stop", "NetworkManager")
+                    ServiceOps.systemctl("stop", "NetworkManager")
                     await asyncio.sleep(2.0)
-                    systemctl("start", "NetworkManager")
+                    ServiceOps.systemctl("start", "NetworkManager")
                     await asyncio.sleep(2.0)
-                    switch_wlan_connection(ssid)
+                    WlanManager.switch_wlan_connection(ssid)
                 except Exception:
                     pass
 
@@ -1678,8 +1666,8 @@ async def _wlan_watchdog_loop():
                 for __ in range(10):
                     await asyncio.sleep(1.0)
                     try:
-                        wc = get_wlan_connections()
-                        if any(w.get("connected") for w in wc) and is_gateway_reachable():
+                        wc = WlanManager.get_wlan_connections()
+                        if any(w.get("connected") for w in wc) and WlanManager.is_gateway_reachable():
                             ok = True
                             break
                     except Exception:
@@ -1689,9 +1677,9 @@ async def _wlan_watchdog_loop():
                     # Re-apply TX-power / power_save after re-association — Broadcom
                     # chipsets often revert these on reconnect and then behave flaky.
                     try:
-                        apply_wlan_runtime_settings()
+                        WlanManager.apply_wlan_runtime_settings()
                     except Exception as e:
-                        logging.warning(f"[WLAN WATCHDOG] apply_wlan_runtime_settings after reconnect failed: {e}")
+                        logging.warning(f"[WLAN WATCHDOG] WlanManager.apply_wlan_runtime_settings after reconnect failed: {e}")
                     wlan_disconnect_counter = 0
                     wlan_reconnect_attempted = False
                     _wlan_outage_state["started_at"] = None
@@ -1703,13 +1691,14 @@ async def _wlan_watchdog_loop():
         if wlan_disconnect_counter >= 8:
             logging.error("[WLAN WATCHDOG] WLAN still not connected after reconnect attempts. Rebooting system...")
             try:
-                systemcmd(["/sbin/reboot"], bool(CONFIG.get("SIMULATE_KITTYFLAP")))
+                ServiceOps.systemcmd(["/sbin/reboot"])
             except Exception:
                 pass
             return
         
 
 async def main():
+    """Entry: refuse remote mode, start WS server, WLAN watchdog, boot-wait, watchdog."""
     configure_logging(CONFIG.get("LOGLEVEL", "INFO"))
 
     if is_remote_mode():
@@ -1719,15 +1708,15 @@ async def main():
     # Align WLAN runtime settings with server.py startup behavior.
     # The watchdog calls the same helper after a successful reconnect so flaky
     # chipsets keep the configured tx-power + power_save values after re-association.
-    apply_wlan_runtime_settings()
+    WlanManager.apply_wlan_runtime_settings()
 
     # Enforce target-mode boot semantics: kittyhack_control supervises kittyhack startup.
     # Best-effort: prevent kittyhack.service from auto-starting on subsequent boots.
     try:
-        if is_service_running("kittyhack"):
+        if ServiceOps.is_service_running("kittyhack"):
             # Keep it running; we only enforce disable to ensure next boot starts via kittyhack_control.
             pass
-        systemctl("disable", "kittyhack")
+        ServiceOps.systemctl("disable", "kittyhack")
     except Exception:
         pass
 
@@ -1754,6 +1743,16 @@ async def main():
 
         await _watchdog()
 
-
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Kittyhack target-side control service")
+    parser.add_argument(
+        "--simulate",
+        action="store_true",
+        help="Simulate hardware and system actions (no GPIO/reboot); same as KITTYHACK_SIMULATE=1",
+    )
+    args = parser.parse_args()
+    if args.simulate:
+        set_simulate_mode(True)
     asyncio.run(main())

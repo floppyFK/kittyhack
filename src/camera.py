@@ -1,6 +1,8 @@
-# This code is based and inspired from the great Tensorflow + CV2 examples from Evan Juras:
-# https://github.com/EdjeElectronics/TensorFlow-Lite-Object-Detection-on-Android-and-Raspberry-Pi/
+"""Camera capture (Picamera / IP), JPEG encode helpers, and detection image buffer.
 
+Based on TensorFlow Lite + OpenCV examples by Evan Juras:
+https://github.com/EdjeElectronics/TensorFlow-Lite-Object-Detection-on-Android-and-Raspberry-Pi/
+"""
 
 # Import packages
 import cv2
@@ -14,8 +16,7 @@ import logging
 import time as tm
 from typing import List, Optional
 from src.baseconfig import CONFIG
-from src.system import ensure_ffmpeg_installed
-
+from src.system import DependencyInstaller
 
 def encode_frame_jpg(frame: np.ndarray, jpeg_quality: int = 75) -> bytes:
     """Encode a BGR frame as JPEG bytes."""
@@ -24,7 +25,6 @@ def encode_frame_jpg(frame: np.ndarray, jpeg_quality: int = 75) -> bytes:
     if not ok:
         raise RuntimeError("cv2.imencode failed for frame")
     return buffer.tobytes()
-
 
 def resolve_ip_camera_hw_decode(mode: str) -> str:
     """Resolve configured hw-decode mode to a concrete backend (or 'none')."""
@@ -68,7 +68,6 @@ def resolve_ip_camera_hw_decode(mode: str) -> str:
     if os.path.exists("/dev/dri/renderD128") and (not ffmpeg_hwaccels or "vaapi" in ffmpeg_hwaccels):
         return "vaapi"
     return "none"
-
 
 def build_ip_camera_ffmpeg_cmd(
     ip_camera_url: str,
@@ -132,9 +131,8 @@ def build_ip_camera_ffmpeg_cmd(
     ])
     return ffmpeg_cmd, hw_label
 
-
 class VideoStream:
-    """Camera object that controls video streaming from the Picamera or an IP camera"""
+    """Threaded capture from the internal Picamera or an IP camera."""
 
     # Camera state constants
     STATE_INITIALIZING = "initializing"
@@ -251,8 +249,8 @@ class VideoStream:
                 self.frame_ids = self.frame_ids[-self.buffer_size:]
         logging.info(f"[CAMERA] Buffer size set to {self.buffer_size}")
 
-
     def start(self):
+        """Start the capture thread (and IP-camera journal monitor if needed)."""
         self.camera_state = self.STATE_INITIALIZING
         self.stopped = False
         self.thread = threading.Thread(target=self.update, args=(), daemon=True)
@@ -262,6 +260,7 @@ class VideoStream:
         return self
     
     def stop_journal_monitor(self):
+        """Stop the IP-camera H.264 journal error monitor thread."""
         # Signal the monitor thread to stop
         self._journal_monitor_stopped = True
         if hasattr(self, 'journal_monitor_thread') and self.journal_monitor_thread is not None:
@@ -315,6 +314,7 @@ class VideoStream:
         self.thread.start()
 
     def update(self):
+        """Capture loop run by the background thread (blocks until stopped)."""
         if self.source == "internal":
             self.camera_state = self.STATE_INTERNAL
             # Internal Raspberry Pi camera via libcamera-vid
@@ -393,7 +393,7 @@ class VideoStream:
 
                 # Optional ffmpeg decode+scale pipeline for IP streams
                 if self.use_ip_camera_decode_scale_pipeline:
-                    if not ensure_ffmpeg_installed():
+                    if not DependencyInstaller.ensure_ffmpeg_installed():
                         logging.error("[CAMERA] FFmpeg decode+scale pipeline enabled, but ffmpeg is unavailable.")
                         self.camera_state = self.STATE_ERROR
                         if self.stopped:
@@ -691,7 +691,7 @@ class VideoStream:
             logging.info("[CAMERA] Added final frame to indicate stream ended.")
 
     def read(self):
-        # Return the most recent frame
+        """Return the most recent buffered frame, or None."""
         with self.lock:
             return self.frames[-1] if self.frames else None
 
@@ -701,7 +701,7 @@ class VideoStream:
             return int(self.frame_ids[-1]) if self.frame_ids else 0
 
     def read_oldest(self):
-        # Return and remove the oldest unread frame from the list, but keep the latest frame buffered.
+        """Return the oldest unread frame; keep the latest frame buffered."""
         with self.lock:
             if not self.frames:
                 return None
@@ -727,6 +727,7 @@ class VideoStream:
             return self.frames[0]
 
     def stop(self):
+        """Stop capture, join the thread, and release camera resources."""
         # Stop the video stream
         self.stopped = True
         self.stop_journal_monitor()
@@ -756,6 +757,8 @@ class VideoStream:
             logging.error("[CAMERA] Video stream not yet started. Nothing to stop.")
 
 class DetectedObject:
+    """One detection box as percentages of image width/height."""
+
     def __init__(self, x: float, y: float, width: float, height: float, object_name: str, probability: float):
         self.x = x  # x as percentage of image width
         self.y = y  # y as percentage of image height
@@ -765,6 +768,8 @@ class DetectedObject:
         self.probability = probability
 
 class ImageBufferElement:
+    """One buffered inference frame with scores, images, and optional RFID tag."""
+
     def __init__(self, id: int, block_id: int, timestamp: float, original_image: bytes | None, modified_image: bytes | None, 
                  mouse_probability: float, no_mouse_probability: float, own_cat_probability: float, tag_id: str = "", detected_objects: List[DetectedObject] = None,
                  timestamp_mono: float | None = None):
@@ -787,6 +792,8 @@ class ImageBufferElement:
                 f"no_mouse_probability={self.no_mouse_probability}, own_cat_probability={self.own_cat_probability}, tag_id={self.tag_id}, detected_objects={self.detected_objects})")
 
 class ImageBuffer:
+    """Ring buffer of recent inference frames for a motion block."""
+
     MAX_IMAGE_BUFFER_SIZE = 1000
 
     def __init__(self):
@@ -797,9 +804,7 @@ class ImageBuffer:
     def append(self, timestamp: float, original_image: bytes | None, modified_image: bytes | None, 
                mouse_probability: float, no_mouse_probability: float, own_cat_probability: float, detected_objects: List[DetectedObject] = None,
                timestamp_mono: float | None = None):
-        """
-        Append a new element to the buffer.
-        """
+        """Append a new inference frame (drops oldest when full)."""
         # --- Periodic logging for discarded elements ---
         if not hasattr(self, '_last_log_time'):
             self._last_log_time = timestamp
@@ -869,14 +874,8 @@ class ImageBuffer:
 
         self._next_id += 1
 
-
     def pop(self) -> Optional[ImageBufferElement]:
-        """
-        Return and remove the last element from the buffer.
-
-        Returns:
-            Optional[ImageBufferElement]: The last element if the buffer is not empty, else None.
-        """
+        """Remove and return the last element, or None if empty."""
         if self._buffer:
             logging.info(f"[IMAGEBUFFER] Popped element with ID {self._buffer[-1].id} from the buffer.")
             return self._buffer.pop()
@@ -887,48 +886,22 @@ class ImageBuffer:
         self._buffer.clear()
 
     def size(self) -> int:
-        """
-        Return the number of elements in the buffer.
-
-        Returns:
-            int: The number of elements in the buffer.
-        """
+        """Return the number of elements in the buffer."""
         return len(self._buffer)
 
     def get_all(self) -> List[ImageBufferElement]:
-        """
-        Return all elements in the buffer.
-
-        Returns:
-            List[ImageBufferElement]: A list of all elements in the buffer.
-        """
+        """Return a shallow copy of all buffered elements."""
         return self._buffer[:]
     
     def get_by_id(self, id: int) -> Optional[ImageBufferElement]:
-        """
-        Return the element with the given ID.
-
-        Args:
-            id (int): The ID to search for.
-
-        Returns:
-            Optional[ImageBufferElement]: The element with the given ID if found, else None.
-        """
+        """Return the element with ``id``, or None."""
         for element in self._buffer:
             if element.id == id:
                 return element
         return None
     
     def delete_by_id(self, id: int) -> bool:
-        """
-        Delete the element with the given ID.
-
-        Args:
-            id (int): The ID to search for.
-
-        Returns:
-            bool: True if the element was deleted, else False.
-        """
+        """Delete the element with ``id``. Returns True if removed."""
         for i, element in enumerate(self._buffer):
             if element.id == id:
                 self._buffer.pop(i)
@@ -945,22 +918,7 @@ class ImageBuffer:
                          max_no_mouse_probability=100.0,
                          min_own_cat_probability=0.0,
                          max_own_cat_probability=100.0) -> List[int]:
-        """
-        Return the IDs of elements that match the given filter criteria.
-
-        Args:
-            min_timestamp (float): The minimum timestamp.
-            max_timestamp (float): The maximum timestamp.
-            min_mouse_probability (float): The minimum mouse probability.
-            max_mouse_probability (float): The maximum mouse probability.
-            min_no_mouse_probability (float): The minimum no mouse probability.
-            max_no_mouse_probability (float): The maximum no mouse probability.
-            min_own_cat_probability (float): The minimum own cat probability.
-            max_own_cat_probability (float): The maximum own cat probability.
-
-        Returns:
-            List[int]: A list of IDs that match the filter criteria.
-        """
+        """Return IDs matching wall-clock time and probability filters."""
         return [element.id for element in self._buffer if 
                 (min_timestamp <= element.timestamp <= max_timestamp) and 
                 (min_mouse_probability <= element.mouse_probability <= max_mouse_probability) and 
@@ -975,10 +933,7 @@ class ImageBuffer:
                               max_no_mouse_probability=100.0,
                               min_own_cat_probability=0.0,
                               max_own_cat_probability=100.0) -> List[int]:
-        """Like get_filtered_ids, but filters by monotonic timestamps.
-
-        This is the preferred API for backend motion/timeout logic.
-        """
+        """Like ``get_filtered_ids``, but filter by monotonic timestamps."""
         return [
             element.id
             for element in self._buffer
@@ -1013,16 +968,7 @@ class ImageBuffer:
         )
     
     def update_block_id(self, id: int, block_id: int) -> bool:
-        """
-        Update the block ID of the element with the given ID.
-
-        Args:
-            id (int): The ID of the element to update.
-            block_id (int): The new block ID.
-
-        Returns:
-            bool: True if the element was updated, else False.
-        """
+        """Set ``block_id`` on the element with ``id``. Returns True if found."""
         for element in self._buffer:
             if element.id == id:
                 element.block_id = block_id
@@ -1030,16 +976,7 @@ class ImageBuffer:
         return False
     
     def update_tag_id(self, id: int, tag_id: str) -> bool:
-        """
-        Update the tag ID of the element with the given ID.
-
-        Args:
-            id (int): The ID of the element to update.
-            tag_id (str): The new tag ID.
-
-        Returns:
-            bool: True if the element was updated, else False.
-        """
+        """Set RFID ``tag_id`` on the element with ``id``. Returns True if found."""
         for element in self._buffer:
             if element.id == id:
                 element.tag_id = tag_id
@@ -1047,15 +984,7 @@ class ImageBuffer:
         return False
     
     def get_by_block_id(self, block_id: int) -> List[ImageBufferElement]:
-        """
-        Return all elements with the given block ID.
-
-        Args:
-            block_id (int): The block ID to search for.
-
-        Returns:
-            List[ImageBufferElement]: A list of elements with the given block ID.
-        """
+        """Return all elements belonging to ``block_id``."""
         return [element for element in self._buffer if element.block_id == block_id]
 
 # Global variable declarations

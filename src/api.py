@@ -110,6 +110,7 @@ def list_tokens() -> list[dict[str, Any]]:
 
 
 def revoke_token(token_id: str) -> bool:
+    """Remove a token by id. Returns True if something was deleted."""
     tokens = _load_tokens()
     new = [t for t in tokens if t.get("id") != token_id]
     if len(new) == len(tokens):
@@ -237,6 +238,7 @@ def _set_manual_override(key: str) -> None:
 
 
 def _current_mode() -> dict[str, Any]:
+    """Return current entry/exit mode strings from CONFIG."""
     from src.baseconfig import CONFIG, AllowedToEnter, AllowedToExit
     entry = CONFIG.get("ALLOWED_TO_ENTER")
     exit_ = CONFIG.get("ALLOWED_TO_EXIT")
@@ -286,6 +288,7 @@ async def _auth_or_fail(request: Request):
 
 
 async def status(request: Request):
+    """GET /api/v1/status — door state and entry/exit mode."""
     _, err = await _auth_or_fail(request)
     if err:
         return err
@@ -293,6 +296,7 @@ async def status(request: Request):
 
 
 async def _door_action(request: Request, override_key: str, success_msg: str):
+    """Auth + set one ``manual_door_override`` key; return updated door state."""
     _, err = await _auth_or_fail(request)
     if err:
         return err
@@ -304,23 +308,28 @@ async def _door_action(request: Request, override_key: str, success_msg: str):
 
 
 async def door_open(request: Request):
+    """Queue inside unlock (let cat in from outside)."""
     # "open" = let the cat in from outside
     return await _door_action(request, "unlock_inside", "inside door unlock queued")
 
 
 async def door_close(request: Request):
+    """Queue inside lock."""
     return await _door_action(request, "lock_inside", "inside door lock queued")
 
 
 async def door_unlock_outside(request: Request):
+    """Queue outside unlock."""
     return await _door_action(request, "unlock_outside", "outside door unlock queued")
 
 
 async def door_lock_outside(request: Request):
+    """Queue outside lock."""
     return await _door_action(request, "lock_outside", "outside door lock queued")
 
 
 async def mode_get(request: Request):
+    """GET /api/v1/mode — current entry/exit mode."""
     _, err = await _auth_or_fail(request)
     if err:
         return err
@@ -328,7 +337,7 @@ async def mode_get(request: Request):
 
 
 async def mode_set(request: Request):
-    """Accept JSON body or query params: entry=..., exit=..."""
+    """Set entry and/or exit mode from JSON body or query params."""
     _, err = await _auth_or_fail(request)
     if err:
         return err
@@ -356,7 +365,7 @@ async def mode_set(request: Request):
 
 
 async def mode_entry_set(request: Request):
-    """GET /api/v1/mode/entry/{value} — only changes entry direction."""
+    """Set entry mode only (path ``/mode/entry/{value}``)."""
     _, err = await _auth_or_fail(request)
     if err:
         return err
@@ -369,7 +378,7 @@ async def mode_entry_set(request: Request):
 
 
 async def mode_exit_set(request: Request):
-    """GET /api/v1/mode/exit/{value} — only changes exit direction."""
+    """Set exit mode only (path ``/mode/exit/{value}``)."""
     _, err = await _auth_or_fail(request)
     if err:
         return err
@@ -382,13 +391,14 @@ async def mode_exit_set(request: Request):
 
 
 async def cats_list(request: Request):
+    """GET /api/v1/cats — list cats (no photo blobs)."""
     _, err = await _auth_or_fail(request)
     if err:
         return err
     try:
         from src.baseconfig import CONFIG
-        from src.database import db_get_cats, ReturnDataCatDB
-        df = db_get_cats(CONFIG["KITTYHACK_DATABASE_PATH"], ReturnDataCatDB.all_except_photos)
+        from src.database import CatsRepo, ReturnDataCatDB
+        df = CatsRepo.db_get_cats(CONFIG["KITTYHACK_DATABASE_PATH"], ReturnDataCatDB.all_except_photos)
         cats = df.to_dict(orient="records") if df is not None and not df.empty else []
         # Normalise booleans / stringify datetimes
         for c in cats:
@@ -402,7 +412,7 @@ async def cats_list(request: Request):
 
 
 async def cat_update(request: Request):
-    """PUT /api/v1/cats/{rfid_or_name} with JSON {allow_entry, allow_exit, enable_prey_detection}."""
+    """Update per-cat flags by RFID or name (``allow_entry`` / ``allow_exit`` / prey)."""
     _, err = await _auth_or_fail(request)
     if err:
         return err
@@ -443,6 +453,7 @@ async def cat_update(request: Request):
 
 
 async def events_list(request: Request):
+    """GET /api/v1/events?limit=N — recent motion-block events."""
     _, err = await _auth_or_fail(request)
     if err:
         return err
@@ -453,8 +464,8 @@ async def events_list(request: Request):
         except ValueError:
             return _err("limit must be an integer")
         from src.baseconfig import CONFIG
-        from src.database import db_get_motion_blocks
-        df = db_get_motion_blocks(CONFIG["KITTYHACK_DATABASE_PATH"], block_count=limit)
+        from src.database import EventsRepo
+        df = EventsRepo.db_get_motion_blocks(CONFIG["KITTYHACK_DATABASE_PATH"], block_count=limit)
         events = df.to_dict(orient="records") if df is not None and not df.empty else []
         for ev in events:
             for k, v in list(ev.items()):

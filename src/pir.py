@@ -1,3 +1,4 @@
+"""Inside/outside PIR motion sensors (GPIO on the Kittyflap)."""
 import os
 import threading
 import time as tm
@@ -22,9 +23,12 @@ PIR_READ_INTERVAL = 0.05
 gpio = Gpio()
 
 class Pir:
+    """Polls inside/outside PIR GPIOs and exposes hysteresis-filtered motion states."""
+
     instance = None
 
     def __init__(self, simulate_kittyflap=False, stop_event: threading.Event | None = None):
+        """Create a PIR controller; call ``init()`` then run ``read()`` on a thread."""
         self.state_outside = 0  # 0 = no motion, 1 = motion detected
         self.state_inside = 0   # 0 = no motion, 1 = motion detected
         self.state_outside_raw = 0
@@ -36,7 +40,7 @@ class Pir:
         self._stop_event = stop_event
 
     def init(self):
-        """Enable both PIRs."""
+        """Register as singleton, configure GPIO, and power on both PIR sensors."""
         Pir.instance = self
         
         if self.simulate_kittyflap:
@@ -58,7 +62,7 @@ class Pir:
                 logging.info("[PIR] PIRs initialized and powered on.")
 
     def read(self):
-        """Continuously read the state of both PIRs and update shared states."""
+        """Loop until shutdown: sample PIRs, apply hysteresis, update shared states."""
         # Register task in the sigterm_monitor object
         sigterm_monitor.register_task()
 
@@ -166,11 +170,11 @@ class Pir:
 
     def update_state(self, pir, state):
         """
-        Thread-safe method to update the state of a PIR sensor.
+        Thread-safe write of a filtered PIR motion state (used in simulation timers).
 
         Args:
-            pir (str): The identifier of the PIR sensor. Expected values are "OUTSIDE" or "INSIDE".
-            state (bool): The new state of the PIR sensor. Typically True for active/motion detected, False for inactive/no motion.
+            pir (str): ``"OUTSIDE"`` or ``"INSIDE"``.
+            state (int): ``1`` = motion, ``0`` = no motion.
         """
         with self.thread_lock:
             if pir == "OUTSIDE":
@@ -180,11 +184,11 @@ class Pir:
 
     def get_states(self):
         """
-        Thread-safe method to read the current states of the PIRs.
+        Thread-safe snapshot of filtered and raw PIR states.
 
         Returns:
-            tuple: A tuple containing: state_outside, state_inside
-                   (0 = no motion, 1 = motion detected)
+            tuple: ``(outside, inside, outside_raw, inside_raw)`` each ``0`` or ``1``.
+                Filtered states require the configured hysteresis; raw is any recent activity.
         """
         with self.thread_lock:
             return self.state_outside, self.state_inside, self.state_outside_raw, self.state_inside_raw

@@ -15,6 +15,7 @@ import uuid
 import json
 from configupdater import ConfigUpdater
 from typing import Any, Callable, List, Tuple
+from dataclasses import dataclass
 
 from src.mode import is_remote_mode
 from src.paths import kittyhack_root
@@ -22,6 +23,8 @@ from src.locales_runtime import ensure_runtime_locales_ready
 
 ###### ENUM DEFINITIONS ######
 class AllowedToEnter(Enum):
+    """Who may enter through the flap (config / MQTT / API)."""
+
     ALL = 'all'
     ALL_RFIDS = 'all_rfids'
     KNOWN = 'known'
@@ -29,6 +32,8 @@ class AllowedToEnter(Enum):
     CONFIGURE_PER_CAT = 'configure_per_cat'
 
 class AllowedToExit(Enum):
+    """Whether exit is allowed (optionally per-cat or time-ranged in UI)."""
+
     ALLOW = 'allow'
     DENY = 'deny'
     CONFIGURE_PER_CAT = 'configure_per_cat'
@@ -39,20 +44,175 @@ class AllowedToExit(Enum):
 CONFIGFILE = 'config.ini'
 REMOTE_CONFIGFILE = 'config.remote.ini'
 
-# Remote-mode settings must be local to the remote device (sync overwrites config.ini).
-# We keep them in a separate overlay file that is loaded only in remote-mode.
-_REMOTE_ONLY_SETTINGS: dict[str, tuple[str, str]] = {
-    # CONFIG_KEY: (ini_option_name, type)
-    "REMOTE_TARGET_HOST": ("remote_target_host", "str"),
-    "REMOTE_CONTROL_PORT": ("remote_control_port", "int"),
-    "REMOTE_CONTROL_TIMEOUT": ("remote_control_timeout", "float"),
-    "REMOTE_SYNC_ON_FIRST_CONNECT": ("remote_sync_on_first_connect", "bool"),
-    "REMOTE_SYNC_LABELSTUDIO": ("remote_sync_labelstudio", "bool"),
-    "REMOTE_INFERENCE_MAX_FPS": ("remote_inference_max_fps", "float"),
+###### SETTINGS SCHEMA ######
+# Single source of truth for defaults, load typing, and save persistence.
+# Add a new setting here only — load_config / save_config / update_single pick it up.
+
+
+@dataclass(frozen=True)
+class Setting:
+    """One persisted (or runtime) config key: defaults, load kind, and save behavior."""
+
+    key: str  # CONFIG key, e.g. "MOUSE_THRESHOLD" (ini option = key.lower())
+    default: Any
+    kind: str  # str | int | float | bool | enum | allowed_to_exit
+    enum_cls: Any = None
+    save_fmt: str | None = None  # e.g. "{:.1f}"
+    persist: bool = True  # False: load into CONFIG but never write on save_config
+    remote_only: bool = False  # persist only in config.remote.ini (stripped from config.ini)
+    save_as_str: bool = False  # force str(...) on save (MOUSE_CHECK_ENABLED)
+
+
+def _S(key, default, kind="str", **kwargs) -> Setting:
+    """Shorthand constructor for a ``Setting`` in ``SETTINGS_SCHEMA``."""
+    return Setting(key=key, default=default, kind=kind, **kwargs)
+
+
+SETTINGS_SCHEMA: list[Setting] = [
+    _S("TIMEZONE", "Europe/Berlin"),
+    _S("LANGUAGE", "en"),
+    _S("DATE_FORMAT", "yyyy-mm-dd"),
+    _S("DATABASE_PATH", "../kittyflap.db"),
+    _S("KITTYHACK_DATABASE_PATH", "./kittyhack.db"),
+    _S("MAX_PHOTOS_COUNT", 6000, "int"),
+    _S("MOUSE_THRESHOLD", 70.0, "float"),
+    _S("NO_MOUSE_THRESHOLD", 70.0, "float"),
+    _S("MIN_THRESHOLD", 30.0, "float"),
+    _S("ELEMENTS_PER_PAGE", 20, "int"),
+    _S("LOGLEVEL", "INFO"),
+    _S("PERIODIC_JOBS_INTERVAL", 900, "int"),
+    _S("ALLOWED_TO_ENTER", "all", "enum", enum_cls=AllowedToEnter),
+    _S("MOUSE_CHECK_ENABLED", True, "bool", save_as_str=True),
+    _S("MIN_SECONDS_TO_ANALYZE", 1.5, "float", save_fmt="{:.1f}"),
+    _S("SHOW_IMAGES_WITH_OVERLAY", True, "bool"),
+    _S("LIVE_VIEW_REFRESH_INTERVAL", 5.0, "float"),
+    _S("KITTYFLAP_CONFIG_MIGRATED", False, "bool"),
+    _S("ALLOWED_TO_EXIT", "allow", "allowed_to_exit", enum_cls=AllowedToExit),
+    _S("LAST_VACUUM_DATE", ""),
+    _S("PERIODIC_VERSION_CHECK", True, "bool"),
+    _S("KITTYFLAP_DB_NAGSCREEN", False, "bool"),
+    _S("LAST_DB_BACKUP_DATE", ""),
+    _S("KITTYHACK_DATABASE_BACKUP_PATH", "../kittyhack_backup.db"),
+    _S("PIR_OUTSIDE_THRESHOLD", 0.5, "float"),
+    _S("PIR_INSIDE_THRESHOLD", 3.0, "float"),
+    _S("IMMEDIATE_LOCK_AFTER_PASSAGE", False, "bool"),
+    _S("WLAN_TX_POWER", 7, "int"),
+    _S("GROUP_PICTURES_TO_EVENTS", True, "bool"),
+    _S("TFLITE_MODEL_VERSION", "original_kittyflap_model_v2"),
+    _S("LOCK_DURATION_AFTER_PREY_DETECTION", 300, "int"),
+    _S("MAX_PICTURES_PER_EVENT_WITH_RFID", 100, "int"),
+    _S("MAX_PICTURES_PER_EVENT_WITHOUT_RFID", 30, "int"),
+    _S("USE_ALL_CORES_FOR_IMAGE_PROCESSING", False, "bool"),
+    _S("LAST_BOOTED_VERSION", "v1.5.1"),  # Parameter introduced in v1.5.1
+    _S("ALLOWED_TO_EXIT_RANGE1", False, "bool"),
+    _S("ALLOWED_TO_EXIT_RANGE1_FROM", "00:00"),
+    _S("ALLOWED_TO_EXIT_RANGE1_TO", "23:59"),
+    _S("ALLOWED_TO_EXIT_RANGE2", False, "bool"),
+    _S("ALLOWED_TO_EXIT_RANGE2_FROM", "00:00"),
+    _S("ALLOWED_TO_EXIT_RANGE2_TO", "23:59"),
+    _S("ALLOWED_TO_EXIT_RANGE3", False, "bool"),
+    _S("ALLOWED_TO_EXIT_RANGE3_FROM", "00:00"),
+    _S("ALLOWED_TO_EXIT_RANGE3_TO", "23:59"),
+    # Not written by save_config (managed separately / migration flags)
+    _S("LABELSTUDIO_VERSION", None, persist=False),
+    _S("LABELSTUDIO_API_TOKEN", "", persist=False),
+    _S("LABELSTUDIO_PROJECT", ""),
+    _S("LABELSTUDIO_PROJECT_TITLE", ""),
+    _S("EMAIL", ""),
+    _S("USER_NAME", ""),
+    _S("MODEL_TRAINING", ""),
+    _S("YOLO_MODEL", ""),
+    _S("INFERENCE_DEVICE", "cpu"),
+    _S("STARTUP_SHUTDOWN_FLAG", False, "bool"),
+    _S("NOT_GRACEFUL_SHUTDOWNS", 0, "int"),
+    _S("USE_CAMERA_FOR_CAT_DETECTION", False, "bool"),
+    _S("CAT_THRESHOLD", 70.0, "float"),
+    _S("USE_CAMERA_FOR_MOTION_DETECTION", False, "bool"),
+    _S("CAMERA_SOURCE", "internal"),  # can be "internal" or "ip_camera"
+    _S("IP_CAMERA_URL", ""),
+    _S("ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE", False, "bool"),
+    _S("IP_CAMERA_TARGET_RESOLUTION", "640x360"),
+    _S("IP_CAMERA_PIPELINE_FPS_LIMIT", 10, "int"),
+    _S("IP_CAMERA_HW_DECODE", "auto"),
+    _S("MQTT_DEVICE_ID", ""),
+    _S("MQTT_BROKER_ADDRESS", ""),
+    _S("MQTT_BROKER_PORT", 1883, "int"),
+    _S("MQTT_USERNAME", None),
+    _S("MQTT_PASSWORD", None),
+    _S("MQTT_ENABLED", False, "bool"),
+    _S("MQTT_IMAGE_PUBLISH_INTERVAL", 5.0, "float"),
+    _S("SHOW_CATS_ONLY", False, "bool"),
+    _S("SHOW_MICE_ONLY", False, "bool"),
+    _S("RESTART_IP_CAMERA_STREAM_ON_FAILURE", True, "bool"),
+    _S("WLAN_WATCHDOG_ENABLED", True, "bool"),
+    _S("DISABLE_RFID_READER", False, "bool"),
+    _S("EVENT_IMAGES_FS_MIGRATED", False, "bool", persist=False),
+    # Remote control / remote-mode (subset lives only in config.remote.ini)
+    _S("REMOTE_TARGET_HOST", "", remote_only=True),
+    _S("REMOTE_CONTROL_PORT", 8888, "int", remote_only=True),
+    _S("REMOTE_CONTROL_TIMEOUT", 30.0, "float", remote_only=True),
+    # Target-mode boot: wait for remote reconnect after remote-triggered reboot
+    _S("REMOTE_WAIT_AFTER_REBOOT_TIMEOUT", 30.0, "float"),
+    _S("REMOTE_SYNC_ON_FIRST_CONNECT", True, "bool", remote_only=True),
+    _S("REMOTE_SYNC_LABELSTUDIO", True, "bool", remote_only=True),
+    _S("REMOTE_INFERENCE_MAX_FPS", 10.0, "float", remote_only=True),
+    # Update repository override (standard = floppyFK/kittyhack; custom = UPDATE_REPOSITORY)
+    _S("UPDATE_REPOSITORY_MODE", "standard"),
+    _S("UPDATE_REPOSITORY", ""),
+]
+
+_SETTINGS_BY_KEY: dict[str, Setting] = {s.key: s for s in SETTINGS_SCHEMA}
+
+# Remote-mode overlay map: CONFIG_KEY -> (ini_option, type_name)
+_REMOTE_ONLY_SETTINGS = {
+    s.key: (s.key.lower(), s.kind if s.kind in {"str", "int", "float", "bool"} else "str")
+    for s in SETTINGS_SCHEMA
+    if s.remote_only
+}
+
+# Default configuration values (generated from schema; UI reads DEFAULT_CONFIG["Settings"][...])
+DEFAULT_CONFIG = {
+    "Settings": {s.key.lower(): s.default for s in SETTINGS_SCHEMA}
 }
 
 
+def _load_default_for_setting(setting: Setting) -> Any:
+    """Typed default used when reading from ini."""
+    if setting.kind == "enum" and isinstance(setting.default, str) and setting.enum_cls is not None:
+        return setting.enum_cls(setting.default)
+    if setting.kind == "allowed_to_exit" and isinstance(setting.default, str) and setting.enum_cls is not None:
+        return setting.enum_cls(setting.default)
+    if setting.kind == "int":
+        return int(setting.default)
+    if setting.kind == "float":
+        return float(setting.default)
+    # Match historical load: MQTT None defaults coerce to ""; LABELSTUDIO_VERSION stays None.
+    if setting.key in {"MQTT_USERNAME", "MQTT_PASSWORD"} and setting.default is None:
+        return ""
+    return setting.default
+
+
+def _value_for_ini(setting: Setting, value: Any) -> Any:
+    """Convert a CONFIG value into something ConfigUpdater can write."""
+    if setting.kind in {"enum", "allowed_to_exit"} and hasattr(value, "value"):
+        value = value.value
+    if setting.save_fmt:
+        try:
+            return setting.save_fmt.format(float(value))
+        except Exception:
+            return str(value)
+    if setting.save_as_str:
+        return str(value)
+    if setting.kind == "int":
+        try:
+            return int(value or 0)
+        except Exception:
+            return int(setting.default or 0)
+    return value
+
+
 def _remote_configfile_path() -> str:
+    """Absolute path to ``config.remote.ini`` (or ``KITTYHACK_REMOTE_CONFIGFILE`` override)."""
     # Allow override primarily for testing.
     override = os.environ.get("KITTYHACK_REMOTE_CONFIGFILE")
     if override:
@@ -61,6 +221,7 @@ def _remote_configfile_path() -> str:
 
 
 def _write_remote_overrides_from_config(path: str) -> None:
+    """Write remote-only CONFIG keys into the overlay ini at ``path``."""
     parser = configparser.ConfigParser()
     parser["Settings"] = {}
     for cfg_key, (opt, _t) in _REMOTE_ONLY_SETTINGS.items():
@@ -113,6 +274,7 @@ def _apply_remote_overrides() -> None:
 
 
 def read_remote_config_values() -> dict:
+    """Read remote-setup fields from the overlay file (with CONFIG-based fallbacks)."""
     defaults = {
         "remote_target_host": (CONFIG.get("REMOTE_TARGET_HOST") or "").strip(),
         "remote_control_port": int(CONFIG.get("REMOTE_CONTROL_PORT", 8888) or 8888),
@@ -147,6 +309,7 @@ def read_remote_config_values() -> dict:
 
 
 def remote_setup_required() -> bool:
+    """True in remote mode when host/port/timeout/sync keys are missing or host is empty."""
     if not is_remote_mode():
         return False
     remote_cfg_path = _remote_configfile_path()
@@ -182,107 +345,6 @@ CONFIG = {}
 
 # True if config.ini had to be created or recreated during this process startup.
 CONFIG_CREATED_AT_STARTUP = False
-
-# Default configuration values
-DEFAULT_CONFIG = {
-    "Settings": {
-        "timezone": "Europe/Berlin",
-        "language": "en",
-        "date_format": "yyyy-mm-dd",
-        "database_path": "../kittyflap.db",
-        "kittyhack_database_path": "./kittyhack.db",
-        "max_photos_count": 6000,
-        "simulate_kittyflap": False,
-        "mouse_threshold": 70.0,
-        "no_mouse_threshold": 70.0,
-        "min_threshold": 30.0,
-        "elements_per_page": 20,
-        "loglevel": "INFO",
-        "periodic_jobs_interval": 900,
-        "allowed_to_enter": "all",
-        "mouse_check_enabled": True,
-        "min_seconds_to_analyze": 1.5,
-        "show_images_with_overlay": True,
-        "live_view_refresh_interval": 5.0,
-        "kittyflap_config_migrated": False,
-        "allowed_to_exit": "allow",
-        "last_vacuum_date": "",
-        "periodic_version_check": True,
-        "kittyflap_db_nagscreen": False,
-        "last_db_backup_date": "",
-        "kittyhack_database_backup_path": "../kittyhack_backup.db",
-        "pir_outside_threshold": 0.5,
-        "pir_inside_threshold": 3.0,
-        "immediate_lock_after_passage": False,
-        "wlan_tx_power": 7,
-        "group_pictures_to_events": True,
-        "tflite_model_version": "original_kittyflap_model_v2",
-        "lock_duration_after_prey_detection": 300,
-        "max_pictures_per_event_with_rfid": 100,
-        "max_pictures_per_event_without_rfid": 30,
-        "use_all_cores_for_image_processing": False,
-        "last_booted_version": "v1.5.1", # Parameter introduced in v1.5.1
-        "allowed_to_exit_range1": False,
-        "allowed_to_exit_range1_from": "00:00",
-        "allowed_to_exit_range1_to": "23:59",
-        "allowed_to_exit_range2": False,
-        "allowed_to_exit_range2_from": "00:00",
-        "allowed_to_exit_range2_to": "23:59",
-        "allowed_to_exit_range3": False,
-        "allowed_to_exit_range3_from": "00:00",
-        "allowed_to_exit_range3_to": "23:59",
-        "labelstudio_version": None,
-        "labelstudio_api_token": "",
-        "labelstudio_project": "",
-        "labelstudio_project_title": "",
-        "email": "",
-        "user_name": "",
-        "model_training": "",
-        "yolo_model": "",
-        "inference_device": "cpu",
-        "startup_shutdown_flag": False,
-        "not_graceful_shutdowns": 0,
-        "use_camera_for_cat_detection": False,
-        "cat_threshold": 70.0,
-        "use_camera_for_motion_detection": False,
-        "camera_source": "internal", # can be "internal" or "ip_camera"
-        "ip_camera_url": "",
-        "enable_ip_camera_decode_scale_pipeline": False,
-        "ip_camera_target_resolution": "640x360",
-        "ip_camera_pipeline_fps_limit": 10,
-        "ip_camera_hw_decode": "auto",
-        "mqtt_device_id": "",
-        "mqtt_broker_address": "",
-        "mqtt_broker_port": 1883,
-        "mqtt_username": None,
-        "mqtt_password": None,
-        "mqtt_enabled": False,
-        "mqtt_image_publish_interval": 5.0,
-        "show_cats_only": False,
-        "show_mice_only": False,
-        "restart_ip_camera_stream_on_failure": True,
-        "wlan_watchdog_enabled": True,
-        "disable_rfid_reader": False,
-        "event_images_fs_migrated": False,
-
-        # Remote control / remote-mode
-        "remote_target_host": "",
-        "remote_control_port": 8888,
-        "remote_control_timeout": 30.0,
-        # Target-mode boot behavior: if remote control was used once, the target may wait for a remote reconnect.
-        "remote_wait_after_reboot_timeout": 30.0,
-        "remote_sync_on_first_connect": True,
-        "remote_sync_labelstudio": True,
-        "remote_inference_max_fps": 10.0,
-
-        # Update repository override (for testing your own fork or a feature branch).
-        # mode: "standard" -> use floppyFK/kittyhack (release tags)
-        #       "custom"   -> use UPDATE_REPOSITORY value below
-        # UPDATE_REPOSITORY format: "owner/repo" or "owner/repo@branch-or-tag"
-        "update_repository_mode": "standard",
-        "update_repository": "",
-    }
-}
 
 # Keys that contain sensitive information (passwords, credentials, etc.) which should not be logged
 SENSITIVE_CONFIG_KEYS = {
@@ -330,6 +392,23 @@ def load_config():
         parser.read(CONFIGFILE)
 
     invalid_values: List[Tuple[str, Any]] = []
+
+    # Legacy: simulate_kittyflap was a persisted config key; simulation is now a process flag.
+    if parser.has_option('Settings', 'simulate_kittyflap'):
+        logging.warning(
+            "[CONFIG] simulate_kittyflap in config.ini is ignored; "
+            "use env KITTYHACK_SIMULATE=1 or kittyhack_control --simulate"
+        )
+        try:
+            updater = ConfigUpdater()
+            updater.read(CONFIGFILE)
+            if 'Settings' in updater and 'simulate_kittyflap' in updater['Settings']:
+                del updater['Settings']['simulate_kittyflap']
+                with open(CONFIGFILE, 'w') as f:
+                    updater.write(f)
+                logging.info("[CONFIG] Removed obsolete simulate_kittyflap from config.ini")
+        except Exception as e:
+            logging.warning(f"[CONFIG] Failed to remove simulate_kittyflap from config.ini: {e}")
 
     def get_raw(section: str, option: str, default: Any) -> Any:
         if not parser.has_option(section, option):
@@ -395,8 +474,6 @@ def load_config():
                 record_invalid('ALLOWED_TO_EXIT', raw)
             return default_member
 
-    d = DEFAULT_CONFIG['Settings']
-
     # --- Migration: MIN_PICTURES_TO_ANALYZE -> MIN_SECONDS_TO_ANALYZE ---
     # Old configs may contain `min_pictures_to_analyze`. New configs use `min_seconds_to_analyze`.
     # If the new key is missing, derive it via: seconds = pictures / 3.33 (avg legacy inference FPS).
@@ -451,115 +528,24 @@ def load_config():
         # Migration must never break startup.
         pass
 
-    new_config = {
-        "TIMEZONE": safe_str("TIMEZONE", d['timezone']),
-        "LANGUAGE": safe_str("LANGUAGE", d['language']),
-        "DATE_FORMAT": safe_str("DATE_FORMAT", d['date_format']),
-        "DATABASE_PATH": safe_str("DATABASE_PATH", d['database_path']),
-        "KITTYHACK_DATABASE_PATH": safe_str("KITTYHACK_DATABASE_PATH", d['kittyhack_database_path']),
-        "MAX_PHOTOS_COUNT": safe_int("MAX_PHOTOS_COUNT", int(d['max_photos_count'])),
-        "SIMULATE_KITTYFLAP": safe_bool("SIMULATE_KITTYFLAP", d['simulate_kittyflap']),
-        "MOUSE_THRESHOLD": safe_float("MOUSE_THRESHOLD", float(d['mouse_threshold'])),
-        "NO_MOUSE_THRESHOLD": safe_float("NO_MOUSE_THRESHOLD", float(d['no_mouse_threshold'])),
-        "MIN_THRESHOLD": safe_float("MIN_THRESHOLD", float(d['min_threshold'])),
-        "ELEMENTS_PER_PAGE": safe_int("ELEMENTS_PER_PAGE", int(d['elements_per_page'])),
-        "LOGLEVEL": safe_str("LOGLEVEL", d['loglevel']),
-        "PERIODIC_JOBS_INTERVAL": safe_int("PERIODIC_JOBS_INTERVAL", int(d['periodic_jobs_interval'])),
-        "ALLOWED_TO_ENTER": safe_enum("ALLOWED_TO_ENTER", AllowedToEnter, AllowedToEnter(d['allowed_to_enter'])),
-        "MOUSE_CHECK_ENABLED": safe_bool("MOUSE_CHECK_ENABLED", d['mouse_check_enabled']),
-        "MIN_SECONDS_TO_ANALYZE": safe_float("MIN_SECONDS_TO_ANALYZE", float(d['min_seconds_to_analyze'])),
-        "SHOW_IMAGES_WITH_OVERLAY": safe_bool("SHOW_IMAGES_WITH_OVERLAY", d['show_images_with_overlay']),
-        "LIVE_VIEW_REFRESH_INTERVAL": safe_float("LIVE_VIEW_REFRESH_INTERVAL", float(d['live_view_refresh_interval'])),
-        "KITTYFLAP_CONFIG_MIGRATED": safe_bool("KITTYFLAP_CONFIG_MIGRATED", d['kittyflap_config_migrated']),
-        "ALLOWED_TO_EXIT": safe_allowed_to_exit(AllowedToExit(d['allowed_to_exit'])),
-        "LAST_VACUUM_DATE": safe_str("LAST_VACUUM_DATE", d['last_vacuum_date']),
-        "PERIODIC_VERSION_CHECK": safe_bool("PERIODIC_VERSION_CHECK", d['periodic_version_check']),
-        "KITTYFLAP_DB_NAGSCREEN": safe_bool("KITTYFLAP_DB_NAGSCREEN", d['kittyflap_db_nagscreen']),
-        "LATEST_VERSION": "unknown",
-        "LAST_DB_BACKUP_DATE": safe_str("LAST_DB_BACKUP_DATE", d['last_db_backup_date']),
-        "KITTYHACK_DATABASE_BACKUP_PATH": safe_str("KITTYHACK_DATABASE_BACKUP_PATH", d['kittyhack_database_backup_path']),
-        "PIR_OUTSIDE_THRESHOLD": safe_float("PIR_OUTSIDE_THRESHOLD", float(d['pir_outside_threshold'])),
-        "PIR_INSIDE_THRESHOLD": safe_float("PIR_INSIDE_THRESHOLD", float(d['pir_inside_threshold'])),
-        "IMMEDIATE_LOCK_AFTER_PASSAGE": safe_bool("IMMEDIATE_LOCK_AFTER_PASSAGE", d.get('immediate_lock_after_passage', False)),
-        "WLAN_TX_POWER": safe_int("WLAN_TX_POWER", int(d['wlan_tx_power'])),
-        "GROUP_PICTURES_TO_EVENTS": safe_bool("GROUP_PICTURES_TO_EVENTS", d['group_pictures_to_events']),
-        "TFLITE_MODEL_VERSION": safe_str("TFLITE_MODEL_VERSION", d['tflite_model_version']),
-        "LOCK_DURATION_AFTER_PREY_DETECTION": safe_int("LOCK_DURATION_AFTER_PREY_DETECTION", int(d['lock_duration_after_prey_detection'])),
-        "MAX_PICTURES_PER_EVENT_WITH_RFID": safe_int("MAX_PICTURES_PER_EVENT_WITH_RFID", int(d['max_pictures_per_event_with_rfid'])),
-        "MAX_PICTURES_PER_EVENT_WITHOUT_RFID": safe_int("MAX_PICTURES_PER_EVENT_WITHOUT_RFID", int(d['max_pictures_per_event_without_rfid'])),
-        "USE_ALL_CORES_FOR_IMAGE_PROCESSING": safe_bool("USE_ALL_CORES_FOR_IMAGE_PROCESSING", d['use_all_cores_for_image_processing']),
-        "LAST_BOOTED_VERSION": safe_str("LAST_BOOTED_VERSION", d['last_booted_version']),
-        "ALLOWED_TO_EXIT_RANGE1": safe_bool("ALLOWED_TO_EXIT_RANGE1", d['allowed_to_exit_range1']),
-        "ALLOWED_TO_EXIT_RANGE1_FROM": safe_str("ALLOWED_TO_EXIT_RANGE1_FROM", d['allowed_to_exit_range1_from']),
-        "ALLOWED_TO_EXIT_RANGE1_TO": safe_str("ALLOWED_TO_EXIT_RANGE1_TO", d['allowed_to_exit_range1_to']),
-        "ALLOWED_TO_EXIT_RANGE2": safe_bool("ALLOWED_TO_EXIT_RANGE2", d['allowed_to_exit_range2']),
-        "ALLOWED_TO_EXIT_RANGE2_FROM": safe_str("ALLOWED_TO_EXIT_RANGE2_FROM", d['allowed_to_exit_range2_from']),
-        "ALLOWED_TO_EXIT_RANGE2_TO": safe_str("ALLOWED_TO_EXIT_RANGE2_TO", d['allowed_to_exit_range2_to']),
-        "ALLOWED_TO_EXIT_RANGE3": safe_bool("ALLOWED_TO_EXIT_RANGE3", d['allowed_to_exit_range3']),
-        "ALLOWED_TO_EXIT_RANGE3_FROM": safe_str("ALLOWED_TO_EXIT_RANGE3_FROM", d['allowed_to_exit_range3_from']),
-        "ALLOWED_TO_EXIT_RANGE3_TO": safe_str("ALLOWED_TO_EXIT_RANGE3_TO", d['allowed_to_exit_range3_to']),
-        "LABELSTUDIO_VERSION": safe_str("LABELSTUDIO_VERSION", d['labelstudio_version']),
-        "LABELSTUDIO_API_TOKEN": safe_str("LABELSTUDIO_API_TOKEN", d.get('labelstudio_api_token', "")),
-        "LABELSTUDIO_PROJECT": safe_str("LABELSTUDIO_PROJECT", d.get('labelstudio_project', "")),
-        "LABELSTUDIO_PROJECT_TITLE": safe_str("LABELSTUDIO_PROJECT_TITLE", d.get('labelstudio_project_title', "")),
-        "EMAIL": safe_str("EMAIL", d['email']),
-        "USER_NAME": safe_str("USER_NAME", d['user_name']),
-        "MODEL_TRAINING": safe_str("MODEL_TRAINING", d['model_training']),
-        "YOLO_MODEL": safe_str("YOLO_MODEL", d['yolo_model']),
-        "INFERENCE_DEVICE": safe_str("INFERENCE_DEVICE", d.get('inference_device', 'cpu')),
-        "STARTUP_SHUTDOWN_FLAG": safe_bool("STARTUP_SHUTDOWN_FLAG", d['startup_shutdown_flag']),
-        "NOT_GRACEFUL_SHUTDOWNS": safe_int("NOT_GRACEFUL_SHUTDOWNS", int(d['not_graceful_shutdowns'])),
-        "USE_CAMERA_FOR_CAT_DETECTION": safe_bool("USE_CAMERA_FOR_CAT_DETECTION", d['use_camera_for_cat_detection']),
-        "CAT_THRESHOLD": safe_float("CAT_THRESHOLD", float(d['cat_threshold'])),
-        "USE_CAMERA_FOR_MOTION_DETECTION": safe_bool("USE_CAMERA_FOR_MOTION_DETECTION", d.get('use_camera_for_motion_detection', False)),
-        "CAMERA_SOURCE": safe_str("CAMERA_SOURCE", d['camera_source']),
-        "IP_CAMERA_URL": safe_str("IP_CAMERA_URL", d.get('ip_camera_url', "")),
-        "ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE": safe_bool(
-            "ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE",
-            d.get('enable_ip_camera_decode_scale_pipeline', False),
-        ),
-        "IP_CAMERA_TARGET_RESOLUTION": safe_str(
-            "IP_CAMERA_TARGET_RESOLUTION",
-            d.get('ip_camera_target_resolution', "640x360"),
-        ),
-        "IP_CAMERA_PIPELINE_FPS_LIMIT": safe_int(
-            "IP_CAMERA_PIPELINE_FPS_LIMIT",
-            int(d.get('ip_camera_pipeline_fps_limit', 10)),
-        ),
-        "IP_CAMERA_HW_DECODE": safe_str(
-            "IP_CAMERA_HW_DECODE",
-            d.get('ip_camera_hw_decode', "auto"),
-        ),
-        "MQTT_DEVICE_ID": safe_str("MQTT_DEVICE_ID", d['mqtt_device_id']),
-        "MQTT_BROKER_ADDRESS": safe_str("MQTT_BROKER_ADDRESS", d['mqtt_broker_address']),
-        "MQTT_BROKER_PORT": safe_int("MQTT_BROKER_PORT", int(d['mqtt_broker_port'])),
-        "MQTT_USERNAME": safe_str("MQTT_USERNAME", d['mqtt_username'] if d['mqtt_username'] is not None else ""),
-        "MQTT_PASSWORD": safe_str("MQTT_PASSWORD", d['mqtt_password'] if d['mqtt_password'] is not None else ""),
-        "MQTT_ENABLED": safe_bool("MQTT_ENABLED", d.get('mqtt_enabled', False)),
-        "MQTT_IMAGE_PUBLISH_INTERVAL": safe_float("MQTT_IMAGE_PUBLISH_INTERVAL", float(d['mqtt_image_publish_interval'])),
-        "SHOW_CATS_ONLY": safe_bool("SHOW_CATS_ONLY", d['show_cats_only']),
-        "SHOW_MICE_ONLY": safe_bool("SHOW_MICE_ONLY", d['show_mice_only']),
-        "RESTART_IP_CAMERA_STREAM_ON_FAILURE": safe_bool("RESTART_IP_CAMERA_STREAM_ON_FAILURE", d.get('restart_ip_camera_stream_on_failure', True)),
-        "WLAN_WATCHDOG_ENABLED": safe_bool("WLAN_WATCHDOG_ENABLED", d.get('wlan_watchdog_enabled', True)),
-        "DISABLE_RFID_READER": safe_bool("DISABLE_RFID_READER", d.get('disable_rfid_reader', False)),
-        "EVENT_IMAGES_FS_MIGRATED": safe_bool("EVENT_IMAGES_FS_MIGRATED", d.get('event_images_fs_migrated', False)),
+    new_config: dict[str, Any] = {}
+    for setting in SETTINGS_SCHEMA:
+        default = _load_default_for_setting(setting)
+        if setting.kind == "int":
+            new_config[setting.key] = safe_int(setting.key, default)
+        elif setting.kind == "float":
+            new_config[setting.key] = safe_float(setting.key, default)
+        elif setting.kind == "bool":
+            new_config[setting.key] = safe_bool(setting.key, default)
+        elif setting.kind == "enum":
+            new_config[setting.key] = safe_enum(setting.key, setting.enum_cls, default)
+        elif setting.kind == "allowed_to_exit":
+            new_config[setting.key] = safe_allowed_to_exit(default)
+        else:
+            new_config[setting.key] = safe_str(setting.key, default)
 
-        # Remote control / remote-mode
-        "REMOTE_TARGET_HOST": safe_str("REMOTE_TARGET_HOST", d.get('remote_target_host', "")),
-        "REMOTE_CONTROL_PORT": safe_int("REMOTE_CONTROL_PORT", int(d.get('remote_control_port', 8888))),
-        "REMOTE_CONTROL_TIMEOUT": safe_float("REMOTE_CONTROL_TIMEOUT", float(d.get('remote_control_timeout', 30.0))),
-        "REMOTE_WAIT_AFTER_REBOOT_TIMEOUT": safe_float(
-            "REMOTE_WAIT_AFTER_REBOOT_TIMEOUT",
-            float(d.get('remote_wait_after_reboot_timeout', 30.0)),
-        ),
-        "REMOTE_SYNC_ON_FIRST_CONNECT": safe_bool("REMOTE_SYNC_ON_FIRST_CONNECT", d.get('remote_sync_on_first_connect', True)),
-        "REMOTE_SYNC_LABELSTUDIO": safe_bool("REMOTE_SYNC_LABELSTUDIO", d.get('remote_sync_labelstudio', True)),
-        "REMOTE_INFERENCE_MAX_FPS": safe_float("REMOTE_INFERENCE_MAX_FPS", float(d.get('remote_inference_max_fps', 10.0))),
-
-        # Update repository override
-        "UPDATE_REPOSITORY_MODE": safe_str("UPDATE_REPOSITORY_MODE", d.get('update_repository_mode', 'standard')),
-        "UPDATE_REPOSITORY": safe_str("UPDATE_REPOSITORY", d.get('update_repository', '')),
-    }
+    # Runtime-only (not persisted)
+    new_config["LATEST_VERSION"] = "unknown"
 
     # Update in-place so imported CONFIG references in other modules stay valid.
     CONFIG.clear()
@@ -630,89 +616,11 @@ def save_config():
         updater.add_section('Settings')
 
     settings = updater['Settings']
-    settings['timezone'] = CONFIG['TIMEZONE']
-    settings['language'] = CONFIG['LANGUAGE']
-    settings['date_format'] = CONFIG['DATE_FORMAT']
-    settings['database_path'] = CONFIG['DATABASE_PATH']
-    settings['kittyhack_database_path'] = CONFIG['KITTYHACK_DATABASE_PATH']
-    settings['max_photos_count'] = CONFIG['MAX_PHOTOS_COUNT']
-    settings['simulate_kittyflap'] = CONFIG['SIMULATE_KITTYFLAP']
-    settings['mouse_threshold'] = CONFIG['MOUSE_THRESHOLD']
-    settings['no_mouse_threshold'] = CONFIG['NO_MOUSE_THRESHOLD']
-    settings['min_threshold'] = CONFIG['MIN_THRESHOLD']
-    settings['elements_per_page'] = CONFIG['ELEMENTS_PER_PAGE']
-    settings['loglevel'] = CONFIG['LOGLEVEL']
-    settings['periodic_jobs_interval'] = CONFIG['PERIODIC_JOBS_INTERVAL']
-    settings['allowed_to_enter'] = CONFIG['ALLOWED_TO_ENTER'].value
-    settings['mouse_check_enabled'] = str(CONFIG['MOUSE_CHECK_ENABLED'])
-    # Persist with 1 decimal precision
-    try:
-        settings['min_seconds_to_analyze'] = f"{float(CONFIG['MIN_SECONDS_TO_ANALYZE']):.1f}"
-    except Exception:
-        settings['min_seconds_to_analyze'] = str(CONFIG['MIN_SECONDS_TO_ANALYZE'])
-    settings['show_images_with_overlay'] = CONFIG['SHOW_IMAGES_WITH_OVERLAY']
-    settings['live_view_refresh_interval'] = CONFIG['LIVE_VIEW_REFRESH_INTERVAL']
-    settings['kittyflap_config_migrated'] = CONFIG['KITTYFLAP_CONFIG_MIGRATED']
-    settings['allowed_to_exit'] = CONFIG['ALLOWED_TO_EXIT'].value
-    settings['last_vacuum_date'] = CONFIG['LAST_VACUUM_DATE']
-    settings['periodic_version_check'] = CONFIG['PERIODIC_VERSION_CHECK']
-    settings['kittyflap_db_nagscreen'] = CONFIG['KITTYFLAP_DB_NAGSCREEN']
-    settings['last_db_backup_date'] = CONFIG['LAST_DB_BACKUP_DATE']
-    settings['kittyhack_database_backup_path'] = CONFIG['KITTYHACK_DATABASE_BACKUP_PATH']
-    settings['pir_outside_threshold'] = CONFIG['PIR_OUTSIDE_THRESHOLD']
-    settings['pir_inside_threshold'] = CONFIG['PIR_INSIDE_THRESHOLD']
-    settings['immediate_lock_after_passage'] = CONFIG['IMMEDIATE_LOCK_AFTER_PASSAGE']
-    settings['wlan_tx_power'] = CONFIG['WLAN_TX_POWER']
-    settings['group_pictures_to_events'] = CONFIG['GROUP_PICTURES_TO_EVENTS']
-    settings['tflite_model_version'] = CONFIG['TFLITE_MODEL_VERSION']
-    settings['lock_duration_after_prey_detection'] = CONFIG['LOCK_DURATION_AFTER_PREY_DETECTION']
-    settings['max_pictures_per_event_with_rfid'] = CONFIG['MAX_PICTURES_PER_EVENT_WITH_RFID']
-    settings['max_pictures_per_event_without_rfid'] = CONFIG['MAX_PICTURES_PER_EVENT_WITHOUT_RFID']
-    settings['use_all_cores_for_image_processing'] = CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']
-    settings['last_booted_version'] = CONFIG['LAST_BOOTED_VERSION']
-    settings['allowed_to_exit_range1'] = CONFIG['ALLOWED_TO_EXIT_RANGE1']
-    settings['allowed_to_exit_range1_from'] = CONFIG['ALLOWED_TO_EXIT_RANGE1_FROM']
-    settings['allowed_to_exit_range1_to'] = CONFIG['ALLOWED_TO_EXIT_RANGE1_TO']
-    settings['allowed_to_exit_range2'] = CONFIG['ALLOWED_TO_EXIT_RANGE2']
-    settings['allowed_to_exit_range2_from'] = CONFIG['ALLOWED_TO_EXIT_RANGE2_FROM']
-    settings['allowed_to_exit_range2_to'] = CONFIG['ALLOWED_TO_EXIT_RANGE2_TO']
-    settings['allowed_to_exit_range3'] = CONFIG['ALLOWED_TO_EXIT_RANGE3']
-    settings['allowed_to_exit_range3_from'] = CONFIG['ALLOWED_TO_EXIT_RANGE3_FROM']
-    settings['allowed_to_exit_range3_to'] = CONFIG['ALLOWED_TO_EXIT_RANGE3_TO']
-    settings['remote_wait_after_reboot_timeout'] = CONFIG.get('REMOTE_WAIT_AFTER_REBOOT_TIMEOUT', 30.0)
-    #settings['labelstudio_version'] = CONFIG['LABELSTUDIO_VERSION'] # This value may not be written to the config file
-    settings['labelstudio_project'] = CONFIG.get('LABELSTUDIO_PROJECT', '')
-    settings['labelstudio_project_title'] = CONFIG.get('LABELSTUDIO_PROJECT_TITLE', '')
-    settings['email'] = CONFIG['EMAIL']
-    settings['user_name'] = CONFIG['USER_NAME']
-    settings['model_training'] = CONFIG['MODEL_TRAINING']
-    settings['yolo_model'] = CONFIG['YOLO_MODEL']
-    settings['inference_device'] = CONFIG.get('INFERENCE_DEVICE', 'cpu')
-    settings['startup_shutdown_flag'] = CONFIG['STARTUP_SHUTDOWN_FLAG']
-    settings['not_graceful_shutdowns'] = CONFIG['NOT_GRACEFUL_SHUTDOWNS']
-    settings['use_camera_for_cat_detection'] = CONFIG['USE_CAMERA_FOR_CAT_DETECTION']
-    settings['cat_threshold'] = CONFIG['CAT_THRESHOLD']
-    settings['use_camera_for_motion_detection'] = CONFIG['USE_CAMERA_FOR_MOTION_DETECTION']
-    settings['camera_source'] = CONFIG['CAMERA_SOURCE']
-    settings['ip_camera_url'] = CONFIG['IP_CAMERA_URL']
-    settings['enable_ip_camera_decode_scale_pipeline'] = CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False)
-    settings['ip_camera_target_resolution'] = CONFIG.get('IP_CAMERA_TARGET_RESOLUTION', '640x360')
-    settings['ip_camera_pipeline_fps_limit'] = int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10)
-    settings['ip_camera_hw_decode'] = CONFIG.get('IP_CAMERA_HW_DECODE', 'auto')
-    settings['mqtt_device_id'] = CONFIG['MQTT_DEVICE_ID']
-    settings['mqtt_broker_address'] = CONFIG['MQTT_BROKER_ADDRESS']
-    settings['mqtt_broker_port'] = CONFIG['MQTT_BROKER_PORT']
-    settings['mqtt_username'] = CONFIG['MQTT_USERNAME']
-    settings['mqtt_password'] = CONFIG['MQTT_PASSWORD']
-    settings['mqtt_enabled'] = CONFIG['MQTT_ENABLED']
-    settings['mqtt_image_publish_interval'] = CONFIG['MQTT_IMAGE_PUBLISH_INTERVAL']
-    settings['show_cats_only'] = CONFIG['SHOW_CATS_ONLY']
-    settings['show_mice_only'] = CONFIG['SHOW_MICE_ONLY']
-    settings['restart_ip_camera_stream_on_failure'] = CONFIG['RESTART_IP_CAMERA_STREAM_ON_FAILURE']
-    settings['wlan_watchdog_enabled'] = CONFIG['WLAN_WATCHDOG_ENABLED']
-    settings['disable_rfid_reader'] = CONFIG['DISABLE_RFID_READER']
-    settings['update_repository_mode'] = CONFIG.get('UPDATE_REPOSITORY_MODE', 'standard')
-    settings['update_repository'] = CONFIG.get('UPDATE_REPOSITORY', '')
+    for setting in SETTINGS_SCHEMA:
+        if not setting.persist or setting.remote_only:
+            continue
+        value = CONFIG.get(setting.key, setting.default)
+        settings[setting.key.lower()] = _value_for_ini(setting, value)
 
     # Never persist remote-only settings in config.ini.
     # They are stored in config.remote.ini so they survive sync operations.
@@ -754,7 +662,10 @@ def update_config_images_overlay():
     if 'Settings' not in updater:
         updater.add_section('Settings')
 
-    updater['Settings']['show_images_with_overlay'] = CONFIG['SHOW_IMAGES_WITH_OVERLAY']
+    setting = _SETTINGS_BY_KEY["SHOW_IMAGES_WITH_OVERLAY"]
+    updater['Settings']['show_images_with_overlay'] = _value_for_ini(
+        setting, CONFIG['SHOW_IMAGES_WITH_OVERLAY']
+    )
 
     # Write updated configuration back to the file
     try:
@@ -777,9 +688,12 @@ def update_single_config_parameter(parameter: str):
     # Ensure [Settings] section exists
     if 'Settings' not in updater:
         updater.add_section('Settings')
+
+    key = parameter.upper()
+    setting = _SETTINGS_BY_KEY.get(key)
     
     # Remote-mode: never persist remote-only settings in config.ini.
-    if is_remote_mode() and parameter.upper() in _REMOTE_ONLY_SETTINGS:
+    if is_remote_mode() and (key in _REMOTE_ONLY_SETTINGS or (setting and setting.remote_only)):
         try:
             _write_remote_overrides_from_config(_remote_configfile_path())
         except Exception:
@@ -794,26 +708,27 @@ def update_single_config_parameter(parameter: str):
             pass
         return
 
-    # Get the value to write
-    value = CONFIG[parameter.upper()]
-    
-    # Special handling for enum values
-    if parameter.upper() == 'ALLOWED_TO_ENTER' and isinstance(value, AllowedToEnter):
-        value = value.value
-    
-    updater['Settings'][parameter.lower()] = value
+    if setting is None:
+        logging.error(f"[CONFIG] Unknown config parameter '{key}' — not written")
+        return
+
+    # Note: persist=False only affects save_config() (bulk write). update_single may still
+    # persist keys like LABELSTUDIO_API_TOKEN that are omitted from full saves.
+
+    value = _value_for_ini(setting, CONFIG[key])
+    updater['Settings'][setting.key.lower()] = value
 
     # Write updated configuration back to the file
     try:
         with open(CONFIGFILE, 'w') as configfile:
             updater.write(configfile)
-        loggable_value = get_loggable_config_value(parameter.upper(), value)
-        logging.info(f"Updated {parameter.upper()} in the configfile to: {loggable_value}")
+        loggable_value = get_loggable_config_value(key, value)
+        logging.info(f"Updated {key} in the configfile to: {loggable_value}")
     except Exception as e:
-        logging.error(f"Failed to update {parameter.upper()} in the configfile: {e}")
+        logging.error(f"Failed to update {key} in the configfile: {e}")
 
     # Keep remote override file in sync in remote-mode.
-    if is_remote_mode() and parameter.upper() in _REMOTE_ONLY_SETTINGS:
+    if is_remote_mode() and key in _REMOTE_ONLY_SETTINGS:
         try:
             _write_remote_overrides_from_config(_remote_configfile_path())
         except Exception:
@@ -833,7 +748,6 @@ def create_default_config():
     with open(CONFIGFILE, 'w') as configfile:
         parser.write(configfile)
     logging.info(f"Default configuration written to {CONFIGFILE}")
-
 
 _locale_bootstrap_lock = threading.Lock()
 _locale_bootstrap_done = False

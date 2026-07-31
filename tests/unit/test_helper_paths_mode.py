@@ -1,0 +1,85 @@
+"""Helper / paths / mode / clock / versioning unit coverage."""
+
+from src.clock import monotonic_time, sleep, wall_time
+from src.helper import EventType, Versioning, is_valid_uuid4
+from src.mode import is_remote_mode, remote_mode_marker_path
+from src.paths import (
+    install_base,
+    kittyhack_root,
+    labelstudio_root,
+    models_yolo_root,
+    pictures_original_dir,
+    pictures_root,
+    pictures_thumbnails_dir,
+)
+from src.system import ServiceOps
+from src.backend import constants
+
+
+def test_clock_helpers():
+    assert monotonic_time() >= 0
+    assert wall_time() > 0
+    sleep(0.0)
+
+
+def test_paths_and_mode(monkeypatch, tmp_path):
+    root = kittyhack_root()
+    assert root.endswith("fk_kth") or "fk_kth" in root or "src" not in root
+    monkeypatch.setenv("KITTYHACK_INSTALL_BASE", str(tmp_path))
+    install_base.cache_clear()
+    assert install_base() == str(tmp_path.resolve())
+    assert pictures_root().startswith(str(tmp_path.resolve()))
+    assert "original_images" in pictures_original_dir()
+    assert "thumbnails" in pictures_thumbnails_dir()
+    assert "yolo" in models_yolo_root()
+    assert "labelstudio" in labelstudio_root()
+    install_base.cache_clear()
+
+    monkeypatch.setenv("KITTYHACK_MODE", "remote")
+    assert is_remote_mode() is True
+    monkeypatch.setenv("KITTYHACK_MODE", "target")
+    assert is_remote_mode() is False
+    monkeypatch.delenv("KITTYHACK_MODE", raising=False)
+    assert remote_mode_marker_path().endswith(".remote-mode")
+
+
+def test_versioning_normalize_and_compare():
+    assert Versioning.normalize_version("v2.5.4") == "2.5.4"
+    assert Versioning.normalize_version("2.5.4-abc1234") == "2.5.4"
+    assert Versioning.is_same_kittyhack_version("v1", "v1") is True
+    assert Versioning.is_same_kittyhack_version("abc1234", "main@abc1234") is True
+    assert Versioning.is_same_kittyhack_version("", "v1") is False
+    assert Versioning.is_same_kittyhack_version("a", "b") is False
+
+
+def test_parse_repo_spec():
+    owner, repo, ref = Versioning._parse_repo_spec("floppyFK/kittyhack@main")
+    assert owner == "floppyFK" and repo == "kittyhack" and ref == "main"
+    assert Versioning._parse_repo_spec("") == (None, None, None)
+
+
+def test_event_type_pretty_and_uuid():
+    pretty = EventType.to_pretty_string(EventType.CAT_WENT_INSIDE)
+    assert isinstance(pretty, str) and len(pretty) > 0
+    assert is_valid_uuid4("550e8400-e29b-41d4-a716-446655440000") is True
+    assert is_valid_uuid4("not-a-uuid") is False
+
+
+def test_serviceops_systemcmd_simulate(monkeypatch):
+    monkeypatch.setenv("KITTYHACK_SIMULATE", "1")
+    from src import runtime_flags
+
+    monkeypatch.setattr(runtime_flags, "_FORCE_SIMULATE", None)
+    assert ServiceOps.systemcmd(["/sbin/reboot"]) is True
+
+
+def test_backend_constants_importable():
+    assert constants.TAG_TIMEOUT == 30.0
+    assert constants.MAX_UNLOCK_TIME == 60.0
+    assert constants.EVENT_COOLDOWN_SECONDS == 3.0
+
+
+def test_backend_package_lazy_exports():
+    from src.backend import manual_door_override
+
+    assert "unlock_inside" in manual_door_override

@@ -8,13 +8,17 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from src.baseconfig import CONFIG, set_language
+from src.helper import (
+    DateTimeUtil,
+    EventType,
+)
 from src.clock import wall_time
-from src.helper import EventType, get_utc_date_string
 
 _ = set_language(CONFIG["LANGUAGE"])
 
-
 class TimelineAction:
+    """Canonical action string constants stored in motion-block timelines."""
+
     MOTION_OUTSIDE = "motion_outside"
     MOTION_OUTSIDE_END = "motion_outside_end"
     MOTION_INSIDE = "motion_inside"
@@ -42,15 +46,13 @@ class TimelineAction:
     INSIDE_CLOSED_FAST_IN_OUT = "inside_closed_fast_in_out"
     OUTSIDE_CLOSED_FAST_IN_OUT = "outside_closed_fast_in_out"
 
-
 def timeline_append(entries: list, action: str, **detail) -> None:
     """Append one timeline entry (UTC timestamp, second precision)."""
-    entry = {"action": action, "at": get_utc_date_string(wall_time())}
+    entry = {"action": action, "at": DateTimeUtil.get_utc_date_string(wall_time())}
     for key, value in detail.items():
         if value is not None:
             entry[key] = value
     entries.append(entry)
-
 
 def timeline_format_time(at_utc: str, timezone: str) -> str:
     """Format a stored UTC timestamp for display (HH:MM:SS, no milliseconds)."""
@@ -67,7 +69,6 @@ def timeline_format_time(at_utc: str, timezone: str) -> str:
     except Exception:
         text = str(at_utc)
         return text.split(".")[0][-8:] if text else ""
-
 
 def timeline_format_message(entry: dict) -> str:
     """Return a translated label for one timeline entry."""
@@ -115,7 +116,6 @@ def timeline_format_message(entry: dict) -> str:
 
     return messages.get(action, action.replace("_", " ").capitalize())
 
-
 def timeline_entries_to_html(entries: list, timezone: str | None = None) -> str:
     """Render timeline entries as an HTML list."""
     tz = timezone or CONFIG.get("TIMEZONE", "UTC")
@@ -134,7 +134,6 @@ def timeline_entries_to_html(entries: list, timezone: str | None = None) -> str:
         )
     return f'<ul class="event-timeline-list">{"".join(items)}</ul>'
 
-
 def timeline_fallback_from_event_type(event_type: str, timezone: str, created_at) -> list:
     """Build a coarse single-timestamp timeline from legacy comma-separated event_type."""
     try:
@@ -146,7 +145,7 @@ def timeline_fallback_from_event_type(event_type: str, timezone: str, created_at
         else:
             at = str(created_at)
     except Exception:
-        at = get_utc_date_string(wall_time())
+        at = DateTimeUtil.get_utc_date_string(wall_time())
 
     entries = []
     for part in str(event_type).split(","):
@@ -156,8 +155,8 @@ def timeline_fallback_from_event_type(event_type: str, timezone: str, created_at
         entries.append({"action": TimelineAction.EVENT_CONCLUSION, "at": at, "conclusion": part})
     return entries
 
-
 def parse_timeline_json(timeline_json: str | None) -> list:
+    """Parse a stored timeline JSON string into a list (empty on error)."""
     if not timeline_json:
         return []
     try:
@@ -166,16 +165,8 @@ def parse_timeline_json(timeline_json: str | None) -> list:
     except Exception:
         return []
 
-
 def timeline_extract_latest_event(entries: list) -> list:
-    """
-    Return only the latest completed event segment from a timeline list.
-
-    Some development snapshots contained concatenated timeline data from
-    multiple motion blocks. A completed block always ends with
-    TimelineAction.EVENT_CONCLUSION, so we keep only the slice after the
-    previous conclusion up to the latest one.
-    """
+    """Keep only the latest completed segment (between EVENT_CONCLUSIONs)."""
     if not entries:
         return []
 

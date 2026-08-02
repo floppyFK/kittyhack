@@ -1486,4 +1486,5 @@ def backend_main(
         except Exception as e:
             # Log full traceback to identify the real call site in case of an exception in the backend loop
             logging.exception(f"[BACKEND] Exception in backend occured: {e}")
-
+        
+    _shutdown_backend()

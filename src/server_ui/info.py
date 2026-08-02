@@ -185,6 +185,45 @@ def register_info(input, output, session, ctx: SessionContext):
                         # Add the sanitized config to the zip file
                 z.write(sanitized_config_path, arcname="config_sanitized.ini")
 
+                # Include a consistent kittyhack.db snapshot (same approach as download_kittyhack_db)
+                db_arcname = "kittyhack_database.db"
+                if (
+                    startup.ids_with_original_blob
+                    and len(startup.ids_with_original_blob) > 0
+                ):
+                    note_path = os.path.join(
+                        temp_dir, "kittyhack_database_unavailable.txt"
+                    )
+                    with open(note_path, "w", encoding="utf-8") as note_file:
+                        note_file.write(
+                            "Kittyhack database snapshot is currently unavailable.\n"
+                            f"Legacy image migration in progress: "
+                            f"{len(startup.ids_with_original_blob)} pictures remaining.\n"
+                            "Please try again later, or use the dedicated database download.\n"
+                        )
+                    z.write(note_path, arcname="kittyhack_database_unavailable.txt")
+                else:
+                    db_snapshot_path = os.path.join(temp_dir, db_arcname)
+                    result = DatabaseCore.backup_database_sqlite(
+                        CONFIG["KITTYHACK_DATABASE_PATH"], db_snapshot_path
+                    )
+                    if result.success and os.path.exists(db_snapshot_path):
+                        z.write(db_snapshot_path, arcname=db_arcname)
+                    else:
+                        logging.error(
+                            f"[DOWNLOAD_LOGS] Database snapshot failed: {result.message}"
+                        )
+                        note_path = os.path.join(
+                            temp_dir, "kittyhack_database_unavailable.txt"
+                        )
+                        with open(note_path, "w", encoding="utf-8") as note_file:
+                            note_file.write(
+                                f"Failed to create database snapshot: {result.message}\n"
+                            )
+                        z.write(
+                            note_path, arcname="kittyhack_database_unavailable.txt"
+                        )
+
                 system_log_dir = "/var/log"
                 if os.path.exists(system_log_dir):
                     # First, find all setup directories with timestamps

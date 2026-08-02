@@ -2,3 +2,4 @@
 # Production Kittyflap installs requirements.txt only — do not merge these there.
 pytest>=8.0
 pytest-timeout>=2.3
+pytest-cov>=5.0

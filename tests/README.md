@@ -13,6 +13,23 @@ pytest
 # or: uv run pytest
 ```
 
+### Coverage (`pytest-cov`)
+
+Config lives in `pytest.ini` (`[coverage:run]` / `[coverage:report]`). Measure unit-test coverage of `src/` (hardware excluded by default):
+
+```bash
+pytest --cov=src --cov-report=term-missing
+# HTML report:
+pytest --cov=src --cov-report=html
+# open htmlcov/index.html
+```
+
+On-target hardware coverage (Kittyflap only):
+
+```bash
+pytest -m hardware --cov=src --cov-report=term-missing
+```
+
 Layout:
 
 - `unit/` — pure logic, config roundtrip, temp SQLite, fake hardware, backend decisions / MQTT / **loop scenarios**

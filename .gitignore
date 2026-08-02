@@ -19,3 +19,7 @@ config.remote.ini
 *.remote_synced
 *.remote_restart_pending
 .release_body_*.md
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/

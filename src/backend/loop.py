@@ -836,6 +836,17 @@ def backend_main(
         if last_outside == 0 and motion_outside == 1 and not suppress_outside_motion_block and not _motion_processing_suspended():
             if wait_for_outside_rising_after_exit:
                 wait_for_outside_rising_after_exit = False
+                # This is the first outside-motion rise after an exit just completed. With
+                # immediate-lock-after-passage this is typically the (camera-delayed) reappearance
+                # of the cat that just left: the outside camera only classifies the cat once it has
+                # fully emerged, seconds after the inside PIR went quiet and the outside was re-locked.
+                # Its RFID tag is still remembered, so the entry logic would otherwise immediately
+                # re-open the inside for the cat that just exited. Suppress the entry decision for
+                # this presence. Because this is set on a rising edge, the matching falling edge
+                # (cat leaves the zone) is guaranteed to clear it via the motion-stop handlers above,
+                # so it can never get stuck.
+                if CONFIG.get('IMMEDIATE_LOCK_AFTER_PASSAGE'):
+                    suppress_entry_decision_after_fast_exit = True
             motion_block_id += 1
             # Start a fresh block unless one is already active (e.g. started by an
             # inside-motion trigger in the same block). Keying this off motion_block_active

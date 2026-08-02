@@ -811,7 +811,8 @@ def register_ai_training(input, output, session, ctx: SessionContext):
 
             return ui.div(table, class_="table-responsive")
 
-        except Exception:
+        except Exception as e:
+            logging.error(f"Failed to build YOLO model management table: {e}")
             return ui.div(
                 _("Nothing here yet. Please train a model first."),
                 class_="text-muted small",

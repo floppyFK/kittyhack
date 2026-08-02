@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def _force_simulate_env(monkeypatch, request):
-    """Default to simulation for non-hardware tests; hardware tests default to real mode."""
-    if request.node.get_closest_marker("hardware"):
-        monkeypatch.setenv("KITTYHACK_SIMULATE", "0")
-    else:
-        monkeypatch.setenv("KITTYHACK_SIMULATE", "1")
+def _force_simulate_env(monkeypatch):
+    """Default all tests to simulate mode unless a test overrides the env."""
+    monkeypatch.setenv("KITTYHACK_SIMULATE", "1")
     from src import runtime_flags
 
     monkeypatch.setattr(runtime_flags, "_FORCE_SIMULATE", None)

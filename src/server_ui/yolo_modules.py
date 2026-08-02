@@ -20,6 +20,7 @@ else:
 from src.server_ui.state import reload_trigger_ai, reload_trigger_config
 
 
+@module.ui
 def btn_yolo_modify():
     """UI fragment: pencil button to open the YOLO model edit modal."""
     return ui.input_action_button(

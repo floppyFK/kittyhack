@@ -4,7 +4,7 @@ Local unit tests and hardware simulation for Kittyhack. End-user install docs st
 
 ## Local unit tests
 
-No Kittyflap hardware required. The default pytest run excludes on-device smoke tests.
+No Kittyflap hardware required. The default pytest run excludes on-device tests.
 
 ```bash
 uv pip install -r requirements-dev.txt
@@ -16,9 +16,9 @@ pytest
 Layout:
 
 - `unit/` — pure logic, config roundtrip, temp SQLite, fake hardware, backend decisions / MQTT / **loop scenarios**
-- `helpers/backend_loop_harness.py` — `FakeClock` + `build_loop_context()` for pumping `backend_main(..., run_forever=False)`
-- `hardware/` — on-target smoke (`@pytest.mark.hardware`)
-- `conftest.py` — temp config, simulate env, fake HW fixtures
+- `helpers/backend_loop_harness.py` — `FakeClock` + `build_loop_context()` for unit tests; `build_hardware_loop_context()` for on-target Magnets
+- `hardware/` — on-target unlock-logic / Door Control matrix (`@pytest.mark.hardware`)
+- `conftest.py` — temp config, simulate env (skipped for `hardware` marker), fake HW fixtures
 
 Backend loop scenarios (`tests/unit/test_backend_loop_scenarios.py`) drive a real `process_tick` with injectable fakes (no GPIO/camera/MQTT): entry allow/deny, exit, prey block, manual override, fast crossing.
 
@@ -42,10 +42,35 @@ python -m src.kittyhack_control --simulate
 
 Production systemd units must **not** set `KITTYHACK_SIMULATE`. See `src/runtime_flags.py` and `src/hardware_sim.py` (`FakePir` / `FakeMagnets` / `FakeRfid`).
 
-## On-target smoke
+## On-target hardware matrix
 
-Run only on a Kittyflap (or a board with real GPIO):
+Run only on a Kittyflap (board with real GPIO). These tests drive the **real Magnets** path while injecting PIR / RFID / camera detections so the full unlock-logic and Door Control Settings permutations stay automatic.
+
+**Before running:** stop services that own the GPIO / magnet queue (otherwise singleton / pin conflicts):
 
 ```bash
-pytest -m hardware -q
+sudo systemctl stop kittyhack kittyhack_control
 ```
+
+Then:
+
+```bash
+# KITTYHACK_SIMULATE must be unset
+cd /path/to/kittyhack
+pytest -m hardware -vv
+```
+
+Notes:
+
+- The door **will physically unlock/lock**. Keep clear of moving parts.
+- The suite can take many minutes (real `MAG_RFID_CMD_DELAY` between magnet ops).
+- Pytest timeout is disabled for `tests/hardware/` (`timeout(0)`).
+- After tests: `sudo systemctl start kittyhack kittyhack_control`
+
+Modules:
+
+- `test_smoke.py` — import / GPIO presence / optional real Pir+Magnets init
+- `test_entry_unlock_modes.py` — all five `ALLOWED_TO_ENTER` modes
+- `test_entry_prey.py` — global / per-cat prey, thresholds, analyze window, lockout
+- `test_exit_unlock_modes.py` — `ALLOWED_TO_EXIT` + time ranges
+- `test_door_control_params.py` — camera motion/ID, immediate lock, remaining knobs

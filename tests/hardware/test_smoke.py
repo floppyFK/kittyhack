@@ -7,12 +7,11 @@ Run on a Kittyflap only:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.hardware
+pytestmark = [pytest.mark.hardware, pytest.mark.timeout(0)]
 
 
 def test_core_modules_import():

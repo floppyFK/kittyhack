@@ -9,11 +9,16 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _force_simulate_env(monkeypatch):
-    """Default all tests to simulate mode unless a test overrides the env."""
-    monkeypatch.setenv("KITTYHACK_SIMULATE", "1")
+def _force_simulate_env(request, monkeypatch):
+    """Default unit tests to simulate mode; hardware tests keep real GPIO."""
     from src import runtime_flags
 
+    if request.node.get_closest_marker("hardware"):
+        monkeypatch.delenv("KITTYHACK_SIMULATE", raising=False)
+        monkeypatch.setattr(runtime_flags, "_FORCE_SIMULATE", None)
+        return
+
+    monkeypatch.setenv("KITTYHACK_SIMULATE", "1")
     monkeypatch.setattr(runtime_flags, "_FORCE_SIMULATE", None)
 
 

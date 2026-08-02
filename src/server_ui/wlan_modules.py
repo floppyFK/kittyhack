@@ -19,6 +19,7 @@ else:
 from src.server_ui.state import reload_trigger_wlan, _set_wlan_action_in_progress
 
 
+@module.ui
 def btn_wlan_modify():
     """UI fragment: pencil button to open the WLAN edit modal."""
     return ui.input_action_button(

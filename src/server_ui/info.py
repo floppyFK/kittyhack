@@ -492,7 +492,7 @@ def register_info(input, output, session, ctx: SessionContext):
                             _("Automatic update to **{}**:").format(latest_version)
                         ),
                         ui.input_task_button(
-                            "KittyhackUpdater.update_kittyhack",
+                            "update_kittyhack",
                             _("Update Kittyhack"),
                             icon=icon_svg("download"),
                             class_="btn-primary",

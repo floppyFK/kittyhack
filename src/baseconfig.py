@@ -3,18 +3,25 @@ import gettext
 import configparser
 import logging
 import sys
+import tempfile
 import threading
+from contextlib import contextmanager
 # If the systemd journal Python bindings are available, use them.
 try:
     from systemd.journal import JournalHandler  # type: ignore
 except Exception:
     JournalHandler = None
 
+try:
+    import fcntl
+except Exception:
+    fcntl = None
+
 from enum import Enum
 import uuid
 import json
 from configupdater import ConfigUpdater
-from typing import Any, Callable, List, Tuple
+from typing import Any, Callable, Iterator, List, Tuple
 from dataclasses import dataclass
 
 from src.mode import is_remote_mode
@@ -43,6 +50,64 @@ class AllowedToExit(Enum):
 # Files
 CONFIGFILE = 'config.ini'
 REMOTE_CONFIGFILE = 'config.remote.ini'
+
+###### CONFIG FILE I/O ######
+# kittyhack.service and kittyhack_control.service both write config.ini
+# (notably STARTUP_SHUTDOWN_FLAG on reboot). In-place open(..., "w") truncates
+# first, so a concurrent reader can persist a near-empty file that silently
+# loads as all defaults. Always lock + write via temp file + os.replace.
+
+
+@contextmanager
+def _config_file_lock() -> Iterator[None]:
+    """Cross-process exclusive lock for config.ini read-modify-write (fcntl/Linux)."""
+    lock_path = f"{CONFIGFILE}.lock"
+    lock_dir = os.path.dirname(os.path.abspath(lock_path))
+    if lock_dir:
+        os.makedirs(lock_dir, exist_ok=True)
+    lock_file = open(lock_path, "a+", encoding="utf-8")
+    try:
+        if fcntl is not None:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            except Exception as e:
+                logging.warning(f"[CONFIG] Failed to acquire config.ini lock: {e}")
+        yield
+    finally:
+        if fcntl is not None:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
+        try:
+            lock_file.close()
+        except Exception:
+            pass
+
+
+def _atomic_write_text(path: str, write_fn: Callable[[Any], None]) -> None:
+    """Write ``path`` atomically (sibling temp file + ``os.replace``)."""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".config_", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            write_fn(f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+        raise
+
+
+def _atomic_write_config_updater(updater: ConfigUpdater) -> None:
+    """Atomically persist a ConfigUpdater to CONFIGFILE (caller must hold lock)."""
+    _atomic_write_text(CONFIGFILE, updater.write)
+
 
 ###### SETTINGS SCHEMA ######
 # Single source of truth for defaults, load typing, and save persistence.
@@ -400,13 +465,13 @@ def load_config():
             "use env KITTYHACK_SIMULATE=1 or kittyhack_control --simulate"
         )
         try:
-            updater = ConfigUpdater()
-            updater.read(CONFIGFILE)
-            if 'Settings' in updater and 'simulate_kittyflap' in updater['Settings']:
-                del updater['Settings']['simulate_kittyflap']
-                with open(CONFIGFILE, 'w') as f:
-                    updater.write(f)
-                logging.info("[CONFIG] Removed obsolete simulate_kittyflap from config.ini")
+            with _config_file_lock():
+                updater = ConfigUpdater()
+                updater.read(CONFIGFILE)
+                if 'Settings' in updater and 'simulate_kittyflap' in updater['Settings']:
+                    del updater['Settings']['simulate_kittyflap']
+                    _atomic_write_config_updater(updater)
+                    logging.info("[CONFIG] Removed obsolete simulate_kittyflap from config.ini")
         except Exception as e:
             logging.warning(f"[CONFIG] Failed to remove simulate_kittyflap from config.ini: {e}")
 
@@ -492,19 +557,19 @@ def load_config():
             migrated_seconds = max(0.1, migrated_seconds)
 
             try:
-                updater = ConfigUpdater()
-                updater.read(CONFIGFILE)
-                if 'Settings' not in updater:
-                    updater.add_section('Settings')
-                settings_section = updater['Settings']
-                settings_section['min_seconds_to_analyze'] = f"{migrated_seconds:.1f}"
-                if 'min_pictures_to_analyze' in settings_section:
-                    del settings_section['min_pictures_to_analyze']
-                with open(CONFIGFILE, 'w', encoding='utf-8') as f:
-                    updater.write(f)
-                logging.info(
-                    f"[CONFIG] Migrated min_pictures_to_analyze={legacy_pics} -> min_seconds_to_analyze={migrated_seconds:.1f}"
-                )
+                with _config_file_lock():
+                    updater = ConfigUpdater()
+                    updater.read(CONFIGFILE)
+                    if 'Settings' not in updater:
+                        updater.add_section('Settings')
+                    settings_section = updater['Settings']
+                    settings_section['min_seconds_to_analyze'] = f"{migrated_seconds:.1f}"
+                    if 'min_pictures_to_analyze' in settings_section:
+                        del settings_section['min_pictures_to_analyze']
+                    _atomic_write_config_updater(updater)
+                    logging.info(
+                        f"[CONFIG] Migrated min_pictures_to_analyze={legacy_pics} -> min_seconds_to_analyze={migrated_seconds:.1f}"
+                    )
             except Exception as e:
                 logging.warning(f"[CONFIG] Failed to migrate min_seconds_to_analyze: {e}")
 
@@ -515,13 +580,13 @@ def load_config():
         elif has_legacy and has_new:
             # Best-effort cleanup: remove legacy key once new key exists.
             try:
-                updater = ConfigUpdater()
-                updater.read(CONFIGFILE)
-                if 'Settings' in updater and 'min_pictures_to_analyze' in updater['Settings']:
-                    del updater['Settings']['min_pictures_to_analyze']
-                    with open(CONFIGFILE, 'w', encoding='utf-8') as f:
-                        updater.write(f)
-                    logging.info("[CONFIG] Removed legacy key min_pictures_to_analyze from config.ini")
+                with _config_file_lock():
+                    updater = ConfigUpdater()
+                    updater.read(CONFIGFILE)
+                    if 'Settings' in updater and 'min_pictures_to_analyze' in updater['Settings']:
+                        del updater['Settings']['min_pictures_to_analyze']
+                        _atomic_write_config_updater(updater)
+                        logging.info("[CONFIG] Removed legacy key min_pictures_to_analyze from config.ini")
             except Exception:
                 pass
     except Exception:
@@ -554,15 +619,15 @@ def load_config():
     if invalid_values:
         # Remove invalid keys from config.ini before notifying user
         try:
-            updater = ConfigUpdater()
-            updater.read(CONFIGFILE)
-            settings_section = updater['Settings']
-            for k, _ in invalid_values:
-                opt = k.lower()
-                if opt in settings_section:
-                    del settings_section[opt]
-            with open(CONFIGFILE, 'w') as f:
-                updater.write(f)
+            with _config_file_lock():
+                updater = ConfigUpdater()
+                updater.read(CONFIGFILE)
+                settings_section = updater['Settings']
+                for k, _ in invalid_values:
+                    opt = k.lower()
+                    if opt in settings_section:
+                        del settings_section[opt]
+                _atomic_write_config_updater(updater)
             logging.info("[CONFIG] Removed invalid keys from config.ini")
         except Exception as e:
             logging.warning(f"[CONFIG] Failed to remove invalid keys from config.ini: {e}")
@@ -607,38 +672,38 @@ def save_config():
     Saves the configuration file.
     Requires the CONFIG
     """
-    # prepare the updated values for the configfile
-    updater = ConfigUpdater()
-    updater.read(CONFIGFILE)
+    with _config_file_lock():
+        # prepare the updated values for the configfile
+        updater = ConfigUpdater()
+        updater.read(CONFIGFILE)
 
-    # Ensure [Settings] section exists
-    if 'Settings' not in updater:
-        updater.add_section('Settings')
+        # Ensure [Settings] section exists
+        if 'Settings' not in updater:
+            updater.add_section('Settings')
 
-    settings = updater['Settings']
-    for setting in SETTINGS_SCHEMA:
-        if not setting.persist or setting.remote_only:
-            continue
-        value = CONFIG.get(setting.key, setting.default)
-        settings[setting.key.lower()] = _value_for_ini(setting, value)
+        settings = updater['Settings']
+        for setting in SETTINGS_SCHEMA:
+            if not setting.persist or setting.remote_only:
+                continue
+            value = CONFIG.get(setting.key, setting.default)
+            settings[setting.key.lower()] = _value_for_ini(setting, value)
 
-    # Never persist remote-only settings in config.ini.
-    # They are stored in config.remote.ini so they survive sync operations.
-    try:
-        for _cfg_key, (opt, _t) in _REMOTE_ONLY_SETTINGS.items():
-            if opt in settings:
-                del settings[opt]
-    except Exception:
-        pass
+        # Never persist remote-only settings in config.ini.
+        # They are stored in config.remote.ini so they survive sync operations.
+        try:
+            for _cfg_key, (opt, _t) in _REMOTE_ONLY_SETTINGS.items():
+                if opt in settings:
+                    del settings[opt]
+        except Exception:
+            pass
 
-    # Write updated configuration back to the file
-    try:
-        with open(CONFIGFILE, 'w') as configfile:
-            updater.write(configfile)
-    except:
-        logging.error("Failed to update the values in the configfile.")
-        return False
-    
+        # Write updated configuration back to the file
+        try:
+            _atomic_write_config_updater(updater)
+        except Exception:
+            logging.error("Failed to update the values in the configfile.")
+            return False
+
     logging.info("Updated the values in the configfile")
 
     # Remote-mode: persist remote-only settings to the local overlay file too.
@@ -655,22 +720,21 @@ def update_config_images_overlay():
     """
     Updates only the SHOW_IMAGES_WITH_OVERLAY setting in the configuration file.
     """
-    updater = ConfigUpdater()
-    updater.read(CONFIGFILE)
-
-    # Ensure [Settings] section exists
-    if 'Settings' not in updater:
-        updater.add_section('Settings')
-
-    setting = _SETTINGS_BY_KEY["SHOW_IMAGES_WITH_OVERLAY"]
-    updater['Settings']['show_images_with_overlay'] = _value_for_ini(
-        setting, CONFIG['SHOW_IMAGES_WITH_OVERLAY']
-    )
-
-    # Write updated configuration back to the file
     try:
-        with open(CONFIGFILE, 'w') as configfile:
-            updater.write(configfile)
+        with _config_file_lock():
+            updater = ConfigUpdater()
+            updater.read(CONFIGFILE)
+
+            # Ensure [Settings] section exists
+            if 'Settings' not in updater:
+                updater.add_section('Settings')
+
+            setting = _SETTINGS_BY_KEY["SHOW_IMAGES_WITH_OVERLAY"]
+            updater['Settings']['show_images_with_overlay'] = _value_for_ini(
+                setting, CONFIG['SHOW_IMAGES_WITH_OVERLAY']
+            )
+
+            _atomic_write_config_updater(updater)
         logging.info("Updated SHOW_IMAGES_WITH_OVERLAY in the configfile")
     except Exception as e:
         logging.error(f"Failed to update SHOW_IMAGES_WITH_OVERLAY in the configfile: {e}")
@@ -682,16 +746,9 @@ def update_single_config_parameter(parameter: str):
     Args:
         parameter (str): The parameter name, which shall be updated.
     """
-    updater = ConfigUpdater()
-    updater.read(CONFIGFILE)
-    
-    # Ensure [Settings] section exists
-    if 'Settings' not in updater:
-        updater.add_section('Settings')
-
     key = parameter.upper()
     setting = _SETTINGS_BY_KEY.get(key)
-    
+
     # Remote-mode: never persist remote-only settings in config.ini.
     if is_remote_mode() and (key in _REMOTE_ONLY_SETTINGS or (setting and setting.remote_only)):
         try:
@@ -700,10 +757,12 @@ def update_single_config_parameter(parameter: str):
             pass
         try:
             # Best-effort cleanup: remove the option from config.ini if present.
-            if 'Settings' in updater and parameter.lower() in updater['Settings']:
-                del updater['Settings'][parameter.lower()]
-                with open(CONFIGFILE, 'w') as configfile:
-                    updater.write(configfile)
+            with _config_file_lock():
+                updater = ConfigUpdater()
+                updater.read(CONFIGFILE)
+                if 'Settings' in updater and parameter.lower() in updater['Settings']:
+                    del updater['Settings'][parameter.lower()]
+                    _atomic_write_config_updater(updater)
         except Exception:
             pass
         return
@@ -716,12 +775,17 @@ def update_single_config_parameter(parameter: str):
     # persist keys like LABELSTUDIO_API_TOKEN that are omitted from full saves.
 
     value = _value_for_ini(setting, CONFIG[key])
-    updater['Settings'][setting.key.lower()] = value
-
-    # Write updated configuration back to the file
     try:
-        with open(CONFIGFILE, 'w') as configfile:
-            updater.write(configfile)
+        with _config_file_lock():
+            updater = ConfigUpdater()
+            updater.read(CONFIGFILE)
+
+            # Ensure [Settings] section exists
+            if 'Settings' not in updater:
+                updater.add_section('Settings')
+
+            updater['Settings'][setting.key.lower()] = value
+            _atomic_write_config_updater(updater)
         loggable_value = get_loggable_config_value(key, value)
         logging.info(f"Updated {key} in the configfile to: {loggable_value}")
     except Exception as e:
@@ -745,8 +809,8 @@ def create_default_config():
     # Convert all values in DEFAULT_CONFIG to strings
     config_str = {section: stringify_dict(values) for section, values in DEFAULT_CONFIG.items()}
     parser.read_dict(config_str)
-    with open(CONFIGFILE, 'w') as configfile:
-        parser.write(configfile)
+    with _config_file_lock():
+        _atomic_write_text(CONFIGFILE, parser.write)
     logging.info(f"Default configuration written to {CONFIGFILE}")
 
 _locale_bootstrap_lock = threading.Lock()

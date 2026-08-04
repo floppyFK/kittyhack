@@ -60,6 +60,12 @@ def test_beta_version_tag_helpers():
     assert Versioning.is_beta_version_tag("v2.6.3-beta.1") is False
     assert Versioning.is_beta_version_tag("") is False
 
+    assert Versioning.is_stable_version_tag("v2.6.3") is True
+    assert Versioning.is_stable_version_tag("2.6.3") is True
+    assert Versioning.is_stable_version_tag("main") is False
+    assert Versioning.is_stable_version_tag("v2.6.3_beta_1") is False
+    assert Versioning.is_stable_version_tag("") is False
+
     assert Versioning.beta_version_sort_key("v2.6.3_beta_1") == (2, 6, 3, 1)
     assert Versioning.beta_version_sort_key("V2.6.3_beta_10") == (2, 6, 3, 10)
 
@@ -75,6 +81,30 @@ def test_beta_version_tag_helpers():
     assert Versioning.pick_latest_non_beta_tag(tags) == "v2.6.3"
     assert Versioning.pick_latest_beta_tag(["v2.6.3", "main"]) is None
     assert Versioning.pick_latest_non_beta_tag(["v2.6.3_beta_1"]) is None
+    assert Versioning.pick_latest_non_beta_tag(["main", "develop"]) is None
+
+    # Beta channel: beta ahead of release → keep beta
+    assert Versioning.pick_latest_beta_channel_tag(tags) == "v2.6.4_beta_1"
+    # No beta tags → fall back to latest release (not "unknown")
+    assert Versioning.pick_latest_beta_channel_tag(["v2.6.3", "v2.6.2", "main"]) == "v2.6.3"
+    assert Versioning.pick_latest_beta_channel_tag(["main"]) is None
+    # Release base >= beta base → prefer the shipped release
+    assert (
+        Versioning.pick_latest_beta_channel_tag(
+            ["v2.6.3", "v2.6.3_beta_4", "v2.6.2_beta_9"]
+        )
+        == "v2.6.3"
+    )
+    # Release older than beta base → keep beta
+    assert (
+        Versioning.pick_latest_beta_channel_tag(["v2.6.2", "v2.6.3_beta_1"])
+        == "v2.6.3_beta_1"
+    )
+    # Only betas → keep latest beta
+    assert (
+        Versioning.pick_latest_beta_channel_tag(["v2.6.3_beta_1", "v2.6.3_beta_2"])
+        == "v2.6.3_beta_2"
+    )
 
 
 def test_parse_repo_spec():
@@ -98,6 +128,51 @@ def test_resolved_update_repo_modes(monkeypatch):
     monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY_MODE", "standard")
     _o, _r, _ref, _url, mode = Versioning.resolved_update_repo()
     assert mode == "standard"
+
+
+def test_read_latest_kittyhack_version_beta_channel(monkeypatch):
+    """Beta channel must fall back to stable instead of reporting 'unknown'."""
+    import src.baseconfig as baseconfig
+
+    monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY_MODE", "beta")
+    monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY", "")
+
+    # No beta tags → latest non-beta release
+    monkeypatch.setattr(
+        Versioning,
+        "_list_github_tag_names",
+        lambda owner, repo, timeout=10: ["v2.6.3", "v2.6.2", "main"],
+    )
+    assert Versioning.read_latest_kittyhack_version(timeout=1) == "v2.6.3"
+
+    # Release base >= beta base → prefer shipped release
+    monkeypatch.setattr(
+        Versioning,
+        "_list_github_tag_names",
+        lambda owner, repo, timeout=10: [
+            "v2.6.3",
+            "v2.6.3_beta_4",
+            "v2.6.2_beta_9",
+            "main",
+        ],
+    )
+    assert Versioning.read_latest_kittyhack_version(timeout=1) == "v2.6.3"
+
+    # Beta ahead of release → keep beta
+    monkeypatch.setattr(
+        Versioning,
+        "_list_github_tag_names",
+        lambda owner, repo, timeout=10: ["v2.6.2", "v2.6.3_beta_1", "main"],
+    )
+    assert Versioning.read_latest_kittyhack_version(timeout=1) == "v2.6.3_beta_1"
+
+    # Nothing usable → unknown
+    monkeypatch.setattr(
+        Versioning,
+        "_list_github_tag_names",
+        lambda owner, repo, timeout=10: ["main", "develop"],
+    )
+    assert Versioning.read_latest_kittyhack_version(timeout=1) == "unknown"
 
 
 def test_event_type_pretty_and_uuid():

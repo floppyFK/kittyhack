@@ -688,19 +688,21 @@ def register_info(input, output, session, ctx: SessionContext):
                 # without the version string moving) or when testing a fork where the
                 # latest release tag equals the currently installed one.
         if startup.git_repo_available:
-            custom_repo_mode = (
+            update_repo_mode = (
                 str(CONFIG.get("UPDATE_REPOSITORY_MODE") or "standard").strip().lower()
-                == "custom"
             )
-            force_update_help = (
-                _(
+            if update_repo_mode == "custom":
+                force_update_help = _(
                     "The current update source is your custom repository. Use this button to pull the latest commit on the selected branch or re-install the selected tag."
                 )
-                if custom_repo_mode
-                else _(
+            elif update_repo_mode == "beta":
+                force_update_help = _(
+                    "The current update source is the official beta channel. Use this button to re-install the latest beta tag (`vX.Y.Z_beta_N`)."
+                )
+            else:
+                force_update_help = _(
                     "Re-install the currently selected version from the configured update source."
                 )
-            )
             ui_update_kittyhack = (
                 ui_update_kittyhack,
                 ui.hr(),
@@ -1750,6 +1752,15 @@ def register_info(input, output, session, ctx: SessionContext):
     @reactive.event(input.btn_modal_update_repo_now)
     def _on_modal_update_repo_now():
         ui.modal_remove()
+        # Re-resolve latest for the newly selected update source (standard/beta/custom).
+        try:
+            CONFIG["LATEST_VERSION"] = Versioning.read_latest_kittyhack_version(
+                timeout=5
+            )
+        except Exception as e:
+            logging.warning(
+                f"[UPDATE] Failed to refresh LATEST_VERSION before update-source switch: {e}"
+            )
         _start_update_process(update_target=bool(is_remote_mode()), update_local=True)
 
     @output

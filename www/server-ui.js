@@ -175,21 +175,27 @@
     }
 
     function initUpdateRepoToggle() {
-        // Toggle custom repository input/help visibility based on #update_repository_mode.
-        // Expects containers: #update_repository_container, #update_repository_help
+        // Toggle custom repository input / beta warning based on #update_repository_mode.
+        // Expects: #update_repository_container, #update_repository_help,
+        //          #update_repository_beta_warning
         var sel = q('#update_repository_mode');
         var urlWrap = q('#update_repository_container');
         var helpWrap = q('#update_repository_help');
-        if (!sel || (!urlWrap && !helpWrap)) return;
+        var betaWarn = q('#update_repository_beta_warning');
+        if (!sel || (!urlWrap && !helpWrap && !betaWarn)) return;
 
         if (sel.getAttribute('data-kh-updaterepo-bound') === '1') return;
         sel.setAttribute('data-kh-updaterepo-bound', '1');
 
         function apply() {
-            var isCustom = false;
-            try { isCustom = (String(sel.value) === 'custom'); } catch (e) {}
+            var mode = '';
+            try { mode = String(sel.value || ''); } catch (e) {}
+            var isCustom = (mode === 'custom');
+            var isBeta = (mode === 'beta');
             if (urlWrap) urlWrap.style.display = isCustom ? '' : 'none';
-            if (helpWrap) helpWrap.style.display = isCustom ? '' : 'none';
+            // Help stays visible for all modes (Standard / Beta / Custom).
+            if (helpWrap) helpWrap.style.display = '';
+            if (betaWarn) betaWarn.style.display = isBeta ? '' : 'none';
         }
 
         apply();

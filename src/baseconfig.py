@@ -221,7 +221,7 @@ SETTINGS_SCHEMA: list[Setting] = [
     _S("REMOTE_SYNC_ON_FIRST_CONNECT", True, "bool", remote_only=True),
     _S("REMOTE_SYNC_LABELSTUDIO", True, "bool", remote_only=True),
     _S("REMOTE_INFERENCE_MAX_FPS", 10.0, "float", remote_only=True),
-    # Update repository override (standard = floppyFK/kittyhack; custom = UPDATE_REPOSITORY)
+    # Update repository: standard | beta | custom (custom uses UPDATE_REPOSITORY)
     _S("UPDATE_REPOSITORY_MODE", "standard"),
     _S("UPDATE_REPOSITORY", ""),
 ]

@@ -52,10 +52,52 @@ def test_versioning_normalize_and_compare():
     assert Versioning.is_same_kittyhack_version("a", "b") is False
 
 
+def test_beta_version_tag_helpers():
+    assert Versioning.is_beta_version_tag("v2.6.3_beta_1") is True
+    assert Versioning.is_beta_version_tag("V2.6.3_beta_1") is True
+    assert Versioning.is_beta_version_tag("2.6.3_beta_12") is True
+    assert Versioning.is_beta_version_tag("v2.6.3") is False
+    assert Versioning.is_beta_version_tag("v2.6.3-beta.1") is False
+    assert Versioning.is_beta_version_tag("") is False
+
+    assert Versioning.beta_version_sort_key("v2.6.3_beta_1") == (2, 6, 3, 1)
+    assert Versioning.beta_version_sort_key("V2.6.3_beta_10") == (2, 6, 3, 10)
+
+    tags = [
+        "v2.6.2",
+        "v2.6.3_beta_1",
+        "v2.6.3_beta_2",
+        "v2.6.4_beta_1",
+        "v2.6.3",
+        "V2.5.9_beta_9",
+    ]
+    assert Versioning.pick_latest_beta_tag(tags) == "v2.6.4_beta_1"
+    assert Versioning.pick_latest_non_beta_tag(tags) == "v2.6.3"
+    assert Versioning.pick_latest_beta_tag(["v2.6.3", "main"]) is None
+    assert Versioning.pick_latest_non_beta_tag(["v2.6.3_beta_1"]) is None
+
+
 def test_parse_repo_spec():
     owner, repo, ref = Versioning._parse_repo_spec("floppyFK/kittyhack@main")
     assert owner == "floppyFK" and repo == "kittyhack" and ref == "main"
     assert Versioning._parse_repo_spec("") == (None, None, None)
+    owner, repo, ref = Versioning._parse_repo_spec("floppyFK/kittyhack@v2.6.3_beta_1")
+    assert owner == "floppyFK" and repo == "kittyhack" and ref == "v2.6.3_beta_1"
+
+
+def test_resolved_update_repo_modes(monkeypatch):
+    import src.baseconfig as baseconfig
+
+    monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY_MODE", "beta")
+    monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY", "")
+    owner, repo, ref, url, mode = Versioning.resolved_update_repo()
+    assert mode == "beta"
+    assert owner == "floppyFK" and repo == "kittyhack" and ref is None
+    assert url.endswith("floppyFK/kittyhack.git")
+
+    monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY_MODE", "standard")
+    _o, _r, _ref, _url, mode = Versioning.resolved_update_repo()
+    assert mode == "standard"
 
 
 def test_event_type_pretty_and_uuid():

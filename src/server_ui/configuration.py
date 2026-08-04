@@ -219,7 +219,11 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 ui.input_select(
                                     "update_repository_mode",
                                     _("Update repository"),
-                                    {"standard": _("Standard"), "custom": _("Custom")},
+                                    {
+                                        "standard": _("Standard"),
+                                        "beta": _("Beta"),
+                                        "custom": _("Custom"),
+                                    },
                                     selected=CONFIG.get(
                                         "UPDATE_REPOSITORY_MODE", "standard"
                                     ),
@@ -242,10 +246,43 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "Use **Standard** for official releases from `floppyFK/kittyhack`. "
+                                        "**Warning:** Beta builds may be unstable. "
+                                        "Create backups of your config (`config.ini`) and "
+                                        "database before switching between **Standard** and **Beta**. "
+                                        "Switching from beta back to the latest release may work, "
+                                        "but it is not recommended."
+                                    )
+                                ),
+                                style_=(
+                                    "color: var(--bs-warning-text-emphasis, #997404);"
+                                    + (
+                                        ""
+                                        if str(
+                                            CONFIG.get(
+                                                "UPDATE_REPOSITORY_MODE", "standard"
+                                            )
+                                            or "standard"
+                                        )
+                                        .strip()
+                                        .lower()
+                                        == "beta"
+                                        else "display: none;"
+                                    )
+                                ),
+                                id="update_repository_beta_warning",
+                            ),
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _(
+                                        "Use **Standard** for official stable releases from "
+                                        "`floppyFK/kittyhack` (beta tags like `v2.6.3_beta_1` "
+                                        "are never offered here). "
+                                        "Use **Beta** to follow official beta releases named "
+                                        "`vX.Y.Z_beta_N`. "
                                         "Select **Custom** to test your own fork or a feature branch. "
-                                        "Accepted formats:\n\n"
-                                        "- `owner/repo` — latest release tag from that fork\n"
+                                        "Accepted custom formats:\n\n"
+                                        "- `owner/repo` — latest stable release tag from that fork\n"
                                         "- `owner/repo@branch-or-tag` — track the specified ref\n"
                                         "- `owner:branch` — GitHub PR head-ref shorthand; "
                                         "you can copy it straight from a pull request header, "
@@ -2457,9 +2494,12 @@ def register_configuration(input, output, session, ctx: SessionContext):
 
         CONFIG["ALLOWED_TO_EXIT"] = ATE(input.btnAllowedToExit())
         CONFIG["PERIODIC_VERSION_CHECK"] = input.btnPeriodicVersionCheck()
-        CONFIG["UPDATE_REPOSITORY_MODE"] = input.update_repository_mode()
+        _new_update_mode = str(input.update_repository_mode() or "standard").strip().lower()
+        if _new_update_mode not in {"standard", "beta", "custom"}:
+            _new_update_mode = "standard"
+        CONFIG["UPDATE_REPOSITORY_MODE"] = _new_update_mode
         # Use the normalized value computed during validation above, or keep the
-        # raw input when mode is 'standard' (UPDATE_REPOSITORY is ignored there).
+        # raw input when mode is 'standard'/'beta' (UPDATE_REPOSITORY is ignored there).
         CONFIG["UPDATE_REPOSITORY"] = (
             normalized_update_repo
             if normalized_update_repo is not None
@@ -2697,31 +2737,70 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 # Usually the new source has a different code base than what's installed,
                 # so the user's next natural step is to update. We only prompt when no
                 # other restart-modal is already up to avoid stacking.
+            _new_update_mode_saved = (
+                str(CONFIG.get("UPDATE_REPOSITORY_MODE") or "standard").strip().lower()
+            )
             update_repo_changed = (
-                _prev_update_mode
-                != str(CONFIG.get("UPDATE_REPOSITORY_MODE") or "standard")
-                .strip()
-                .lower()
+                _prev_update_mode != _new_update_mode_saved
                 or _prev_update_repo
                 != str(CONFIG.get("UPDATE_REPOSITORY") or "").strip()
             )
+            if update_repo_changed:
+                # Resolve the new channel's latest tag before offering "Update now",
+                # otherwise the install would still target the previous source's version.
+                try:
+                    CONFIG["LATEST_VERSION"] = Versioning.read_latest_kittyhack_version(
+                        timeout=5
+                    )
+                except Exception as e:
+                    logging.warning(
+                        f"[UPDATE] Failed to refresh LATEST_VERSION after update-source change: {e}"
+                    )
             if (
                 update_repo_changed
                 and startup.git_repo_available
                 and not restart_modal_shown
             ):
+                beta_channel_switch = (
+                    _prev_update_mode == "beta" or _new_update_mode_saved == "beta"
+                )
+                modal_parts = [
+                    _(
+                        "The update repository was changed. The new source most likely has a different code base than what is currently installed."
+                    ),
+                ]
+                if beta_channel_switch:
+                    modal_parts.extend(
+                        [
+                            "\n\n",
+                            _(
+                                "**Important:** Create backups of your config (`config.ini`) and "
+                                "database before switching between Standard and Beta."
+                            ),
+                        ]
+                    )
+                    if _prev_update_mode == "beta" and _new_update_mode_saved != "beta":
+                        modal_parts.extend(
+                            [
+                                "\n\n",
+                                _(
+                                    "Switching from beta back to the latest release may work, "
+                                    "but it is not recommended."
+                                ),
+                            ]
+                        )
+                modal_parts.extend(
+                    [
+                        "\n\n",
+                        _(
+                            "Do you want to run an update now to switch to the new source?"
+                        ),
+                    ]
+                )
                 ui.modal_remove()
                 ui.modal_show(
                     ui.modal(
-                        ui.markdown(
-                            _(
-                                "The update repository was changed. The new source most likely has a different code base than what is currently installed."
-                            )
-                            + "\n\n"
-                            + _(
-                                "Do you want to run an update now to switch to the new source?"
-                            )
-                        ),
+                        ui.markdown("".join(modal_parts)),
                         title=_("Update source changed"),
                         easy_close=False,
                         footer=ui.div(

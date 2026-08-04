@@ -236,6 +236,10 @@ DEFAULT_UPDATE_REPO_OWNER = "floppyFK"
 
 DEFAULT_UPDATE_REPO_NAME = "kittyhack"
 
+# Beta release tags: e.g. v2.6.3_beta_1 / V2.6.3_beta_1 (never offered on Standard).
+_BETA_TAG_RE = re.compile(r"(?i)^v?\d+(?:\.\d+)*_beta_\d+$")
+_BETA_SORT_RE = re.compile(r"(?i)^v?(\d+)\.(\d+)\.(\d+)_beta_(\d+)$")
+
 class Versioning:
     """Git/version comparison, update-repo resolution, changelogs, release notes."""
 
@@ -373,6 +377,42 @@ class Versioning:
         return False
 
     @staticmethod
+    def is_beta_version_tag(tag: str) -> bool:
+        """True if tag matches the beta release naming ``…_beta_<counter>``."""
+        if not tag:
+            return False
+        return bool(_BETA_TAG_RE.match(str(tag).strip()))
+
+    @staticmethod
+    def beta_version_sort_key(tag: str) -> tuple[int, int, int, int]:
+        """Sort key for beta tags ``vX.Y.Z_beta_N`` → ``(X, Y, Z, N)``."""
+        m = _BETA_SORT_RE.match(str(tag or "").strip())
+        if not m:
+            return (0, 0, 0, 0)
+        return tuple(int(x) for x in m.groups())
+
+    @staticmethod
+    def pick_latest_beta_tag(tags) -> str | None:
+        """Return the highest ``…_beta_N`` tag from ``tags``, or None."""
+        betas = [str(t).strip() for t in (tags or []) if Versioning.is_beta_version_tag(t)]
+        if not betas:
+            return None
+        return max(betas, key=Versioning.beta_version_sort_key)
+
+    @staticmethod
+    def pick_latest_non_beta_tag(tags) -> str | None:
+        """Return the highest non-beta ``vX.Y.Z``-style tag from ``tags``, or None."""
+        stables = []
+        for raw in tags or []:
+            tag = str(raw or "").strip()
+            if not tag or Versioning.is_beta_version_tag(tag):
+                continue
+            stables.append(tag)
+        if not stables:
+            return None
+        return max(stables, key=lambda t: Versioning.parse_version(t))
+
+    @staticmethod
     def _parse_repo_spec(raw: str):
         """Parse ``owner/repo[@ref]`` (or ``owner:branch``) into (owner, repo, ref)."""
         if not raw:
@@ -456,6 +496,14 @@ class Versioning:
                     f"[UPDATE] Invalid custom repository spec '{CONFIG.get('UPDATE_REPOSITORY', '')}'; "
                     f"falling back to {DEFAULT_UPDATE_REPO_OWNER}/{DEFAULT_UPDATE_REPO_NAME}"
                 )
+            elif mode == "beta":
+                return (
+                    DEFAULT_UPDATE_REPO_OWNER,
+                    DEFAULT_UPDATE_REPO_NAME,
+                    None,
+                    f"https://github.com/{DEFAULT_UPDATE_REPO_OWNER}/{DEFAULT_UPDATE_REPO_NAME}.git",
+                    "beta",
+                )
         except Exception as e:
             logging.debug(f"[UPDATE] Versioning.resolved_update_repo fell back to default: {e}")
         return (
@@ -467,25 +515,85 @@ class Versioning:
         )
 
     @staticmethod
+    def _list_github_tag_names(owner: str, repo: str, timeout: float = 10) -> list[str]:
+        """Return tag names from GitHub (releases + tags endpoints), newest pages first."""
+        names: list[str] = []
+        seen: set[str] = set()
+
+        def _add(tag: str) -> None:
+            tag = str(tag or "").strip()
+            if tag and tag not in seen:
+                seen.add(tag)
+                names.append(tag)
+
+        try:
+            response = requests.get(
+                f"https://api.github.com/repos/{owner}/{repo}/releases",
+                params={"per_page": 100},
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            for release in response.json():
+                if release.get("draft"):
+                    continue
+                _add(release.get("tag_name", ""))
+        except Exception as e:
+            logging.debug(f"[UPDATE] Failed to list GitHub releases for {owner}/{repo}: {e}")
+
+        try:
+            response = requests.get(
+                f"https://api.github.com/repos/{owner}/{repo}/tags",
+                params={"per_page": 100},
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            for tag in response.json():
+                _add(tag.get("name", ""))
+        except Exception as e:
+            logging.debug(f"[UPDATE] Failed to list GitHub tags for {owner}/{repo}: {e}")
+
+        return names
+
+    @staticmethod
     def read_latest_kittyhack_version(timeout=10) -> str:
-        """Fetch latest release tag, or ``ref@sha`` in branch mode (else 'unknown')."""
-        owner, repo, ref, _git_url, _mode = Versioning.resolved_update_repo()
+        """Fetch latest release tag, or ``ref@sha`` in branch mode (else 'unknown').
+
+        - **standard** / custom without ref: newest non-beta release (``_beta_N`` tags excluded)
+        - **beta**: newest ``…_beta_<counter>`` tag on the official repo
+        - custom with ref: ``ref@sha7`` from the commits API
+        """
+        owner, repo, ref, _git_url, mode = Versioning.resolved_update_repo()
         try:
             ts_pre = tm.time()
-            if ref is None:
-                url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
-                response = requests.get(url, timeout=timeout)
-                ts_post = tm.time()
-                latest_version = str(response.json().get("tag_name", "unknown"))
-            else:
+            if ref is not None:
                 url = f"https://api.github.com/repos/{owner}/{repo}/commits/{ref}"
                 response = requests.get(url, timeout=timeout)
                 ts_post = tm.time()
                 sha = str(response.json().get("sha", "") or "")[:7]
                 latest_version = f"{ref}@{sha}" if sha else "unknown"
+            elif mode == "beta":
+                tags = Versioning._list_github_tag_names(owner, repo, timeout=timeout)
+                ts_post = tm.time()
+                latest_version = Versioning.pick_latest_beta_tag(tags) or "unknown"
+            else:
+                # Stable channel (standard, or custom owner/repo without @ref).
+                url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+                response = requests.get(url, timeout=timeout)
+                ts_post = tm.time()
+                latest_version = str(response.json().get("tag_name", "unknown"))
+                # Hard guarantee: Standard must never surface a ``_beta_N`` tag, even if
+                # it was published as a non-prerelease GitHub Release.
+                if Versioning.is_beta_version_tag(latest_version):
+                    logging.warning(
+                        f"[UPDATE] /releases/latest returned beta tag '{latest_version}' for "
+                        f"{owner}/{repo}; selecting newest non-beta tag instead"
+                    )
+                    tags = Versioning._list_github_tag_names(owner, repo, timeout=timeout)
+                    ts_post = tm.time()
+                    latest_version = Versioning.pick_latest_non_beta_tag(tags) or "unknown"
             logging.info(
                 f"GitHub latest version fetch took {ts_post - ts_pre:.3f} seconds "
-                f"({owner}/{repo}{'@' + ref if ref else ''}). Latest: {latest_version}"
+                f"({owner}/{repo}{'@' + ref if ref else ''} mode={mode}). Latest: {latest_version}"
             )
             return latest_version
         except Exception as e:

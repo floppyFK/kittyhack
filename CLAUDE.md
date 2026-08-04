@@ -114,7 +114,7 @@ Tags are **lightweight** (no annotation, `git tag vX.Y.Z`). Follow the style.
 
 **Implication:** anything that must survive updates has to be in `.gitignore` (step 2). Already there: `config.ini`, `config.remote.ini`, `notifications.json`, `api_tokens.json`, `*.db`, `kittyhack.log*`, `.venv/`, etc.
 
-Update source is resolved via `resolved_update_repo()` in `helper.py` — driven by `CONFIG['UPDATE_REPOSITORY_MODE']` (`standard`|`custom`) and `CONFIG['UPDATE_REPOSITORY']` (format `owner/repo` or `owner/repo@ref`). Branch mode returns `<ref>@<sha7>` as the "latest version" so the UI's version comparison keeps working.
+Update source is resolved via `resolved_update_repo()` in `helper.py` — driven by `CONFIG['UPDATE_REPOSITORY_MODE']` (`standard`|`beta`|`custom`) and `CONFIG['UPDATE_REPOSITORY']` (format `owner/repo` or `owner/repo@ref`). **Standard** uses `/releases/latest` and never offers `_beta_N` tags. **Beta** picks the highest `vX.Y.Z_beta_N` tag on `floppyFK/kittyhack`. Branch/custom-ref mode returns `<ref>@<sha7>` as the "latest version" so the UI's version comparison keeps working.
 
 ## WLAN watchdog — lessons from PR #155
 

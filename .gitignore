@@ -6,6 +6,7 @@ kittyhack.log*
 locales/*/LC_MESSAGES/messages.mo
 locales/.runtime_locale_state.json
 config.ini
+config.ini.lock
 sync-to-kittyflap.sh
 *.code-workspace
 notifications.json

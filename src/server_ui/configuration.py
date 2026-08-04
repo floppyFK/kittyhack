@@ -281,7 +281,16 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         "`vX.Y.Z_beta_N` (falls back to the latest stable release "
                                         "when no beta exists, or when the latest release is newer "
                                         "than or equal to the latest beta base version). "
-                                        "Select **Custom** to test your own fork or a feature branch. "
+                                        "Select **Custom** to test your own fork or a feature branch."
+                                    )
+                                ),
+                                style_="color: grey;",
+                                id="update_repository_help",
+                            ),
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _(
                                         "Accepted custom formats:\n\n"
                                         "- `owner/repo` — latest stable release tag from that fork\n"
                                         "- `owner/repo@branch-or-tag` — track the specified ref\n"
@@ -290,8 +299,23 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         "the repo name defaults to `kittyhack`"
                                     )
                                 ),
-                                style_="color: grey;",
-                                id="update_repository_help",
+                                style_=(
+                                    "color: grey;"
+                                    + (
+                                        ""
+                                        if str(
+                                            CONFIG.get(
+                                                "UPDATE_REPOSITORY_MODE", "standard"
+                                            )
+                                            or "standard"
+                                        )
+                                        .strip()
+                                        .lower()
+                                        == "custom"
+                                        else "display: none;"
+                                    )
+                                ),
+                                id="update_repository_custom_help",
                             ),
                         ),
                         ui.hr(),

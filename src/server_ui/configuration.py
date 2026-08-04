@@ -27,7 +27,6 @@ from src.backend import (
     update_mqtt_language,
     reload_model_handler_runtime,
 )
-import src.startup as startup
 from src.server_ui.state import (
     reload_trigger_config,
     live_view_refresh_nonce,
@@ -279,7 +278,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         "`floppyFK/kittyhack` (beta tags like `v2.6.3_beta_1` "
                                         "are never offered here). "
                                         "Use **Beta** to follow official beta releases named "
-                                        "`vX.Y.Z_beta_N`. "
+                                        "`vX.Y.Z_beta_N` (falls back to the latest stable release "
+                                        "when no beta exists, or when the latest release is newer "
+                                        "than or equal to the latest beta base version). "
                                         "Select **Custom** to test your own fork or a feature branch. "
                                         "Accepted custom formats:\n\n"
                                         "- `owner/repo` — latest stable release tag from that fork\n"
@@ -2733,10 +2734,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 )
                 restart_modal_shown = True
 
-                # Offer to run the update right away when the update source changed.
-                # Usually the new source has a different code base than what's installed,
-                # so the user's next natural step is to update. We only prompt when no
-                # other restart-modal is already up to avoid stacking.
+                # When the update source changed: only refresh the channel's latest version
+            # and point the user to the INFO tab. Do **not** start an update here —
+            # the user decides on INFO whether/when to install.
             _new_update_mode_saved = (
                 str(CONFIG.get("UPDATE_REPOSITORY_MODE") or "standard").strip().lower()
             )
@@ -2746,73 +2746,99 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 != str(CONFIG.get("UPDATE_REPOSITORY") or "").strip()
             )
             if update_repo_changed:
-                # Resolve the new channel's latest tag before offering "Update now",
-                # otherwise the install would still target the previous source's version.
+                latest_after_source_change = "unknown"
                 try:
-                    CONFIG["LATEST_VERSION"] = Versioning.read_latest_kittyhack_version(
-                        timeout=5
+                    latest_after_source_change = (
+                        Versioning.read_latest_kittyhack_version(timeout=5)
                     )
+                    CONFIG["LATEST_VERSION"] = latest_after_source_change
                 except Exception as e:
                     logging.warning(
                         f"[UPDATE] Failed to refresh LATEST_VERSION after update-source change: {e}"
                     )
-            if (
-                update_repo_changed
-                and startup.git_repo_available
-                and not restart_modal_shown
-            ):
-                beta_channel_switch = (
-                    _prev_update_mode == "beta" or _new_update_mode_saved == "beta"
-                )
-                modal_parts = [
-                    _(
-                        "The update repository was changed. The new source most likely has a different code base than what is currently installed."
-                    ),
-                ]
-                if beta_channel_switch:
-                    modal_parts.extend(
-                        [
-                            "\n\n",
-                            _(
-                                "**Important:** Create backups of your config (`config.ini`) and "
-                                "database before switching between Standard and Beta."
-                            ),
-                        ]
+                    latest_after_source_change = str(
+                        CONFIG.get("LATEST_VERSION") or "unknown"
                     )
-                    if _prev_update_mode == "beta" and _new_update_mode_saved != "beta":
+                try:
+                    ctx.reload_trigger_info.set(ctx.reload_trigger_info.get() + 1)
+                except Exception:
+                    pass
+
+                if not restart_modal_shown:
+                    beta_channel_switch = (
+                        _prev_update_mode == "beta"
+                        or _new_update_mode_saved == "beta"
+                    )
+                    modal_parts = [
+                        _(
+                            "The update repository was changed. A version check for the new source has been started."
+                        ),
+                    ]
+                    if (
+                        latest_after_source_change
+                        and latest_after_source_change != "unknown"
+                    ):
+                        modal_parts.extend(
+                            [
+                                "\n\n",
+                                _("Latest version for the new source: **{}**").format(
+                                    latest_after_source_change
+                                ),
+                            ]
+                        )
+                    else:
                         modal_parts.extend(
                             [
                                 "\n\n",
                                 _(
-                                    "Switching from beta back to the latest release may work, "
-                                    "but it is not recommended."
+                                    "The latest version for the new source could not be determined yet. You can retry the check on the **INFO** tab."
                                 ),
                             ]
                         )
-                modal_parts.extend(
-                    [
-                        "\n\n",
-                        _(
-                            "Do you want to run an update now to switch to the new source?"
-                        ),
-                    ]
-                )
-                ui.modal_remove()
-                ui.modal_show(
-                    ui.modal(
-                        ui.markdown("".join(modal_parts)),
-                        title=_("Update source changed"),
-                        easy_close=False,
-                        footer=ui.div(
-                            ui.input_action_button(
-                                "btn_modal_update_repo_now",
-                                _("Update now"),
-                                class_="btn-primary",
+                    if beta_channel_switch:
+                        modal_parts.extend(
+                            [
+                                "\n\n",
+                                _(
+                                    "**Important:** Create backups of your config (`config.ini`) and "
+                                    "database before switching between Standard and Beta."
+                                ),
+                            ]
+                        )
+                        if (
+                            _prev_update_mode == "beta"
+                            and _new_update_mode_saved != "beta"
+                        ):
+                            modal_parts.extend(
+                                [
+                                    "\n\n",
+                                    _(
+                                        "Switching from beta back to the latest release may work, "
+                                        "but it is not recommended."
+                                    ),
+                                ]
+                            )
+                    modal_parts.extend(
+                        [
+                            "\n\n",
+                            _(
+                                "If a different version is available, you can review it and start the update yourself on the **INFO** tab."
                             ),
-                            ui.input_action_button("btn_modal_cancel", _("Later")),
-                        ),
+                        ]
                     )
-                )
+                    ui.modal_remove()
+                    ui.modal_show(
+                        ui.modal(
+                            ui.markdown("".join(modal_parts)),
+                            title=_("Update source changed"),
+                            easy_close=True,
+                            footer=ui.div(
+                                ui.input_action_button(
+                                    "btn_modal_cancel", _("OK")
+                                ),
+                            ),
+                        )
+                    )
 
             if mqtt_settings_changed:
                 logging.info("MQTT settings changed. Restarting MQTT client...")

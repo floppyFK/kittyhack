@@ -697,7 +697,9 @@ def register_info(input, output, session, ctx: SessionContext):
                 )
             elif update_repo_mode == "beta":
                 force_update_help = _(
-                    "The current update source is the official beta channel. Use this button to re-install the latest beta tag (`vX.Y.Z_beta_N`)."
+                    "The current update source is the official beta channel. "
+                    "Use this button to re-install the latest beta tag (`vX.Y.Z_beta_N`), "
+                    "or the latest stable release when no newer beta is available."
                 )
             else:
                 force_update_help = _(
@@ -1746,21 +1748,6 @@ def register_info(input, output, session, ctx: SessionContext):
         # Same flow as the regular update button; the underlying KittyhackUpdater.update_kittyhack()
         # already handles both tag mode (re-checkout) and branch mode (reset to
         # origin/<ref>) correctly when called with the current latest_version.
-        _start_update_process(update_target=bool(is_remote_mode()), update_local=True)
-
-    @reactive.Effect
-    @reactive.event(input.btn_modal_update_repo_now)
-    def _on_modal_update_repo_now():
-        ui.modal_remove()
-        # Re-resolve latest for the newly selected update source (standard/beta/custom).
-        try:
-            CONFIG["LATEST_VERSION"] = Versioning.read_latest_kittyhack_version(
-                timeout=5
-            )
-        except Exception as e:
-            logging.warning(
-                f"[UPDATE] Failed to refresh LATEST_VERSION before update-source switch: {e}"
-            )
         _start_update_process(update_target=bool(is_remote_mode()), update_local=True)
 
     @output

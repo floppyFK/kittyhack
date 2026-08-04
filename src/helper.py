@@ -239,6 +239,8 @@ DEFAULT_UPDATE_REPO_NAME = "kittyhack"
 # Beta release tags: e.g. v2.6.3_beta_1 / V2.6.3_beta_1 (never offered on Standard).
 _BETA_TAG_RE = re.compile(r"(?i)^v?\d+(?:\.\d+)*_beta_\d+$")
 _BETA_SORT_RE = re.compile(r"(?i)^v?(\d+)\.(\d+)\.(\d+)_beta_(\d+)$")
+# Non-beta release tags: e.g. v2.6.3 / 2.6.3 (rejects branch names like "main").
+_STABLE_TAG_RE = re.compile(r"(?i)^v?\d+(?:\.\d+)+$")
 
 class Versioning:
     """Git/version comparison, update-repo resolution, changelogs, release notes."""
@@ -400,17 +402,48 @@ class Versioning:
         return max(betas, key=Versioning.beta_version_sort_key)
 
     @staticmethod
+    def is_stable_version_tag(tag: str) -> bool:
+        """True if tag looks like a non-beta release ``vX.Y.Z`` (not a branch name)."""
+        if not tag:
+            return False
+        return bool(_STABLE_TAG_RE.match(str(tag).strip()))
+
+    @staticmethod
     def pick_latest_non_beta_tag(tags) -> str | None:
         """Return the highest non-beta ``vX.Y.Z``-style tag from ``tags``, or None."""
         stables = []
         for raw in tags or []:
             tag = str(raw or "").strip()
-            if not tag or Versioning.is_beta_version_tag(tag):
+            if not Versioning.is_stable_version_tag(tag):
                 continue
             stables.append(tag)
         if not stables:
             return None
         return max(stables, key=lambda t: Versioning.parse_version(t))
+
+    @staticmethod
+    def pick_latest_beta_channel_tag(tags) -> str | None:
+        """Pick the update target for the beta channel.
+
+        Rules:
+        - Prefer the newest ``…_beta_N`` tag when it is ahead of the latest release
+          (e.g. ``v2.6.4_beta_1`` beats ``v2.6.3``).
+        - If no beta exists, fall back to the latest non-beta release.
+        - If the latest release base version is **greater than or equal to** the
+          latest beta base (e.g. release ``v2.6.3`` vs beta ``v2.6.3_beta_4``),
+          use the release — a shipped release supersedes betas of the same base.
+        """
+        beta = Versioning.pick_latest_beta_tag(tags)
+        stable = Versioning.pick_latest_non_beta_tag(tags)
+        if not beta:
+            return stable
+        if not stable:
+            return beta
+        beta_base = Versioning.beta_version_sort_key(beta)[:3]
+        stable_base = Versioning.parse_version(stable)
+        if stable_base >= beta_base:
+            return stable
+        return beta
 
     @staticmethod
     def _parse_repo_spec(raw: str):
@@ -559,7 +592,8 @@ class Versioning:
         """Fetch latest release tag, or ``ref@sha`` in branch mode (else 'unknown').
 
         - **standard** / custom without ref: newest non-beta release (``_beta_N`` tags excluded)
-        - **beta**: newest ``…_beta_<counter>`` tag on the official repo
+        - **beta**: newest ``…_beta_<counter>`` on the official repo, falling back to the
+          latest non-beta release when no beta exists or the release base is >= the beta base
         - custom with ref: ``ref@sha7`` from the commits API
         """
         owner, repo, ref, _git_url, mode = Versioning.resolved_update_repo()
@@ -574,7 +608,7 @@ class Versioning:
             elif mode == "beta":
                 tags = Versioning._list_github_tag_names(owner, repo, timeout=timeout)
                 ts_post = tm.time()
-                latest_version = Versioning.pick_latest_beta_tag(tags) or "unknown"
+                latest_version = Versioning.pick_latest_beta_channel_tag(tags) or "unknown"
             else:
                 # Stable channel (standard, or custom owner/repo without @ref).
                 url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"

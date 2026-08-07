@@ -175,6 +175,51 @@ def test_read_latest_kittyhack_version_beta_channel(monkeypatch):
     assert Versioning.read_latest_kittyhack_version(timeout=1) == "unknown"
 
 
+def test_read_latest_kittyhack_version_standard_ignores_betas(monkeypatch):
+    """Standard channel must never surface ``_beta_N`` tags as LATEST_VERSION."""
+    import src.baseconfig as baseconfig
+    import src.helper as helper_mod
+
+    monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY_MODE", "standard")
+    monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY", "")
+
+    class _Resp:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            return None
+
+    # Happy path: /releases/latest is stable even when betas exist elsewhere.
+    def _get_stable(url, timeout=10, params=None):
+        assert "/releases/latest" in url
+        return _Resp({"tag_name": "v2.6.4"})
+
+    monkeypatch.setattr(helper_mod.requests, "get", _get_stable)
+    assert Versioning.read_latest_kittyhack_version(timeout=1) == "v2.6.4"
+
+    # Mis-published beta as non-prerelease "latest" → reject and pick stable.
+    def _get_beta_as_latest(url, timeout=10, params=None):
+        assert "/releases/latest" in url
+        return _Resp({"tag_name": "v2.6.5_beta_1"})
+
+    monkeypatch.setattr(helper_mod.requests, "get", _get_beta_as_latest)
+    monkeypatch.setattr(
+        Versioning,
+        "_list_github_tag_names",
+        lambda owner, repo, timeout=10: [
+            "v2.6.5_beta_1",
+            "v2.6.4",
+            "v2.6.3",
+            "main",
+        ],
+    )
+    assert Versioning.read_latest_kittyhack_version(timeout=1) == "v2.6.4"
+
+
 def test_event_type_pretty_and_uuid():
     pretty = EventType.to_pretty_string(EventType.CAT_WENT_INSIDE)
     assert isinstance(pretty, str) and len(pretty) > 0

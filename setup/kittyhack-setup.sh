@@ -691,22 +691,13 @@ install_remote_mode() {
 
     echo -e "${CYAN}--- REMOTE MODE INSTALL Step 2: Create virtualenv + install Python deps ---${NC}"
     cd "$KITTYHACK_INSTALL_DIR" || exit 1
-    if ! create_venv_py311 .venv; then
-        echo -e "${RED}Failed to create Python 3.11 virtualenv. Aborting.${NC}"
+    if ! bash "${KITTYHACK_INSTALL_DIR}/setup/ensure_venv.sh" \
+        --bootstrap \
+        --root "${KITTYHACK_INSTALL_DIR}" \
+        --requirements "${KITTYHACK_INSTALL_DIR}/requirements_remote.txt"; then
+        echo -e "${RED}Failed to create Python virtualenv / install dependencies. Aborting.${NC}"
         exit 1
     fi
-    source .venv/bin/activate
-    if ! pip install --upgrade pip; then
-        deactivate 2>/dev/null || true
-        echo -e "${RED}Failed to upgrade pip in virtualenv.${NC}"
-        exit 1
-    fi
-    if ! pip install --timeout 120 --retries 10 -r requirements_remote.txt; then
-        deactivate 2>/dev/null || true
-        echo -e "${RED}Failed to install Python dependencies from requirements_remote.txt.${NC}"
-        exit 1
-    fi
-    deactivate
 
     echo -e "${CYAN}--- REMOTE MODE INSTALL Step 3: Configure remote-mode ---${NC}"
     # Create remote-mode marker file
@@ -729,13 +720,16 @@ User=root
 Group=root
 WorkingDirectory=${KITTYHACK_INSTALL_DIR}
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${KITTYHACK_INSTALL_DIR}/.venv/bin"
-ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/shiny run --host=0.0.0.0 --port=80
+ExecStartPre=/bin/bash ${KITTYHACK_INSTALL_DIR}/setup/ensure_venv.sh --apply --root ${KITTYHACK_INSTALL_DIR}
+ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 80 --ws-ping-interval 30 --ws-ping-timeout 120
 Restart=always
 RestartSec=5
+TimeoutStartSec=3600
 
 KillSignal=SIGTERM
 KillMode=mixed
 TimeoutStopSec=30
+SuccessExitStatus=SIGKILL
 
 [Install]
 WantedBy=multi-user.target
@@ -896,29 +890,11 @@ install_kittyhack() {
     set_config_language "${KITTYHACK_INSTALL_DIR}/config.ini"
 
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 2: Set up Python virtual environment ---${NC}"
-    if ! create_venv_py311 "${KITTYHACK_INSTALL_DIR}/.venv"; then
+    if ! bash "${KITTYHACK_INSTALL_DIR}/setup/ensure_venv.sh" --bootstrap --root "${KITTYHACK_INSTALL_DIR}"; then
         ((FAIL_COUNT++))
-        echo -e "${RED}Failed to create Python 3.11 virtualenv.${NC}"
+        echo -e "${RED}Failed to create Python virtualenv / install dependencies.${NC}"
         return 1
     fi
-    source "${KITTYHACK_INSTALL_DIR}/.venv/bin/activate"
-
-    # Force pip to use PyPI only to satisfy --require-hashes entries in requirements.txt
-    # Some systems have PIP_EXTRA_INDEX_URL=piwheels; unset it to avoid hash mismatches.
-    unset PIP_EXTRA_INDEX_URL
-    export PIP_INDEX_URL="https://pypi.org/simple"
-
-    # Upgrade pip/setuptools/wheel to improve compatibility
-    pip install --timeout 120 --no-cache-dir -U pip setuptools wheel
-
-    # Install project dependencies from PyPI (no extra indexes), fail fast if hashes don’t match
-    if ! pip install --timeout 120 --no-cache-dir -r "${KITTYHACK_INSTALL_DIR}/requirements.txt"; then
-        ((FAIL_COUNT++))
-        echo -e "${RED}Failed to install Python dependencies.${NC}"
-    else
-        echo -e "${GREEN}Python dependencies installed/updated.${NC}"
-    fi
-    deactivate
 
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 3: Start kwork process ---${NC}"
     if [ $INSTALL_LEGACY_KITTYHACK -eq 1 ]; then
@@ -964,13 +940,16 @@ User=root
 Group=root
 WorkingDirectory=${KITTYHACK_INSTALL_DIR}
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${KITTYHACK_INSTALL_DIR}/.venv/bin"
-ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/shiny run --host=0.0.0.0 --port=80
+ExecStartPre=/bin/bash ${KITTYHACK_INSTALL_DIR}/setup/ensure_venv.sh --apply --root ${KITTYHACK_INSTALL_DIR}
+ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 80 --ws-ping-interval 30 --ws-ping-timeout 120
 Restart=always
 RestartSec=5
+TimeoutStartSec=3600
 
 KillSignal=SIGTERM
 KillMode=mixed
 TimeoutStopSec=30
+SuccessExitStatus=SIGKILL
 
 [Install]
 WantedBy=multi-user.target
@@ -992,9 +971,11 @@ User=root
 Group=root
 WorkingDirectory=${KITTYHACK_INSTALL_DIR}
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${KITTYHACK_INSTALL_DIR}/.venv/bin"
+ExecStartPre=/bin/bash ${KITTYHACK_INSTALL_DIR}/setup/ensure_venv.sh --apply --root ${KITTYHACK_INSTALL_DIR}
 ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/python -m src.kittyhack_control
 Restart=always
 RestartSec=2
+TimeoutStartSec=3600
 
 KillSignal=SIGTERM
 KillMode=mixed
@@ -1243,40 +1224,60 @@ ensure_uv_installed() {
 }
 
 ensure_python311_available() {
-    if command -v python3.11 >/dev/null 2>&1; then
+    # Back-compat wrapper: preferred path is setup/ensure_venv.sh reading REQUIRED_PYTHON.
+    local required="3.11"
+    if [[ -f "$(dirname "${BASH_SOURCE[0]}")/REQUIRED_PYTHON" ]]; then
+        required="$(tr -d '[:space:]' < "$(dirname "${BASH_SOURCE[0]}")/REQUIRED_PYTHON")"
+    elif [[ -f "${KITTYHACK_INSTALL_DIR:-}/setup/REQUIRED_PYTHON" ]]; then
+        required="$(tr -d '[:space:]' < "${KITTYHACK_INSTALL_DIR}/setup/REQUIRED_PYTHON")"
+    fi
+    if command -v "python${required}" >/dev/null 2>&1; then
         return 0
     fi
 
-    echo -e "${YELLOW}python3.11 not found. Trying to install python3.11 via apt...${NC}"
+    echo -e "${YELLOW}python${required} not found. Trying to install python${required} via apt...${NC}"
     apt-get update -y >/dev/null 2>&1 || true
-    if apt-get install -y python3.11 python3.11-venv python3.11-dev >/dev/null 2>&1; then
-        if command -v python3.11 >/dev/null 2>&1; then
+    if apt-get install -y "python${required}" "python${required}-venv" "python${required}-dev" >/dev/null 2>&1; then
+        if command -v "python${required}" >/dev/null 2>&1; then
             return 0
         fi
     fi
 
-    echo -e "${YELLOW}python3.11 not available via apt. Falling back to uv-managed Python 3.11...${NC}"
+    echo -e "${YELLOW}python${required} not available via apt. Falling back to uv-managed Python ${required}...${NC}"
     ensure_uv_installed || return 1
-    uv python install 3.11 || return 1
+    uv python install "$required" || return 1
     return 0
 }
 
 create_venv_py311() {
+    # Deprecated name kept for compatibility; delegates to ensure_venv.sh --bootstrap --skip-pip
+    # so callers that still pip-install themselves keep working.
     local venv_path="$1"
-
-    # Ensure we don't keep an old venv created with a different Python version.
-    if [[ -d "$venv_path" ]]; then
-        rm -rf "$venv_path"
+    local root
+    root="$(cd "$(dirname "$venv_path")/.." 2>/dev/null && pwd)" || root="$(dirname "$venv_path")"
+    # When called as create_venv_py311 .venv from install dir, parent is install root.
+    if [[ "$(basename "$venv_path")" == ".venv" ]]; then
+        root="$(cd "$(dirname "$venv_path")" && pwd)"
     fi
-
-    ensure_python311_available || return 1
-
-    if command -v python3.11 >/dev/null 2>&1; then
-        python3.11 -m venv "$venv_path"
+    local script="${root}/setup/ensure_venv.sh"
+    if [[ -f "$script" ]]; then
+        bash "$script" --bootstrap --root "$root" --skip-pip
         return $?
     fi
 
-    uv venv --python 3.11 "$venv_path"
+    local required="3.11"
+    if [[ -f "${root}/setup/REQUIRED_PYTHON" ]]; then
+        required="$(tr -d '[:space:]' < "${root}/setup/REQUIRED_PYTHON")"
+    fi
+    if [[ -d "$venv_path" ]]; then
+        rm -rf "$venv_path"
+    fi
+    ensure_python311_available || return 1
+    if command -v "python${required}" >/dev/null 2>&1; then
+        "python${required}" -m venv "$venv_path"
+        return $?
+    fi
+    uv venv --python "$required" "$venv_path"
 }
 
 # Environment override (kept for compatibility)

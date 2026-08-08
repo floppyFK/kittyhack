@@ -915,16 +915,26 @@ class KittyhackUpdater:
                 logging.error(f"Failed to stop backend process: {e}")
 
         requirements_path = os.path.join(kittyhack_root(), "requirements.txt")
+        ensure_venv_script = os.path.join(kittyhack_root(), "setup", "ensure_venv.sh")
+        venv_new_dir = os.path.join(kittyhack_root(), ".venv.new")
         venv_activate = os.path.join(kittyhack_root(), ".venv", "bin", "activate")
         pip_install_cmd = [
             "/bin/bash",
             "-c",
             f"source {venv_activate} && pip install --timeout 120 --retries 10 -r {requirements_path}",
         ]
+        ensure_prepare_cmd = [
+            "/bin/bash",
+            ensure_venv_script,
+            "--prepare",
+            "--root",
+            kittyhack_root(),
+        ]
 
         req_hash_before: str | None = None
         req_hash_after: str | None = None
         did_update_deps = False
+        did_prepare_new_venv = False
 
         # Resolve the configured update source (standard vs custom repo / branch).
         try:
@@ -977,8 +987,30 @@ class KittyhackUpdater:
                 req_hash_before is not None and req_hash_after is not None and req_hash_before == req_hash_after
             )
 
-            # 5
-            if requirements_unchanged:
+            # 5a — If setup/REQUIRED_PYTHON mismatches the active .venv, build .venv.new
+            # beside it (never swap while this process may still be using .venv).
+            # ExecStartPre --apply performs the atomic swap on the next service start/reboot.
+            if os.path.isfile(ensure_venv_script):
+                _run_step(5, "Ensuring required Python runtime", ensure_prepare_cmd)
+                # After a successful mismatch prepare, .venv.new remains for --apply.
+                # After a match, ensure_venv removes any stale .venv.new.
+                did_prepare_new_venv = os.path.isdir(venv_new_dir)
+            else:
+                logging.warning(
+                    f"[UPDATE] ensure_venv.sh missing at {ensure_venv_script}; skipping Python runtime check"
+                )
+
+            # 5b — pip into the live .venv only when we are NOT migrating via .venv.new.
+            # A prepared .venv.new already contains a full requirements install.
+            if did_prepare_new_venv:
+                msg = (
+                    "Python runtime migration prepared (.venv.new); "
+                    "dependency install skipped for live .venv (swap on next start/reboot)"
+                )
+                if progress_callback:
+                    progress_callback(5, msg, "")
+                logging.info(msg)
+            elif requirements_unchanged:
                 msg = "Python dependencies unchanged (requirements.txt); skipping reinstall"
                 if progress_callback:
                     progress_callback(5, msg, "")
@@ -987,30 +1019,30 @@ class KittyhackUpdater:
                 _run_step(5, "Updating python dependencies", pip_install_cmd)
                 did_update_deps = True
 
-            # 6-8 (service/unit changes) can be deferred when update is executed from
-            # kittyhack_control on the target device to avoid self-restart during update.
+            # 6-8 — Always refresh unit files on disk so ExecStartPre (ensure_venv --apply)
+            # is present after reboot. When defer_service_updates is set (update run from
+            # kittyhack_control), skip enable/start churn that could restart us mid-update.
+            if progress_callback:
+                progress_callback(6, "Updating systemd service file", "")
+            logging.info("Updating systemd service file")
+            _install_kittyhack_service_file()
+            try:
+                _is_remote_now = bool(is_remote_mode())
+            except Exception:
+                _is_remote_now = False
+            if _is_remote_now:
+                _remove_kittyhack_control_service_file()
+            else:
+                _install_kittyhack_control_service_file()
+            # 7
+            _run_step(7, "Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"])
+
+            # 8
             if defer_service_updates:
                 if progress_callback:
-                    progress_callback(6, "Deferring systemd service updates until reboot", "")
-                logging.info("Deferring systemd service/unit updates until reboot")
+                    progress_callback(8, "Deferring systemd enable/start until reboot", "")
+                logging.info("Deferring systemd enable/start state until reboot (unit files already updated)")
             else:
-                # 6
-                if progress_callback:
-                    progress_callback(6, "Updating systemd service file", "")
-                logging.info("Updating systemd service file")
-                _install_kittyhack_service_file()
-                try:
-                    _is_remote_now = bool(is_remote_mode())
-                except Exception:
-                    _is_remote_now = False
-                if _is_remote_now:
-                    _remove_kittyhack_control_service_file()
-                else:
-                    _install_kittyhack_control_service_file()
-                # 7
-                _run_step(7, "Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"])
-
-                # 8
                 if progress_callback:
                     progress_callback(8, "Updating systemd enable/disable state", "")
                 logging.info("Updating systemd enable/disable state")
@@ -1020,6 +1052,12 @@ class KittyhackUpdater:
             # Rollback logic
             if current_version:
                 try:
+                    # Drop a half-prepared migration venv so the next boot does not swap to it.
+                    if did_prepare_new_venv or os.path.isdir(venv_new_dir):
+                        try:
+                            shutil.rmtree(venv_new_dir, ignore_errors=True)
+                        except Exception:
+                            pass
                     subprocess.run(["/bin/git", "checkout", current_version], check=True)
                     # Only reinstall deps on rollback if we actually modified them during the update.
                     if did_update_deps:
@@ -1085,13 +1123,6 @@ class KittyhackUpdater:
             out = _systemctl_stdout("is-enabled", service_name)
             return out in {"disabled", "masked", "indirect", "generated", "transient", ""}
 
-        # Fast-path: if we're already in the desired state, do nothing.
-        try:
-            if _is_enabled("kittyhack_control.service") and _is_active("kittyhack_control.service") and _is_disabled("kittyhack.service"):
-                return
-        except Exception:
-            pass
-
         template_path = os.path.join(kittyhack_root(), "setup", "kittyhack_control.service")
         target_path = "/etc/systemd/system/kittyhack_control.service"
         did_update_unit_file = False
@@ -1117,12 +1148,42 @@ class KittyhackUpdater:
         except Exception as e:
             logging.warning(f"[SYSTEM] Could not install kittyhack_control.service: {e}")
 
+        # Also keep kittyhack.service in sync (ExecStartPre / ensure_venv --apply).
+        try:
+            kh_template = os.path.join(kittyhack_root(), "setup", "kittyhack.service")
+            kh_target = "/etc/systemd/system/kittyhack.service"
+            if os.path.exists(kh_template):
+                with open(kh_template, "r", encoding="utf-8") as f:
+                    content = f.read()
+                content = content.replace("/root/kittyhack", kittyhack_root())
+                existing = None
+                try:
+                    if os.path.exists(kh_target):
+                        with open(kh_target, "r", encoding="utf-8") as f:
+                            existing = f.read()
+                except Exception:
+                    existing = None
+                if existing != content:
+                    with open(kh_target, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    did_update_unit_file = True
+        except Exception as e:
+            logging.warning(f"[SYSTEM] Could not install kittyhack.service: {e}")
+
         # Only daemon-reload if we updated/installed the unit file.
         if did_update_unit_file:
             try:
                 _run_systemctl("daemon-reload")
             except Exception:
                 pass
+
+        # Fast-path: if enable/active state is already correct, skip enable/start churn.
+        # (Unit files above are still synced every call.)
+        try:
+            if _is_enabled("kittyhack_control.service") and _is_active("kittyhack_control.service") and _is_disabled("kittyhack.service"):
+                return
+        except Exception:
+            pass
 
         # Ensure kittyhack_control is enabled + running (best-effort).
         try:

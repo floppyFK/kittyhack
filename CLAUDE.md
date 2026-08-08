@@ -108,11 +108,14 @@ Tags are **lightweight** (no annotation, `git tag vX.Y.Z`). Follow the style.
 3. `git remote set-url origin <resolved_url>` (if custom update repo configured)
 4. `git fetch --all --tags`
 5. `git checkout <tag>` (tag mode) OR `git checkout -B <ref> origin/<ref>` (branch mode)
-6. `pip install -r requirements.txt` if requirements hash changed
-7. Install systemd unit files, `daemon-reload`, apply boot semantics
-8. Rollback branch (`git checkout <current_version>`) on any failure
+6. `setup/ensure_venv.sh --prepare` (no-op while `REQUIRED_PYTHON` matches `.venv`; otherwise builds `.venv.new`)
+7. `pip install -r requirements.txt` if requirements hash changed **and** no `.venv.new` was prepared
+8. Install systemd unit files, `daemon-reload`, apply boot semantics (enable/start may be deferred when updating from `kittyhack_control`)
+9. Rollback branch (`git checkout <current_version>`) on any failure; also removes a half-prepared `.venv.new`
 
-**Implication:** anything that must survive updates has to be in `.gitignore` (step 2). Already there: `config.ini`, `config.remote.ini`, `notifications.json`, `api_tokens.json`, `*.db`, `kittyhack.log*`, `.venv/`, etc.
+On the next service start/reboot, `ExecStartPre` runs `ensure_venv.sh --apply` (atomic `.venv.new` → `.venv` swap if pending). See `doc/python_venv_upgrade.md`.
+
+**Implication:** anything that must survive updates has to be in `.gitignore` (step 2). Already there: `config.ini`, `config.remote.ini`, `notifications.json`, `api_tokens.json`, `*.db`, `kittyhack.log*`, `.venv/`, `.venv.new/`, `.venv.old/`, etc.
 
 Update source is resolved via `resolved_update_repo()` in `helper.py` — driven by `CONFIG['UPDATE_REPOSITORY_MODE']` (`standard`|`beta`|`custom`) and `CONFIG['UPDATE_REPOSITORY']` (format `owner/repo` or `owner/repo@ref`). **Standard** uses `/releases/latest` and never offers `_beta_N` tags. **Beta** picks the highest `vX.Y.Z_beta_N` tag on `floppyFK/kittyhack` when that beta base is ahead of the latest release; if no beta exists or the latest release base is `>=` the beta base (e.g. release `v2.6.3` vs `v2.6.3_beta_4`), it falls back to the latest non-beta release. Branch/custom-ref mode returns `<ref>@<sha7>` as the "latest version" so the UI's version comparison keeps working.
 

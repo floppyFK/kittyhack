@@ -34,7 +34,7 @@ class MQTTConfig:
     }
 
 class MQTTClient:
-    """Thin paho-mqtt wrapper with LWT online/offline status."""
+    """Thin paho-mqtt wrapper with LWT online/offline status and reconnect recovery."""
 
     def __init__(self, broker_address, broker_port, username=None, password=None, client_name=None):
         self.broker_address = broker_address
@@ -42,33 +42,132 @@ class MQTTClient:
         self.username = username
         self.password = password
         self.client_name = client_name or MQTTConfig.device_id
-        self.client = mqtt.Client(client_id=self.client_name)
+        # VERSION1 keeps on_connect/on_disconnect signatures simple (rc: int).
+        self.client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
+            client_id=self.client_name,
+        )
         if self.username and self.password:
             self.client.username_pw_set(self.username, self.password)
-            
+
+        # Bound reconnect backoff so prolonged broker outages keep retrying.
+        self.client.reconnect_delay_set(min_delay=1, max_delay=120)
+
         # Set the Last Will and Testament BEFORE connecting
         status_topic = f"kittyhack/{MQTTConfig.device_id}/status"
         self.client.will_set(status_topic, "offline", retain=True)
-        
+
         self.connected = False
         self.topic_callbacks = {}
-        
-        # Set up the message callback
-        self.client.on_message = self.on_message
+        self._reconnect_callbacks = []
+        self._connect_count = 0
+        self._intentional_disconnect = False
 
-    def connect(self):
-        """Connect, start the network loop, and publish online status."""
+        self.client.on_message = self.on_message
+        self.client.on_connect = self._on_connect
+        self.client.on_disconnect = self._on_disconnect
+
+    def register_reconnect_callback(self, callback):
+        """Register a callback invoked after every successful reconnect (not the first connect)."""
+        if callback and callback not in self._reconnect_callbacks:
+            self._reconnect_callbacks.append(callback)
+
+    def _status_topic(self):
+        return f"kittyhack/{MQTTConfig.device_id}/status"
+
+    def _publish_online_status(self):
+        """Publish retained online status (must run after CONNACK)."""
+        try:
+            self.client.publish(self._status_topic(), "online", retain=True)
+        except Exception as e:
+            logging.warning(f"[MQTT] Could not publish online status: {e}")
+
+    def _resubscribe_all(self):
+        """Re-subscribe all registered topics after (re)connect."""
+        for topic in list(self.topic_callbacks.keys()):
+            try:
+                self.client.subscribe(topic)
+                logging.info(f"[MQTT] Re-subscribed to {topic}")
+            except Exception as e:
+                logging.warning(f"[MQTT] Could not re-subscribe to {topic}: {e}")
+
+    def _on_connect(self, client, userdata, flags, rc):
+        """Handle CONNACK: mark online, restore subscriptions, refresh HA after reconnect."""
+        if rc != 0:
+            self.connected = False
+            logging.error(f"[MQTT] Connection refused by broker (rc={rc})")
+            return
+
+        self.connected = True
+        self._connect_count += 1
+        if isinstance(flags, dict):
+            session_present = bool(flags.get("session_present", False))
+        elif isinstance(flags, int):
+            session_present = bool(flags & 0x01)
+        else:
+            session_present = bool(getattr(flags, "session_present", False))
+        logging.info(
+            f"[MQTT] Connected to broker at {self.broker_address}:{self.broker_port} "
+            f"(connect=#{self._connect_count}, session_present={session_present})"
+        )
+
+        # Always republish availability — LWT may have set offline during the outage.
+        self._publish_online_status()
+
+        # Clean sessions drop subscriptions; always restore from our registry.
+        self._resubscribe_all()
+
+        # First connect: StatePublisher still runs its initial publish path.
+        # Later connects: refresh discovery + last known states for Home Assistant.
+        if self._connect_count > 1:
+            logging.info("[MQTT] Reconnected — refreshing Home Assistant state")
+            for callback in list(self._reconnect_callbacks):
+                try:
+                    callback()
+                except Exception as e:
+                    logging.error(f"[MQTT] Reconnect callback failed: {e}")
+
+    def _on_disconnect(self, client, userdata, rc):
+        """Clear connected flag; paho's loop thread will attempt automatic reconnect."""
+        self.connected = False
+        if self._intentional_disconnect:
+            logging.info("[MQTT] Disconnected from MQTT broker")
+            return
+        if rc == 0:
+            logging.info("[MQTT] Disconnected from MQTT broker (clean)")
+        else:
+            logging.warning(
+                f"[MQTT] Unexpected disconnect (rc={rc}); "
+                "waiting for automatic reconnect and online republish"
+            )
+
+    def connect(self, timeout=10.0):
+        """Connect, start the network loop, and wait for CONNACK."""
+        self._intentional_disconnect = False
         try:
             self.client.connect(self.broker_address, self.broker_port, 60)
             self.client.loop_start()
-            self.connected = True
-            
-            # Publish online status AFTER connecting
-            status_topic = f"kittyhack/{MQTTConfig.device_id}/status"
-            self.client.publish(status_topic, "online", retain=True)
-            
-            logging.info(f"[MQTT] Connected to broker at {self.broker_address}:{self.broker_port}")
-            return True
+
+            deadline = tm.monotonic() + float(timeout)
+            while tm.monotonic() < deadline:
+                if self.connected:
+                    return True
+                tm.sleep(0.05)
+
+            logging.warning(
+                f"[MQTT] Timed out waiting for CONNACK from "
+                f"{self.broker_address}:{self.broker_port}"
+            )
+            # Stop the background loop so a failed startup does not keep retrying forever
+            # without an owning MQTTClient reference.
+            self._intentional_disconnect = True
+            try:
+                self.client.loop_stop()
+                self.client.disconnect()
+            except Exception:
+                pass
+            self.connected = False
+            return False
         except Exception as e:
             logging.warning(f"[MQTT] Could not connect to broker: {e}")
             self.connected = False
@@ -77,58 +176,63 @@ class MQTTClient:
     def publish(self, topic, message, retain=False):
         """JSON-encode ``message`` and publish to ``topic``."""
         if not self.connected:
-            self.connect()
+            logging.debug(f"[MQTT] Skipping publish to {topic}: not connected")
+            return
         try:
             self.client.publish(topic, json.dumps(message), retain=retain)
         except Exception as e:
             logging.warning(f"[MQTT] Could not publish to {topic}: {e}")
-            
+
     def subscribe(self, topic, callback=None):
-        """Subscribe to ``topic`` and optionally register a per-topic callback."""
+        """Subscribe to ``topic`` and optionally register a per-topic callback.
+
+        Callbacks are always stored so they can be restored after reconnect.
+        The actual subscribe is deferred until the client is connected.
+        """
+        if callback:
+            self.topic_callbacks[topic] = callback
+
         if not self.connected:
-            self.connect()
-            
+            logging.info(f"[MQTT] Deferred subscribe to {topic} until connected")
+            return
+
         try:
             self.client.subscribe(topic)
             logging.info(f"[MQTT] Subscribed to {topic}")
-            
-            if callback:
-                self.topic_callbacks[topic] = callback
-                
         except Exception as e:
             logging.warning(f"[MQTT] Could not subscribe to {topic}: {e}")
-    
+
     def on_message(self, client, userdata, message):
         """Dispatch an inbound message to the registered topic callback."""
         topic = message.topic
         try:
             payload = json.loads(message.payload.decode())
             logging.info(f"[MQTT] Received message on {topic}: {payload}")
-            
+
             # Call the registered callback for this topic if it exists
             if topic in self.topic_callbacks:
                 self.topic_callbacks[topic](payload)
-                
+
         except json.JSONDecodeError:
             payload = message.payload.decode()
             logging.info(f"[MQTT] Received non-JSON message on {topic}: {payload}")
-            
+
             # Call the registered callback anyway
             if topic in self.topic_callbacks:
                 self.topic_callbacks[topic](payload)
-                
+
         except Exception as e:
             logging.warning(f"[MQTT] Error handling message on {topic}: {e}")
 
     def disconnect(self):
         """Publish offline status, then stop the loop and disconnect."""
+        self._intentional_disconnect = True
         try:
             # First publish offline status
             if self.connected:
-                status_topic = f"kittyhack/{MQTTConfig.device_id}/status"
-                self.client.publish(status_topic, "offline", retain=True)
+                self.client.publish(self._status_topic(), "offline", retain=True)
                 logging.info("[MQTT] Published offline status before disconnecting")
-                
+
             # Then disconnect properly
             self.client.loop_stop()
             self.client.disconnect()
@@ -136,6 +240,7 @@ class MQTTClient:
             logging.info("[MQTT] Disconnected from MQTT broker")
         except Exception as e:
             logging.error(f"[MQTT] Error during graceful disconnect: {e}")
+            self.connected = False
 
 class StatePublisher:
     """Publish flap/motion/config state and HA discovery; handle inbound sets."""
@@ -146,13 +251,23 @@ class StatePublisher:
         self.image_publish_thread = None
         self.stop_image_thread = False
 
+        # Remember last published states so reconnect can restore HA availability.
+        self._last_inside_lock = inside_lock_state
+        self._last_outside_lock = outside_lock_state
+        self._last_motion_inside = motion_inside_state
+        self._last_motion_outside = motion_outside_state
+        self._last_prey_detected = prey_detected_state
+
         if not self.mqtt_client.connected:
             # Wait up to 3 seconds for connection
             for __ in range(30):
                 if self.mqtt_client.connected:
                     break
                 tm.sleep(0.1)
-        
+
+        # After broker outages / LWT offline, republish discovery + last states.
+        self.mqtt_client.register_reconnect_callback(self.refresh_after_reconnect)
+
         # Publish discovery topics first
         self.publish_discovery_topics()
         
@@ -179,8 +294,29 @@ class StatePublisher:
         # Subscribe to config set topics
         self.register_config_handlers()
 
+    def refresh_after_reconnect(self):
+        """Republish discovery and last known states after an MQTT reconnect."""
+        logging.info("[MQTT] Refreshing discovery and state topics after reconnect")
+        try:
+            self.publish_discovery_topics()
+            if self._last_inside_lock is not None:
+                self.publish_lock_inside(self._last_inside_lock)
+            if self._last_outside_lock is not None:
+                self.publish_lock_outside(self._last_outside_lock)
+            if self._last_motion_inside is not None:
+                self.publish_motion_inside(self._last_motion_inside)
+            if self._last_motion_outside is not None:
+                self.publish_motion_outside(self._last_motion_outside)
+            if self._last_prey_detected is not None:
+                self.publish_prey_detected(self._last_prey_detected)
+            self.publish_allowed_to_exit(CONFIG['ALLOWED_TO_EXIT'])
+            self.publish_allowed_to_enter(CONFIG['ALLOWED_TO_ENTER'])
+        except Exception as e:
+            logging.error(f"[MQTT] Failed to refresh state after reconnect: {e}")
+
     def publish_lock_inside(self, locked: bool):
         """Publish inside lock state (``locked`` / ``unlocked``)."""
+        self._last_inside_lock = locked
         topic = MQTTConfig.topics["inside_lock_state"]
         state = "locked" if locked else "unlocked"
         if self.mqtt_client.connected:
@@ -188,6 +324,7 @@ class StatePublisher:
 
     def publish_lock_outside(self, locked: bool):
         """Publish outside lock state (``locked`` / ``unlocked``)."""
+        self._last_outside_lock = locked
         topic = MQTTConfig.topics["outside_lock_state"]
         state = "locked" if locked else "unlocked"
         if self.mqtt_client.connected:
@@ -195,6 +332,7 @@ class StatePublisher:
 
     def publish_motion_outside(self, detected: bool):
         """Publish outside PIR motion state."""
+        self._last_motion_outside = detected
         topic = MQTTConfig.topics["motion_outside_state"]
         state = "detected" if detected else "not_detected"
         if self.mqtt_client.connected:
@@ -202,6 +340,7 @@ class StatePublisher:
 
     def publish_motion_inside(self, detected: bool):
         """Publish inside PIR motion state."""
+        self._last_motion_inside = detected
         topic = MQTTConfig.topics["motion_inside_state"]
         state = "detected" if detected else "not_detected"
         if self.mqtt_client.connected:
@@ -209,6 +348,7 @@ class StatePublisher:
 
     def publish_prey_detected(self, detected: bool):
         """Publish prey-detection state."""
+        self._last_prey_detected = detected
         topic = MQTTConfig.topics["prey_detected"]
         state = "detected" if detected else "not_detected"
         if self.mqtt_client.connected:
@@ -356,9 +496,12 @@ class StatePublisher:
             img_str = base64.b64encode(buffer).decode()
             
             # Publish the image
+            if not self.mqtt_client.connected:
+                logging.debug("[MQTT] Skipping image publish: not connected")
+                return
             topic = MQTTConfig.topics["camera_image"]
             self.mqtt_client.client.publish(topic, img_str, retain)
-            
+
         except Exception as e:
             logging.warning(f"[MQTT] Could not publish image: {e}")
     

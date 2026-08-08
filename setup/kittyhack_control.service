@@ -7,9 +7,12 @@ User=root
 Group=root
 WorkingDirectory=/root/kittyhack
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/kittyhack/.venv/bin"
+# Runs before kittyhack on target boot; safe place to atomically swap .venv.new -> .venv.
+ExecStartPre=/bin/bash /root/kittyhack/setup/ensure_venv.sh --apply --root /root/kittyhack
 ExecStart=/root/kittyhack/.venv/bin/python -m src.kittyhack_control
 Restart=always
 RestartSec=2
+TimeoutStartSec=3600
 
 # Process handling
 KillSignal=SIGTERM

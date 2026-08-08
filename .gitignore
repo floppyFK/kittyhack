@@ -2,6 +2,10 @@ __pycache__/
 kittyhack.log*
 *.db
 .venv/
+.venv.new/
+.venv.old/
+.venv-ensure.lock
+.venv-ensure.lock.d/
 *.po~
 locales/*/LC_MESSAGES/messages.mo
 locales/.runtime_locale_state.json

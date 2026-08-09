@@ -20,6 +20,7 @@ devices have no control supervisor, so a control-only fix is incomplete.
 |------|------|
 | `setup/REQUIRED_PYTHON` | Single-line `X.Y` pin for this software version |
 | `setup/ensure_venv.sh` | Dual-venv create / smoke / atomic swap |
+| `setup/update_status_server.py` | Simple “Update in progress” page on port 80 during `--apply` |
 | `setup/kittyhack.service` | `ExecStartPre=… --apply` + long `TimeoutStartSec` |
 | `setup/kittyhack_control.service` | Same `ExecStartPre` (target boot path) |
 | `KittyhackUpdater.update_kittyhack()` | Calls `--prepare` after checkout |
@@ -29,10 +30,11 @@ devices have no control supervisor, so a control-only fix is incomplete.
 1. **`--bootstrap`** — fresh install (`kittyhack-setup.sh`). Creates `.venv` in place.
 2. **`--prepare`** — during software update while the old process may still be alive.
    On mismatch: build `.venv.new`, `pip install -r requirements.txt`, strict smoke test.
-   Never swaps; leaves `.venv` untouched.
-3. **`--apply`** — `ExecStartPre` / after reboot. If `.venv.new` is ready → atomic swap
-   (`.venv` → `.venv.old`, `.venv.new` → `.venv`). If mismatch and no `.venv.new` → repair
-   the same way, then swap. On failure, keep the previous `.venv`.
+   Never swaps; leaves `.venv` untouched. Sets `.runtime-update-pending`.
+3. **`--apply`** — `ExecStartPre` / after reboot. If work is needed, serves a non-technical
+   status page on port 80 (“Update in progress… do not power off”), then either swaps
+   `.venv.new` → `.venv` or repairs on mismatch. On failure, keeps the previous `.venv`
+   and stops the status page.
 
 ## Update + reboot sequence (future Python bump)
 
@@ -41,7 +43,8 @@ devices have no control supervisor, so a control-only fix is incomplete.
 3. Existing pip-into-`.venv` step is skipped when `.venv.new` was prepared (deps already there).
 4. Systemd unit files are refreshed (include `ExecStartPre`).
 5. UI asks for reboot (existing behaviour).
-6. On boot, `ExecStartPre --apply` swaps `.venv.new` → `.venv`, then the service starts.
+6. On boot, `ExecStartPre --apply` shows the status page if needed, swaps `.venv.new` → `.venv`,
+   then the service starts and the normal UI comes back.
 
 ## Lockout rules
 

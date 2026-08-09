@@ -6,6 +6,8 @@ kittyhack.log*
 .venv.old/
 .venv-ensure.lock
 .venv-ensure.lock.d/
+.runtime-update-pending
+.update-status-server.pid
 *.po~
 locales/*/LC_MESSAGES/messages.mo
 locales/.runtime_locale_state.json

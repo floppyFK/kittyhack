@@ -30,7 +30,10 @@ from .camera_config import (
 from .detection import _parse_yolo_detection_results
 
 if TYPE_CHECKING:
-    from tflite_runtime.interpreter import Interpreter
+    try:
+        from tflite_runtime.interpreter import Interpreter
+    except ImportError:
+        from ai_edge_litert.interpreter import Interpreter
 
 class ModelHandler:
     """Runs TFLite or YOLO inference on the live camera videostream."""
@@ -164,7 +167,10 @@ class ModelHandler:
     def load_model(self):
         """Load the TFLite interpreter or YOLO model (direct or worker process)."""
         if self.model == "tflite":
-            from tflite_runtime.interpreter import Interpreter
+            try:
+                from tflite_runtime.interpreter import Interpreter
+            except ImportError:
+                from ai_edge_litert.interpreter import Interpreter
             self._Interpreter = Interpreter
             self._yolo = None
             self._model_worker = None

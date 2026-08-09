@@ -38,6 +38,8 @@ Setup files: `setup/kittyhack.service`, `setup/kittyhack_control.service`, `setu
 | Subprocess wrappers (nmcli, systemctl, git, pip, …) | `src/system.py` | `update_kittyhack()`, `switch_wlan_connection()`, `apply_wlan_runtime_settings()`, `systemctl()` |
 | Version check / release notes / update-repo resolution | `src/helper.py` | `read_latest_kittyhack_version()`, `fetch_github_release_notes()`, `resolved_update_repo()` |
 | Door hardware | `src/magnets_rfid.py` | `Magnets` singleton (`Magnets.instance`), `queue_command("unlock_inside" | "lock_inside" | "unlock_outside" | "lock_outside")`, state getters |
+| TFLite / LiteRT inference | `src/model/model_handler.py` | `from ai_edge_litert.interpreter import Interpreter` (replaces `tflite_runtime` on Python 3.12+) |
+| Required Python pin | `setup/REQUIRED_PYTHON` | Currently `3.12`; enforced by `setup/ensure_venv.sh` |
 | DB access | `src/database.py` | `db_get_cats`, `db_get_motion_blocks`, `get_cat_settings_map`, backup helpers |
 | MQTT | `src/mqtt.py` | `MqttPublisher`, topics, `handle_manual_override()` bridge in backend |
 | REST API (PR #153, not yet merged to main) | `src/api.py` | Token storage, auth, Starlette routes, middleware |

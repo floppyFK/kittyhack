@@ -942,7 +942,13 @@ class KittyhackUpdater:
         pip_install_cmd = [
             "/bin/bash",
             "-c",
-            f"source {venv_activate} && pip install --timeout 120 --retries 10 --no-cache-dir -r {requirements_path}",
+            (
+                f"export PIP_CONFIG_FILE=/dev/null PIP_EXTRA_INDEX_URL= "
+                f"PIP_INDEX_URL=https://pypi.org/simple; "
+                f"source {venv_activate} && "
+                f"pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 "
+                f"--no-cache-dir -r {requirements_path}"
+            ),
         ]
         ensure_prepare_cmd = [
             "/bin/bash",

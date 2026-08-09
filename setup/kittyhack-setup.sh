@@ -597,7 +597,7 @@ install_remote_mode() {
         echo -e "  - python3, python3-venv, python3-pip, gettext"
         echo -e "  - rsync, git, curl, ca-certificates"
         echo -e "  - libgl1, libglib2.0-0"
-        echo -e "Zusatzlich: Es wird ein Python 3.11 Virtualenv erstellt und die Abhangigkeiten aus requirements_remote.txt installiert."
+        echo -e "Zusatzlich: Es wird ein Python 3.12 Virtualenv erstellt und die Abhangigkeiten aus requirements_remote.txt installiert."
         read -r -p "Mit diesen Installationen fortfahren? (y/N): " CONFIRM_REMOTE_MODE
     else
         echo -e "NOTE: The installation requires root rights. It is strongly recommended to install it on an separate system, which acts only as a kittyhack remote controller."
@@ -611,7 +611,7 @@ install_remote_mode() {
         echo -e "  - python3, python3-venv, python3-pip, gettext"
         echo -e "  - rsync, git, curl, ca-certificates"
         echo -e "  - libgl1, libglib2.0-0"
-        echo -e "Additionally: A Python 3.11 virtualenv will be created and dependencies from requirements_remote.txt will be installed."
+        echo -e "Additionally: A Python 3.12 virtualenv will be created and dependencies from requirements_remote.txt will be installed."
         read -r -p "Continue with these installations? (y/N): " CONFIRM_REMOTE_MODE
     fi
 

@@ -30,10 +30,10 @@ from .camera_config import (
 from .detection import _parse_yolo_detection_results
 
 if TYPE_CHECKING:
-    from tflite_runtime.interpreter import Interpreter
+    from ai_edge_litert.interpreter import Interpreter
 
 class ModelHandler:
-    """Runs TFLite or YOLO inference on the live camera videostream."""
+    """Runs TFLite/LiteRT or YOLO inference on the live camera videostream."""
 
     def __init__(self, 
                  model = "tflite",  # Can be instance of TfLite or Yolo
@@ -164,7 +164,8 @@ class ModelHandler:
     def load_model(self):
         """Load the TFLite interpreter or YOLO model (direct or worker process)."""
         if self.model == "tflite":
-            from tflite_runtime.interpreter import Interpreter
+            # LiteRT is the maintained successor of tflite-runtime (required for Python >= 3.12).
+            from ai_edge_litert.interpreter import Interpreter
             self._Interpreter = Interpreter
             self._yolo = None
             self._model_worker = None

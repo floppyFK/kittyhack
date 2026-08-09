@@ -239,14 +239,16 @@ pip_install_requirements() {
     fi
     [[ -f "$REQUIREMENTS_FILE" ]] || die "Missing ${REQUIREMENTS_FILE}"
 
-    # Avoid piwheels / extra indexes breaking hashed or pinned installs.
-    unset PIP_EXTRA_INDEX_URL || true
-    export PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.org/simple}"
+    # Force PyPI only. Raspberry Pi OS often enables piwheels via pip.conf /
+    # PIP_EXTRA_INDEX_URL, which can mix incompatible wheels with pinned deps.
+    export PIP_CONFIG_FILE=/dev/null
+    export PIP_EXTRA_INDEX_URL=
+    export PIP_INDEX_URL="https://pypi.org/simple"
 
     # shellcheck disable=SC1091
     source "${venv_dir}/bin/activate"
-    pip install --timeout 120 --retries 10 --no-cache-dir -U pip setuptools wheel
-    pip install --timeout 120 --retries 10 --no-cache-dir -r "$REQUIREMENTS_FILE"
+    pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 --no-cache-dir -U pip setuptools wheel
+    pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 --no-cache-dir -r "$REQUIREMENTS_FILE"
     deactivate || true
 }
 
@@ -287,13 +289,12 @@ smoke_test_venv() {
         fi
         warn "torch import failed (non-strict); continuing"
     fi
-    if ! "$py" -c 'import tflite_runtime' >/dev/null 2>&1 \
-        && ! "$py" -c 'import ai_edge_litert' >/dev/null 2>&1; then
+    if ! "$py" -c 'import ai_edge_litert' >/dev/null 2>&1; then
         if [[ "$SMOKE_STRICT" -eq 1 ]]; then
-            warn "Smoke test failed: tflite_runtime / ai_edge_litert"
+            warn "Smoke test failed: ai_edge_litert"
             return 1
         fi
-        warn "tflite/litert import failed (non-strict); continuing"
+        warn "ai_edge_litert import failed (non-strict); continuing"
     fi
     return 0
 }

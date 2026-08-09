@@ -5,8 +5,9 @@
 Allow a future Kittyhack release to change the required Python version (e.g. 3.11 → 3.13)
 without locking users out of the Web UI after an in-app update.
 
-v2.7.0 ships `setup/REQUIRED_PYTHON` = `3.11`. On all existing installs the new checks are a
-fast no-op; they establish the mechanism for a later bump.
+v2.8.0+ targets `setup/REQUIRED_PYTHON` = `3.12`. The venv dual-path (`--prepare` /
+`--apply`) was introduced in v2.7.0 so devices can migrate without deleting the working
+`.venv` first.
 
 ## Why not “recreate .venv inside Shiny on first start”?
 
@@ -59,10 +60,10 @@ devices have no control supervisor, so a control-only fix is incomplete.
 - Pip installs use `--no-cache-dir`; after a successful bootstrap / prepare / apply-swap
   (and after in-app updates), the pip download cache under `/root/.cache/pip` is purged.
 
-## Before raising `REQUIRED_PYTHON`
+## Before raising `REQUIRED_PYTHON` again
 
-1. Migrate `tflite-runtime` → `ai-edge-litert` (or another runtime with aarch64 wheels).
-2. Refresh `requirements.txt` for the target Python; validate on Pi 4 + Debian x64.
+1. Confirm aarch64 + x86_64 wheels exist for torch/torchvision/ai-edge-litert/ncnn.
+2. Refresh `requirements.txt` / `requirements_remote.txt` together and resolve pip conflicts on a Pi.
 3. Bump `setup/REQUIRED_PYTHON` in the same release that needs the new interpreter.
 4. Test: in-app update from previous tag → reboot → UI comes back; simulate failed pip and
    confirm old `.venv` remains bootable.

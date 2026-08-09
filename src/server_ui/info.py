@@ -1,6 +1,7 @@
 """Info tab, backups, changelogs, update flow."""
 
 import os
+import re
 import pandas as pd
 from datetime import datetime
 import time as tm
@@ -31,6 +32,7 @@ from src.shiny_wrappers import uix
 import src.startup as startup
 from src.server_ui.state import set_update_progress, get_update_progress
 from src.server_ui.context import SessionContext
+from src.server_ui.helpers import changelog_expandable_item
 
 _ = set_language(CONFIG["LANGUAGE"])
 
@@ -1182,14 +1184,42 @@ def register_info(input, output, session, ctx: SessionContext):
     @reactive.Effect
     @reactive.event(input.btn_changelogs)
     def show_changelogs():
-        changelog_text = Versioning.get_changelogs(
-            after_version="v1.0.0", language=CONFIG["LANGUAGE"]
+        update_mode = (
+            str(CONFIG.get("UPDATE_REPOSITORY_MODE") or "standard").strip().lower()
         )
+        entries = Versioning.list_changelogs(
+            after_version="v1.0.0",
+            language=CONFIG["LANGUAGE"],
+            include_beta=(update_mode == "beta"),
+        )
+        if not entries:
+            body = ui.markdown(_("No changelogs found."))
+        else:
+            rows = []
+            for idx, entry in enumerate(entries):
+                title = entry["version"]
+                if entry.get("is_beta"):
+                    title = f"{title} ({_('Beta')})"
+                # Drop a leading "# version" heading from the body — the row title
+                # already shows it — to avoid duplicating the version line.
+                body_md = entry.get("body") or ""
+                body_lines = body_md.splitlines()
+                if body_lines and re.match(
+                    r"^\s*#+\s*v?\d", body_lines[0], flags=re.IGNORECASE
+                ):
+                    body_md = "\n".join(body_lines[1:]).lstrip("\n")
+                rows.append(
+                    changelog_expandable_item(
+                        f"changelog_item_{idx}",
+                        title,
+                        ui.markdown(body_md or _("(No release notes.)")),
+                    )
+                )
+            body = ui.div(*rows, class_="changelog-accordion")
+
         ui.modal_show(
             ui.modal(
-                ui.div(
-                    ui.markdown(changelog_text),
-                ),
+                body,
                 title=_("Changelogs"),
                 easy_close=True,
                 size="xl",

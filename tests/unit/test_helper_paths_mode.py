@@ -220,6 +220,48 @@ def test_read_latest_kittyhack_version_standard_ignores_betas(monkeypatch):
     assert Versioning.read_latest_kittyhack_version(timeout=1) == "v2.6.4"
 
 
+def test_list_changelogs_hides_betas_unless_requested(tmp_path):
+    changelog_dir = tmp_path / "changelogs"
+    changelog_dir.mkdir()
+    (changelog_dir / "changelog_v2.6.4_en.md").write_text("# v2.6.4\n\nStable.\n", encoding="utf-8")
+    (changelog_dir / "changelog_v2.6.5_beta_1_en.md").write_text(
+        "# v2.6.5_beta_1\n\nBeta.\n", encoding="utf-8"
+    )
+    (changelog_dir / "changelog_v2.6.3_en.md").write_text("# v2.6.3\n\nOlder.\n", encoding="utf-8")
+
+    stable_only = Versioning.list_changelogs(
+        after_version="v1.0.0",
+        language="en",
+        include_beta=False,
+        changelog_dir=str(changelog_dir),
+    )
+    assert [e["version"] for e in stable_only] == ["v2.6.4", "v2.6.3"]
+    assert all(not e["is_beta"] for e in stable_only)
+
+    with_beta = Versioning.list_changelogs(
+        after_version="v1.0.0",
+        language="en",
+        include_beta=True,
+        changelog_dir=str(changelog_dir),
+    )
+    assert [e["version"] for e in with_beta] == [
+        "v2.6.5_beta_1",
+        "v2.6.4",
+        "v2.6.3",
+    ]
+    assert with_beta[0]["is_beta"] is True
+
+    # Stable of same base sorts above its betas
+    (changelog_dir / "changelog_v2.6.5_en.md").write_text("# v2.6.5\n\nRelease.\n", encoding="utf-8")
+    mixed = Versioning.list_changelogs(
+        after_version="v1.0.0",
+        language="en",
+        include_beta=True,
+        changelog_dir=str(changelog_dir),
+    )
+    assert [e["version"] for e in mixed][:2] == ["v2.6.5", "v2.6.5_beta_1"]
+
+
 def test_event_type_pretty_and_uuid():
     pretty = EventType.to_pretty_string(EventType.CAT_WENT_INSIDE)
     assert isinstance(pretty, str) and len(pretty) > 0

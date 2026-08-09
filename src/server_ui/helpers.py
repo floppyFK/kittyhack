@@ -49,6 +49,30 @@ def collapsible_section(section_id, title, intro, content):
     )
 
 
+def changelog_expandable_item(item_id: str, title: str, body_content):
+    """Compact single-line changelog row that expands to the full release text."""
+    return ui.div(
+        ui.tags.button(
+            ui.tags.span("\u25b6", class_="changelog-item-chevron"),
+            ui.tags.span(title, class_="changelog-item-title"),
+            class_="changelog-item-btn btn",
+            type="button",
+            **{
+                "data-bs-toggle": "collapse",
+                "data-bs-target": f"#{item_id}_body",
+                "aria-expanded": "false",
+                "aria-controls": f"{item_id}_body",
+            },
+        ),
+        ui.div(
+            ui.div(body_content, class_="changelog-item-body-inner"),
+            id=f"{item_id}_body",
+            class_="collapse changelog-item-body",
+        ),
+        class_="changelog-item",
+    )
+
+
 def wlan_add_dialog():
     """Show the modal dialog for adding a new WLAN connection."""
     m = ui.modal(

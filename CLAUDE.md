@@ -42,7 +42,7 @@ Setup files: `setup/kittyhack.service`, `setup/kittyhack_control.service`, `setu
 | MQTT | `src/mqtt.py` | `MqttPublisher`, topics, `handle_manual_override()` bridge in backend |
 | REST API (PR #153, not yet merged to main) | `src/api.py` | Token storage, auth, Starlette routes, middleware |
 | Translations | `locales/{de,en}/LC_MESSAGES/messages.{po,mo}` | gettext, compile with `msgfmt` |
-| Per-release changelogs | `doc/changelogs/changelog_vX.Y.Z_{en,de}.md` | One file per version per language |
+| Per-release changelogs | `doc/changelogs/changelog_vX.Y.Z_{en,de}.md` | One file per version per language. Beta releases use `changelog_vX.Y.Z_beta_N_{en,de}.md` and are only shown in the Info “Show all Changelogs” UI when `UPDATE_REPOSITORY_MODE=beta`. |
 | Static assets (JS toggles, CSS) | `www/` | `server-ui.js` handles conditional-visibility toggles |
 
 ## Config pattern (adding a new setting)

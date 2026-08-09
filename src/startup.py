@@ -74,6 +74,9 @@ def _get_highest_changelog_version() -> str | None:
     best_tuple = None
     for path in glob.glob(pattern):
         name = os.path.basename(path)
+        # Ignore beta changelogs for the fallback version (stable installs only).
+        if "_beta_" in name:
+            continue
         match = re.search(r"changelog_v(\d+(?:\.\d+)+)_", name)
         if not match:
             continue

@@ -677,67 +677,130 @@ class Versioning:
             return False
 
     @staticmethod
-    def get_changelogs(after_version: str = "v1.0.0", language: str = "en") -> str:
-        """Concatenate local changelog markdown newer than ``after_version``."""
+    def changelog_version_sort_key(version_label: str) -> tuple:
+        """Sort key for changelog versions; stables sort above same-base betas."""
+        label = str(version_label or "").strip()
+        if Versioning.is_beta_version_tag(label):
+            return Versioning.beta_version_sort_key(label)
+        parsed = Versioning.parse_version(label)
+        # Pad to 3 components then append a sentinel so stable > any beta of same base.
+        if len(parsed) < 3:
+            parsed = tuple(list(parsed) + [0] * (3 - len(parsed)))
+        return (parsed[0], parsed[1], parsed[2], 10**9)
 
-        changelog_dir = "doc/changelogs/"
-        changelog_entries = []
+    @staticmethod
+    def list_changelogs(
+        after_version: str = "v1.0.0",
+        language: str = "en",
+        *,
+        include_beta: bool = False,
+        changelog_dir: str | None = None,
+    ) -> list[dict]:
+        """Return local changelog entries newer than ``after_version``, newest first.
 
-        # If the directory doesn't exist, return an empty list
+        Each entry is ``{"version": "vX.Y.Z[_beta_N]", "is_beta": bool, "body": str}``.
+        Beta files (``changelog_vX.Y.Z_beta_N_*.md``) are omitted unless ``include_beta``.
+        """
+        changelog_dir = changelog_dir or "doc/changelogs/"
         if not os.path.exists(changelog_dir):
             logging.warning(f"Changelog directory '{changelog_dir}' not found")
             return []
 
-        # Get all changelog files
         try:
             files = os.listdir(changelog_dir)
         except Exception as e:
             logging.error(f"Failed to list changelog directory: {e}")
             return []
 
-        # First try to find files in the requested language
-        matching_files = [f for f in files if f.startswith("changelog_v") and f.endswith(f"_{language}.md")]
+        # changelog_v2.7.0_en.md  or  changelog_v2.6.5_beta_1_de.md
+        file_re = re.compile(
+            r"^changelog_(v\d+(?:\.\d+)+(?:_beta_\d+)?)_([a-z]{2})\.md$",
+            re.IGNORECASE,
+        )
 
-        # If no files found in the requested language, fall back to English
-        if not matching_files and language != "en":
-            matching_files = [f for f in files if f.startswith("changelog_v") and f.endswith("_en.md")]
-            logging.info(f"No changelogs found for language '{language}', falling back to English")
+        lang = (language or "en").lower()
+        matching: list[tuple[str, str, bool]] = []  # (version, filename, is_beta)
+        for filename in files:
+            m = file_re.match(filename)
+            if not m:
+                continue
+            version_label = m.group(1)
+            file_lang = m.group(2).lower()
+            if file_lang != lang:
+                continue
+            is_beta = Versioning.is_beta_version_tag(version_label)
+            if is_beta and not include_beta:
+                continue
+            matching.append((version_label, filename, is_beta))
 
-        if not matching_files:
+        # Fall back to English if nothing found for the requested language.
+        if not matching and lang != "en":
+            for filename in files:
+                m = file_re.match(filename)
+                if not m or m.group(2).lower() != "en":
+                    continue
+                version_label = m.group(1)
+                is_beta = Versioning.is_beta_version_tag(version_label)
+                if is_beta and not include_beta:
+                    continue
+                matching.append((version_label, filename, is_beta))
+            if matching:
+                logging.info(
+                    f"No changelogs found for language '{language}', falling back to English"
+                )
+
+        if not matching:
             logging.warning("No changelog files found")
             return []
 
-        # Extract version from filename pattern "changelog_vX.Y.Z_lang.md"
-        version_pattern = re.compile(r"changelog_v([0-9]+\.[0-9]+\.[0-9]+)_")
+        after_key = (
+            Versioning.changelog_version_sort_key(after_version)
+            if after_version != "unknown"
+            else (0, 0, 0, -1)
+        )
 
-        # Filter files for versions newer than after_version
-        newer_files = []
-        after_version_tuple = Versioning.parse_version(after_version) if after_version != "unknown" else (0, 0, 0)
+        newer: list[tuple[tuple, str, str, bool]] = []
+        for version_label, filename, is_beta in matching:
+            key = Versioning.changelog_version_sort_key(version_label)
+            if after_version == "unknown" or key > after_key:
+                newer.append((key, version_label, filename, is_beta))
 
-        for file in matching_files:
-            match = version_pattern.search(file)
-            if match:
-                file_version = match.group(1)
-                file_version_tuple = Versioning.parse_version(file_version)
+        newer.sort(key=lambda item: item[0], reverse=True)
 
-                # Only include if this version is newer than after_version
-                if after_version == "unknown" or file_version_tuple > after_version_tuple:
-                    newer_files.append((file_version_tuple, file))
-
-        # Sort files by version (newest first)
-        newer_files.sort(reverse=True)
-
-        # Read contents of each file and add to changelog entries
-        for _, filename in newer_files:
+        entries: list[dict] = []
+        for _key, version_label, filename, is_beta in newer:
             try:
-                with open(os.path.join(changelog_dir, filename), 'r', encoding='utf-8') as f:
-                    changelog_entries.append(f.read())
+                with open(
+                    os.path.join(changelog_dir, filename), "r", encoding="utf-8"
+                ) as f:
+                    body = f.read()
             except Exception as e:
                 logging.error(f"Failed to read changelog file {filename}: {e}")
+                continue
+            entries.append(
+                {"version": version_label, "is_beta": is_beta, "body": body}
+            )
+        return entries
 
-        # Join all entries with a horizontal line separator
+    @staticmethod
+    def get_changelogs(
+        after_version: str = "v1.0.0",
+        language: str = "en",
+        *,
+        include_beta: bool = False,
+        changelog_dir: str | None = None,
+    ) -> str:
+        """Concatenate local changelog markdown newer than ``after_version``."""
+        entries = Versioning.list_changelogs(
+            after_version=after_version,
+            language=language,
+            include_beta=include_beta,
+            changelog_dir=changelog_dir,
+        )
+        if not entries:
+            return ""
         separator = "\n\n" + "-" * 80 + "\n\n"
-        return separator.join(changelog_entries)
+        return separator.join(entry["body"] for entry in entries)
 
     @staticmethod
     def parse_version(v_str):
@@ -1438,6 +1501,7 @@ resolved_update_repo = Versioning.resolved_update_repo
 read_latest_kittyhack_version = Versioning.read_latest_kittyhack_version
 fetch_github_release_notes = Versioning.fetch_github_release_notes
 execute_update_step = Versioning.execute_update_step
+list_changelogs = Versioning.list_changelogs
 get_changelogs = Versioning.get_changelogs
 parse_version = Versioning.parse_version
 get_free_disk_space = SystemInfo.get_free_disk_space

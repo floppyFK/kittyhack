@@ -50,7 +50,10 @@ devices have no control supervisor, so a control-only fix is incomplete.
 
 - Never `rm -rf .venv` before a smoke-tested replacement exists.
 - Prefer side-by-side `.venv.new` + atomic rename.
-- Keep `.venv.old` for one generation (manual recovery via SSH).
+- Keep `.venv.old` for one generation after a successful swap (manual recovery via SSH).
+  On the *next* Python migration, `--prepare` deletes `.venv.old` **before** creating
+  `.venv.new`, so peak disk is `.venv` + `.venv.new` (not three full copies). After
+  reboot `--apply` swaps and recreates `.venv.old` from the previous live `.venv`.
 - `TimeoutStartSec=3600` so a cold torch download on a Pi does not get SIGKILL’d.
 - File lock (`.venv-ensure.lock`) so control + kittyhack `ExecStartPre` do not race.
 - Pip installs use `--no-cache-dir`; after a successful bootstrap / prepare / apply-swap

@@ -375,6 +375,12 @@ do_prepare() {
     current="$(venv_python_mm "$VENV")"
     log "prepare: mismatch (have '${current:-none}', need '${REQUIRED_PYTHON}'); building ${VENV_NEW}"
     mark_update_pending
+    # Drop the previous recovery copy before allocating another full venv.
+    # Live recovery during prepare/apply is still the current .venv until swap.
+    if [[ -d "$VENV_OLD" ]]; then
+        log "prepare: removing previous ${VENV_OLD} to free disk space before creating ${VENV_NEW}"
+        rm -rf "$VENV_OLD"
+    fi
     create_venv_at "$VENV_NEW"
     pip_install_requirements "$VENV_NEW"
     SMOKE_STRICT=1

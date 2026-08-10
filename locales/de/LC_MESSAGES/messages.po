@@ -3187,6 +3187,17 @@ msgstr "Automatisches Update auf **{}**:"
 msgid "Update Kittyhack"
 msgstr "Kittyhack aktualisieren"
 
+#, python-brace-format
+msgid ""
+"Update is disabled because less than 2 GB of free disk space is available "
+"({:.1f} MB free). Free up space first (e.g. reduce the max amount of "
+"pictures in the database), then reload this page."
+msgstr ""
+"Das Update ist deaktiviert, weil weniger als 2 GB freier Speicherplatz "
+"verfügbar sind ({:.1f} MB frei). Gib zuerst Speicherplatz frei (z.B. durch "
+"Reduzierung der maximalen Anzahl an Bildern in der Datenbank) und lade "
+"dann diese Seite neu."
+
 msgid "Important: A stable WLAN connection is required for the update process."
 msgstr ""
 "Wichtig: Eine stabile WLAN-Verbindung ist für den Update-Prozess "

@@ -1161,40 +1161,15 @@ class EventsRepo:
             logging.info(f"[DATABASE] Wrote {index}/{len(elements)} images to the database (Limit per event: {max_images}).")
 
             # Check if the number of photos exceeds the maximum allowed number
-            cursor.execute("SELECT COUNT(*) FROM events WHERE deleted != 1")
-            total_photos = cursor.fetchone()[0]
-            if 'MAX_PHOTOS_COUNT' in CONFIG and total_photos > CONFIG['MAX_PHOTOS_COUNT']:
-                excess_photos = total_photos - CONFIG['MAX_PHOTOS_COUNT']
-                logging.info(f"[DATABASE] Number of photos exceeds limit. Deleting {excess_photos} oldest photos.")
-                cursor.execute(f"SELECT id, created_at, block_id FROM events WHERE deleted != 1 ORDER BY created_at ASC LIMIT {excess_photos}")
-                photos_to_delete = cursor.fetchall()
-                ids_to_purge: List[int] = []
-                blocks_to_invalidate: List[int] = []
-                for photo in photos_to_delete:
-                    photo_id = photo[0]
-                    logging.debug(f"[DATABASE] Deleting photo ID: {photo_id}, created_at: {photo[1]}")
-                    try:
-                        blocks_to_invalidate.append(int(photo[2]))
-                    except Exception:
-                        pass
-                    cursor.execute("UPDATE events SET deleted = 1, original_image = NULL, modified_image = NULL, thumbnail = NULL WHERE id = ?", (photo_id,))
-                    ids_to_purge.append(photo_id)
-
-                # Remove filesystem-stored original image and thumbnail for purged IDs
-                if ids_to_purge:
-                    removed_orig, removed_thumb = EventsRepo._remove_event_image_files(ids_to_purge)
-                    removed_bundles = EventsRepo._remove_event_bundle_files(blocks_to_invalidate)
-                    logging.info(
-                        f"[DATABASE] Purged oldest photos "
-                        f"(filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}, bundles={removed_bundles})."
+            if 'MAX_PHOTOS_COUNT' in CONFIG:
+                try:
+                    max_count = int(CONFIG['MAX_PHOTOS_COUNT'])
+                except Exception:
+                    max_count = 0
+                if max_count > 0:
+                    EventsRepo._purge_excess_photos_with_cursor(
+                        cursor, max_count, has_motion_timeline=has_motion_timeline
                     )
-                    if blocks_to_invalidate and has_motion_timeline:
-                        unique_blocks = sorted({int(b) for b in blocks_to_invalidate})
-                        placeholders = ",".join("?" for _ in unique_blocks)
-                        cursor.execute(
-                            f"DELETE FROM motion_timeline WHERE block_id IN ({placeholders})",
-                            unique_blocks,
-                        )
 
             if timeline_entries and has_motion_timeline:
                 try:
@@ -1222,6 +1197,108 @@ class EventsRepo:
             for db_photo_id in db_photo_ids['id']:
                 EventsRepo.get_thubmnail_by_id(database, db_photo_id)
             logging.info(f"[DATABASE] Generated {len(db_photo_ids)} thumbnails for block ID '{db_block_id}'. (Filesystem storage)")
+
+    @staticmethod
+    def _purge_excess_photos_with_cursor(
+        cursor, max_count: int, *, has_motion_timeline: bool | None = None
+    ) -> int:
+        """Soft-delete oldest active events until count <= max_count. Returns purged count."""
+        if max_count <= 0:
+            return 0
+
+        cursor.execute("SELECT COUNT(*) FROM events WHERE deleted != 1")
+        total_photos = int(cursor.fetchone()[0] or 0)
+        if total_photos <= max_count:
+            return 0
+
+        excess_photos = total_photos - max_count
+        logging.info(
+            f"[DATABASE] Number of photos exceeds limit. Deleting {excess_photos} oldest photos."
+        )
+        cursor.execute(
+            "SELECT id, created_at, block_id FROM events "
+            "WHERE deleted != 1 ORDER BY created_at ASC LIMIT ?",
+            (excess_photos,),
+        )
+        photos_to_delete = cursor.fetchall()
+        ids_to_purge: List[int] = []
+        blocks_to_invalidate: List[int] = []
+        for photo in photos_to_delete:
+            photo_id = photo[0]
+            logging.debug(
+                f"[DATABASE] Deleting photo ID: {photo_id}, created_at: {photo[1]}"
+            )
+            try:
+                blocks_to_invalidate.append(int(photo[2]))
+            except Exception:
+                pass
+            cursor.execute(
+                "UPDATE events SET deleted = 1, original_image = NULL, "
+                "modified_image = NULL, thumbnail = NULL WHERE id = ?",
+                (photo_id,),
+            )
+            ids_to_purge.append(photo_id)
+
+        if not ids_to_purge:
+            return 0
+
+        removed_orig, removed_thumb = EventsRepo._remove_event_image_files(ids_to_purge)
+        removed_bundles = EventsRepo._remove_event_bundle_files(blocks_to_invalidate)
+        logging.info(
+            f"[DATABASE] Purged oldest photos "
+            f"(filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}, "
+            f"bundles={removed_bundles})."
+        )
+
+        if has_motion_timeline is None:
+            try:
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='motion_timeline'"
+                )
+                has_motion_timeline = bool(cursor.fetchone())
+            except Exception:
+                has_motion_timeline = False
+
+        if blocks_to_invalidate and has_motion_timeline:
+            unique_blocks = sorted({int(b) for b in blocks_to_invalidate})
+            placeholders = ",".join("?" for _ in unique_blocks)
+            cursor.execute(
+                f"DELETE FROM motion_timeline WHERE block_id IN ({placeholders})",
+                unique_blocks,
+            )
+
+        return len(ids_to_purge)
+
+    @staticmethod
+    def purge_excess_photos(
+        database: str, max_count: int | None = None
+    ) -> Result:
+        """Enforce ``MAX_PHOTOS_COUNT`` immediately; message is the purged count."""
+        if max_count is None:
+            try:
+                max_count = int(CONFIG.get("MAX_PHOTOS_COUNT") or 0)
+            except Exception:
+                max_count = 0
+        if max_count <= 0:
+            return Result(True, "0")
+
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return result
+
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            cursor = conn.cursor()
+            purged = EventsRepo._purge_excess_photos_with_cursor(cursor, int(max_count))
+            conn.commit()
+            conn.close()
+            return Result(True, str(purged))
+        except Exception as e:
+            error_message = f"[DATABASE] Failed to purge excess photos: {e}"
+            logging.error(error_message)
+            return Result(False, error_message)
+        finally:
+            DatabaseCore.release_database()
 
     @staticmethod
     def cleanup_orphan_image_files(database: str) -> Result:
@@ -2072,6 +2149,7 @@ read_event_from_json = EventsRepo.read_event_from_json
 get_detected_object_by_index = EventsRepo.get_detected_object_by_index
 write_motion_block_to_db = EventsRepo.write_motion_block_to_db
 cleanup_orphan_image_files = EventsRepo.cleanup_orphan_image_files
+purge_excess_photos = EventsRepo.purge_excess_photos
 db_get_motion_blocks = EventsRepo.db_get_motion_blocks
 cleanup_deleted_events = EventsRepo.cleanup_deleted_events
 get_ids_with_original_blob = EventsRepo.get_ids_with_original_blob

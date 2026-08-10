@@ -447,8 +447,36 @@ def register_info(input, output, session, ctx: SessionContext):
         elif (not versions_mismatch) and ctx.version_mismatch_warning_shown:
             ctx.version_mismatch_warning_shown = False
 
-            # Check if the current version is different from the latest version
+        # 2 GB hard gate only when REQUIRED_PYTHON or requirements.txt will change.
+        from src.helper import MIN_HEAVY_UPDATE_FREE_DISK_MB
+
+        startup.free_disk_space = SystemInfo.get_free_disk_space()
         latest_version = CONFIG["LATEST_VERSION"]
+        needs_heavy_disk = False
+        if latest_version and latest_version != "unknown":
+            try:
+                needs_heavy_disk = bool(
+                    Versioning.update_changes_runtime_files(latest_version)
+                )
+            except Exception as e:
+                logging.warning(f"[UPDATE] Heavy-update file compare failed: {e}")
+                needs_heavy_disk = False
+        update_disabled = bool(
+            needs_heavy_disk and startup.free_disk_space < MIN_HEAVY_UPDATE_FREE_DISK_MB
+        )
+        update_disk_warning = None
+        if update_disabled:
+            update_disk_warning = ui.div(
+                ui.markdown(
+                    f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
+                    + _(
+                        "Update is disabled because less than 2 GB of free disk space is available ({:.1f} MB free). "
+                        "Free up space first (e.g. reduce the max amount of pictures in the database), then reload this page."
+                    ).format(startup.free_disk_space)
+                ),
+            )
+
+        # Check if the current version is different from the latest version
         if latest_version == "unknown":
             ui_update_kittyhack = ui.div(
                 ui.markdown(
@@ -485,6 +513,7 @@ def register_info(input, output, session, ctx: SessionContext):
                                 _("Update target device only"),
                                 icon=icon_svg("download"),
                                 class_="btn-default",
+                                disabled=update_disabled,
                             ),
                             ui.br(),
                             ui.br(),
@@ -493,6 +522,7 @@ def register_info(input, output, session, ctx: SessionContext):
                                 _("Update this device only"),
                                 icon=icon_svg("download"),
                                 class_="btn-default",
+                                disabled=update_disabled,
                             ),
                             style_="text-align: center;",
                         ),
@@ -537,6 +567,7 @@ def register_info(input, output, session, ctx: SessionContext):
                             _("Update Kittyhack"),
                             icon=icon_svg("download"),
                             class_="btn-primary",
+                            disabled=update_disabled,
                         ),
                         ui.br(),
                         ui.help_text(
@@ -574,6 +605,7 @@ def register_info(input, output, session, ctx: SessionContext):
                                     _("Update target device only"),
                                     icon=icon_svg("download"),
                                     class_="btn-default",
+                                    disabled=update_disabled,
                                 ),
                                 ui.br(),
                                 ui.br(),
@@ -582,6 +614,7 @@ def register_info(input, output, session, ctx: SessionContext):
                                     _("Update this device only"),
                                     icon=icon_svg("download"),
                                     class_="btn-default",
+                                    disabled=update_disabled,
                                 ),
                                 style_="text-align: center;",
                             ),
@@ -671,6 +704,7 @@ def register_info(input, output, session, ctx: SessionContext):
                                 _("Update target device only"),
                                 icon=icon_svg("download"),
                                 class_="btn-default",
+                                disabled=update_disabled,
                             ),
                             ui.br(),
                             ui.br(),
@@ -679,6 +713,7 @@ def register_info(input, output, session, ctx: SessionContext):
                                 _("Update this device only"),
                                 icon=icon_svg("download"),
                                 class_="btn-default",
+                                disabled=update_disabled,
                             ),
                             style_="text-align: center;",
                         ),
@@ -720,11 +755,18 @@ def register_info(input, output, session, ctx: SessionContext):
                             _("Force update now"),
                             icon=icon_svg("rotate"),
                             class_="btn-default",
+                            disabled=update_disabled,
                         ),
                         style_="text-align: center;",
                     ),
                 ),
             )
+            if update_disk_warning:
+                ui_update_kittyhack = (
+                    ui_update_kittyhack,
+                    ui.br(),
+                    update_disk_warning,
+                )
 
             # Check if the original kittyflap database file still exists
         kittyflap_db_file_exists = os.path.exists(CONFIG["DATABASE_PATH"])

@@ -242,6 +242,10 @@ _BETA_SORT_RE = re.compile(r"(?i)^v?(\d+)\.(\d+)\.(\d+)_beta_(\d+)$")
 # Non-beta release tags: e.g. v2.6.3 / 2.6.3 (rejects branch names like "main").
 _STABLE_TAG_RE = re.compile(r"(?i)^v?\d+(?:\.\d+)+$")
 
+# Files whose change implies a heavy update (venv rebuild and/or full pip reinstall).
+HEAVY_UPDATE_REPO_FILES = ("setup/REQUIRED_PYTHON", "requirements.txt")
+MIN_HEAVY_UPDATE_FREE_DISK_MB = 2048
+
 class Versioning:
     """Git/version comparison, update-repo resolution, changelogs, release notes."""
 
@@ -633,6 +637,182 @@ class Versioning:
         except Exception as e:
             logging.error(f"Failed to fetch the latest version from GitHub ({owner}/{repo}): {e}")
             return "unknown"
+
+    @staticmethod
+    def resolve_update_checkout_ref(target_version: str | None = None) -> str | None:
+        """Return the git ref for an update target (tag, branch, or short SHA)."""
+        _owner, _repo, update_ref, _git_url, _mode = Versioning.resolved_update_repo()
+        if update_ref is not None:
+            ver = str(target_version or "").strip()
+            if "@" in ver:
+                _branch, maybe_sha = ver.rsplit("@", 1)
+                if maybe_sha.strip():
+                    return maybe_sha.strip()
+            return update_ref
+        ver = str(target_version or "").strip()
+        if not ver or ver == "unknown":
+            return None
+        return ver
+
+    @staticmethod
+    def _normalize_repo_file_for_compare(rel_path: str, text: str | None) -> str | None:
+        if text is None:
+            return None
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        if rel_path.endswith("REQUIRED_PYTHON"):
+            return normalized.strip()
+        return normalized
+
+    @staticmethod
+    def _read_local_repo_file(rel_path: str) -> str | None:
+        from src.paths import kittyhack_root
+
+        path = os.path.join(kittyhack_root(), rel_path)
+        try:
+            if not os.path.exists(path):
+                return None
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception as e:
+            logging.debug(f"[UPDATE] Failed to read local {rel_path}: {e}")
+            return None
+
+    @staticmethod
+    def _read_repo_file_at_ref_via_git(ref: str, rel_path: str) -> tuple[bool, str | None]:
+        """Return ``(resolved, content)`` for ``ref:rel_path`` via local git.
+
+        ``resolved`` is True when git answered for a usable ref (content may still
+        be None if the path is absent). False means the ref could not be queried.
+        """
+        from src.paths import kittyhack_root
+
+        candidates = [ref]
+        if "/" not in ref and not ref.startswith(("v", "refs/")):
+            candidates.append(f"origin/{ref}")
+        for candidate in candidates:
+            try:
+                result = subprocess.run(
+                    ["/bin/git", "show", f"{candidate}:{rel_path}"],
+                    cwd=kittyhack_root(),
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    return True, result.stdout
+                err = (result.stderr or "").lower()
+                if (
+                    "unknown revision" in err
+                    or "bad revision" in err
+                    or "invalid object name" in err
+                    or "bad object" in err
+                ):
+                    continue
+                # Usable ref, but path missing (or other non-fatal path error).
+                if "does not exist" in err or "exists on disk" in err:
+                    return True, None
+            except Exception as e:
+                logging.debug(f"[UPDATE] git show {candidate}:{rel_path} failed: {e}")
+        return False, None
+
+    @staticmethod
+    def _read_repo_file_at_ref_via_github(
+        owner: str, repo: str, ref: str, rel_path: str, timeout: float = 8
+    ) -> tuple[bool, str | None]:
+        """Return ``(resolved, content)`` from GitHub at ``ref``.
+
+        ``resolved`` True + content None means the file is confirmed missing (404).
+        """
+        import base64
+
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{rel_path}"
+        try:
+            response = requests.get(
+                url,
+                params={"ref": ref},
+                headers={"Accept": "application/vnd.github.raw"},
+                timeout=timeout,
+            )
+            if response.status_code == 200:
+                return True, response.text
+            if response.status_code == 404:
+                return True, None
+            # Fallback: JSON + base64 payload.
+            response = requests.get(url, params={"ref": ref}, timeout=timeout)
+            if response.status_code == 404:
+                return True, None
+            response.raise_for_status()
+            payload = response.json()
+            if isinstance(payload, dict) and payload.get("encoding") == "base64":
+                raw = payload.get("content") or ""
+                return True, base64.b64decode(raw).decode("utf-8", errors="replace")
+        except Exception as e:
+            logging.debug(
+                f"[UPDATE] Failed to fetch {owner}/{repo}/{rel_path}@{ref} from GitHub: {e}"
+            )
+        return False, None
+
+    @staticmethod
+    def update_changes_runtime_files(
+        target_version: str | None = None, *, use_git_show: bool = False
+    ) -> bool:
+        """True if target differs from local in REQUIRED_PYTHON or requirements.txt.
+
+        Comparison is best-effort. If the target file cannot be resolved at all,
+        that path is skipped so a transient network/git error does not block light
+        updates behind the 2 GB gate.
+        """
+        ref = Versioning.resolve_update_checkout_ref(target_version)
+        if not ref:
+            return False
+
+        owner, repo, update_ref, _git_url, _mode = Versioning.resolved_update_repo()
+        github_refs = [ref]
+        if update_ref and update_ref not in github_refs:
+            github_refs.append(update_ref)
+
+        for rel_path in HEAVY_UPDATE_REPO_FILES:
+            local = Versioning._normalize_repo_file_for_compare(
+                rel_path, Versioning._read_local_repo_file(rel_path)
+            )
+            # Prefer HEAD for "installed" side when available (ignores dirty tree).
+            head_ok, head_text = Versioning._read_repo_file_at_ref_via_git("HEAD", rel_path)
+            if head_ok:
+                local = Versioning._normalize_repo_file_for_compare(rel_path, head_text)
+
+            remote_ok = False
+            remote_text: str | None = None
+            if use_git_show:
+                remote_ok, remote_text = Versioning._read_repo_file_at_ref_via_git(
+                    ref, rel_path
+                )
+                if not remote_ok and update_ref:
+                    remote_ok, remote_text = Versioning._read_repo_file_at_ref_via_git(
+                        f"origin/{update_ref}", rel_path
+                    )
+            if not remote_ok:
+                for gh_ref in github_refs:
+                    remote_ok, remote_text = Versioning._read_repo_file_at_ref_via_github(
+                        owner, repo, gh_ref, rel_path
+                    )
+                    if remote_ok:
+                        break
+
+            if not remote_ok:
+                logging.debug(
+                    f"[UPDATE] Could not resolve target {rel_path} at {ref}; skipping compare"
+                )
+                continue
+
+            remote = Versioning._normalize_repo_file_for_compare(rel_path, remote_text)
+            if local != remote:
+                logging.info(
+                    f"[UPDATE] Heavy-update marker: {rel_path} differs from target ref '{ref}'"
+                )
+                return True
+
+        return False
 
     @staticmethod
     def fetch_github_release_notes(version: str) -> str:
@@ -1499,6 +1679,7 @@ normalize_repo_spec = Versioning.normalize_repo_spec
 check_custom_update_repo_reachable = Versioning.check_custom_update_repo_reachable
 resolved_update_repo = Versioning.resolved_update_repo
 read_latest_kittyhack_version = Versioning.read_latest_kittyhack_version
+update_changes_runtime_files = Versioning.update_changes_runtime_files
 fetch_github_release_notes = Versioning.fetch_github_release_notes
 execute_update_step = Versioning.execute_update_step
 list_changelogs = Versioning.list_changelogs

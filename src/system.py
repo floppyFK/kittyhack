@@ -902,18 +902,6 @@ class KittyhackUpdater:
             except Exception:
                 pass
 
-        # Step 0: Stop backend process (only for local kittyhack.service updates).
-        if halt_backend_first:
-            if progress_callback:
-                progress_callback(0, "Stopping backend process", "")
-            try:
-                from src.helper import sigterm_monitor
-                import time as tm
-                sigterm_monitor.halt_backend()
-                tm.sleep(1.0)
-            except Exception as e:
-                logging.error(f"Failed to stop backend process: {e}")
-
         requirements_path = os.path.join(kittyhack_root(), "requirements.txt")
         venv_activate = os.path.join(kittyhack_root(), ".venv", "bin", "activate")
         pip_install_cmd = [
@@ -927,25 +915,25 @@ class KittyhackUpdater:
         did_update_deps = False
 
         # Resolve the configured update source (standard vs custom repo / branch).
+        versioning_cls = None
+        update_git_url = None
+        update_ref = None
+        update_mode = "standard"
         try:
-            from src.helper import Versioning
-            update_owner, update_repo, update_ref, update_git_url, update_mode = Versioning.resolved_update_repo()
+            from src.helper import Versioning as versioning_cls
+            _owner, _repo, update_ref, update_git_url, update_mode = (
+                versioning_cls.resolved_update_repo()
+            )
         except Exception as e:
-            logging.debug(f"[UPDATE] Versioning.resolved_update_repo not available ({e}); using existing origin")
+            logging.debug(
+                f"[UPDATE] Versioning.resolved_update_repo not available ({e}); using existing origin"
+            )
             update_git_url = None
             update_ref = None
             update_mode = "standard"
 
         try:
-            # 1
-            _run_step(1, "Reverting local changes", ["/bin/git", "restore", "."])
-            # 2
-            _run_step(2, "Cleaning untracked files", ["/bin/git", "clean", "-fd"])
-
-            # Hash current requirements after a clean tree, so the comparison is meaningful.
-            req_hash_before = _sha256_file(requirements_path)
-
-            # Point origin at the configured update source (best-effort).
+            # Point origin at the configured update source (best-effort) before fetch.
             if update_git_url:
                 try:
                     subprocess.run(
@@ -959,8 +947,58 @@ class KittyhackUpdater:
                 except Exception as e:
                     logging.warning(f"[UPDATE] Failed to update origin URL to {update_git_url}: {e}")
 
-            # 3
+            # Fetch first so we can compare REQUIRED_PYTHON / requirements.txt before
+            # stopping the backend or wiping the working tree.
             _run_step(3, f"Fetching latest version {latest_version}", ["/bin/git", "fetch", "--all", "--tags"])
+
+            # 2 GB hard gate only when those runtime files change on the target ref.
+            needs_heavy_disk = False
+            if versioning_cls is not None:
+                try:
+                    needs_heavy_disk = bool(
+                        versioning_cls.update_changes_runtime_files(
+                            latest_version, use_git_show=True
+                        )
+                    )
+                except Exception as e:
+                    logging.warning(f"[UPDATE] Heavy-update file compare failed: {e}")
+                    needs_heavy_disk = False
+            if needs_heavy_disk:
+                from src.helper import MIN_HEAVY_UPDATE_FREE_DISK_MB, SystemInfo
+
+                try:
+                    free_mb = SystemInfo.get_free_disk_space()
+                except Exception as e:
+                    logging.error(f"[UPDATE] Failed to check free disk space: {e}")
+                    free_mb = 0.0
+                if free_mb < MIN_HEAVY_UPDATE_FREE_DISK_MB:
+                    msg = _(
+                        "Update is disabled because less than 2 GB of free disk space is available ({:.1f} MB free). "
+                        "Free up space first (e.g. reduce the max amount of pictures in the database), then reload this page."
+                    ).format(free_mb)
+                    logging.error(f"[UPDATE] {msg}")
+                    return False, msg
+
+            # Step 0: Stop backend process (only for local kittyhack.service updates).
+            if halt_backend_first:
+                if progress_callback:
+                    progress_callback(0, "Stopping backend process", "")
+                try:
+                    from src.helper import sigterm_monitor
+                    import time as tm
+                    sigterm_monitor.halt_backend()
+                    tm.sleep(1.0)
+                except Exception as e:
+                    logging.error(f"Failed to stop backend process: {e}")
+
+            # 1
+            _run_step(1, "Reverting local changes", ["/bin/git", "restore", "."])
+            # 2
+            _run_step(2, "Cleaning untracked files", ["/bin/git", "clean", "-fd"])
+
+            # Hash current requirements after a clean tree, so the comparison is meaningful.
+            req_hash_before = _sha256_file(requirements_path)
+
             # 4 — checkout either a tag (standard / custom+tag) or a branch (custom+branch).
             if update_ref is not None:
                 # Branch mode: create/reset a local branch tracking origin/<ref> to HEAD.

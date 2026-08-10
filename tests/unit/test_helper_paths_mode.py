@@ -115,19 +115,52 @@ def test_parse_repo_spec():
     assert owner == "floppyFK" and repo == "kittyhack" and ref == "v2.6.3_beta_1"
 
 
-def test_resolved_update_repo_modes(monkeypatch):
+def test_update_changes_runtime_files(monkeypatch):
+    """Heavy-update detection compares REQUIRED_PYTHON and requirements.txt."""
     import src.baseconfig as baseconfig
 
-    monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY_MODE", "beta")
-    monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY", "")
-    owner, repo, ref, url, mode = Versioning.resolved_update_repo()
-    assert mode == "beta"
-    assert owner == "floppyFK" and repo == "kittyhack" and ref is None
-    assert url.endswith("floppyFK/kittyhack.git")
-
     monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY_MODE", "standard")
-    _o, _r, _ref, _url, mode = Versioning.resolved_update_repo()
-    assert mode == "standard"
+    monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY", "")
+
+    monkeypatch.setattr(Versioning, "resolve_update_checkout_ref", lambda _v=None: "v9.9.9")
+    monkeypatch.setattr(
+        Versioning,
+        "_read_local_repo_file",
+        lambda rel: "3.11\n" if rel.endswith("REQUIRED_PYTHON") else "pkg==1\n",
+    )
+    monkeypatch.setattr(
+        Versioning,
+        "_read_repo_file_at_ref_via_git",
+        lambda ref, rel: (True, "3.11\n")
+        if rel.endswith("REQUIRED_PYTHON")
+        else (True, "pkg==1\n"),
+    )
+    monkeypatch.setattr(
+        Versioning,
+        "_read_repo_file_at_ref_via_github",
+        lambda owner, repo, ref, rel, timeout=8: (True, "3.12\n")
+        if rel.endswith("REQUIRED_PYTHON")
+        else (True, "pkg==1\n"),
+    )
+    assert Versioning.update_changes_runtime_files("v9.9.9") is True
+
+    monkeypatch.setattr(
+        Versioning,
+        "_read_repo_file_at_ref_via_github",
+        lambda owner, repo, ref, rel, timeout=8: (True, "3.11\n")
+        if rel.endswith("REQUIRED_PYTHON")
+        else (True, "pkg==2\n"),
+    )
+    assert Versioning.update_changes_runtime_files("v9.9.9") is True
+
+    monkeypatch.setattr(
+        Versioning,
+        "_read_repo_file_at_ref_via_github",
+        lambda owner, repo, ref, rel, timeout=8: (True, "3.11\n")
+        if rel.endswith("REQUIRED_PYTHON")
+        else (True, "pkg==1\n"),
+    )
+    assert Versioning.update_changes_runtime_files("v9.9.9") is False
 
 
 def test_read_latest_kittyhack_version_beta_channel(monkeypatch):

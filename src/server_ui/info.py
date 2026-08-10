@@ -452,15 +452,16 @@ def register_info(input, output, session, ctx: SessionContext):
 
         startup.free_disk_space = SystemInfo.get_free_disk_space()
         latest_version = CONFIG["LATEST_VERSION"]
-        needs_heavy_disk = False
+        runtime_changes = {
+            path: False for path in ("setup/REQUIRED_PYTHON", "requirements.txt")
+        }
         if latest_version and latest_version != "unknown":
             try:
-                needs_heavy_disk = bool(
-                    Versioning.update_changes_runtime_files(latest_version)
-                )
+                runtime_changes = Versioning.get_runtime_file_changes(latest_version)
             except Exception as e:
                 logging.warning(f"[UPDATE] Heavy-update file compare failed: {e}")
-                needs_heavy_disk = False
+        needs_heavy_disk = any(runtime_changes.values())
+        is_venv_update = bool(runtime_changes.get("setup/REQUIRED_PYTHON"))
         update_disabled = bool(
             needs_heavy_disk and startup.free_disk_space < MIN_HEAVY_UPDATE_FREE_DISK_MB
         )
@@ -474,6 +475,20 @@ def register_info(input, output, session, ctx: SessionContext):
                         "Free up space first (e.g. reduce the max amount of pictures in the database), then reload this page."
                     ).format(startup.free_disk_space)
                 ),
+                style_="overflow-wrap: anywhere; word-break: break-word; max-width: 100%;",
+            )
+        venv_update_notice = None
+        if is_venv_update and not update_disabled:
+            venv_update_notice = ui.div(
+                ui.markdown(
+                    f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
+                    + _(
+                        "This update includes a Python runtime change and can take **up to 20 minutes**. "
+                        "After the reboot, finishing the update can take **another 10–20 minutes**. "
+                        "Do **not** power-cycle or switch off the Kittyflap during that time."
+                    )
+                ),
+                style_="overflow-wrap: anywhere; word-break: break-word; max-width: 100%;",
             )
 
         # Check if the current version is different from the latest version
@@ -526,6 +541,8 @@ def register_info(input, output, session, ctx: SessionContext):
                             ),
                             style_="text-align: center;",
                         ),
+                        update_disk_warning if update_disk_warning else ui.div(),
+                        venv_update_notice if venv_update_notice else ui.div(),
                     ),
                 )
         elif not Versioning.is_same_kittyhack_version(
@@ -570,6 +587,8 @@ def register_info(input, output, session, ctx: SessionContext):
                             disabled=update_disabled,
                         ),
                         ui.br(),
+                        update_disk_warning if update_disk_warning else ui.div(),
+                        venv_update_notice if venv_update_notice else ui.div(),
                         ui.help_text(
                             _(
                                 "Important: A stable WLAN connection is required for the update process."
@@ -717,6 +736,8 @@ def register_info(input, output, session, ctx: SessionContext):
                             ),
                             style_="text-align: center;",
                         ),
+                        update_disk_warning if update_disk_warning else ui.div(),
+                        venv_update_notice if venv_update_notice else ui.div(),
                     ),
                 )
 
@@ -742,6 +763,11 @@ def register_info(input, output, session, ctx: SessionContext):
                 force_update_help = _(
                     "Re-install the currently selected version from the configured update source."
                 )
+            # Show disk/venv notices next to Force update when the primary Update
+            # button is not shown (already-latest / unknown-version paths).
+            show_notices_at_force = Versioning.is_same_kittyhack_version(
+                startup.git_version, latest_version
+            ) or latest_version == "unknown"
             ui_update_kittyhack = (
                 ui_update_kittyhack,
                 ui.hr(),
@@ -759,14 +785,18 @@ def register_info(input, output, session, ctx: SessionContext):
                         ),
                         style_="text-align: center;",
                     ),
+                    (
+                        update_disk_warning
+                        if show_notices_at_force and update_disk_warning
+                        else ui.div()
+                    ),
+                    (
+                        venv_update_notice
+                        if show_notices_at_force and venv_update_notice
+                        else ui.div()
+                    ),
                 ),
             )
-            if update_disk_warning:
-                ui_update_kittyhack = (
-                    ui_update_kittyhack,
-                    ui.br(),
-                    update_disk_warning,
-                )
 
             # Check if the original kittyflap database file still exists
         kittyflap_db_file_exists = os.path.exists(CONFIG["DATABASE_PATH"])
@@ -1532,6 +1562,17 @@ def register_info(input, output, session, ctx: SessionContext):
         else:
             initial_max_steps = 1
 
+        # Detect Python-runtime (venv) updates before opening the progress modal.
+        is_venv_update = False
+        if latest_version and latest_version != "unknown":
+            try:
+                is_venv_update = bool(
+                    Versioning.update_changes_required_python(latest_version)
+                )
+            except Exception as e:
+                logging.warning(f"[UPDATE] REQUIRED_PYTHON compare failed: {e}")
+                is_venv_update = False
+
         set_update_progress(
             in_progress=True,
             step=1,
@@ -1540,6 +1581,7 @@ def register_info(input, output, session, ctx: SessionContext):
             detail="",
             result=None,
             error_msg="",
+            is_venv_update=is_venv_update,
         )
 
         # Start the update in a background thread so the UI can update immediately
@@ -1842,6 +1884,21 @@ def register_info(input, output, session, ctx: SessionContext):
             ui.modal_remove()
             return
 
+        timing_note = ui.markdown(
+            _("*This step may take several minutes. Please be patient.*")
+        )
+        if state.get("is_venv_update"):
+            timing_note = ui.div(
+                ui.markdown(
+                    _(
+                        "This update includes a Python runtime change and can take **up to 20 minutes**. "
+                        "After the reboot, finishing the update can take **another 10–20 minutes**. "
+                        "Do **not** power-cycle or switch off the Kittyflap during that time."
+                    )
+                ),
+                style_="overflow-wrap: anywhere; word-break: break-word; max-width: 100%;",
+            )
+
         ui.modal_show(
             ui.modal(
                 ui.div(
@@ -1856,7 +1913,7 @@ def register_info(input, output, session, ctx: SessionContext):
                                     <div id="in_progress_dots" style="margin-left: 0.2em; color: #888; font-size: 0.95em;"></div>
                                 </div>
                             </div>
-                            <div style="color: #888;">
+                            <div style="color: #888; overflow-wrap: anywhere; word-break: break-word; max-width: 100%;">
                     """),
                     ui.output_text("update_progress_detail"),
                     ui.HTML("""
@@ -1883,9 +1940,7 @@ def register_info(input, output, session, ctx: SessionContext):
                     ui.markdown(
                         _("Do not close this page until the update is finished!")
                     ),
-                    ui.markdown(
-                        _("*This step may take several minutes. Please be patient.*")
-                    ),
+                    timing_note,
                 ),
                 title=_("Updating Kittyhack..."),
                 easy_close=False,
@@ -1944,11 +1999,28 @@ def register_info(input, output, session, ctx: SessionContext):
             # Always remove any open modal first
             ui.modal_remove()
             set_update_progress(result="reboot_dialog", in_progress=False)
-            ui.modal_show(
-                ui.modal(
+            reboot_body = [
+                ui.markdown(
                     _(
                         "A restart is required to apply the update. Please click the 'Reboot' button to restart the Kittyflap."
-                    ),
+                    )
+                )
+            ]
+            if state.get("is_venv_update"):
+                reboot_body.append(
+                    ui.div(
+                        ui.markdown(
+                            _(
+                                "After the reboot, finishing the update can take **another 10–20 minutes**. "
+                                "Do **not** power-cycle or switch off the Kittyflap during that time."
+                            )
+                        ),
+                        style_="overflow-wrap: anywhere; word-break: break-word; max-width: 100%; margin-top: 0.75em;",
+                    )
+                )
+            ui.modal_show(
+                ui.modal(
+                    ui.div(*reboot_body),
                     title=_("Restart required"),
                     easy_close=False,
                     footer=ui.div(
@@ -1966,11 +2038,24 @@ def register_info(input, output, session, ctx: SessionContext):
         ):
             ui.modal_remove()
             set_update_progress(result="reboot_dialog", in_progress=False)
+            error_text = str(state.get("error_msg") or "").strip()
             ui.modal_show(
                 ui.modal(
                     ui.div(
                         ui.markdown(_("An error occurred during the update process:")),
-                        ui.markdown(f"```\n{state['error_msg']}\n```"),
+                        ui.div(
+                            error_text,
+                            style_=(
+                                "margin-top: 0.5em; padding: 0.75em; "
+                                "border: 1px solid var(--bs-border-color, #dee2e6); "
+                                "border-radius: 0.375rem; "
+                                "background: var(--bs-tertiary-bg, #f8f9fa); "
+                                "color: var(--bs-body-color, #212529); "
+                                "font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; "
+                                "font-size: 0.9em; white-space: pre-wrap; "
+                                "overflow-wrap: anywhere; word-break: break-word; max-width: 100%;"
+                            ),
+                        ),
                         ui.br(),
                         ui.markdown(
                             _(

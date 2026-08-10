@@ -28,6 +28,7 @@ update_progress_state = {
     "detail": "",
     "result": None,
     "error_msg": "",
+    "is_venv_update": False,
 }
 update_progress_lock = threading.Lock()
 

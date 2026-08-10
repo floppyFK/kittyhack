@@ -754,18 +754,19 @@ class Versioning:
         return False, None
 
     @staticmethod
-    def update_changes_runtime_files(
+    def get_runtime_file_changes(
         target_version: str | None = None, *, use_git_show: bool = False
-    ) -> bool:
-        """True if target differs from local in REQUIRED_PYTHON or requirements.txt.
+    ) -> dict[str, bool]:
+        """Return which heavy-update files differ from the target ref.
 
-        Comparison is best-effort. If the target file cannot be resolved at all,
-        that path is skipped so a transient network/git error does not block light
-        updates behind the 2 GB gate.
+        Keys are paths from ``HEAVY_UPDATE_REPO_FILES``. A path is omitted (or
+        False) when it could not be resolved — transient failures must not look
+        like a change.
         """
+        changes = {path: False for path in HEAVY_UPDATE_REPO_FILES}
         ref = Versioning.resolve_update_checkout_ref(target_version)
         if not ref:
-            return False
+            return changes
 
         owner, repo, update_ref, _git_url, _mode = Versioning.resolved_update_repo()
         github_refs = [ref]
@@ -810,9 +811,29 @@ class Versioning:
                 logging.info(
                     f"[UPDATE] Heavy-update marker: {rel_path} differs from target ref '{ref}'"
                 )
-                return True
+                changes[rel_path] = True
 
-        return False
+        return changes
+
+    @staticmethod
+    def update_changes_runtime_files(
+        target_version: str | None = None, *, use_git_show: bool = False
+    ) -> bool:
+        """True if target differs from local in REQUIRED_PYTHON or requirements.txt."""
+        changes = Versioning.get_runtime_file_changes(
+            target_version, use_git_show=use_git_show
+        )
+        return any(changes.values())
+
+    @staticmethod
+    def update_changes_required_python(
+        target_version: str | None = None, *, use_git_show: bool = False
+    ) -> bool:
+        """True if ``setup/REQUIRED_PYTHON`` differs from the update target (venv rebuild)."""
+        changes = Versioning.get_runtime_file_changes(
+            target_version, use_git_show=use_git_show
+        )
+        return bool(changes.get("setup/REQUIRED_PYTHON"))
 
     @staticmethod
     def fetch_github_release_notes(version: str) -> str:
@@ -1680,6 +1701,8 @@ check_custom_update_repo_reachable = Versioning.check_custom_update_repo_reachab
 resolved_update_repo = Versioning.resolved_update_repo
 read_latest_kittyhack_version = Versioning.read_latest_kittyhack_version
 update_changes_runtime_files = Versioning.update_changes_runtime_files
+update_changes_required_python = Versioning.update_changes_required_python
+get_runtime_file_changes = Versioning.get_runtime_file_changes
 fetch_github_release_notes = Versioning.fetch_github_release_notes
 execute_update_step = Versioning.execute_update_step
 list_changelogs = Versioning.list_changelogs

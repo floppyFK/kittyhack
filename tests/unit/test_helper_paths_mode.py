@@ -143,6 +143,9 @@ def test_update_changes_runtime_files(monkeypatch):
         else (True, "pkg==1\n"),
     )
     assert Versioning.update_changes_runtime_files("v9.9.9") is True
+    assert Versioning.update_changes_required_python("v9.9.9") is True
+    assert Versioning.get_runtime_file_changes("v9.9.9")["setup/REQUIRED_PYTHON"] is True
+    assert Versioning.get_runtime_file_changes("v9.9.9")["requirements.txt"] is False
 
     monkeypatch.setattr(
         Versioning,
@@ -152,6 +155,7 @@ def test_update_changes_runtime_files(monkeypatch):
         else (True, "pkg==2\n"),
     )
     assert Versioning.update_changes_runtime_files("v9.9.9") is True
+    assert Versioning.update_changes_required_python("v9.9.9") is False
 
     monkeypatch.setattr(
         Versioning,
@@ -161,6 +165,7 @@ def test_update_changes_runtime_files(monkeypatch):
         else (True, "pkg==1\n"),
     )
     assert Versioning.update_changes_runtime_files("v9.9.9") is False
+    assert Versioning.update_changes_required_python("v9.9.9") is False
 
 
 def test_read_latest_kittyhack_version_beta_channel(monkeypatch):

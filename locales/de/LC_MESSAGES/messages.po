@@ -2986,6 +2986,16 @@ msgstr ""
 msgid "Kittyhack configuration updated successfully."
 msgstr "Kittyhack Konfiguration erfolgreich aktualisiert."
 
+#, python-brace-format
+msgid "Deleted {} oldest photos to apply the new retention limit."
+msgstr ""
+"{} älteste Fotos wurden gelöscht, um das neue Aufbewahrungslimit "
+"anzuwenden."
+
+#, python-brace-format
+msgid "Failed to apply the new photo retention limit: {}"
+msgstr "Das neue Foto-Aufbewahrungslimit konnte nicht angewendet werden: {}"
+
 msgid "Model change applied."
 msgstr "Modelländerung angewendet."
 

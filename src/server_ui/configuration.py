@@ -13,7 +13,7 @@ from src.baseconfig import (
     configure_logging,
     DEFAULT_CONFIG,
 )
-from src.helper import Versioning
+from src.helper import Versioning, SystemInfo
 from src.system import (
     DependencyInstaller,
     KittyhackUpdater,
@@ -21,6 +21,7 @@ from src.system import (
 from src.paths import kittyhack_root
 from src.mode import is_remote_mode
 from src.model import YoloModel
+from src.database import EventsRepo
 from src.backend import (
     restart_mqtt,
     update_mqtt_config,
@@ -34,6 +35,7 @@ from src.server_ui.state import (
 )
 from src.server_ui.helpers import _disable_numeric_input, collapsible_section
 from src.server_ui.context import SessionContext
+import src.startup as startup
 
 _ = set_language(CONFIG["LANGUAGE"])
 
@@ -2233,6 +2235,10 @@ def register_configuration(input, output, session, ctx: SessionContext):
             str(CONFIG.get("UPDATE_REPOSITORY_MODE") or "standard").strip().lower()
         )
         _prev_update_repo = str(CONFIG.get("UPDATE_REPOSITORY") or "").strip()
+        try:
+            prev_max_photos_count = int(CONFIG.get("MAX_PHOTOS_COUNT") or 0)
+        except Exception:
+            prev_max_photos_count = 0
 
         camera_settings_changed = (
             CONFIG.get("CAMERA_SOURCE") != input.camera_source()
@@ -2697,6 +2703,60 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 duration=5,
                 type="message",
             )
+
+            # Apply photo retention immediately when the limit was reduced.
+            try:
+                new_max_photos_count = int(CONFIG.get("MAX_PHOTOS_COUNT") or 0)
+            except Exception:
+                new_max_photos_count = prev_max_photos_count
+            if (
+                new_max_photos_count > 0
+                and new_max_photos_count < prev_max_photos_count
+            ):
+                try:
+                    purge_result = EventsRepo.purge_excess_photos(
+                        CONFIG["KITTYHACK_DATABASE_PATH"],
+                        max_count=new_max_photos_count,
+                    )
+                    if purge_result.success:
+                        try:
+                            purged_count = int(purge_result.message or "0")
+                        except Exception:
+                            purged_count = 0
+                        if purged_count > 0:
+                            ui.notification_show(
+                                _(
+                                    "Deleted {} oldest photos to apply the new retention limit."
+                                ).format(purged_count),
+                                duration=10,
+                                type="message",
+                            )
+                            try:
+                                startup.free_disk_space = (
+                                    SystemInfo.get_free_disk_space()
+                                )
+                            except Exception:
+                                pass
+                    else:
+                        ui.notification_show(
+                            _(
+                                "Failed to apply the new photo retention limit: {}"
+                            ).format(purge_result.message),
+                            duration=12,
+                            type="error",
+                        )
+                except Exception as e:
+                    logging.error(
+                        f"[CONFIG] Failed to purge excess photos after lowering MAX_PHOTOS_COUNT: {e}"
+                    )
+                    ui.notification_show(
+                        _(
+                            "Failed to apply the new photo retention limit: {}"
+                        ).format(e),
+                        duration=12,
+                        type="error",
+                    )
+
             model_reload_failed = False
 
             if selected_model_changed or inference_device_changed:

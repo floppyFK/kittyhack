@@ -44,8 +44,11 @@ devices have no control supervisor, so a control-only fix is incomplete.
 3. Existing pip-into-`.venv` step is skipped when `.venv.new` was prepared (deps already there).
 4. Systemd unit files are refreshed (include `ExecStartPre`).
 5. UI asks for reboot (existing behaviour).
-6. On boot, `ExecStartPre --apply` shows the status page if needed, swaps `.venv.new` → `.venv`,
-   then the service starts and the normal UI comes back.
+6. On boot, `ExecStartPre --apply` shows the status page if needed, swaps `.venv.new` → `.venv`
+   (rewriting embedded shebang paths), then the service starts and the normal UI comes back.
+
+**Important:** systemd must start the app via `.venv/bin/python -m uvicorn …` (not `.venv/bin/uvicorn`).
+Console scripts embed absolute shebangs that break when `.venv.new` is renamed to `.venv`.
 
 ## Lockout rules
 

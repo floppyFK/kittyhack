@@ -721,7 +721,7 @@ Group=root
 WorkingDirectory=${KITTYHACK_INSTALL_DIR}
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${KITTYHACK_INSTALL_DIR}/.venv/bin"
 ExecStartPre=/bin/bash ${KITTYHACK_INSTALL_DIR}/setup/ensure_venv.sh --apply --root ${KITTYHACK_INSTALL_DIR}
-ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 80 --ws-ping-interval 30 --ws-ping-timeout 120
+ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 80 --ws-ping-interval 30 --ws-ping-timeout 120
 Restart=always
 RestartSec=5
 TimeoutStartSec=3600
@@ -941,7 +941,7 @@ Group=root
 WorkingDirectory=${KITTYHACK_INSTALL_DIR}
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${KITTYHACK_INSTALL_DIR}/.venv/bin"
 ExecStartPre=/bin/bash ${KITTYHACK_INSTALL_DIR}/setup/ensure_venv.sh --apply --root ${KITTYHACK_INSTALL_DIR}
-ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 80 --ws-ping-interval 30 --ws-ping-timeout 120
+ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 80 --ws-ping-interval 30 --ws-ping-timeout 120
 Restart=always
 RestartSec=5
 TimeoutStartSec=3600

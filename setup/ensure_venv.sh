@@ -299,6 +299,44 @@ smoke_test_venv() {
     return 0
 }
 
+rewrite_venv_paths_after_rename() {
+    # venv console scripts embed absolute shebangs (e.g. #!/.../.venv.new/bin/python).
+    # After `mv .venv.new .venv`, those shebangs break with systemd 203/EXEC
+    # ("No such file or directory") even though `python -m …` still works.
+    local venv_dir="$1"
+    local old_prefix="$2"
+    local new_prefix="$3"
+    local bin_dir="${venv_dir}/bin"
+    local rewritten=0
+
+    [[ -d "$bin_dir" ]] || return 0
+    [[ -n "$old_prefix" && -n "$new_prefix" && "$old_prefix" != "$new_prefix" ]] || return 0
+
+    local f
+    for f in "$bin_dir"/*; do
+        [[ -e "$f" ]] || continue
+        # Skip binaries / symlinks; only rewrite text entry-point scripts.
+        if [[ -L "$f" || ! -f "$f" ]]; then
+            continue
+        fi
+        if ! head -c 2 "$f" 2>/dev/null | grep -q '#!'; then
+            continue
+        fi
+        if grep -Fq "$old_prefix" "$f" 2>/dev/null; then
+            sed -i "s|${old_prefix}|${new_prefix}|g" "$f"
+            rewritten=$((rewritten + 1))
+        fi
+    done
+
+    if [[ -f "${venv_dir}/pyvenv.cfg" ]] && grep -Fq "$old_prefix" "${venv_dir}/pyvenv.cfg" 2>/dev/null; then
+        sed -i "s|${old_prefix}|${new_prefix}|g" "${venv_dir}/pyvenv.cfg"
+    fi
+
+    if [[ "$rewritten" -gt 0 ]]; then
+        log "Rewrote ${rewritten} venv script path(s) after rename (${old_prefix} -> ${new_prefix})"
+    fi
+}
+
 atomic_swap_new_to_current() {
     [[ -d "$VENV_NEW" ]] || die "atomic_swap: ${VENV_NEW} missing"
     smoke_test_venv "$VENV_NEW" || die "atomic_swap: smoke test failed for ${VENV_NEW}"
@@ -309,6 +347,7 @@ atomic_swap_new_to_current() {
         mv "$VENV" "$VENV_OLD"
     fi
     mv "$VENV_NEW" "$VENV"
+    rewrite_venv_paths_after_rename "$VENV" "$VENV_NEW" "$VENV"
 
     # Keep one previous venv for manual recovery; prune only if smoke of new current fails
     # (should not happen after tests above).
@@ -318,6 +357,12 @@ atomic_swap_new_to_current() {
         mv "$VENV_OLD" "$VENV"
         die "Restored previous venv after failed post-swap smoke test"
     fi
+
+    # Catch broken console-script shebangs early (systemd ExecStart used to call bin/uvicorn).
+    if ! "${VENV}/bin/python" -m uvicorn --help >/dev/null 2>&1; then
+        die "Post-swap check failed: python -m uvicorn does not run"
+    fi
+
     log "Swap complete. Active Python: $(venv_python_mm "$VENV")"
 }
 

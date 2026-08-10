@@ -315,7 +315,7 @@ class DependencyInstaller:
         logging.warning("[MODEL] openvino package not found. Attempting to install via pip...")
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "openvino"],
+                [sys.executable, "-m", "pip", "install", "--no-cache-dir", "openvino"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -780,6 +780,39 @@ class KittyhackUpdater:
     """Kittyhack update install, hostname, and base-package upgrades."""
 
     @staticmethod
+    def purge_pip_cache() -> None:
+        """Best-effort removal of pip's download cache (never raises)."""
+        try:
+            venv_pip = os.path.join(kittyhack_root(), ".venv", "bin", "pip")
+            candidates = []
+            if os.path.isfile(venv_pip) and os.access(venv_pip, os.X_OK):
+                candidates.append([venv_pip, "cache", "purge"])
+            candidates.append([sys.executable, "-m", "pip", "cache", "purge"])
+            for cmd in candidates:
+                try:
+                    subprocess.run(
+                        cmd,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                except Exception:
+                    pass
+            for cache_dir in (
+                "/root/.cache/pip",
+                os.path.join(os.path.expanduser("~"), ".cache", "pip"),
+            ):
+                try:
+                    if os.path.isdir(cache_dir):
+                        shutil.rmtree(cache_dir, ignore_errors=True)
+                        logging.info(f"[UPDATE] Removed pip cache directory '{cache_dir}'")
+                except Exception:
+                    pass
+        except Exception as e:
+            logging.debug(f"[UPDATE] pip cache purge ignored error: {e}")
+
+    @staticmethod
     def update_kittyhack(
         progress_callback=None,
         latest_version=None,
@@ -909,7 +942,7 @@ class KittyhackUpdater:
         pip_install_cmd = [
             "/bin/bash",
             "-c",
-            f"source {venv_activate} && pip install --timeout 120 --retries 10 -r {requirements_path}",
+            f"source {venv_activate} && pip install --timeout 120 --retries 10 --no-cache-dir -r {requirements_path}",
         ]
         ensure_prepare_cmd = [
             "/bin/bash",
@@ -1118,6 +1151,7 @@ class KittyhackUpdater:
                 except Exception as rollback_e:
                     logging.error(f"Rollback failed: {rollback_e}")
             return False, str(e)
+        KittyhackUpdater.purge_pip_cache()
         return True, "Update completed"
 
     @staticmethod
@@ -1582,7 +1616,7 @@ class LabelStudioInstall:
 
             # Step 2: Install pip and dependencies
             ok, pip_upgrade_output = ServiceOps.run_with_progress(
-                [venv_python, "-m", "pip", "install", "--upgrade", "pip"],
+                [venv_python, "-m", "pip", "install", "--no-cache-dir", "--upgrade", "pip"],
                 progress_callback,
                 2,
                 _("Upgrading pip..."),
@@ -1595,7 +1629,7 @@ class LabelStudioInstall:
 
             # Step 3: Install Label Studio
             ok, pip_output = ServiceOps.run_with_progress(
-                [venv_python, "-m", "pip", "install", "label-studio"],
+                [venv_python, "-m", "pip", "install", "--no-cache-dir", "label-studio"],
                 progress_callback,
                 3,
                 _("Installing Label Studio..."),
@@ -1643,6 +1677,7 @@ class LabelStudioInstall:
                 return False
             logging.info("[SYSTEM] Label Studio systemd daemon reloaded.")
 
+            KittyhackUpdater.purge_pip_cache()
             return True
         except Exception as e:
             logging.error(f"[SYSTEM] Error installing Label Studio: {e}")
@@ -1664,7 +1699,7 @@ class LabelStudioInstall:
             # Step 1: Upgrade Label Studio
             venv_python = os.path.join(LABELSTUDIO_PATH, LABELSTUDIO_VENV, "bin", "python")
             ok, pip_output = ServiceOps.run_with_progress(
-                [venv_python, "-m", "pip", "install", "--upgrade", "label-studio"],
+                [venv_python, "-m", "pip", "install", "--no-cache-dir", "--upgrade", "label-studio"],
                 progress_callback,
                 1,
                 _("Upgrading Label Studio..."),
@@ -1675,6 +1710,7 @@ class LabelStudioInstall:
                 return False
             logging.info("[SYSTEM] Label Studio upgraded in virtual environment.")
 
+            KittyhackUpdater.purge_pip_cache()
             return True
         except Exception as e:
             logging.error(f"[SYSTEM] Error updating Label Studio: {e}")
@@ -1724,6 +1760,7 @@ get_wlan_connections = WlanManager.get_wlan_connections
 get_default_gateways = WlanManager.get_default_gateways
 is_gateway_reachable = WlanManager.is_gateway_reachable
 update_kittyhack = KittyhackUpdater.update_kittyhack
+purge_pip_cache = KittyhackUpdater.purge_pip_cache
 ensure_target_boot_service_semantics = KittyhackUpdater.ensure_target_boot_service_semantics
 upgrade_base_system_packages = KittyhackUpdater.upgrade_base_system_packages
 get_hostname = KittyhackUpdater.get_hostname

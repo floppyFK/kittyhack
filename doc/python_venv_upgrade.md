@@ -53,6 +53,8 @@ devices have no control supervisor, so a control-only fix is incomplete.
 - Keep `.venv.old` for one generation (manual recovery via SSH).
 - `TimeoutStartSec=3600` so a cold torch download on a Pi does not get SIGKILL’d.
 - File lock (`.venv-ensure.lock`) so control + kittyhack `ExecStartPre` do not race.
+- Pip installs use `--no-cache-dir`; after a successful bootstrap / prepare / apply-swap
+  (and after in-app updates), the pip download cache under `/root/.cache/pip` is purged.
 
 ## Before raising `REQUIRED_PYTHON`
 

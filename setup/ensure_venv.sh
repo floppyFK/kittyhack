@@ -250,6 +250,23 @@ pip_install_requirements() {
     deactivate || true
 }
 
+purge_pip_cache() {
+    # Free leftover wheel downloads from older installs/updates. Never fail the caller.
+    log "Purging pip download cache (best-effort)..."
+    if [[ -x "${VENV}/bin/pip" ]]; then
+        "${VENV}/bin/pip" cache purge >/dev/null 2>&1 || true
+    fi
+    if [[ -x "${VENV_NEW}/bin/pip" ]]; then
+        "${VENV_NEW}/bin/pip" cache purge >/dev/null 2>&1 || true
+    fi
+    if command -v pip3 >/dev/null 2>&1; then
+        pip3 cache purge >/dev/null 2>&1 || true
+    elif command -v pip >/dev/null 2>&1; then
+        pip cache purge >/dev/null 2>&1 || true
+    fi
+    rm -rf /root/.cache/pip "${HOME:-/root}/.cache/pip" 2>/dev/null || true
+}
+
 smoke_test_venv() {
     local venv_dir="$1"
     local py="${venv_dir}/bin/python"
@@ -335,6 +352,7 @@ do_bootstrap() {
     SMOKE_STRICT=1
     smoke_test_venv "$VENV" || die "bootstrap smoke test failed"
     rm -rf "$VENV_NEW" "$VENV_OLD"
+    purge_pip_cache
     log "bootstrap OK ($(venv_python_mm "$VENV"))"
 }
 
@@ -348,6 +366,8 @@ do_prepare() {
             rm -rf "$VENV_NEW"
         fi
         clear_update_pending
+        # Only purge after a real prepare that may have left downloads; skip the
+        # no-op match path so routine updates stay quiet when there is no cache work.
         return 0
     fi
 
@@ -364,6 +384,7 @@ do_prepare() {
         die "prepare smoke test failed; left existing .venv untouched"
     fi
     mark_update_pending
+    purge_pip_cache
     log "prepare OK: ${VENV_NEW} ready for --apply on next service start/reboot"
 }
 
@@ -395,6 +416,7 @@ _do_apply_work() {
         if smoke_test_venv "$VENV_NEW"; then
             atomic_swap_new_to_current
             clear_update_pending
+            purge_pip_cache
             return 0
         fi
         warn "Found ${VENV_NEW} but smoke failed; removing and continuing"
@@ -420,6 +442,7 @@ _do_apply_work() {
     fi
     atomic_swap_new_to_current
     clear_update_pending
+    purge_pip_cache
     return 0
 }
 

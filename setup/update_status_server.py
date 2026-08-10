@@ -18,19 +18,31 @@ TEXTS = {
         "title": "Update in progress",
         "heading": "Update in progress…",
         "body": (
-            "Kittyhack is finishing the update. This can take several minutes."
+            "Kittyhack is finishing the update. This can take about 10–20 minutes."
         ),
-        "warn": "Please do not switch off or reboot the Kittyflap.",
-        "hint": "This page refreshes automatically. The normal interface will appear when the update is done.",
+        "warn": (
+            "Please do not switch off, power-cycle, or reboot the Kittyflap "
+            "during this time."
+        ),
+        "hint": (
+            "This page refreshes automatically. The normal interface will appear "
+            "when the update is done."
+        ),
     },
     "de": {
         "title": "Aktualisierung läuft",
         "heading": "Aktualisierung läuft…",
         "body": (
-            "Kittyhack schließt die Aktualisierung ab. Das kann einige Minuten dauern."
+            "Kittyhack schließt die Aktualisierung ab. Das kann etwa 10–20 Minuten dauern."
         ),
-        "warn": "Bitte schalte die Kittyflap nicht aus und starte sie nicht neu.",
-        "hint": "Diese Seite wird automatisch aktualisiert. Die normale Oberfläche erscheint, sobald die Aktualisierung fertig ist.",
+        "warn": (
+            "Bitte schalte die Kittyflap in dieser Zeit nicht aus, "
+            "starte sie nicht neu und unterbrich nicht die Stromversorgung."
+        ),
+        "hint": (
+            "Diese Seite wird automatisch aktualisiert. Die normale Oberfläche "
+            "erscheint, sobald die Aktualisierung fertig ist."
+        ),
     },
 }
 
@@ -96,7 +108,7 @@ def _html(lang: str) -> bytes:
       box-shadow: var(--shadow); padding: 28px 24px;
     }}
     h1 {{ font-size: 1.55rem; letter-spacing: -0.02em; margin: 0 0 14px; }}
-    p {{ margin: 0.55rem 0; }}
+    p {{ margin: 0.55rem 0; overflow-wrap: anywhere; word-break: break-word; }}
     .warn {{ font-weight: 700; color: var(--text); }}
     .muted {{ color: var(--muted); font-size: 0.95rem; }}
     .dot {{

@@ -4373,9 +4373,6 @@ msgstr "Für dieses Ereignis wurde keine detaillierte Zeitleiste aufgezeichnet."
 #~ msgid "Changelog"
 #~ msgstr "Changelog"
 
-#~ msgid "All cats"
-#~ msgstr "Alle Katzen"
-
 #~ msgid "MQTT camera image publish interval"
 #~ msgstr "MQTT Kamera Bild Update-Intervall"
 

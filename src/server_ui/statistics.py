@@ -357,7 +357,8 @@ def register_statistics(input, output, session, ctx: SessionContext):
     @output
     @render.ui
     def ui_statistics_dashboard():
-        _ = reload_trigger_photos.get()
+        # Read reload_trigger_photos so this output re-executes when events change.
+        reload_trigger_photos.get()
         try:
             range_key = str(input.stats_range() or "30d")
         except Exception:

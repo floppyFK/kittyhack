@@ -2,6 +2,7 @@
 # Keep requirements.txt and requirements_remote.txt in sync.
 # Native pins were raised only where the previous 3.12 lock had no cp314
 # manylinux aarch64 + x86_64 wheels (torch 2.9.1 is the oldest 3.14-capable pair).
+# ultralytics 8.3.119 is the first 8.3.x that allows numpy>2.1.1 (needed for cp314).
 anyio==4.9.0
 appdirs==1.4.4
 asgiref==3.8.1
@@ -66,7 +67,7 @@ tqdm==4.67.1
 typing_extensions==4.13.2
 tzdata==2025.2
 uc-micro-py==1.0.3
-ultralytics==8.3.101
+ultralytics==8.3.119
 ultralytics-thop==2.0.14
 urllib3==2.4.0
 uvicorn==0.34.2

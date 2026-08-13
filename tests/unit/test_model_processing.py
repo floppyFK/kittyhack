@@ -16,7 +16,7 @@ from src.model.camera_config import (
     _remote_internal_proxy_url,
 )
 from src.model.detection import _parse_yolo_detection_results
-from src.model.model_handler import ModelHandler
+from src.model.model_handler import ModelHandler, _yolo_model_worker_process
 from src.model.remote_trainer import RemoteModelTrainer
 from src.model.yolo_model import YoloModel
 
@@ -337,3 +337,14 @@ def test_start_download_model_async_guards(monkeypatch, tmp_path):
         RemoteModelTrainer.start_download_model_async("job", "new", model_name="m")
         is False
     )
+
+
+def test_yolo_worker_process_is_forking_picklable():
+    """Python 3.14 forkserver pickles Process.target; a nested worker would crash camera start."""
+    import io
+    from multiprocessing.reduction import ForkingPickler
+
+    assert "<locals>" not in _yolo_model_worker_process.__qualname__
+    buf = io.BytesIO()
+    ForkingPickler(buf).dump(_yolo_model_worker_process)
+    assert buf.tell() > 0

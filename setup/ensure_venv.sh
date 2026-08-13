@@ -12,7 +12,7 @@
 #   - --apply is intended when this unit is not yet ExecStart'ed; on target boot,
 #     kittyhack_control runs first (kittyhack is stopped), so a swap is safe.
 #
-# Required version is read from setup/REQUIRED_PYTHON (e.g. "3.11").
+# Required version is read from setup/REQUIRED_PYTHON (e.g. "3.14").
 set -euo pipefail
 
 MODE="--apply"

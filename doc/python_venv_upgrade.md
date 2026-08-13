@@ -5,9 +5,9 @@
 Allow a future Kittyhack release to change the required Python version (e.g. 3.11 → 3.13)
 without locking users out of the Web UI after an in-app update.
 
-v2.8.0+ targets `setup/REQUIRED_PYTHON` = `3.12`. The venv dual-path (`--prepare` /
-`--apply`) was introduced in v2.7.0 so devices can migrate without deleting the working
-`.venv` first.
+This tree targets `setup/REQUIRED_PYTHON` = `3.14` (the previous pin was `3.12`).
+The venv dual-path (`--prepare` / `--apply`) was introduced in v2.7.0 so devices can
+migrate without deleting the working `.venv` first.
 
 ## Why not “recreate .venv inside Shiny on first start”?
 
@@ -70,3 +70,7 @@ Console scripts embed absolute shebangs that break when `.venv.new` is renamed t
 3. Bump `setup/REQUIRED_PYTHON` in the same release that needs the new interpreter.
 4. Test: in-app update from previous tag → reboot → UI comes back; simulate failed pip and
    confirm old `.venv` remains bootable.
+
+For the 3.14 bump, native pins were raised only to the oldest minor that publishes
+`cp314` manylinux wheels for both aarch64 (Kittyflap) and x86_64 (remote-mode host).
+`ai-edge-litert==2.1.6` and `ncnn==1.0.20260526` already had those wheels and were kept.

@@ -597,7 +597,7 @@ install_remote_mode() {
         echo -e "  - python3, python3-venv, python3-pip, gettext"
         echo -e "  - rsync, git, curl, ca-certificates"
         echo -e "  - libgl1, libglib2.0-0"
-        echo -e "Zusatzlich: Es wird ein Python 3.12 Virtualenv erstellt und die Abhangigkeiten aus requirements_remote.txt installiert."
+        echo -e "Zusatzlich: Es wird ein Python 3.14 Virtualenv erstellt und die Abhangigkeiten aus requirements_remote.txt installiert."
         read -r -p "Mit diesen Installationen fortfahren? (y/N): " CONFIRM_REMOTE_MODE
     else
         echo -e "NOTE: The installation requires root rights. It is strongly recommended to install it on an separate system, which acts only as a kittyhack remote controller."
@@ -611,7 +611,7 @@ install_remote_mode() {
         echo -e "  - python3, python3-venv, python3-pip, gettext"
         echo -e "  - rsync, git, curl, ca-certificates"
         echo -e "  - libgl1, libglib2.0-0"
-        echo -e "Additionally: A Python 3.12 virtualenv will be created and dependencies from requirements_remote.txt will be installed."
+        echo -e "Additionally: A Python 3.14 virtualenv will be created and dependencies from requirements_remote.txt will be installed."
         read -r -p "Continue with these installations? (y/N): " CONFIRM_REMOTE_MODE
     fi
 
@@ -1218,14 +1218,14 @@ ensure_uv_installed() {
     fi
 
     if ! command -v uv >/dev/null 2>&1; then
-        echo -e "${RED}Failed to install uv. Please install it manually (https://astral.sh/uv) or install python3.11 via apt.${NC}"
+        echo -e "${RED}Failed to install uv. Please install it manually (https://astral.sh/uv) or install python3.14 via apt.${NC}"
         return 1
     fi
 }
 
 ensure_python311_available() {
     # Back-compat wrapper: preferred path is setup/ensure_venv.sh reading REQUIRED_PYTHON.
-    local required="3.11"
+    local required="3.14"
     if [[ -f "$(dirname "${BASH_SOURCE[0]}")/REQUIRED_PYTHON" ]]; then
         required="$(tr -d '[:space:]' < "$(dirname "${BASH_SOURCE[0]}")/REQUIRED_PYTHON")"
     elif [[ -f "${KITTYHACK_INSTALL_DIR:-}/setup/REQUIRED_PYTHON" ]]; then
@@ -1265,7 +1265,7 @@ create_venv_py311() {
         return $?
     fi
 
-    local required="3.11"
+    local required="3.14"
     if [[ -f "${root}/setup/REQUIRED_PYTHON" ]]; then
         required="$(tr -d '[:space:]' < "${root}/setup/REQUIRED_PYTHON")"
     fi

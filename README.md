@@ -35,7 +35,7 @@ See: [doc/remote-mode.md](doc/remote-mode.md)
 - SSH access to your Kittyflap (user: `pi`, password: `kittyflap`)
 - A stable WiFi connection during installation (downloads can be a few hundred MB)
 - About **1 GB free space** on the Kittyflap
-- **Python 3.12** is required (the setup script will try to provision it automatically on newer systems)
+- **Python 3.14** is required (the setup script will try to provision it automatically on newer systems)
 
 You can usually find the Kittyflap IP address in your router:
 
@@ -203,7 +203,7 @@ Siehe: [doc/remote-mode_de.md](doc/remote-mode_de.md)
 - SSH-Zugriff auf die Kittyflap (User: `pi`, Passwort: `kittyflap`)
 - Stabile WLAN-Verbindung während der Installation (Downloads können mehrere hundert MB sein)
 - Ca. **1 GB freier Speicher** auf der Kittyflap
-- **Python 3.12** wird benötigt (das Setup versucht es auf neueren Systemen automatisch bereitzustellen)
+- **Python 3.14** wird benötigt (das Setup versucht es auf neueren Systemen automatisch bereitzustellen)
 
 Die IP-Adresse findest du meist im Router:
 

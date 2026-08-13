@@ -148,15 +148,15 @@ If you use remote→target update:
 
 Do **not** change production `REQUIRED_PYTHON` permanently on a device you need. Use a disposable test device or restore from backup afterwards.
 
-### 3.1 Simulate / use the Python 3.12 stack
+### 3.1 Simulate / use the Python 3.14 stack
 
-This branch/release targets `REQUIRED_PYTHON=3.12` with the updated `requirements*.txt`.
+This branch/release targets `REQUIRED_PYTHON=3.14` with the updated `requirements*.txt`.
 
 If you only need to re-run prepare/apply on an already-checked-out tree:
 
 ```bash
 cd /root/kittyhack
-cat setup/REQUIRED_PYTHON   # expect 3.12
+cat setup/REQUIRED_PYTHON   # expect 3.14
 sudo bash setup/ensure_venv.sh --prepare --root /root/kittyhack
 ```
 

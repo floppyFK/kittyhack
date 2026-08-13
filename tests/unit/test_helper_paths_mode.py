@@ -138,7 +138,7 @@ def test_update_changes_runtime_files(monkeypatch):
     monkeypatch.setattr(
         Versioning,
         "_read_repo_file_at_ref_via_github",
-        lambda owner, repo, ref, rel, timeout=8: (True, "3.12\n")
+        lambda owner, repo, ref, rel, timeout=8: (True, "3.14\n")
         if rel.endswith("REQUIRED_PYTHON")
         else (True, "pkg==1\n"),
     )

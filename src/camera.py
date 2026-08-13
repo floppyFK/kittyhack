@@ -26,6 +26,45 @@ def encode_frame_jpg(frame: np.ndarray, jpeg_quality: int = 75) -> bytes:
         raise RuntimeError("cv2.imencode failed for frame")
     return buffer.tobytes()
 
+
+def redact_camera_url(text: str | None) -> str:
+    """Mask `user:password@` credentials in camera URLs and FFmpeg error text."""
+    if not text:
+        return ""
+    return re.sub(r"(://[^:/@?#\s]+):([^@/?#\s]+)@", r"\1:***@", str(text))
+
+# Intel / AMD GPUs that actually VAAPI-decode video. Raspberry Pi V3D/VC4 also
+# expose /dev/dri/renderD128 and FFmpeg lists "vaapi", but decode ioctls fail
+# with EPERM ("Operation not permitted") and waste the RTSP startup window.
+_VAAPI_DECODE_VENDORS = {"0x8086", "0x1002"}
+_VAAPI_DECODE_DRIVERS = {"i915", "xe", "amdgpu", "radeon"}
+_FFMPEG_FIRST_FRAME_TIMEOUT_S = 12.0
+
+
+def _drm_vaapi_identity(render_sysfs: str = "/sys/class/drm/renderD128") -> tuple[str, str]:
+    """Return `(vendor, driver)` for a DRM render node, or empty strings."""
+    vendor = ""
+    driver = ""
+    try:
+        with open(os.path.join(render_sysfs, "device/vendor"), encoding="utf-8") as fh:
+            vendor = fh.read().strip().lower()
+    except Exception:
+        pass
+    try:
+        driver = os.path.basename(os.path.realpath(os.path.join(render_sysfs, "device/driver"))).lower()
+    except Exception:
+        pass
+    return vendor, driver
+
+
+def drm_render_node_supports_vaapi_decode(render_node: str = "/dev/dri/renderD128") -> bool:
+    """True when the render node belongs to an Intel/AMD GPU that can VAAPI-decode."""
+    if not os.path.exists(render_node):
+        return False
+    vendor, driver = _drm_vaapi_identity()
+    return vendor in _VAAPI_DECODE_VENDORS or driver in _VAAPI_DECODE_DRIVERS
+
+
 def resolve_ip_camera_hw_decode(mode: str) -> str:
     """Resolve configured hw-decode mode to a concrete backend (or 'none')."""
     normalized = str(mode or "auto").strip().lower()
@@ -65,9 +104,29 @@ def resolve_ip_camera_hw_decode(mode: str) -> str:
                 return "cuda"
     except Exception:
         pass
-    if os.path.exists("/dev/dri/renderD128") and (not ffmpeg_hwaccels or "vaapi" in ffmpeg_hwaccels):
+    if drm_render_node_supports_vaapi_decode() and (not ffmpeg_hwaccels or "vaapi" in ffmpeg_hwaccels):
         return "vaapi"
     return "none"
+
+
+def ip_camera_hw_modes_to_try(configured: str) -> list[str]:
+    """Ordered FFmpeg hw-decode attempts: requested/auto backend, then software."""
+    requested = str(configured or "auto").strip().lower()
+    modes: list[str] = []
+    if requested in {"cuda", "vaapi", "qsv"}:
+        modes.append(requested)
+    elif requested == "auto":
+        resolved = resolve_ip_camera_hw_decode("auto")
+        if resolved != "none":
+            modes.append(resolved)
+    modes.append("none")
+    unique: list[str] = []
+    seen: set[str] = set()
+    for mode in modes:
+        if mode not in seen:
+            seen.add(mode)
+            unique.append(mode)
+    return unique
 
 def build_ip_camera_ffmpeg_cmd(
     ip_camera_url: str,
@@ -229,6 +288,65 @@ class VideoStream:
             return value
         return 10
 
+    def _terminate_capture_process(self) -> None:
+        """Terminate `self.process` if it is running."""
+        proc = self.process
+        if not proc:
+            return
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=1)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        finally:
+            if self.process is proc:
+                self.process = None
+
+    def _wait_for_raw_stdout_frame(
+        self,
+        process: subprocess.Popen,
+        frame_bytes: int,
+        target_h: int,
+        target_w: int,
+        timeout_s: float,
+    ) -> np.ndarray | None:
+        """Read one raw BGR frame, honoring timeout and stop() (stdout.read would block)."""
+        stdout = process.stdout
+        if stdout is None:
+            return None
+        holder: dict = {"raw": b""}
+
+        def _read() -> None:
+            try:
+                holder["raw"] = stdout.read(frame_bytes) or b""
+            except Exception:
+                holder["raw"] = b""
+
+        reader = threading.Thread(target=_read, daemon=True)
+        reader.start()
+        deadline = tm.monotonic() + timeout_s
+        while reader.is_alive() and tm.monotonic() < deadline and not self.stopped:
+            if process.poll() is not None:
+                reader.join(timeout=0.5)
+                break
+            tm.sleep(0.05)
+        if reader.is_alive():
+            return None
+        raw = holder.get("raw") or b""
+        if len(raw) != frame_bytes:
+            return None
+        try:
+            return np.frombuffer(raw, dtype=np.uint8).reshape((target_h, target_w, 3)).copy()
+        except Exception:
+            return None
+
     def get_camera_state(self):
         """Return the current camera connection state."""
         return self.camera_state
@@ -388,7 +506,7 @@ class VideoStream:
                 return best_res
 
             while not self.stopped:
-                logging.info(f"[CAMERA] Connecting to IP camera at {self.ip_camera_url}")
+                logging.info(f"[CAMERA] Connecting to IP camera at {redact_camera_url(self.ip_camera_url)}")
                 self.camera_state = self.STATE_INITIALIZING
 
                 # Optional ffmpeg decode+scale pipeline for IP streams
@@ -403,17 +521,12 @@ class VideoStream:
 
                     target_w, target_h = self._parse_target_resolution()
                     fps_limit = self._normalized_pipeline_fps_limit()
-                    hw_modes_to_try: list[str] = []
-                    resolved_hw = resolve_ip_camera_hw_decode(self.ip_camera_hw_decode)
-                    if resolved_hw != "none":
-                        hw_modes_to_try.append(self.ip_camera_hw_decode)
-                    if str(self.ip_camera_hw_decode or "").strip().lower() == "auto":
-                        if resolved_hw != "vaapi":
-                            hw_modes_to_try.append("vaapi")
-                    hw_modes_to_try.append("none")
+                    hw_modes_to_try = ip_camera_hw_modes_to_try(self.ip_camera_hw_decode)
 
                     pipeline_started = False
-                    for hw_mode in hw_modes_to_try:
+                    for hw_index, hw_mode in enumerate(hw_modes_to_try):
+                        if self.stopped:
+                            break
                         ffmpeg_cmd, hw_label = build_ip_camera_ffmpeg_cmd(
                             self.ip_camera_url,
                             target_w,
@@ -439,57 +552,57 @@ class VideoStream:
                             self.process = None
                             continue
 
+                        if self.stopped:
+                            self._terminate_capture_process()
+                            break
+
                         self.resolution = (target_w, target_h)
                         frame_bytes = target_w * target_h * 3
-                        startup_deadline = tm.monotonic() + 5.0
-                        first_frame_ok = False
-                        while tm.monotonic() < startup_deadline and not self.stopped:
-                            try:
-                                raw = self.process.stdout.read(frame_bytes) if self.process.stdout else b""
-                            except Exception:
-                                raw = b""
-                            if len(raw) == frame_bytes:
-                                try:
-                                    frame = np.frombuffer(raw, dtype=np.uint8).reshape((target_h, target_w, 3))
-                                    with self.lock:
-                                        self._append_frame_locked(frame)
-                                    first_frame_ok = True
-                                    break
-                                except Exception:
-                                    pass
-                            if self.process.poll() is not None:
-                                break
-                            tm.sleep(0.05)
+                        first_frame = self._wait_for_raw_stdout_frame(
+                            self.process,
+                            frame_bytes,
+                            target_h,
+                            target_w,
+                            _FFMPEG_FIRST_FRAME_TIMEOUT_S,
+                        )
 
-                        if first_frame_ok:
+                        if first_frame is not None and not self.stopped:
+                            with self.lock:
+                                self._append_frame_locked(first_frame)
                             self._start_process_stderr_drain(self.process, f"ffmpeg-{hw_label}")
                             pipeline_started = True
                             break
 
+                        proc = self.process
+                        self._terminate_capture_process()
                         stderr_tail = b""
-                        try:
-                            if self.process.stderr is not None:
-                                stderr_tail = self.process.stderr.read() or b""
-                        except Exception:
-                            pass
-                        try:
-                            if self.process:
-                                self.process.terminate()
-                                self.process.wait(timeout=2)
-                        except Exception:
+
+                        def _read_stderr() -> None:
+                            nonlocal stderr_tail
                             try:
-                                if self.process:
-                                    self.process.kill()
+                                if proc is not None and proc.stderr is not None:
+                                    stderr_tail = proc.stderr.read() or b""
                             except Exception:
                                 pass
-                        finally:
-                            self.process = None
+
+                        err_reader = threading.Thread(target=_read_stderr, daemon=True)
+                        err_reader.start()
+                        err_reader.join(timeout=1.0)
+                        err_txt = redact_camera_url(
+                            stderr_tail.decode("utf-8", errors="replace")[-1200:]
+                        ).strip()
                         if hw_mode != "none":
                             logging.warning(
                                 f"[CAMERA] FFmpeg hardware decode ({hw_label}) failed to produce frames; "
-                                f"falling back to software decode. "
-                                f"{stderr_tail.decode('utf-8', errors='replace')[-1200:]}"
+                                f"falling back to software decode. {err_txt}"
                             )
+                        else:
+                            logging.warning(
+                                f"[CAMERA] FFmpeg software decode failed to produce frames. {err_txt}"
+                            )
+                        # Let the camera release the previous RTSP session before retrying.
+                        if hw_index < len(hw_modes_to_try) - 1 and not self.stopped:
+                            tm.sleep(0.5)
 
                     if not pipeline_started:
                         logging.error("[CAMERA] FFmpeg IP pipeline failed to start.")
@@ -548,19 +661,9 @@ class VideoStream:
                             self._append_frame_locked(frame)
 
                     try:
-                        if self.process:
-                            self.process.terminate()
-                            try:
-                                self.process.wait(timeout=2)
-                            except Exception:
-                                try:
-                                    self.process.kill()
-                                except Exception:
-                                    pass
+                        self._terminate_capture_process()
                     except Exception:
                         pass
-                    finally:
-                        self.process = None
 
                     if self.stopped:
                         break
@@ -571,7 +674,10 @@ class VideoStream:
 
                 self.cap = cv2.VideoCapture(self.ip_camera_url)
                 if not self.cap.isOpened():
-                    logging.error(f"[CAMERA] Failed to open IP camera stream: {self.ip_camera_url}. Retrying in {retry_delay}s...")
+                    logging.error(
+                        f"[CAMERA] Failed to open IP camera stream: {redact_camera_url(self.ip_camera_url)}. "
+                        f"Retrying in {retry_delay}s..."
+                    )
                     self.camera_state = self.STATE_ERROR
                     self.cap.release()
                     if self.stopped:
@@ -728,33 +834,27 @@ class VideoStream:
 
     def stop(self):
         """Stop capture, join the thread, and release camera resources."""
-        # Stop the video stream
         self.stopped = True
         self.stop_journal_monitor()
-        if self.process:
-            try:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=2)
-                except Exception:
-                    try:
-                        self.process.kill()
-                    except Exception:
-                        pass
-            finally:
-                self.process = None
+        self._terminate_capture_process()
 
         if self.thread is not None:
-            self.thread.join(timeout=5)  # Wait for the thread to finish
+            self.thread.join(timeout=5)
             self.thread = None
+
+        if self.cap:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
 
         if self.source == "internal":
             logging.info("[CAMERA] Video stream stopped.")
-        elif self.source == "ip_camera" and self.cap:
-            self.cap.release()
+        elif self.source == "ip_camera":
             logging.info("[CAMERA] IP camera stream stopped.")
         else:
-            logging.error("[CAMERA] Video stream not yet started. Nothing to stop.")
+            logging.info("[CAMERA] Video stream stopped.")
 
 class DetectedObject:
     """One detection box as percentages of image width/height."""

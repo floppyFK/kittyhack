@@ -32,6 +32,86 @@ from .detection import _parse_yolo_detection_results
 if TYPE_CHECKING:
     from ai_edge_litert.interpreter import Interpreter
 
+
+def _yolo_model_worker_process(
+    model_path,
+    input_queue,
+    output_queue,
+    num_threads=1,
+    inference_device="cpu",
+):
+    """YOLO inference subprocess (CPU-affinity-limited worker).
+
+    Must stay at module level. Python 3.14 changed the default multiprocessing
+    start method on Linux from ``fork`` to ``forkserver``, which pickles the
+    process target. A nested ``load_model()`` function is not picklable and
+    crashes ``Process.start()`` before the camera videostream is created.
+    """
+    try:
+        import psutil
+        from ultralytics import YOLO
+
+        from src.baseconfig import CONFIG, configure_logging
+
+        process = psutil.Process()
+
+        requested = list(range(int(num_threads) if num_threads else 1))
+        try:
+            allowed = process.cpu_affinity()  # type: ignore[call-arg]
+        except Exception:
+            allowed = []
+
+        cores_to_use = requested
+        if allowed:
+            cores_to_use = [c for c in requested if c in allowed]
+            if not cores_to_use:
+                cores_to_use = list(allowed)
+
+        try:
+            if cores_to_use:
+                process.cpu_affinity(cores_to_use)
+                logging.info(f"[MODEL] Worker process running on CPU cores {cores_to_use}")
+            else:
+                logging.info("[MODEL] Worker process running without CPU affinity (no cores resolved)")
+        except OSError as e:
+            logging.warning(f"[MODEL] CPU affinity not supported/allowed here; continuing without pinning: {e}")
+        except Exception as e:
+            logging.warning(f"[MODEL] Failed to set CPU affinity; continuing without pinning: {e}")
+
+        logging.getLogger("ultralytics").setLevel(logging.WARNING)
+        logging.getLogger("ultralytics.yolo.engine.model").setLevel(logging.WARNING)
+        model = YOLO(model_path, task="detect", verbose=False)
+        configure_logging(CONFIG["LOGLEVEL"])
+
+        while True:
+            job = input_queue.get()
+            if job is None:
+                break
+
+            job_id, frame, input_size, labels, cat_names, min_threshold = job
+
+            _worker_kwargs: dict = dict(stream=True, imgsz=input_size)
+            if inference_device != "cpu":
+                _worker_kwargs["device"] = inference_device
+            results = model(frame, **_worker_kwargs)
+
+            mouse_probability, own_cat_probability, detected_objects = _parse_yolo_detection_results(
+                results,
+                labels,
+                cat_names,
+                min_threshold,
+            )
+
+            output_queue.put((job_id, mouse_probability, own_cat_probability, detected_objects))
+
+    except Exception as e:
+        logging.error(f"[MODEL] Worker process error: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
+    finally:
+        logging.info("[MODEL] Worker process exiting")
+
+
 class ModelHandler:
     """Runs TFLite/LiteRT or YOLO inference on the live camera videostream."""
 
@@ -172,9 +252,6 @@ class ModelHandler:
 
         elif self.model == "yolo":
             from ultralytics import YOLO
-            import multiprocessing
-            from multiprocessing import Queue
-            import os
             from src.baseconfig import configure_logging
 
             if self._uses_openvino_backend():
@@ -229,83 +306,15 @@ class ModelHandler:
                 self._yolo = direct_inference
                 self._model_worker = None
             else:
-                # Use the multiprocessing approach for limited CPU cores
-                def model_worker_process(model_path, input_queue, output_queue, num_threads=1, inference_device='cpu'):
-                    try:
-                        # Set CPU affinity for this process based on num_threads
-                        import psutil
-                        process = psutil.Process()
-
-                        # Calculate which cores to use (0..num_threads-1) but respect cpuset/container limits.
-                        requested = list(range(int(num_threads) if num_threads else 1))
-                        try:
-                            allowed = process.cpu_affinity()  # type: ignore[call-arg]
-                        except Exception:
-                            allowed = []
-
-                        cores_to_use = requested
-                        if allowed:
-                            cores_to_use = [c for c in requested if c in allowed]
-                            if not cores_to_use:
-                                # Fallback: use whatever the OS allows.
-                                cores_to_use = list(allowed)
-
-                        # Best-effort pinning: may fail on some kernels/containers (e.g. Errno 22).
-                        try:
-                            if cores_to_use:
-                                process.cpu_affinity(cores_to_use)
-                                logging.info(f"[MODEL] Worker process running on CPU cores {cores_to_use}")
-                            else:
-                                logging.info("[MODEL] Worker process running without CPU affinity (no cores resolved)")
-                        except OSError as e:
-                            logging.warning(f"[MODEL] CPU affinity not supported/allowed here; continuing without pinning: {e}")
-                        except Exception as e:
-                            logging.warning(f"[MODEL] Failed to set CPU affinity; continuing without pinning: {e}")
-                        
-                        # Load the YOLO model in this process
-                        logging.getLogger("ultralytics").setLevel(logging.WARNING)
-                        logging.getLogger("ultralytics.yolo.engine.model").setLevel(logging.WARNING)
-                        model = YOLO(model_path, task="detect", verbose=False)
-                        # Re-Configure logging to silence the model's output
-                        configure_logging(CONFIG['LOGLEVEL'])
-                        
-                        while True:
-                            # Get input from queue
-                            job = input_queue.get()
-                            if job is None:  # None is our signal to exit
-                                break
-                                
-                            job_id, frame, input_size, labels, cat_names, min_threshold = job
-
-                            _worker_kwargs: dict = dict(stream=True, imgsz=input_size)
-                            if inference_device != 'cpu':
-                                _worker_kwargs['device'] = inference_device
-                            results = model(frame, **_worker_kwargs)
-
-                            mouse_probability, own_cat_probability, detected_objects = _parse_yolo_detection_results(
-                                results,
-                                labels,
-                                cat_names,
-                                min_threshold,
-                            )
-
-                            output_queue.put((job_id, mouse_probability, own_cat_probability, detected_objects))
-                            
-                    except Exception as e:
-                        logging.error(f"[MODEL] Worker process error: {e}")
-                        import traceback
-                        logging.error(traceback.format_exc())
-                    finally:
-                        logging.info("[MODEL] Worker process exiting")
-
-                # Create the queues for communication
-                self._input_queue = Queue()
-                self._output_queue = Queue()
-                
-                # Start the worker process with the specified number of threads
-                self._model_worker = multiprocessing.Process(
-                    target=model_worker_process,
-                    args=(self.modeldir, self._input_queue, self._output_queue, self.num_threads, resolved_inference_device)
+                # Limited-core path: run YOLO in a child process with CPU affinity.
+                # Use the default context (forkserver on Python 3.14 / Linux) with a
+                # module-level target so the worker is picklable.
+                ctx = multiprocessing.get_context()
+                self._input_queue = ctx.Queue()
+                self._output_queue = ctx.Queue()
+                self._model_worker = ctx.Process(
+                    target=_yolo_model_worker_process,
+                    args=(self.modeldir, self._input_queue, self._output_queue, self.num_threads, resolved_inference_device),
                 )
                 self._model_worker.daemon = True
                 self._model_worker.start()
@@ -369,8 +378,6 @@ class ModelHandler:
         resW, resH = self.resolution.split('x')
         imW, imH = int(resW), int(resH)
 
-        self.load_model()
-
         # Store the last used effective camera config to detect changes
         last_camera_source, last_ip_camera_url = _effective_camera_stream_config()
         last_enable_ip_camera_decode_scale_pipeline = CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False)
@@ -378,42 +385,44 @@ class ModelHandler:
         last_ip_camera_pipeline_fps_limit = int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10)
         last_ip_camera_hw_decode = str(CONFIG.get('IP_CAMERA_HW_DECODE', 'auto') or 'auto')
 
-        # Check if the model is a YOLO model
-        if self.model == "tflite":
-            # ------------- TFLite Model -------------
-            # Path to .tflite file, which contains the model that is used for object detection
-            PATH_TO_TFLITE = os.path.join(self.modeldir, self.graph)
+        interpreter = None
+        model_ready = False
+        try:
+            self.load_model()
 
-            logging.info(f"[MODEL] Preparing to run TFLite model {PATH_TO_TFLITE} on video stream with resolution {imW}x{imH} @ {self.framerate}fps and quality {self.jpeg_quality}%")
+            if self.model == "tflite":
+                # ------------- TFLite Model -------------
+                PATH_TO_TFLITE = os.path.join(self.modeldir, self.graph)
 
-            # Load the Tensorflow Lite model.
-            interpreter = self._Interpreter(model_path=PATH_TO_TFLITE, num_threads=self.num_threads)
-            interpreter.allocate_tensors()
+                logging.info(f"[MODEL] Preparing to run TFLite model {PATH_TO_TFLITE} on video stream with resolution {imW}x{imH} @ {self.framerate}fps and quality {self.jpeg_quality}%")
 
-            # Get model details
-            self.tf_input_details = interpreter.get_input_details()
-            self.tf_output_details = interpreter.get_output_details()
-            self.tf_height = self.tf_input_details[0]['shape'][1]
-            self.tf_width = self.tf_input_details[0]['shape'][2]
+                interpreter = self._Interpreter(model_path=PATH_TO_TFLITE, num_threads=self.num_threads)
+                interpreter.allocate_tensors()
 
-            self.input_size = max(self.tf_height, self.tf_width)
+                self.tf_input_details = interpreter.get_input_details()
+                self.tf_output_details = interpreter.get_output_details()
+                self.tf_height = self.tf_input_details[0]['shape'][1]
+                self.tf_width = self.tf_input_details[0]['shape'][2]
 
-            self.tf_floating_model = (self.tf_input_details[0]['dtype'] == np.float32)
-            logging.info(f"[MODEL] Floating model: {self.tf_floating_model}")
-            logging.info(f"[MODEL] Input details: {self.tf_input_details} (model shape: {self.tf_height}x{self.tf_width} --> {self.input_size})")
+                self.input_size = max(self.tf_height, self.tf_width)
 
-            # Check output layer name to determine if this model was created with TF2 or TF1,
-            # because outputs are ordered differently for TF2 and TF1 models
-            self.tf_outname = self.tf_output_details[0]['name']
-        
-        elif self.model == "yolo":
-            # ------------- YOLO Model -------------
-            logging.info(f"[MODEL] Preparing to run YOLO model {self.modeldir} on video stream with resolution {imW}x{imH} @ {self.framerate}fps and quality {self.jpeg_quality}%")
-            # No need to initialize YOLO here - it's already running in the worker process
+                self.tf_floating_model = (self.tf_input_details[0]['dtype'] == np.float32)
+                logging.info(f"[MODEL] Floating model: {self.tf_floating_model}")
+                logging.info(f"[MODEL] Input details: {self.tf_input_details} (model shape: {self.tf_height}x{self.tf_width} --> {self.input_size})")
 
-        else:
-            logging.error(f"[MODEL] Unknown model type: {self.model}. Failed to start inference.") 
-            return
+                self.tf_outname = self.tf_output_details[0]['name']
+                model_ready = True
+
+            elif self.model == "yolo":
+                logging.info(f"[MODEL] Preparing to run YOLO model {self.modeldir} on video stream with resolution {imW}x{imH} @ {self.framerate}fps and quality {self.jpeg_quality}%")
+                model_ready = True
+
+            else:
+                logging.error(f"[MODEL] Unknown model type: {self.model}. Failed to start inference.")
+        except Exception as e:
+            logging.error(f"[MODEL] Failed to load model; starting camera without inference: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
         
         # Register task in the sigterm_monitor object
         sigterm_monitor.register_task()
@@ -552,10 +561,15 @@ class ModelHandler:
                     except Exception:
                         timestamp_mono = None
 
-                    if self.model == "tflite":
+                    mouse_probability = 0
+                    no_mouse_probability = 0
+                    own_cat_probability = 0
+                    detected_objects = []
+
+                    if model_ready and self.model == "tflite" and interpreter is not None:
                         own_cat_probability = 0 # Not supported in the original Kittyflap TFLite models
                         mouse_probability, no_mouse_probability, detected_objects = self._process_frame_tflite(frame, interpreter)
-                    elif self.model == "yolo":
+                    elif model_ready and self.model == "yolo" and getattr(self, "_yolo", None):
                         if hasattr(self, '_model_worker') and self._model_worker:
                             job_id = self._yolo(frame, self.input_size)
                             result = self._get_result(job_id)

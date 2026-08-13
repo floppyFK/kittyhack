@@ -833,6 +833,7 @@ document.addEventListener("DOMContentLoaded", function() {
         var TAB_ROUTES = {
             'live-view':           '/live-view/',
             'pictures':            '/pictures/',
+            'statistics':          '/statistics/',
             'manage-cats':         '/manage-cats/',
             'add-new-cat':         '/add-new-cat/',
             'ai-training':         '/ai-training/',

@@ -7,6 +7,8 @@ from src.baseconfig import CONFIG, set_language
 js_file = Path(__file__).parent.parent / "www" / "app.js"
 server_ui_js_file = Path(__file__).parent.parent / "www" / "server-ui.js"
 event_modal_js_file = Path(__file__).parent.parent / "www" / "event-modal.js"
+chart_js_file = Path(__file__).parent.parent / "www" / "vendor" / "chart.umd.min.js"
+stats_js_file = Path(__file__).parent.parent / "www" / "stats.js"
 css_file = Path(__file__).parent.parent / "www" / "styles.css"
 
 try:
@@ -29,6 +31,16 @@ try:
 except Exception:
     _event_modal_js_version = "0"
 
+try:
+    _chart_js_version = str(int(chart_js_file.stat().st_mtime))
+except Exception:
+    _chart_js_version = "0"
+
+try:
+    _stats_js_version = str(int(stats_js_file.stat().st_mtime))
+except Exception:
+    _stats_js_version = "0"
+
 # Prepare gettext for translations
 _ = set_language(CONFIG['LANGUAGE'])
 
@@ -47,6 +59,11 @@ _nav_items = [
         ui.output_ui("ui_photos_events"),
         ui.br(),
         value="pictures",
+    ),
+    ui.nav_panel(
+        _("Statistics"),
+        ui.output_ui("ui_statistics"),
+        value="statistics",
     ),
     ui.nav_panel(
         _("Manage cats"),
@@ -99,6 +116,8 @@ _nav_items.append(
 # the main kittyhack ui
 app_ui = ui.page_fillable(
     ui.tags.script(src=f"app.js?v={_js_version}", defer=True),
+    ui.tags.script(src=f"vendor/chart.umd.min.js?v={_chart_js_version}", defer=True),
+    ui.tags.script(src=f"stats.js?v={_stats_js_version}", defer=True),
     ui.tags.script(src=f"server-ui.js?v={_server_ui_js_version}", defer=True),
     ui.tags.script(src=f"event-modal.js?v={_event_modal_js_version}", defer=True),
     ui.tags.link(rel="stylesheet", href=f"styles.css?v={_asset_version}"),

@@ -55,4 +55,5 @@ def tmp_kittyhack_db(tmp_path):
     DbMigrations.create_kittyhack_cats_table(db)
     DbMigrations.create_kittyhack_events_table(db)
     DbMigrations.create_motion_timeline_table(db)
+    DbMigrations.create_visit_stats_tables(db)
     return db

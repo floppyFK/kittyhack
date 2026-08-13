@@ -7,6 +7,7 @@ from src.clock import monotonic_time, wall_time
 from src.baseconfig import AllowedToEnter, AllowedToExit, CONFIG, set_language
 from src.helper import (
     EventType,
+    DateTimeUtil,
     check_allowed_to_exit,
     sigterm_monitor,
 )
@@ -46,6 +47,7 @@ from src.backend.decisions import (
     conclude_motion_event_type,
 )
 from src.runtime_flags import is_simulate_mode
+from src.statistics import record_motion_conclusion
 
 # Aliases for in-place mutable / callable symbols (safe to bind once).
 manual_door_override = mqtt_bridge.manual_door_override
@@ -53,6 +55,39 @@ _start_model_thread = model_runtime._start_model_thread
 reload_model_handler_runtime = model_runtime.reload_model_handler_runtime
 init_mqtt_client = mqtt_bridge.init_mqtt_client
 cleanup_mqtt = mqtt_bridge.cleanup_mqtt
+
+
+def _persist_concluded_motion(
+    database: str,
+    buffer_block_id: int,
+    all_events: str,
+    *,
+    write_pictures: bool,
+    timeline_entries: list | None,
+    rfid,
+    cat_name,
+    created_at: str,
+    extra_infos: list | None,
+):
+    """Record visit_stats always; persist pictures only when ``write_pictures``."""
+    try:
+        record_motion_conclusion(
+            database,
+            created_at=created_at,
+            rfid=rfid,
+            cat_name=cat_name,
+            event_type=all_events,
+            additional_verdict_infos=extra_infos,
+        )
+    except Exception as e:
+        logging.error(f"[BACKEND] Failed to record visit statistics: {e}")
+    if write_pictures:
+        EventsRepo.write_motion_block_to_db(
+            database,
+            buffer_block_id,
+            all_events,
+            timeline_entries=timeline_entries,
+        )
 
 
 # Prepare gettext for translations based on the configured language
@@ -494,6 +529,7 @@ def backend_main(
             last_motion_outside_tm = _wall()
 
         all_events = str(event_type)
+        verdict_snapshot = list(additional_verdict_infos) if additional_verdict_infos else []
         if additional_verdict_infos:
             for info in additional_verdict_infos:
                 all_events += "," + str(info)
@@ -511,10 +547,18 @@ def backend_main(
                                                             Event type: {all_events}
                                                             RFID tag: {tag_id or 'None'} 
                                                             Video tag: {tag_id_from_video or 'None'}""")
-        if ((len(ids_exceeding_mouse_th) + len(ids_exceeding_nomouse_th) + len(ids_exceeding_own_cat_th) > 0) or
-            (event_type in [EventType.CAT_WENT_OUTSIDE]) or
-            (tag_id is not None) or
-            (tag_id_from_video is not None)):
+        persist_rfid = tag_id if tag_id is not None else tag_id_from_video
+        persist_name = cat_rfid_name_dict.get(persist_rfid) if persist_rfid else None
+        persist_at = DateTimeUtil.get_utc_date_string(
+            first_motion_outside_tm if first_motion_outside_tm > 0.0 else _wall()
+        )
+        should_write_pictures = (
+            (len(ids_exceeding_mouse_th) + len(ids_exceeding_nomouse_th) + len(ids_exceeding_own_cat_th) > 0)
+            or (event_type in [EventType.CAT_WENT_OUTSIDE])
+            or (tag_id is not None)
+            or (tag_id_from_video is not None)
+        )
+        if should_write_pictures:
             for element in img_ids_for_motion_block:
                 image_buffer.update_block_id(element, motion_block_id)
                 if tag_id is not None:
@@ -523,18 +567,27 @@ def backend_main(
                     image_buffer.update_tag_id(element, tag_id_from_video)
             logging.info(f"[BACKEND] Minimal threshold exceeded or tag ID detected. Images will be written to the database. Updated block ID for {len(img_ids_for_motion_block)} elements to '{motion_block_id}' and tag ID to '{tag_id if tag_id is not None else ''}'")
             timeline_snapshot = list(motion_timeline_entries)
-            db_thread = threading.Thread(
-                target=EventsRepo.write_motion_block_to_db,
-                args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, all_events),
-                kwargs={"timeline_entries": timeline_snapshot},
-                daemon=True,
-            )
-            db_thread.start()
         else:
-            logging.info(f"[BACKEND] No elements found that exceed the minimal threshold '{CONFIG['MIN_THRESHOLD']}' and no tag ID was detected. No database entry will be created.")
+            logging.info(f"[BACKEND] No elements found that exceed the minimal threshold '{CONFIG['MIN_THRESHOLD']}' and no tag ID was detected. No picture database entry will be created.")
             if len(img_ids_for_motion_block) > 0:
                 for element in img_ids_for_motion_block:
                     image_buffer.delete_by_id(element)
+            timeline_snapshot = None
+
+        db_thread = threading.Thread(
+            target=_persist_concluded_motion,
+            args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, all_events),
+            kwargs={
+                "write_pictures": should_write_pictures,
+                "timeline_entries": timeline_snapshot,
+                "rfid": persist_rfid,
+                "cat_name": persist_name,
+                "created_at": persist_at,
+                "extra_infos": verdict_snapshot,
+            },
+            daemon=True,
+        )
+        db_thread.start()
 
         first_motion_outside_tm = 0.0
         first_motion_inside_tm = 0.0

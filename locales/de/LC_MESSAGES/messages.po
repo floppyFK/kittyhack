@@ -4671,3 +4671,198 @@ msgstr "Innen verriegelt (nach Durchgang)"
 
 msgid "Outside locked (after passage)"
 msgstr "Außen verriegelt (nach Durchgang)"
+
+msgid "Statistics"
+msgstr "Statistik"
+
+msgid "Last 24 hours"
+msgstr "Letzte 24 Stunden"
+
+msgid "Last 7 days"
+msgstr "Letzte 7 Tage"
+
+msgid "Last 30 days"
+msgstr "Letzte 30 Tage"
+
+msgid "Last 12 months"
+msgstr "Letzte 12 Monate"
+
+msgid "All time"
+msgstr "Gesamter Zeitraum"
+
+msgid "Custom range"
+msgstr "Zeitraum wählen"
+
+msgid "Time range"
+msgstr "Zeitraum"
+
+msgid "Grouping"
+msgstr "Gruppierung"
+
+msgid "Auto"
+msgstr "Automatisch"
+
+msgid "Hour"
+msgstr "Stunde"
+
+msgid "Day"
+msgstr "Tag"
+
+msgid "Week"
+msgstr "Woche"
+
+msgid "Month"
+msgstr "Monat"
+
+msgid "All cats"
+msgstr "Alle Katzen"
+
+msgid "Cat"
+msgstr "Katze"
+
+msgid "From / to"
+msgstr "Von / bis"
+
+msgid "Entries"
+msgstr "Eingänge"
+
+msgid "Exits"
+msgstr "Ausgänge"
+
+msgid "In"
+msgstr "Rein"
+
+msgid "Out"
+msgstr "Raus"
+
+msgid "Prey"
+msgstr "Beute"
+
+msgid "Entered with prey"
+msgstr "Mit Beute reingegangen"
+
+msgid "Prey blocked"
+msgstr "Beute blockiert"
+
+msgid "Entry attempts"
+msgstr "Eintrittsversuche"
+
+msgid "Denied exits"
+msgstr "Verweigerte Ausgänge"
+
+msgid "Median time outside"
+msgstr "Median draußen"
+
+msgid "Median time inside"
+msgstr "Median drinnen"
+
+msgid "Mon"
+msgstr "Mo"
+
+msgid "Tue"
+msgstr "Di"
+
+msgid "Wed"
+msgstr "Mi"
+
+msgid "Thu"
+msgstr "Do"
+
+msgid "Fri"
+msgstr "Fr"
+
+msgid "Sat"
+msgstr "Sa"
+
+msgid "Sun"
+msgstr "So"
+
+msgid "d"
+msgstr "T"
+
+msgid "h"
+msgstr "Std."
+
+msgid "m"
+msgstr "Min."
+
+msgid "Passages"
+msgstr "Durchgänge"
+
+msgid "Prey detections"
+msgstr "Beuteerkennungen"
+
+msgid "Attempts without passing"
+msgstr "Versuche ohne Durchgang"
+
+msgid "Time inside / outside"
+msgstr "Zeit drinnen / draußen"
+
+msgid "Activity by hour of day"
+msgstr "Aktivität nach Tageszeit"
+
+msgid "Per cat"
+msgstr "Pro Katze"
+
+msgid "Attempts"
+msgstr "Versuche"
+
+msgid "Typical first exit"
+msgstr "Typischer erster Ausgang"
+
+msgid "Typical last return"
+msgstr "Typische letzte Rückkehr"
+
+msgid "Longest time outside"
+msgstr "Längste Zeit draußen"
+
+msgid "No events in this time range."
+msgstr "Keine Ereignisse in diesem Zeitraum."
+
+msgid "Try a longer range or another cat."
+msgstr "Probiere einen längeren Zeitraum oder eine andere Katze."
+
+msgid "No statistics yet"
+msgstr "Noch keine Statistiken"
+
+msgid ""
+"Statistics are stored independently of pictures. Activity that was already "
+"deleted from the picture archive cannot be reconstructed. New flap events "
+"will appear here."
+msgstr ""
+"Statistiken werden unabhängig von Bildern gespeichert. Aktivität, die "
+"bereits aus dem Bildarchiv gelöscht wurde, kann nicht rekonstruiert werden. "
+"Neue Klappenereignisse erscheinen hier."
+
+msgid "Show numbers"
+msgstr "Zahlen anzeigen"
+
+msgid "Uncertain entries"
+msgstr "Unsichere Eingänge"
+
+msgid "Denied entry"
+msgstr "Verweigerter Eingang"
+
+msgid "Denied exit"
+msgstr "Verweigerter Ausgang"
+
+msgid "Avg. time outside"
+msgstr "Ø-Zeit draußen"
+
+msgid "Avg. time inside"
+msgstr "Ø-Zeit drinnen"
+
+msgid "Avg. / median outside"
+msgstr "Ø / Median draußen"
+
+msgid "Avg. / median inside"
+msgstr "Ø / Median drinnen"
+
+#, python-brace-format
+msgid "Entered: {n}"
+msgstr "Eingegangen: {n}"
+
+#, python-brace-format
+msgid "Blocked: {n}"
+msgstr "Blockiert: {n}"
+

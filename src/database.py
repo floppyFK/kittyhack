@@ -254,7 +254,7 @@ class DatabaseCore:
             "CREATE INDEX IF NOT EXISTS idx_id ON events (id)",
             "CREATE INDEX IF NOT EXISTS idx_block_id_created_at ON events (block_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_events_block_id_deleted_created_at ON events (block_id, deleted, created_at)",
-            "CREATE INDEX IF NOT EXISTS idx_cats_rfid ON cats (rfid)"
+            "CREATE INDEX IF NOT EXISTS idx_cats_rfid ON cats (rfid)",
         ]
 
         for stmt in indexes:
@@ -1841,6 +1841,257 @@ class CatsRepo:
             return None
 
 
+class VisitStatsRepo:
+    """Durable per-visit statistics (independent of picture purge)."""
+
+    _INSERT_SQL = """
+        INSERT INTO visit_stats (
+            created_at, cat_rfid, cat_name, conclusion, direction,
+            passed, prey, denied_entry, denied_exit, attempt_no_pass,
+            uncertain_entry, duration_outside_s, duration_inside_s, source_block_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    @staticmethod
+    def insert(database: str, row: dict) -> Result:
+        """Insert one visit_stats row. Duplicate ``source_block_id`` is ignored."""
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return result
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            cursor = conn.cursor()
+            cursor.execute(
+                VisitStatsRepo._INSERT_SQL,
+                (
+                    row.get("created_at"),
+                    row.get("cat_rfid"),
+                    row.get("cat_name"),
+                    row.get("conclusion"),
+                    row.get("direction"),
+                    int(row.get("passed") or 0),
+                    int(row.get("prey") or 0),
+                    int(row.get("denied_entry") or 0),
+                    int(row.get("denied_exit") or 0),
+                    int(row.get("attempt_no_pass") or 0),
+                    int(row.get("uncertain_entry") or 0),
+                    row.get("duration_outside_s"),
+                    row.get("duration_inside_s"),
+                    row.get("source_block_id"),
+                ),
+            )
+            conn.commit()
+            conn.close()
+        except sqlite3.IntegrityError:
+            logging.debug(
+                "[VISIT_STATS] Skipping duplicate source_block_id=%s",
+                row.get("source_block_id"),
+            )
+            return Result(True, "duplicate")
+        except Exception as e:
+            error_message = f"[VISIT_STATS] Failed to insert visit: {e}"
+            logging.error(error_message)
+            return Result(False, error_message)
+        else:
+            return Result(True, "")
+        finally:
+            DatabaseCore.release_database()
+
+    @staticmethod
+    def get_last_passed(database: str, cat_rfid: str) -> dict | None:
+        """Latest passed in/out row for ``cat_rfid``, or None."""
+        if not cat_rfid:
+            return None
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return None
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, created_at, direction, conclusion
+                FROM visit_stats
+                WHERE cat_rfid = ? AND passed = 1 AND direction IN ('in', 'out')
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (cat_rfid,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return dict(row) if row else None
+        except Exception as e:
+            logging.error(f"[VISIT_STATS] Failed to read last passed visit: {e}")
+            return None
+        finally:
+            DatabaseCore.release_database()
+
+    @staticmethod
+    def query_range(
+        database: str,
+        date_start: str,
+        date_end: str,
+        cat_rfid: str | None = None,
+    ) -> list[dict]:
+        """Return visit_stats rows in ``[date_start, date_end]``, oldest first."""
+        if not DatabaseCore.check_if_table_exists(database, "visit_stats"):
+            return []
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return []
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            sql = """
+                SELECT * FROM visit_stats
+                WHERE created_at >= ? AND created_at <= ?
+            """
+            params: list = [date_start, date_end]
+            if cat_rfid == "__unknown__":
+                sql += " AND (cat_rfid IS NULL OR cat_rfid = '')"
+            elif cat_rfid:
+                sql += " AND cat_rfid = ?"
+                params.append(cat_rfid)
+            sql += " ORDER BY created_at ASC, id ASC"
+            cursor.execute(sql, params)
+            rows = [dict(r) for r in cursor.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            logging.error(f"[VISIT_STATS] Failed to query range: {e}")
+            return []
+        finally:
+            DatabaseCore.release_database()
+
+    @staticmethod
+    def count(database: str) -> int:
+        """Total visit_stats rows, or 0 if the table is missing."""
+        if not DatabaseCore.check_if_table_exists(database, "visit_stats"):
+            return 0
+        df = DatabaseCore.read_df_from_database(
+            database, "SELECT COUNT(*) AS n FROM visit_stats"
+        )
+        if df.empty:
+            return 0
+        try:
+            return int(df.iloc[0]["n"])
+        except Exception:
+            return 0
+
+    @staticmethod
+    def list_cats(database: str) -> list[dict]:
+        """Distinct RFID/name pairs seen in visit_stats (unknown = empty rfid)."""
+        if not DatabaseCore.check_if_table_exists(database, "visit_stats"):
+            return []
+        df = DatabaseCore.read_df_from_database(
+            database,
+            "SELECT cat_rfid, cat_name FROM visit_stats GROUP BY cat_rfid, cat_name",
+        )
+        if df.empty:
+            return []
+        out = []
+        for __, row in df.iterrows():
+            out.append(
+                {
+                    "cat_rfid": row["cat_rfid"] if pd.notna(row["cat_rfid"]) else None,
+                    "cat_name": row["cat_name"] if pd.notna(row["cat_name"]) else None,
+                }
+            )
+        return out
+
+    @staticmethod
+    def get_meta(database: str, key: str) -> str | None:
+        """Read a visit_stats_meta value, or None."""
+        if not DatabaseCore.check_if_table_exists(database, "visit_stats_meta"):
+            return None
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return None
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM visit_stats_meta WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            conn.close()
+            return str(row[0]) if row else None
+        except Exception as e:
+            logging.error(f"[VISIT_STATS] Failed to read meta '{key}': {e}")
+            return None
+        finally:
+            DatabaseCore.release_database()
+
+    @staticmethod
+    def set_meta(database: str, key: str, value: str) -> Result:
+        """Upsert a visit_stats_meta key."""
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return result
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT OR REPLACE INTO visit_stats_meta (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            error_message = f"[VISIT_STATS] Failed to set meta '{key}': {e}"
+            logging.error(error_message)
+            return Result(False, error_message)
+        else:
+            return Result(True, "")
+        finally:
+            DatabaseCore.release_database()
+
+    @staticmethod
+    def fetch_motion_blocks_for_backfill(database: str) -> list[dict]:
+        """One representative events-row per motion block, oldest first (includes deleted)."""
+        if not DatabaseCore.check_if_table_exists(database, "events"):
+            return []
+        stmt = """
+            SELECT e.block_id, e.created_at, e.event_type,
+                   COALESCE(
+                       NULLIF(TRIM(e.rfid), ''),
+                       (
+                           SELECT TRIM(e2.rfid) FROM events e2
+                           WHERE e2.block_id = e.block_id
+                             AND e2.rfid IS NOT NULL
+                             AND TRIM(e2.rfid) != ''
+                           LIMIT 1
+                       )
+                   ) AS rfid
+            FROM events e
+            INNER JOIN (
+                SELECT block_id, MIN(id) AS min_id
+                FROM events
+                WHERE block_id IS NOT NULL
+                GROUP BY block_id
+            ) t ON e.id = t.min_id
+            ORDER BY e.created_at ASC, e.id ASC
+        """
+        df = DatabaseCore.read_df_from_database(database, stmt)
+        if df.empty:
+            return []
+        rows = []
+        for __, row in df.iterrows():
+            rfid = row["rfid"] if "rfid" in row and pd.notna(row["rfid"]) else None
+            if isinstance(rfid, str) and not rfid.strip():
+                rfid = None
+            rows.append(
+                {
+                    "block_id": int(row["block_id"]) if pd.notna(row["block_id"]) else None,
+                    "created_at": str(row["created_at"]) if pd.notna(row["created_at"]) else "",
+                    "event_type": str(row["event_type"]) if pd.notna(row["event_type"]) else "",
+                    "rfid": rfid,
+                }
+            )
+        return rows
+
+
 class DbMigrations:
     """Table creation and one-shot migrations between kittyflap/kittyhack schemas."""
 
@@ -1871,6 +2122,51 @@ class DbMigrations:
         if result.success:
             logging.info(f"[DATABASE] Successfully created the 'events' table in the database '{database}'.")
         return result
+
+    @staticmethod
+    def create_visit_stats_tables(database: str) -> Result:
+        """Create visit_stats and visit_stats_meta tables (and indexes) if missing."""
+        stmt_stats = """
+            CREATE TABLE IF NOT EXISTS visit_stats (
+                id INTEGER PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                cat_rfid TEXT,
+                cat_name TEXT,
+                conclusion TEXT NOT NULL,
+                direction TEXT,
+                passed INTEGER NOT NULL DEFAULT 0,
+                prey INTEGER NOT NULL DEFAULT 0,
+                denied_entry INTEGER NOT NULL DEFAULT 0,
+                denied_exit INTEGER NOT NULL DEFAULT 0,
+                attempt_no_pass INTEGER NOT NULL DEFAULT 0,
+                uncertain_entry INTEGER NOT NULL DEFAULT 0,
+                duration_outside_s REAL,
+                duration_inside_s REAL,
+                source_block_id INTEGER
+            )
+        """
+        stmt_meta = """
+            CREATE TABLE IF NOT EXISTS visit_stats_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """
+        result = DatabaseCore.write_stmt_to_database(database, stmt_stats)
+        if not result.success:
+            return result
+        result = DatabaseCore.write_stmt_to_database(database, stmt_meta)
+        if not result.success:
+            return result
+        for idx_stmt in (
+            "CREATE INDEX IF NOT EXISTS idx_visit_stats_created_at ON visit_stats (created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_visit_stats_cat_created ON visit_stats (cat_rfid, created_at)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_visit_stats_source_block ON visit_stats (source_block_id) WHERE source_block_id IS NOT NULL",
+        ):
+            result = DatabaseCore.write_stmt_to_database(database, idx_stmt)
+            if not result.success:
+                return result
+        logging.info(f"[DATABASE] Ensured visit_stats tables in '{database}'.")
+        return Result(True, "")
 
     @staticmethod
     def create_motion_timeline_table(database: str):
@@ -2165,6 +2461,7 @@ get_cat_names_list = CatsRepo.get_cat_names_list
 get_cat_thumbnail = CatsRepo.get_cat_thumbnail
 create_kittyhack_events_table = DbMigrations.create_kittyhack_events_table
 create_motion_timeline_table = DbMigrations.create_motion_timeline_table
+create_visit_stats_tables = DbMigrations.create_visit_stats_tables
 create_kittyhack_photo_table = DbMigrations.create_kittyhack_photo_table
 create_kittyhack_cats_table = DbMigrations.create_kittyhack_cats_table
 migrate_cats_to_kittyhack = DbMigrations.migrate_cats_to_kittyhack

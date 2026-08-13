@@ -13,6 +13,7 @@ If you find bugs or have ideas, please use the GitHub issue tracker.
 - **Control who may enter/exit** (global rules or **individual rules per cat**)
 - **Prey detection** (on/off) + **per-cat settings** (when enabled)
 - **See events and pictures** (filter by date, cat/prey detection)
+- **Statistics** (entries/exits, time outside/inside, prey, activity heatmap; stored independently of picture retention)
 - **Live camera view** + detection overlay
 - **Manage cats** (RFID, name, per-cat settings)
 - **Use external IP cameras** (better angle / night vision compared to the internal camera)
@@ -181,6 +182,7 @@ Wenn du Bugs findest oder Ideen hast, nutze bitte den GitHub Issue Tracker.
 - **Steuern, wer rein/raus darf** (globale Regeln oder **individuell pro Katze**)
 - **Beuteerkennung** (an/aus) + **pro Katze konfigurierbar** (wenn aktiviert)
 - **Events & Bilder ansehen** (Filter nach Datum, Katze/Beute-Erkennung)
+- **Statistik** (Eingänge/Ausgänge, Zeit draußen/drinnen, Beute, Aktivitäts-Heatmap; unabhängig von der Bild-Aufbewahrung)
 - **Live-Kamerabild** + Overlay mit erkannten Objekten
 - **Katzen verwalten** (RFID, Name, Einstellungen pro Katze)
 - **Externe IP-Kameras** (besserer Blickwinkel / bessere Nachtsicht als die interne Kamera)

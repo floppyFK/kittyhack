@@ -57,3 +57,18 @@ def test_update_kittyhack_button_id_is_valid_shiny_id():
     button_ids = re.findall(r'input_task_button\(\s*"([^"]+)"', info)
     assert "update_kittyhack" in button_ids
     assert all("." not in button_id for button_id in button_ids)
+
+
+def test_statistics_tab_is_wired():
+    """Statistics tab must be registered in nav, routing, and register_all."""
+    init = (SERVER_UI / "__init__.py").read_text(encoding="utf-8")
+    assert "register_statistics" in init
+    ui_py = (ROOT / "src" / "ui.py").read_text(encoding="utf-8")
+    assert 'value="statistics"' in ui_py
+    app_py = (ROOT / "app.py").read_text(encoding="utf-8")
+    assert '"statistics"' in app_py
+    app_js = (ROOT / "www" / "app.js").read_text(encoding="utf-8")
+    assert "'statistics'" in app_js
+    assert (ROOT / "www" / "vendor" / "chart.umd.min.js").is_file()
+    assert (ROOT / "www" / "stats.js").is_file()
+    assert (SERVER_UI / "statistics.py").is_file()

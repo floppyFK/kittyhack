@@ -628,6 +628,8 @@ def run() -> None:
         logging.warning("Table 'motion_timeline' not found in the kittyhack database. Creating it...")
         DbMigrations.create_motion_timeline_table(CONFIG['KITTYHACK_DATABASE_PATH'])
 
+    DbMigrations.create_visit_stats_tables(CONFIG['KITTYHACK_DATABASE_PATH'])
+
     if not DatabaseCore.check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
         logging.warning(f"Legacy table 'photo' not found in the kittyhack database. Creating it...")
         DbMigrations.create_kittyhack_photo_table(CONFIG['KITTYHACK_DATABASE_PATH'])
@@ -682,6 +684,12 @@ def run() -> None:
 
     # Create indexes for the kittyhack database
     DatabaseCore.create_index_on_events(CONFIG['KITTYHACK_DATABASE_PATH'])
+
+    try:
+        from src.statistics import backfill_from_events
+        backfill_from_events(CONFIG['KITTYHACK_DATABASE_PATH'])
+    except Exception as e:
+        logging.error(f"[VISIT_STATS] Backfill failed: {e}")
 
     # Wait for internet connectivity and NTP sync
     logging.info("Waiting for network connectivity...")

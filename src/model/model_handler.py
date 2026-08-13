@@ -19,6 +19,7 @@ from src.camera import (
     VideoStream,
     encode_frame_jpg,
     image_buffer,
+    redact_camera_url,
     videostream,
 )
 from src.mode import is_remote_mode
@@ -437,7 +438,7 @@ class ModelHandler:
             effective_camera_source, effective_ip_camera_url = _effective_camera_stream_config()
             if is_remote_mode() and str(CONFIG.get('CAMERA_SOURCE') or '').strip().lower() == 'internal':
                 if effective_camera_source == 'ip_camera' and effective_ip_camera_url:
-                    logging.info(f"[CAMERA] Remote-mode implicit internal camera mapping active: {effective_ip_camera_url}")
+                    logging.info(f"[CAMERA] Remote-mode implicit internal camera mapping active: {redact_camera_url(effective_ip_camera_url)}")
                 elif effective_camera_source == 'disconnected':
                     logging.info("[CAMERA] Remote control disconnected. IP camera stream remains closed until reconnect.")
                 else:
@@ -465,8 +466,8 @@ class ModelHandler:
             stream_start_time = tm.time()
             while frame is None and not sigterm_monitor.stop_now and not self._stop_requested.is_set():
                 frame = videostream.read_oldest()
-                if tm.time() - stream_start_time > 10:
-                    logging.error("[CAMERA] Camera stream failed to start within 10 seconds!")
+                if tm.time() - stream_start_time > 15:
+                    logging.error("[CAMERA] Camera stream failed to start within 15 seconds!")
                     break
                 else:
                     tm.sleep(0.1)
@@ -515,18 +516,27 @@ class ModelHandler:
                     last_ip_camera_target_resolution = current_ip_camera_target_resolution
                     last_ip_camera_pipeline_fps_limit = current_ip_camera_pipeline_fps_limit
                     last_ip_camera_hw_decode = current_ip_camera_hw_decode
+                    # Previous camera's frames must not trip the no-frame watchdog.
+                    last_good_frame_ts = tm.time()
+                    last_no_frame_reinit_ts = tm.time()
+                    no_frame_since_ts = 0.0
+                    try:
+                        last_seen_camera_frame_id = int(videostream.get_latest_frame_id()) if videostream is not None else 0
+                    except Exception:
+                        last_seen_camera_frame_id = 0
                     # Wait for the new stream to warm up
                     frame = None
                     stream_start_time = tm.time()
                     while frame is None and not sigterm_monitor.stop_now and not self._stop_requested.is_set():
                         frame = videostream.read_oldest()
-                        if tm.time() - stream_start_time > 10:
-                            logging.error("[CAMERA] Camera stream failed to start within 10 seconds after reinit!")
+                        if tm.time() - stream_start_time > 15:
+                            logging.error("[CAMERA] Camera stream failed to start within 15 seconds after reinit!")
                             break
                         else:
                             tm.sleep(0.1)
                     if frame is not None:
                         logging.info("[CAMERA] Camera stream re-initialized successfully.")
+                        last_good_frame_ts = tm.time()
 
                 # Start timer (for calculating frame rate)
                 t1 = cv2.getTickCount()
@@ -704,9 +714,17 @@ class ModelHandler:
                         try:
                             self.reinit_videostream()
                             last_no_frame_reinit_ts = current_time
+                            last_good_frame_ts = tm.time()
+                            no_frame_since_ts = 0.0
+                            try:
+                                last_seen_camera_frame_id = (
+                                    int(videostream.get_latest_frame_id()) if videostream is not None else 0
+                                )
+                            except Exception:
+                                last_seen_camera_frame_id = 0
 
                             # Warm-up probe after reinit
-                            probe_deadline = tm.time() + 10.0
+                            probe_deadline = tm.time() + 15.0
                             probe_frame = None
                             while (
                                 probe_frame is None
@@ -845,13 +863,13 @@ class ModelHandler:
             ip_camera_hw_decode=str(CONFIG.get('IP_CAMERA_HW_DECODE', 'auto') or 'auto'),
         ).start()
         if is_remote_mode() and str(CONFIG.get('CAMERA_SOURCE') or '').strip().lower() == 'internal' and effective_camera_source == 'ip_camera':
-            logging.info(f"[MODEL] Re-initialized videostream with implicit remote MJPEG relay source: {effective_ip_camera_url}.")
+            logging.info(f"[MODEL] Re-initialized videostream with implicit remote MJPEG relay source: {redact_camera_url(effective_ip_camera_url)}.")
         elif effective_camera_source == 'disconnected':
             logging.info("[MODEL] Re-initialized videostream in disconnected mode (IP camera stream closed).")
         elif CONFIG['CAMERA_SOURCE'] == "internal":
             logging.info(f"[MODEL] Re-initialized videostream with internal camera source.")
         else:
-            logging.info(f"[MODEL] Re-initialized videostream with external camera source: {effective_ip_camera_url}.")
+            logging.info(f"[MODEL] Re-initialized videostream with external camera source: {redact_camera_url(effective_ip_camera_url)}.")
 
     def set_videostream_buffer_size(self, new_size: int):
         """Set the videostream frame buffer size, if a stream is active."""

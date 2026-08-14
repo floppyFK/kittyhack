@@ -2,20 +2,20 @@
 
 Import-order is load-bearing. Python 3.14's default multiprocessing start
 method on Linux is ``forkserver``, which starts a *fresh* interpreter and
-re-imports this module before the worker function runs. OpenMP/NCNN/PyTorch
-read ``OMP_NUM_THREADS`` and the CPU affinity mask at first import. If cv2,
-numpy, torch, or ultralytics are imported first, they spawn one thread per
-core; pinning to a single core afterwards oversubscribes that core and cuts
-throughput by roughly the core count (observed: ~2.95 fps with fork on
-Python 3.12 vs ~0.72 fps with forkserver on Python 3.14 on the Kittyflap).
+re-imports this module before the worker function runs.
 
-This module must not import those libraries at top level. ``src.model``
-``__init__`` is lazy for the same reason.
+The worker talks to NCNN directly (no Ultralytics/PyTorch). Ultralytics still
+letterboxes and runs NMS through torch even for NCNN models; torch 2.9 on
+the Kittyflap is far slower than the 3.12 / torch 2.7 stack (~0.72 vs ~2.95 fps).
+
+This module must not import cv2/numpy/torch/ultralytics/ncnn at top level.
+``src.model`` ``__init__`` is lazy for the same reason.
 """
 from __future__ import annotations
 
 import logging
 import os
+import time as tm
 
 _THREAD_ENV_VARS = (
     "OMP_NUM_THREADS",
@@ -70,8 +70,8 @@ def configure_worker_compute(num_threads=1) -> list[int]:
     return cores_to_use
 
 
-def apply_runtime_thread_limits(num_threads=1, model=None) -> None:
-    """Apply thread caps on already-imported cv2/torch/ncnn (and the YOLO net)."""
+def apply_runtime_thread_limits(num_threads=1) -> None:
+    """Apply thread caps on already-imported cv2/ncnn."""
     n = _normalized_thread_count(num_threads)
     try:
         import cv2
@@ -85,31 +85,12 @@ def apply_runtime_thread_limits(num_threads=1, model=None) -> None:
         pass
 
     try:
-        import torch
-
-        torch.set_num_threads(n)
-        try:
-            torch.set_num_interop_threads(1)
-        except RuntimeError:
-            pass
-    except Exception:
-        pass
-
-    try:
         import ncnn
 
         if hasattr(ncnn, "set_omp_num_threads"):
             ncnn.set_omp_num_threads(n)
     except Exception:
         pass
-
-    backend = getattr(model, "model", None) if model is not None else None
-    net = getattr(backend, "net", None)
-    if net is not None and hasattr(net, "opt"):
-        try:
-            net.opt.num_threads = n
-        except Exception:
-            pass
 
 
 def yolo_model_worker_process(
@@ -119,30 +100,30 @@ def yolo_model_worker_process(
     num_threads=1,
     inference_device="cpu",
 ):
-    """YOLO inference subprocess. Must stay picklable (module-level target)."""
+    """NCNN inference subprocess. Must stay picklable (module-level target)."""
     n = _normalized_thread_count(num_threads)
     cores_to_use = configure_worker_compute(n)
 
     try:
         from src.baseconfig import CONFIG, configure_logging
-        from src.model.detection import _parse_yolo_detection_results
-        from ultralytics import YOLO
+        from src.model.ncnn_detect import NcnnYoloDetector
 
         apply_runtime_thread_limits(n)
+        configure_logging(CONFIG["LOGLEVEL"])
 
-        logging.getLogger("ultralytics").setLevel(logging.WARNING)
-        logging.getLogger("ultralytics.yolo.engine.model").setLevel(logging.WARNING)
         if cores_to_use:
             logging.info(
                 f"[MODEL] Worker process running on CPU cores {cores_to_use} "
-                f"with {n} native thread(s)"
+                f"with {n} native thread(s) (NCNN, no torch)"
             )
         else:
-            logging.info(f"[MODEL] Worker process running without CPU affinity ({n} native thread(s))")
+            logging.info(
+                f"[MODEL] Worker process running without CPU affinity "
+                f"({n} native thread(s), NCNN, no torch)"
+            )
 
-        model = YOLO(model_path, task="detect", verbose=False)
-        apply_runtime_thread_limits(n, model=model)
-        configure_logging(CONFIG["LOGLEVEL"])
+        detector = NcnnYoloDetector(model_path, num_threads=n)
+        first = True
 
         while True:
             job = input_queue.get()
@@ -150,18 +131,20 @@ def yolo_model_worker_process(
                 break
 
             job_id, frame, input_size, labels, cat_names, min_threshold = job
-
-            _worker_kwargs: dict = dict(stream=True, imgsz=input_size, verbose=False)
-            if inference_device != "cpu":
-                _worker_kwargs["device"] = inference_device
-            results = model(frame, **_worker_kwargs)
-
-            mouse_probability, own_cat_probability, detected_objects = _parse_yolo_detection_results(
-                results,
+            t0 = tm.perf_counter()
+            mouse_probability, own_cat_probability, detected_objects = detector.predict(
+                frame,
                 labels,
                 cat_names,
                 min_threshold,
+                input_size=input_size,
             )
+            if first:
+                logging.info(
+                    f"[MODEL] First NCNN inference took {tm.perf_counter() - t0:.3f}s "
+                    f"(imgsz={detector.imgsz})"
+                )
+                first = False
 
             output_queue.put((job_id, mouse_probability, own_cat_probability, detected_objects))
 

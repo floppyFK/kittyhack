@@ -229,10 +229,8 @@ class ModelHandler:
                 self._yolo = direct_inference
                 self._model_worker = None
             else:
-                # Limited-core path: run YOLO in a child process with CPU affinity.
-                # Python 3.14's default start method on Linux is forkserver (not
-                # fork). The worker target lives in yolo_inference_worker so the
-                # child can cap OpenMP/NCNN threads before cv2/torch import.
+                # Limited-core path: NCNN in a child process (no PyTorch).
+                # Python 3.14's default start method on Linux is forkserver.
                 ctx = multiprocessing.get_context()
                 self._input_queue = ctx.Queue()
                 self._output_queue = ctx.Queue()
@@ -242,7 +240,7 @@ class ModelHandler:
                 )
                 self._model_worker.daemon = True
                 self._model_worker.start()
-                logging.info(f"[MODEL] Started YOLO worker process using {self.num_threads} CPU cores")
+                logging.info(f"[MODEL] Started NCNN worker process using {self.num_threads} CPU cores")
 
                 self._yolo = self._send_to_worker
                 self._Interpreter = None

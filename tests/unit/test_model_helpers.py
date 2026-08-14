@@ -85,3 +85,71 @@ def test_parse_yolo_empty_results():
         min_threshold=30.0,
     )
     assert mouse == 0 and cat == 0 and objs == []
+
+
+def test_letterbox_bgr_800x600_to_320():
+    from src.model.ncnn_detect import letterbox_bgr
+
+    img = np.zeros((600, 800, 3), dtype=np.uint8)
+    out, ratio, pad = letterbox_bgr(img, 320)
+    assert out.shape == (320, 320, 3)
+    assert ratio == pytest.approx(0.4)
+    # min(320/600, 320/800)=0.4 → unpad (320, 240), vertical pad 80 → 40/side
+    assert pad == (0, 40)
+
+
+def test_decode_yolo_ncnn_two_class_is_not_end2end():
+    from src.model.ncnn_detect import decode_yolo_ncnn
+
+    # (4+2, 3 proposals): one real box in letterbox pixels, two below threshold
+    raw = np.zeros((6, 3), dtype=np.float32)
+    raw[0, 0] = 160.0  # cx
+    raw[1, 0] = 160.0  # cy
+    raw[2, 0] = 40.0   # w
+    raw[3, 0] = 40.0   # h
+    raw[4, 0] = 0.9    # class 0
+    raw[5, 0] = 0.1    # class 1
+    raw[4, 1] = 0.05
+    raw[5, 2] = 0.02
+
+    xyxy, scores, classes = decode_yolo_ncnn(raw, num_classes=2, imgsz=320, conf_thres=0.25)
+    assert len(scores) == 1
+    assert classes[0] == 0
+    assert scores[0] == pytest.approx(0.9)
+    assert xyxy[0, 0] == pytest.approx(140.0)
+    assert xyxy[0, 2] == pytest.approx(180.0)
+
+
+def test_nms_and_scale_xyxy():
+    from src.model.ncnn_detect import nms_xyxy, scale_xyxy_to_original
+
+    xyxy = np.array([[10.0, 10.0, 50.0, 50.0], [12.0, 12.0, 48.0, 48.0]], dtype=np.float32)
+    scores = np.array([0.9, 0.8], dtype=np.float32)
+    keep = nms_xyxy(xyxy, scores, iou_thres=0.5)
+    assert keep == [0]
+
+    scaled = scale_xyxy_to_original(
+        np.array([[40.0, 40.0, 80.0, 80.0]], dtype=np.float32),
+        ratio=0.4,
+        pad=(0, 40),
+        orig_w=800,
+        orig_h=600,
+    )
+    # x: 40/0.4=100 → 100/800=0.125; y: (40-40)/0.4=0
+    assert scaled[0, 0] == pytest.approx(0.125)
+    assert scaled[0, 1] == pytest.approx(0.0)
+
+
+def test_read_ncnn_meta(tmp_path):
+    from src.model.ncnn_detect import read_ncnn_meta
+
+    imgsz, end2end = read_ncnn_meta(str(tmp_path), 320)
+    assert imgsz == 320 and end2end is False
+
+    (tmp_path / "metadata.yaml").write_text(
+        "imgsz: [416, 416]\nargs:\n  nms: true\n",
+        encoding="utf-8",
+    )
+    imgsz, end2end = read_ncnn_meta(str(tmp_path), 320)
+    assert imgsz == 416 and end2end is True
+

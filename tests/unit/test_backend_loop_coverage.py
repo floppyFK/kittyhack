@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time as time_mod
+
 import pytest
 
 import src.baseconfig as baseconfig
@@ -34,6 +36,7 @@ def _short_loop_delays(monkeypatch):
         "src.database.EventsRepo.write_motion_block_to_db",
         staticmethod(lambda *a, **k: Result(True, "")),
     )
+    monkeypatch.setattr(loop_mod.UserNotifications, "add", lambda *a, **k: "ok")
 
 
 @pytest.fixture
@@ -59,6 +62,28 @@ def _inject_frame(harness, *, mouse=0.0, own_cat=0.0, cat_name=None):
         detected_objects=detected,
         timestamp_mono=harness.clock.monotonic(),
     )
+
+
+def _inject_live_camera_cat(harness, own_cat=90.0):
+    """Camera-motion frames must use real monotonic time (``get_filtered_ids_recent``)."""
+    image_buffer.append(
+        harness.clock.wall_time(),
+        b"",
+        b"",
+        0.0,
+        0.0,
+        float(own_cat),
+        timestamp_mono=time_mod.monotonic(),
+    )
+
+
+def _enable_camera_motion_all(harness):
+    baseconfig.CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter.ALL
+    baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = False
+    baseconfig.CONFIG["USE_CAMERA_FOR_MOTION_DETECTION"] = True
+    baseconfig.CONFIG["REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY"] = False
+    baseconfig.CONFIG["CAT_THRESHOLD"] = 50.0
+    harness.set_outside(False)
 
 
 # --- Entry modes -------------------------------------------------------------
@@ -621,3 +646,204 @@ def test_lazy_cat_workaround_keeps_motion(harness, monkeypatch):
     # After delay, falling edge finalizes.
     harness.advance(2.0)
     harness.pump(5)
+
+
+# --- Magnet protection after MAX_UNLOCK_TIME --------------------------------
+
+
+def test_camera_motion_hold_after_max_unlock_without_pir(harness):
+    """Persistent camera 'cat' must not re-unlock after the first max-unlock window."""
+    _enable_camera_motion_all(harness)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is True
+
+    harness.advance(3.5)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+
+def test_camera_motion_hold_pir_rising_reunlocks(harness):
+    _enable_camera_motion_all(harness)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    harness.advance(3.5)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+    harness.set_outside(True)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is True
+
+
+def test_camera_motion_hold_rfid_reunlocks(harness):
+    _enable_camera_motion_all(harness)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    harness.advance(3.5)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+    harness.inject_rfid("CAT001")
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is True
+
+
+def test_camera_motion_hold_quiet_then_new_frame_reunlocks(harness, monkeypatch):
+    monkeypatch.setattr(loop_mod, "INSIDE_UNLOCK_CONFIRM_QUIET_SECONDS", 0.5)
+    _enable_camera_motion_all(harness)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    harness.advance(3.5)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+    image_buffer.clear()
+    harness.pump(3)
+    harness.advance(0.6)
+    harness.pump(3)
+
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is True
+
+
+def test_camera_motion_hold_survives_motion_block_finalize(harness):
+    _enable_camera_motion_all(harness)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is True
+
+    harness.advance(3.5)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+    harness.advance(2.5)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+
+def test_optional_pir_second_factor_blocks_camera_only_entry(harness):
+    _enable_camera_motion_all(harness)
+    baseconfig.CONFIG["REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY"] = True
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+    harness.set_outside(True)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is True
+
+
+def test_second_max_unlock_starts_safety_cooldown_blocks_pir(harness, monkeypatch):
+    monkeypatch.setattr(loop_mod, "INSIDE_UNLOCK_SAFETY_COOLDOWN_SECONDS", 2.0)
+    monkeypatch.setattr(loop_mod, "MAX_MOTION_BLOCK_SECONDS", 30.0)
+    _enable_camera_motion_all(harness)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    harness.advance(3.5)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+    harness.set_outside(True)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is True
+
+    harness.advance(3.5)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+    harness.set_outside(False)
+    harness.pump(2)
+    harness.set_outside(True)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+
+def test_after_safety_cooldown_new_pir_rising_reunlocks(harness, monkeypatch):
+    monkeypatch.setattr(loop_mod, "INSIDE_UNLOCK_SAFETY_COOLDOWN_SECONDS", 2.0)
+    monkeypatch.setattr(loop_mod, "MAX_MOTION_BLOCK_SECONDS", 30.0)
+    _enable_camera_motion_all(harness)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    harness.advance(3.5)
+    harness.pump(5)
+    harness.set_outside(True)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    harness.advance(3.5)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+    harness.advance(2.5)
+    harness.pump(3)
+    assert harness.magnets.get_inside_state() is False
+
+    harness.set_outside(False)
+    harness.pump(2)
+    harness.set_outside(True)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is True
+
+
+def test_rfid_bypasses_safety_cooldown(harness, monkeypatch):
+    monkeypatch.setattr(loop_mod, "INSIDE_UNLOCK_SAFETY_COOLDOWN_SECONDS", 2.0)
+    monkeypatch.setattr(loop_mod, "MAX_MOTION_BLOCK_SECONDS", 30.0)
+    _enable_camera_motion_all(harness)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    harness.advance(3.5)
+    harness.pump(5)
+    harness.set_outside(True)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    harness.advance(3.5)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+    harness.inject_rfid("CAT001")
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is True
+
+
+def test_passage_resets_max_unlock_escalation(harness):
+    baseconfig.CONFIG["IMMEDIATE_LOCK_AFTER_PASSAGE"] = True
+    _enable_camera_motion_all(harness)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is True
+
+    harness.advance(3.5)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+    harness.set_inside(True)
+    harness.pump(5)
+    image_buffer.clear()
+    harness.set_inside(False)
+    harness.pump(5)
+
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is True
+
+    harness.advance(3.5)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+
+    harness.set_outside(True)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is True

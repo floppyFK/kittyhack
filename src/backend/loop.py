@@ -4,7 +4,7 @@ import time as tm
 import logging
 from threading import Lock
 from src.clock import monotonic_time, wall_time
-from src.baseconfig import AllowedToEnter, AllowedToExit, CONFIG, set_language
+from src.baseconfig import AllowedToEnter, AllowedToExit, CONFIG, set_language, UserNotifications
 from src.helper import (
     EventType,
     DateTimeUtil,
@@ -30,6 +30,8 @@ from src.backend.constants import (
     FAST_EXIT_POST_CAPTURE_SECONDS,
     EVENT_COOLDOWN_SECONDS,
     MAX_MOTION_BLOCK_SECONDS,
+    INSIDE_UNLOCK_CONFIRM_QUIET_SECONDS,
+    INSIDE_UNLOCK_SAFETY_COOLDOWN_SECONDS,
 )
 import src.backend.model_runtime as model_runtime
 import src.backend.mqtt_bridge as mqtt_bridge
@@ -45,6 +47,7 @@ from src.backend.decisions import (
     no_prey_within_timeout,
     build_unlock_inside_conditions,
     conclude_motion_event_type,
+    pir_ok_for_camera_entry,
 )
 from src.runtime_flags import is_simulate_mode
 from src.statistics import record_motion_conclusion
@@ -238,6 +241,15 @@ def backend_main(
     entry_unlocked_in_block = False
     entry_unlocked_mono = 0.0
     event_cooldown_until_mono = 0.0
+    # Magnet protection after MAX_UNLOCK_TIME: confirm-hold, then safety cooldown.
+    inside_unlock_needs_confirm = False
+    inside_unlock_safety_cooldown_until_mono = 0.0
+    consecutive_max_unlocks_without_passage = 0
+    magnet_protection_notified = False
+    last_pir_outside = 0
+    pir_outside = 0
+    pir_outside_raw = 0
+    last_camera_cat_seen_mono = 0.0
 
     # Register task in the sigterm_monitor object
     sigterm_monitor.register_task()
@@ -389,6 +401,60 @@ def backend_main(
         )
         motion_block_active = True
 
+    def _reset_inside_unlock_escalation(reason: str):
+        """Clear confirm-hold, safety cooldown, and consecutive max-unlock count."""
+        nonlocal inside_unlock_needs_confirm
+        nonlocal inside_unlock_safety_cooldown_until_mono
+        nonlocal consecutive_max_unlocks_without_passage
+        nonlocal magnet_protection_notified
+
+        if (
+            inside_unlock_needs_confirm
+            or inside_unlock_safety_cooldown_until_mono > 0.0
+            or consecutive_max_unlocks_without_passage > 0
+        ):
+            logging.info(
+                f"[BACKEND] Resetting inside-unlock magnet protection ({reason})."
+            )
+        inside_unlock_needs_confirm = False
+        inside_unlock_safety_cooldown_until_mono = 0.0
+        consecutive_max_unlocks_without_passage = 0
+        magnet_protection_notified = False
+
+    def _notify_magnet_protection():
+        """Queue a one-shot WebUI warning the first time magnet protection engages."""
+        nonlocal magnet_protection_notified
+        if magnet_protection_notified:
+            return
+        magnet_protection_notified = True
+        try:
+            UserNotifications.add(
+                header=_("Persistent outside detection"),
+                message=(
+                    _("The inside lock stayed unlocked for the maximum time without a cat passing through. "
+                      "Kittyhack protected the magnets: camera detection alone will not keep the inside open.")
+                    + "\n\n"
+                    + _("If this continues, a 60 second lock cooldown is applied. "
+                      "A detected RFID chip or a manual unlock still works during the cooldown.")
+                    + "\n\n"
+                    + _("What you can do:")
+                    + "\n"
+                    + _("- Optionally require the outside PIR as a second factor for camera-based entry "
+                      "(Configuration)")
+                    + "\n"
+                    + _("- Check the outside camera for sun glare or reflections")
+                    + "\n"
+                    + _("- Raise the cat detection threshold")
+                    + "\n"
+                    + _("- Train the model with typical false-detection frames")
+                ),
+                type="warning",
+                id="inside_unlock_held_after_max_time",
+                skip_if_id_exists=True,
+            )
+        except Exception as e:
+            logging.warning(f"[BACKEND] Failed to add magnet-protection user notification: {e}")
+
     def _apply_fast_crossing_locks():
         """On fast in/out crossing: lock both sides, suppress further block/entry handling."""
         nonlocal exit_in_progress
@@ -411,6 +477,7 @@ def backend_main(
             magnets.queue_command("lock_outside")
         suppress_outside_motion_block = True
         suppress_inside_motion_block = True
+        _reset_inside_unlock_escalation("fast in/out crossing")
 
     def _finalize_motion_block(trigger_source: str = "outside_motion_end", locks_already_applied: bool = False):
         """Conclude the motion block: lock if needed, classify event, persist DB/MQTT, reset state."""
@@ -440,6 +507,7 @@ def backend_main(
         nonlocal event_cooldown_until_mono
         nonlocal pending_exit_rfid_check
         nonlocal deferred_entry_due_to_exit
+        nonlocal inside_unlock_needs_confirm
 
         if not motion_block_active:
             return
@@ -448,6 +516,14 @@ def backend_main(
 
         if trigger_source == "outside_motion_end":
             timeline_append(motion_timeline_entries, TimelineAction.MOTION_OUTSIDE_END)
+        if trigger_source == "outside_motion_timeout":
+            if not inside_unlock_needs_confirm:
+                logging.warning(
+                    "[BACKEND] Motion-block timeout with outside motion still active. "
+                    "Holding inside auto-unlock until RFID, a new outside PIR trigger, or camera quiet."
+                )
+            inside_unlock_needs_confirm = True
+            _notify_magnet_protection()
         # Note: the "Cat crossed the flap" (FAST_IN_OUT_CROSSING) timeline entry is added exactly
         # once by _apply_fast_crossing_locks(), which is the single source for fast-crossing locks.
 
@@ -489,6 +565,13 @@ def backend_main(
             tag_id=tag_id,
             no_mouse_detected=mouse_check_conditions["no_mouse_detected"],
         )
+        if event_type in (
+            EventType.CAT_WENT_INSIDE,
+            EventType.CAT_WENT_INSIDE_WITH_MOUSE,
+            EventType.CAT_WENT_OUTSIDE,
+            EventType.CAT_WENT_PROBABLY_INSIDE,
+        ):
+            _reset_inside_unlock_escalation(f"passage conclusion {event_type}")
 
         timeline_append(
             motion_timeline_entries,
@@ -655,6 +738,8 @@ def backend_main(
         nonlocal mouse_check_conditions, motion_source, use_camera_for_motion
         nonlocal motion_block_active, event_cooldown_until_mono, additional_verdict_infos, motion_timeline_entries
         nonlocal timeline_inside_reported, timeline_outside_reported, motion_inside_tm, motion_inside_raw_tm, motion_outside_tm
+        nonlocal inside_unlock_needs_confirm, inside_unlock_safety_cooldown_until_mono, consecutive_max_unlocks_without_passage
+        nonlocal magnet_protection_notified, last_pir_outside, pir_outside, pir_outside_raw, last_camera_cat_seen_mono
 
         # Persist effective FPS into info.json for the active YOLO model while running.
         try:
@@ -766,10 +851,14 @@ def backend_main(
             motion_outside = 1 if len(cat_imgs) > 0 else 0
             # Motion raw does not exist for the camera, so we set it to the same value as motion_outside
             motion_outside_raw = motion_outside
-            # Still use PIR for inside motion
-            __, motion_inside, __, motion_inside_raw = pir.get_states()
+            # Still sample both PIRs: inside for passage, outside as confirm/2FA (not as motion)
+            pir_outside, motion_inside, pir_outside_raw, motion_inside_raw = pir.get_states()
+            if motion_outside == 1:
+                last_camera_cat_seen_mono = _mono()
         else:
-            motion_outside, motion_inside, motion_outside_raw, motion_inside_raw = pir.get_states()
+            pir_outside, motion_inside, pir_outside_raw, motion_inside_raw = pir.get_states()
+            motion_outside = pir_outside
+            motion_outside_raw = pir_outside_raw
 
         # Threshold-filtered motion (not raw PIR) for immediate-lock crossing detection.
         motion_outside_crossing = motion_outside
@@ -811,6 +900,44 @@ def backend_main(
         if tag_id is not None:
             if tag_seen_mono == 0.0 or tag_id != previous_tag_id:
                 tag_seen_mono = _mono()
+
+        # Magnet protection: expire safety cooldown, then allow RFID / PIR-rise / camera-quiet to resume.
+        in_safety_cooldown = (
+            inside_unlock_safety_cooldown_until_mono > 0.0
+            and _mono() < inside_unlock_safety_cooldown_until_mono
+        )
+        if inside_unlock_safety_cooldown_until_mono > 0.0 and not in_safety_cooldown:
+            logging.info(
+                "[BACKEND] Inside-unlock safety cooldown ended. "
+                "Still requiring a new confirmation (RFID or PIR rising edge)."
+            )
+            inside_unlock_safety_cooldown_until_mono = 0.0
+
+        pir_outside_rising = last_pir_outside == 0 and pir_outside == 1
+        last_pir_outside = pir_outside
+
+        if tag_id is not None and tag_id != previous_tag_id:
+            if inside_unlock_needs_confirm or in_safety_cooldown:
+                logging.info(
+                    f"[BACKEND] RFID tag '{tag_id}' clears inside-unlock magnet protection."
+                )
+            inside_unlock_needs_confirm = False
+            inside_unlock_safety_cooldown_until_mono = 0.0
+            in_safety_cooldown = False
+
+        if pir_outside_rising and inside_unlock_needs_confirm and not in_safety_cooldown:
+            logging.info(
+                "[BACKEND] Outside PIR rising edge clears inside-unlock confirm hold."
+            )
+            inside_unlock_needs_confirm = False
+
+        if (
+            use_camera_for_motion
+            and last_camera_cat_seen_mono > 0.0
+            and (_mono() - last_camera_cat_seen_mono) >= INSIDE_UNLOCK_CONFIRM_QUIET_SECONDS
+        ):
+            _reset_inside_unlock_escalation("camera quiet")
+            last_camera_cat_seen_mono = 0.0
 
         # Check if the RFID reader is still running. Otherwise restart it.
         if rfid.get_run_state() == RfidRunState.stopped:
@@ -1375,6 +1502,17 @@ def backend_main(
             no_unlock_queued=magnets.check_queued("unlock_inside") == False,
             no_prey_within_timeout_effective=no_prey_within_timeout_effective,
             not_manually_locked=inside_manually_locked_tm == 0.0 or (_mono() - inside_manually_locked_tm) > MAX_UNLOCK_TIME,
+            not_held_after_max_unlock=not inside_unlock_needs_confirm,
+            not_in_safety_cooldown=(
+                inside_unlock_safety_cooldown_until_mono <= 0.0
+                or _mono() >= inside_unlock_safety_cooldown_until_mono
+            ),
+            pir_ok_for_camera_entry=pir_ok_for_camera_entry(
+                bool(CONFIG.get("REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY", False)),
+                bool(CONFIG.get("USE_CAMERA_FOR_MOTION_DETECTION", False)),
+                bool(CONFIG.get("USE_CAMERA_FOR_CAT_DETECTION", False)),
+                pir_outside == 1,
+            ),
         )
 
         if not hasattr(backend_main, "previous_mouse_check_conditions"):
@@ -1408,7 +1546,7 @@ def backend_main(
             backend_main.previous_unlock_inside_conditions = unlock_inside_conditions
         else:
             for key, value in unlock_inside_conditions.items():
-                if backend_main.previous_unlock_inside_conditions[key] != value:
+                if backend_main.previous_unlock_inside_conditions.get(key) != value:
                     logging.info(f"[BACKEND] Unlock inside Condition '{key}' changed to {value}. ({sum(unlock_inside_conditions.values())}/{len(unlock_inside_conditions)} conditions fulfilled)")
                     if key == "inside_locked" and mqtt_bridge.mqtt_publisher:
                         mqtt_bridge.mqtt_publisher.publish_lock_inside(value)
@@ -1450,6 +1588,8 @@ def backend_main(
                 _timeline_log_inside_open(manual=bool(manual_door_override['unlock_inside']))
                 if manual_door_override['unlock_inside']:
                     inside_manually_unlocked = True
+                    inside_unlock_needs_confirm = False
+                    inside_unlock_safety_cooldown_until_mono = 0.0
                     # Only annotate if a real motion event is currently active.
                     if first_motion_outside_mono > 0.0:
                         flag = str(EventType.MANUALLY_UNLOCKED)
@@ -1499,8 +1639,33 @@ def backend_main(
             logging.warning("[BACKEND] Maximum unlock time exceeded for inside door. Forcing lock.")
             magnets.queue_command("lock_inside")
             _timeline_log_inside_close(TimelineAction.INSIDE_CLOSED_MAX_TIME)
+            was_manual_unlock = bool(inside_manually_unlocked)
             if inside_manually_unlocked:
                 inside_manually_unlocked = False
+            was_held = inside_unlock_needs_confirm
+            inside_unlock_needs_confirm = True
+            if not was_manual_unlock:
+                consecutive_max_unlocks_without_passage += 1
+                if consecutive_max_unlocks_without_passage >= 2:
+                    inside_unlock_safety_cooldown_until_mono = _mono() + INSIDE_UNLOCK_SAFETY_COOLDOWN_SECONDS
+                    logging.warning(
+                        "[BACKEND] Second max-unlock without passage. "
+                        f"Starting {INSIDE_UNLOCK_SAFETY_COOLDOWN_SECONDS:.0f}s inside-unlock safety cooldown "
+                        "(camera and PIR auto-unlock blocked; RFID and manual unlock still work)."
+                    )
+                else:
+                    logging.warning(
+                        "[BACKEND] Inside unlock held after max time. "
+                        "Camera-only motion will not re-unlock until RFID, a new outside PIR trigger, "
+                        "or camera detections go quiet."
+                    )
+            else:
+                logging.warning(
+                    "[BACKEND] Inside unlock held after manual max time. "
+                    "Camera-only motion will not re-unlock until confirmation."
+                )
+            if not was_held:
+                _notify_magnet_protection()
             # Only annotate if a real motion event is currently active.
             if first_motion_outside_mono > 0.0:
                 flag = str(EventType.MAX_UNLOCK_TIME_EXCEEDED)

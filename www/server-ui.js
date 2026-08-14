@@ -206,6 +206,42 @@
         sel.addEventListener('change', apply, true);
     }
 
+    function initRequirePirForCameraEntryToggle() {
+        // Show PIR second-factor switch when camera cat detection or camera motion is enabled.
+        var catSw = q('#btnUseCameraForCatDetection');
+        var motionSw = q('#btnUseCameraForMotionDetection');
+        var wrap = q('#require_pir_for_camera_entry_container');
+        if (!wrap || (!catSw && !motionSw)) return;
+
+        if (wrap.getAttribute('data-kh-pir2fa-bound') === '1') return;
+        wrap.setAttribute('data-kh-pir2fa-bound', '1');
+
+        function isOn(el) {
+            if (!el) return false;
+            try {
+                if (el.type === 'checkbox') return !!el.checked;
+                return el.classList.contains('active') || el.getAttribute('aria-checked') === 'true';
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function apply() {
+            var show = isOn(catSw) || isOn(motionSw);
+            wrap.style.display = show ? '' : 'none';
+        }
+
+        apply();
+        if (catSw) {
+            catSw.addEventListener('change', apply, true);
+            catSw.addEventListener('click', apply, true);
+        }
+        if (motionSw) {
+            motionSw.addEventListener('change', apply, true);
+            motionSw.addEventListener('click', apply, true);
+        }
+    }
+
     function initLogicToggles() {
         // Handles "Show decision logic" blocks for entry and exit.
         if (!onceFlag(window, '__khLogicToggleGlobal')) return;
@@ -363,6 +399,7 @@
         // These run opportunistically when the corresponding UI is present.
         initIpCameraUrlToggle();
         initUpdateRepoToggle();
+        initRequirePirForCameraEntryToggle();
         initLogicToggles();
         initManageCatsRFIDValidation();
         initUpdateProgressModal();

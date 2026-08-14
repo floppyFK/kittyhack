@@ -103,6 +103,23 @@ def unlock_inside_ready(conditions: dict) -> bool:
     return all(bool(v) for v in conditions.values())
 
 
+def pir_ok_for_camera_entry(
+    require_pir: bool,
+    use_camera_for_motion: bool,
+    use_camera_for_cat_detection: bool,
+    pir_outside_active: bool,
+) -> bool:
+    """Whether optional PIR second-factor for camera-based entry is satisfied.
+
+    When the setting is off, or neither camera option is enabled, this is True.
+    """
+    if not require_pir:
+        return True
+    if not (use_camera_for_motion or use_camera_for_cat_detection):
+        return True
+    return bool(pir_outside_active)
+
+
 def build_unlock_inside_conditions(
     *,
     motion_outside: bool,
@@ -113,6 +130,9 @@ def build_unlock_inside_conditions(
     no_unlock_queued: bool,
     no_prey_within_timeout_effective: bool,
     not_manually_locked: bool,
+    not_held_after_max_unlock: bool = True,
+    not_in_safety_cooldown: bool = True,
+    pir_ok_for_camera_entry: bool = True,
 ) -> dict:
     """Named gates for logging / MQTT (same keys as the live loop)."""
     return {
@@ -124,6 +144,9 @@ def build_unlock_inside_conditions(
         "no_unlock_queued": bool(no_unlock_queued),
         "no_prey_within_timeout": bool(no_prey_within_timeout_effective),
         "not_manually_locked": bool(not_manually_locked),
+        "not_held_after_max_unlock": bool(not_held_after_max_unlock),
+        "not_in_safety_cooldown": bool(not_in_safety_cooldown),
+        "pir_ok_for_camera_entry": bool(pir_ok_for_camera_entry),
     }
 
 

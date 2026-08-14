@@ -9,6 +9,7 @@ from src.baseconfig import AllowedToEnter, SETTINGS_SCHEMA
 def test_schema_has_no_simulate_kittyflap():
     keys = {s.key for s in SETTINGS_SCHEMA}
     assert "SIMULATE_KITTYFLAP" not in keys
+    assert "REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY" in keys
 
 
 def test_create_default_and_reload(tmp_config_ini):

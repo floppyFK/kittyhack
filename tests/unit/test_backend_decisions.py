@@ -6,6 +6,7 @@ from src.backend.decisions import (
     compute_mouse_check,
     conclude_motion_event_type,
     no_prey_within_timeout,
+    pir_ok_for_camera_entry,
     resolve_per_cat_exit,
     resolve_prey_detection_enabled,
     time_in_exit_ranges,
@@ -90,6 +91,21 @@ def test_unlock_inside_ready_requires_all_gates():
     assert unlock_inside_ready(conds) is True
     conds["mouse_check"] = False
     assert unlock_inside_ready(conds) is False
+    conds["mouse_check"] = True
+    conds["not_held_after_max_unlock"] = False
+    assert unlock_inside_ready(conds) is False
+    conds["not_held_after_max_unlock"] = True
+    conds["not_in_safety_cooldown"] = False
+    assert unlock_inside_ready(conds) is False
+
+
+def test_pir_ok_for_camera_entry():
+    assert pir_ok_for_camera_entry(False, True, True, False) is True
+    assert pir_ok_for_camera_entry(True, False, False, False) is True
+    assert pir_ok_for_camera_entry(True, True, False, False) is False
+    assert pir_ok_for_camera_entry(True, True, False, True) is True
+    assert pir_ok_for_camera_entry(True, False, True, False) is False
+    assert pir_ok_for_camera_entry(True, False, True, True) is True
 
 
 def test_full_entry_path_with_fakes_and_gates():

@@ -951,9 +951,59 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     + " "
                                     + _(
                                         "If one or both are not good, you may experience false triggers or your cat may not be detected correctly."
+                                    )
+                                    + "\n\n"
+                                    + _(
+                                        "To protect the lock magnets, camera detection alone will not keep the inside unlocked for more than 60 seconds without a cat passing through."
+                                    )
+                                    + " "
+                                    + _(
+                                        "A detected RFID chip or a new trigger of the outside PIR can open the inside again. "
+                                        "If that still leaves the lock open for another 60 seconds, a 60 second cooldown is applied "
+                                        "(RFID and manual unlock still work during the cooldown)."
                                     ),
                                 ),
                             ),
+                        ),
+                        ui.hr(),
+                        ui.div(
+                            ui.row(
+                                ui.column(
+                                    12,
+                                    ui.input_switch(
+                                        "btnRequireOutsidePirForCameraEntry",
+                                        _("Require outside PIR for camera-based entry"),
+                                        CONFIG.get(
+                                            "REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY",
+                                            False,
+                                        ),
+                                        width="90%",
+                                    ),
+                                ),
+                                ui.column(
+                                    12,
+                                    info_toggle(
+                                        "require_pir_for_camera_entry_info",
+                                        _("Explain PIR second factor for camera entry"),
+                                        _(
+                                            "When enabled, the inside direction opens for camera-based entry only if the outside PIR sensor is also active."
+                                        )
+                                        + "  \n\n"
+                                        + _(
+                                            "Use this if the camera sometimes detects a cat when none is at the flap (for example sun glare)."
+                                        )
+                                        + "  \n\n"
+                                        + _(
+                                            "Leave this disabled if the camera alone should be enough to open the inside direction."
+                                        )
+                                        + "  \n\n"
+                                        + _(
+                                            "**NOTE:** Independent of this setting, Kittyhack always requires a new confirmation after the inside lock has been open for 60 seconds without a passage, and applies a 60 second cooldown if that happens twice in a row."
+                                        ),
+                                    ),
+                                ),
+                            ),
+                            id="require_pir_for_camera_entry_container",
                         ),
                         ui.hr(),
                         ui.row(
@@ -2461,6 +2511,12 @@ def register_configuration(input, output, session, ctx: SessionContext):
         CONFIG["USE_CAMERA_FOR_MOTION_DETECTION"] = (
             input.btnUseCameraForMotionDetection()
         )
+        try:
+            CONFIG["REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY"] = bool(
+                input.btnRequireOutsidePirForCameraEntry()
+            )
+        except Exception:
+            CONFIG["REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY"] = False
         CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter(input.txtAllowedToEnter())
         CONFIG["LIVE_VIEW_REFRESH_INTERVAL"] = float(input.numLiveViewUpdateInterval())
         from src.baseconfig import AllowedToExit as ATE

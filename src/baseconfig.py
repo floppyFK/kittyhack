@@ -193,6 +193,7 @@ SETTINGS_SCHEMA: list[Setting] = [
     _S("USE_CAMERA_FOR_CAT_DETECTION", False, "bool"),
     _S("CAT_THRESHOLD", 70.0, "float"),
     _S("USE_CAMERA_FOR_MOTION_DETECTION", False, "bool"),
+    _S("REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY", False, "bool"),
     _S("CAMERA_SOURCE", "internal"),  # can be "internal" or "ip_camera"
     _S("IP_CAMERA_URL", ""),
     _S("ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE", False, "bool"),

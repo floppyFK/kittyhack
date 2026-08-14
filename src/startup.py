@@ -413,12 +413,6 @@ def run() -> None:
 
     if CONFIG['NOT_GRACEFUL_SHUTDOWNS'] >= 3:
         logging.error("Not graceful shutdown detected 3 times in a row!")
-        if not is_remote_mode():
-            logging.error("We will disable the 'use all cores' setting, if it was enabled.")
-            CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = False
-            update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
-        else:
-            logging.error("[REMOTE_MODE] Keeping 'use all cores' enabled by policy.")
         CONFIG['NOT_GRACEFUL_SHUTDOWNS'] = 0
         update_single_config_parameter("NOT_GRACEFUL_SHUTDOWNS")
 
@@ -429,12 +423,6 @@ def run() -> None:
             "[GitHub issue tracker](https://github.com/floppyFK/kittyhack/issues), " +
             _("thanks!")
         )
-        if not is_remote_mode():
-            shutdown_message += (
-                "\n\n" +
-                _("> **NOTE:** The option `Use all CPU cores for image processing` has been disabled now automatically, since this could cause the issue on some devices.") + "\n" +
-                _("Please check the settings and enable it again, if you want to use it.")
-            )
 
         UserNotifications.add(
             header=_("Several crashes detected!"),
@@ -450,11 +438,14 @@ def run() -> None:
         update_single_config_parameter('MQTT_DEVICE_ID')
         logging.info(f"[BACKEND] Generated MQTT device ID: {CONFIG['MQTT_DEVICE_ID']}")
 
-    # Now proceed with the startup
-    # Remote-mode policy: image processing must always use all CPU cores.
+    # Image-processing core policy: all CPUs in remote-mode, always 1 core on Kittyflap hardware.
     if is_remote_mode() and not CONFIG.get('USE_ALL_CORES_FOR_IMAGE_PROCESSING', False):
         logging.info("[REMOTE_MODE] Enforcing USE_ALL_CORES_FOR_IMAGE_PROCESSING=True.")
         CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = True
+        update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
+    elif (not is_remote_mode()) and CONFIG.get('USE_ALL_CORES_FOR_IMAGE_PROCESSING', False):
+        logging.info("[TARGET] Disabling USE_ALL_CORES_FOR_IMAGE_PROCESSING (unsupported on Kittyflap hardware).")
+        CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = False
         update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
 
     _ensure_valid_startup_model_selection()
@@ -475,14 +466,6 @@ def run() -> None:
             logging.warning(f"Using version from changelog files: {git_version}")
 
     remote_setup_required = check_remote_setup_required()
-
-    last_booted_version = CONFIG['LAST_BOOTED_VERSION']
-    # Check if we need to update the USE_ALL_CORES_FOR_IMAGE_PROCESSING setting
-    # This is only needed once after updating to version 1.5.2 or higher
-    if (not is_remote_mode()) and Versioning.normalize_version(last_booted_version) < '1.5.2' and Versioning.normalize_version(git_version) >= '1.5.2':
-        logging.info("First run after update to 1.5.2 or higher. Setting USE_ALL_CORES_FOR_IMAGE_PROCESSING to the new default value.")
-        CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = False
-        update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
 
     # Now update the last booted version in the configuration
     CONFIG['LAST_BOOTED_VERSION'] = git_version

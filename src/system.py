@@ -863,6 +863,15 @@ class KittyhackUpdater:
             with open(template_path, "r", encoding="utf-8") as f:
                 content = f.read()
             content = content.replace("/root/kittyhack", kittyhack_root())
+            try:
+                if is_remote_mode() and "--requirements" not in content:
+                    apply_root = f"--apply --root {kittyhack_root()}"
+                    req = os.path.join(kittyhack_root(), "requirements_remote.txt")
+                    content = content.replace(
+                        apply_root, f"{apply_root} --requirements {req}"
+                    )
+            except Exception:
+                pass
             with open(target_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
@@ -935,10 +944,26 @@ class KittyhackUpdater:
             except Exception:
                 pass
 
-        requirements_path = os.path.join(kittyhack_root(), "requirements.txt")
+        try:
+            _is_remote_update = bool(is_remote_mode())
+        except Exception:
+            _is_remote_update = False
+        _req_name = "requirements_remote.txt" if _is_remote_update else "requirements.txt"
+        requirements_path = os.path.join(kittyhack_root(), _req_name)
         ensure_venv_script = os.path.join(kittyhack_root(), "setup", "ensure_venv.sh")
         venv_new_dir = os.path.join(kittyhack_root(), ".venv.new")
         venv_activate = os.path.join(kittyhack_root(), ".venv", "bin", "activate")
+        # pip install does not uninstall dropped pins. On the Kittyflap, strip
+        # leftover torch/ultralytics from older venvs after installing the target file.
+        _uninstall_leftover_torch = (
+            ""
+            if _is_remote_update
+            else (
+                f" && if ! grep -qE '^torch(==|>=|<=|~=|>|<|!=)' {requirements_path}; then "
+                "pip uninstall -y torch torchvision ultralytics ultralytics-thop || true; "
+                "fi"
+            )
+        )
         pip_install_cmd = [
             "/bin/bash",
             "-c",
@@ -948,6 +973,7 @@ class KittyhackUpdater:
                 f"source {venv_activate} && "
                 f"pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 "
                 f"--no-cache-dir -r {requirements_path}"
+                f"{_uninstall_leftover_torch}"
             ),
         ]
         ensure_prepare_cmd = [
@@ -956,6 +982,8 @@ class KittyhackUpdater:
             "--prepare",
             "--root",
             kittyhack_root(),
+            "--requirements",
+            requirements_path,
         ]
 
         req_hash_before: str | None = None
@@ -996,7 +1024,7 @@ class KittyhackUpdater:
                 except Exception as e:
                     logging.warning(f"[UPDATE] Failed to update origin URL to {update_git_url}: {e}")
 
-            # Fetch first so we can compare REQUIRED_PYTHON / requirements.txt before
+            # Fetch first so we can compare REQUIRED_PYTHON / requirements before
             # stopping the backend or wiping the working tree.
             _run_step(3, f"Fetching latest version {latest_version}", ["/bin/git", "fetch", "--all", "--tags"])
 
@@ -1088,7 +1116,7 @@ class KittyhackUpdater:
                     progress_callback(5, msg, "")
                 logging.info(msg)
             elif requirements_unchanged:
-                msg = "Python dependencies unchanged (requirements.txt); skipping reinstall"
+                msg = f"Python dependencies unchanged ({_req_name}); skipping reinstall"
                 if progress_callback:
                     progress_callback(5, msg, "")
                 logging.info(msg)

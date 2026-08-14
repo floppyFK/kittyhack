@@ -1849,58 +1849,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 style_="color: grey;",
                             ),
                         ),
-                        (
-                            ui.TagList(
-                                ui.hr(),
-                                ui.row(
-                                    ui.column(
-                                        12,
-                                        ui.input_switch(
-                                            "btnUseAllCoresForImageProcessing",
-                                            _("Use all CPU cores for image processing"),
-                                            CONFIG[
-                                                "USE_ALL_CORES_FOR_IMAGE_PROCESSING"
-                                            ],
-                                        ),
-                                    ),
-                                    ui.column(
-                                        12,
-                                        ui.markdown(
-                                            _(
-                                                "If this is enabled, all CPU cores will be used for image processing. This results in a faster analysis of the pictures, and therefore a maybe a bit faster prey detection."
-                                            )
-                                        ),
-                                        style="color: grey;",
-                                    ),
-                                    ui.column(
-                                        12,
-                                        ui.markdown(
-                                            f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
-                                            + _(
-                                                "**WARNING**: It is NOT recommended to enable this feature! Several users have reported that this option causes reboots or system freezes."
-                                            )
-                                            + _(
-                                                "If you encounter the same issue, it's strongly recommended to disable this setting."
-                                            )
-                                        ),
-                                        style_="color: #e74a3b; padding: 10px; border: 1px solid #e74a3b; border-radius: 5px; margin: 20px; width: 90%;",
-                                    ),
-                                    ui.column(
-                                        12,
-                                        ui.markdown(
-                                            "> "
-                                            + _(
-                                                "NOTE: This setting requires a restart of the kittyflap to take effect."
-                                            )
-                                        ),
-                                        style_="color: grey;",
-                                    ),
-                                ),
-                                ui.hr(),
-                            )
-                            if not is_remote_mode()
-                            else ui.hr()
-                        ),
+                        ui.hr(),
                         ui.row(
                             ui.column(
                                 12,
@@ -2450,13 +2399,6 @@ def register_configuration(input, output, session, ctx: SessionContext):
             selected_model_changed = True
         else:
             selected_model_changed = False
-        if is_remote_mode():
-            img_processing_cores_changed = False
-        else:
-            img_processing_cores_changed = (
-                CONFIG["USE_ALL_CORES_FOR_IMAGE_PROCESSING"]
-                != input.btnUseAllCoresForImageProcessing()
-            )
 
         inference_device_changed = (
             is_remote_mode()
@@ -2554,9 +2496,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
         if is_remote_mode():
             CONFIG["USE_ALL_CORES_FOR_IMAGE_PROCESSING"] = True
         else:
-            CONFIG["USE_ALL_CORES_FOR_IMAGE_PROCESSING"] = (
-                input.btnUseAllCoresForImageProcessing()
-            )
+            CONFIG["USE_ALL_CORES_FOR_IMAGE_PROCESSING"] = False
         CONFIG["ALLOWED_TO_EXIT_RANGE1"] = input.btnAllowedToExitRange1()
         CONFIG["ALLOWED_TO_EXIT_RANGE1_FROM"] = input.txtAllowedToExitRange1From()
         CONFIG["ALLOWED_TO_EXIT_RANGE1_TO"] = input.txtAllowedToExitRange1To()
@@ -2799,7 +2739,6 @@ def register_configuration(input, output, session, ctx: SessionContext):
                     and model_reload_failed
                 )
                 or hostname_changed
-                or img_processing_cores_changed
                 or rfid_state_changed
             ):
                 ui.modal_remove()

@@ -1,5 +1,7 @@
-# Kittyhack dependencies for Python 3.14 (see setup/REQUIRED_PYTHON).
-# Keep requirements.txt and requirements_remote.txt in sync.
+# Kittyhack dependencies for remote-mode hosts (Linux PC/VM), Python 3.14
+# (see setup/REQUIRED_PYTHON).
+# Same base as requirements.txt plus torch/torchvision/ultralytics for
+# GPU/OpenVINO and in-process Ultralytics inference.
 # Native pins were raised only where the previous 3.12 lock had no cp314
 # manylinux aarch64 + x86_64 wheels (torch 2.9.1 is the oldest 3.14-capable pair).
 # ultralytics 8.3.119 is the first 8.3.x that allows numpy>2.1.1 (needed for cp314).

@@ -242,9 +242,22 @@ _BETA_SORT_RE = re.compile(r"(?i)^v?(\d+)\.(\d+)\.(\d+)_beta_(\d+)$")
 # Non-beta release tags: e.g. v2.6.3 / 2.6.3 (rejects branch names like "main").
 _STABLE_TAG_RE = re.compile(r"(?i)^v?\d+(?:\.\d+)+$")
 
-# Files whose change implies a heavy update (venv rebuild and/or full pip reinstall).
+# Target-mode default. Prefer ``heavy_update_repo_files()`` so remote hosts
+# watch ``requirements_remote.txt`` instead of the Kittyflap file.
 HEAVY_UPDATE_REPO_FILES = ("setup/REQUIRED_PYTHON", "requirements.txt")
 MIN_HEAVY_UPDATE_FREE_DISK_MB = 2048
+
+
+def heavy_update_repo_files() -> tuple[str, ...]:
+    """Runtime files whose change implies a venv rebuild and/or full pip reinstall.
+
+    Kittyflap installs ``requirements.txt`` (no torch). Remote hosts install
+    ``requirements_remote.txt``.
+    """
+    from src.mode import is_remote_mode
+
+    req = "requirements_remote.txt" if is_remote_mode() else "requirements.txt"
+    return ("setup/REQUIRED_PYTHON", req)
 
 class Versioning:
     """Git/version comparison, update-repo resolution, changelogs, release notes."""
@@ -759,11 +772,12 @@ class Versioning:
     ) -> dict[str, bool]:
         """Return which heavy-update files differ from the target ref.
 
-        Keys are paths from ``HEAVY_UPDATE_REPO_FILES``. A path is omitted (or
+        Keys are paths from ``heavy_update_repo_files()``. A path is omitted (or
         False) when it could not be resolved — transient failures must not look
         like a change.
         """
-        changes = {path: False for path in HEAVY_UPDATE_REPO_FILES}
+        tracked = heavy_update_repo_files()
+        changes = {path: False for path in tracked}
         ref = Versioning.resolve_update_checkout_ref(target_version)
         if not ref:
             return changes
@@ -773,7 +787,7 @@ class Versioning:
         if update_ref and update_ref not in github_refs:
             github_refs.append(update_ref)
 
-        for rel_path in HEAVY_UPDATE_REPO_FILES:
+        for rel_path in tracked:
             local = Versioning._normalize_repo_file_for_compare(
                 rel_path, Versioning._read_local_repo_file(rel_path)
             )
@@ -819,7 +833,7 @@ class Versioning:
     def update_changes_runtime_files(
         target_version: str | None = None, *, use_git_show: bool = False
     ) -> bool:
-        """True if target differs from local in REQUIRED_PYTHON or requirements.txt."""
+        """True if target differs from local in REQUIRED_PYTHON or this host's requirements file."""
         changes = Versioning.get_runtime_file_changes(
             target_version, use_git_show=use_git_show
         )

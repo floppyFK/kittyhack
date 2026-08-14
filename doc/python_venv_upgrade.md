@@ -30,7 +30,9 @@ devices have no control supervisor, so a control-only fix is incomplete.
 
 1. **`--bootstrap`** — fresh install (`kittyhack-setup.sh`). Creates `.venv` in place.
 2. **`--prepare`** — during software update while the old process may still be alive.
-   On mismatch: build `.venv.new`, `pip install -r requirements.txt`, strict smoke test.
+   On mismatch: build `.venv.new`, `pip install -r` the host requirements file
+   (`requirements.txt` on the Kittyflap, `requirements_remote.txt` in remote mode),
+   strict smoke test.
    Never swaps; leaves `.venv` untouched. Sets `.runtime-update-pending`.
 3. **`--apply`** — `ExecStartPre` / after reboot. If work is needed, serves a non-technical
    status page on port 80 (“Update in progress… do not power off”), then either swaps
@@ -58,15 +60,17 @@ Console scripts embed absolute shebangs that break when `.venv.new` is renamed t
   On the *next* Python migration, `--prepare` deletes `.venv.old` **before** creating
   `.venv.new`, so peak disk is `.venv` + `.venv.new` (not three full copies). After
   reboot `--apply` swaps and recreates `.venv.old` from the previous live `.venv`.
-- `TimeoutStartSec=3600` so a cold torch download on a Pi does not get SIGKILL’d.
+- `TimeoutStartSec=3600` so a cold wheel download on a Pi does not get SIGKILL’d.
 - File lock (`.venv-ensure.lock`) so control + kittyhack `ExecStartPre` do not race.
 - Pip installs use `--no-cache-dir`; after a successful bootstrap / prepare / apply-swap
   (and after in-app updates), the pip download cache under `/root/.cache/pip` is purged.
 
 ## Before raising `REQUIRED_PYTHON` again
 
-1. Confirm aarch64 + x86_64 wheels exist for torch/torchvision/ai-edge-litert/ncnn.
-2. Refresh `requirements.txt` / `requirements_remote.txt` together and resolve pip conflicts on a Pi.
+1. Confirm aarch64 + x86_64 wheels exist for the packages this host installs
+   (`ai-edge-litert`/`ncnn` on the Kittyflap; plus torch/torchvision/ultralytics on remote).
+2. Refresh `requirements.txt` (target) and `requirements_remote.txt` (remote) as needed
+   and resolve pip conflicts on a Pi / remote host.
 3. Bump `setup/REQUIRED_PYTHON` in the same release that needs the new interpreter.
 4. Test: in-app update from previous tag → reboot → UI comes back; simulate failed pip and
    confirm old `.venv` remains bootable.

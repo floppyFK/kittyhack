@@ -167,7 +167,7 @@ SETTINGS_SCHEMA: list[Setting] = [
     _S("LOCK_DURATION_AFTER_PREY_DETECTION", 300, "int"),
     _S("MAX_PICTURES_PER_EVENT_WITH_RFID", 100, "int"),
     _S("MAX_PICTURES_PER_EVENT_WITHOUT_RFID", 30, "int"),
-    _S("USE_ALL_CORES_FOR_IMAGE_PROCESSING", False, "bool"),
+    _S("USE_ALL_CORES_FOR_IMAGE_PROCESSING", False, "bool"),  # forced True in remote-mode; always False on Kittyflap hardware
     _S("LAST_BOOTED_VERSION", "v1.5.1"),  # Parameter introduced in v1.5.1
     _S("ALLOWED_TO_EXIT_RANGE1", False, "bool"),
     _S("ALLOWED_TO_EXIT_RANGE1_FROM", "00:00"),

@@ -18,6 +18,7 @@ from src.baseconfig import CONFIG, set_language, get_loggable_config_value
 from src.helper import (
     SystemInfo,
     Versioning,
+    heavy_update_repo_files,
     sigterm_monitor,
     wait_for_network,
 )
@@ -447,14 +448,12 @@ def register_info(input, output, session, ctx: SessionContext):
         elif (not versions_mismatch) and ctx.version_mismatch_warning_shown:
             ctx.version_mismatch_warning_shown = False
 
-        # 2 GB hard gate only when REQUIRED_PYTHON or requirements.txt will change.
+        # 2 GB hard gate only when REQUIRED_PYTHON or this host's requirements file will change.
         from src.helper import MIN_HEAVY_UPDATE_FREE_DISK_MB
 
         startup.free_disk_space = SystemInfo.get_free_disk_space()
         latest_version = CONFIG["LATEST_VERSION"]
-        runtime_changes = {
-            path: False for path in ("setup/REQUIRED_PYTHON", "requirements.txt")
-        }
+        runtime_changes = {path: False for path in heavy_update_repo_files()}
         if latest_version and latest_version != "unknown":
             try:
                 runtime_changes = Versioning.get_runtime_file_changes(latest_version)

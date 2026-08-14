@@ -116,11 +116,12 @@ def test_parse_repo_spec():
 
 
 def test_update_changes_runtime_files(monkeypatch):
-    """Heavy-update detection compares REQUIRED_PYTHON and requirements.txt."""
+    """Heavy-update detection compares REQUIRED_PYTHON and this host's requirements file."""
     import src.baseconfig as baseconfig
 
     monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY_MODE", "standard")
     monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY", "")
+    monkeypatch.setattr("src.mode.is_remote_mode", lambda: False)
 
     monkeypatch.setattr(Versioning, "resolve_update_checkout_ref", lambda _v=None: "v9.9.9")
     monkeypatch.setattr(
@@ -144,8 +145,10 @@ def test_update_changes_runtime_files(monkeypatch):
     )
     assert Versioning.update_changes_runtime_files("v9.9.9") is True
     assert Versioning.update_changes_required_python("v9.9.9") is True
-    assert Versioning.get_runtime_file_changes("v9.9.9")["setup/REQUIRED_PYTHON"] is True
-    assert Versioning.get_runtime_file_changes("v9.9.9")["requirements.txt"] is False
+    changes = Versioning.get_runtime_file_changes("v9.9.9")
+    assert changes["setup/REQUIRED_PYTHON"] is True
+    assert changes["requirements.txt"] is False
+    assert "requirements_remote.txt" not in changes
 
     monkeypatch.setattr(
         Versioning,
@@ -166,6 +169,20 @@ def test_update_changes_runtime_files(monkeypatch):
     )
     assert Versioning.update_changes_runtime_files("v9.9.9") is False
     assert Versioning.update_changes_required_python("v9.9.9") is False
+
+
+def test_heavy_update_repo_files_remote_uses_remote_requirements(monkeypatch):
+    """Remote hosts watch requirements_remote.txt, not the Kittyflap file."""
+    from src.helper import heavy_update_repo_files
+
+    monkeypatch.setattr("src.mode.is_remote_mode", lambda: False)
+    assert heavy_update_repo_files() == ("setup/REQUIRED_PYTHON", "requirements.txt")
+
+    monkeypatch.setattr("src.mode.is_remote_mode", lambda: True)
+    assert heavy_update_repo_files() == (
+        "setup/REQUIRED_PYTHON",
+        "requirements_remote.txt",
+    )
 
 
 def test_read_latest_kittyhack_version_beta_channel(monkeypatch):

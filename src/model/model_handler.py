@@ -174,7 +174,6 @@ class ModelHandler:
             self._model_worker = None
 
         elif self.model == "yolo":
-            from ultralytics import YOLO
             from src.baseconfig import configure_logging
 
             if self._uses_openvino_backend():
@@ -182,13 +181,20 @@ class ModelHandler:
 
             resolved_inference_device = self._resolved_inference_device()
 
-            # Check if we're using all available cores
             all_cores = multiprocessing.cpu_count()
-            # GPU devices always use the direct inference path (GPU handles its own parallelism)
-            using_all_cores = self.num_threads >= all_cores or self.inference_device.lower() != 'cpu'
+            # GPU/OpenVINO always use the direct path (the device handles parallelism).
+            # On Kittyflap hardware never use all cores — that undervolts the Pi.
+            if not is_remote_mode():
+                using_all_cores = False
+            else:
+                using_all_cores = (
+                    self.num_threads >= all_cores
+                    or self.inference_device.lower() != "cpu"
+                )
 
             # If using all cores (or GPU), run the model directly for better performance
             if using_all_cores:
+                from ultralytics import YOLO
                 if self.inference_device.lower() == 'cpu':
                     _device_label = 'cpu (NCNN)'
                 elif self._uses_openvino_backend():

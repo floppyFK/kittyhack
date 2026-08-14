@@ -163,7 +163,7 @@ sudo bash setup/ensure_venv.sh --prepare --root /root/kittyhack
 Notes:
 
 - Prefer a Python version that is installable on that OS (`apt` or `uv`).
-- This test may download large wheels (torch). Plan 20–60+ minutes on a Pi and a stable network.
+- This test may download large wheels (ncnn / LiteRT on the Pi; torch on remote). Plan extra time and a stable network.
 - Pip is forced to **PyPI only** (piwheels disabled) inside `ensure_venv.sh`.
 
 ### 3.2 Run `--prepare` (update-time path)
@@ -252,7 +252,9 @@ sudo systemctl start kittyhack_control.service
 - Inference path smoke (open live view / trigger a detection if practical):
 
 ```bash
-.venv/bin/python -c "import torch, cv2, shiny; print('ok')"
+.venv/bin/python -c "import ncnn, cv2, shiny; print('ok')"
+# Remote-mode hosts should also import torch:
+# .venv/bin/python -c "import torch, cv2, shiny; print('ok')"
 ```
 
 ### 3.6 Restore device after simulation (important)

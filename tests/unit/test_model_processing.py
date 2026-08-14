@@ -244,6 +244,17 @@ def test_model_handler_device_and_labels(tmp_path, monkeypatch, tmp_kittyhack_db
     assert h.check_videostream_status() is False
 
 
+def test_get_model_threads_target_is_always_one_core(monkeypatch):
+    import src.backend.model_runtime as mr
+
+    monkeypatch.setattr(mr.multiprocessing, "cpu_count", lambda: 4)
+    monkeypatch.setattr(mr, "is_remote_mode", lambda: False)
+    assert mr._get_model_threads() == 1
+
+    monkeypatch.setattr(mr, "is_remote_mode", lambda: True)
+    assert mr._get_model_threads() == 4
+
+
 def test_parse_yolo_below_threshold_still_returns_objects():
     import numpy as np
 

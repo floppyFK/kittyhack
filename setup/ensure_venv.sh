@@ -29,9 +29,10 @@ Usage: ensure_venv.sh [--bootstrap|--prepare|--apply] [--root DIR] [--requiremen
   --prepare         Build .venv.new if the active .venv Python mismatches REQUIRED_PYTHON.
   --apply           Swap .venv.new into place if present; otherwise repair on mismatch.
   --root DIR        Kittyhack install root (default: parent of setup/).
-  --requirements F  requirements file (default: <root>/requirements.txt).
-  --skip-pip        Skip pip install -r requirements.txt (bootstrap/testing only).
-  --smoke-strict    Fail smoke test if torch/tflite_runtime cannot be imported.
+  --requirements F  requirements file (default: requirements.txt, or
+                    requirements_remote.txt when this host is in remote mode).
+  --skip-pip        Skip pip install -r <requirements> (bootstrap/testing only).
+  --smoke-strict    Fail smoke test if listed ML packages cannot be imported.
 EOF
 }
 
@@ -53,8 +54,25 @@ if [[ -z "$ROOT" ]]; then
 fi
 
 REQUIRED_FILE="${SCRIPT_DIR}/REQUIRED_PYTHON"
+
+is_remote_host() {
+    local mode
+    mode="$(echo "${KITTYHACK_MODE:-}" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$mode" == "remote" || "$mode" == "remote-mode" ]]; then
+        return 0
+    fi
+    if [[ "$mode" == "target" || "$mode" == "target-mode" ]]; then
+        return 1
+    fi
+    [[ -f "${ROOT}/.remote-mode" ]]
+}
+
 if [[ -z "$REQUIREMENTS_FILE" ]]; then
-    REQUIREMENTS_FILE="${ROOT}/requirements.txt"
+    if is_remote_host; then
+        REQUIREMENTS_FILE="${ROOT}/requirements_remote.txt"
+    else
+        REQUIREMENTS_FILE="${ROOT}/requirements.txt"
+    fi
 fi
 VENV="${ROOT}/.venv"
 VENV_NEW="${ROOT}/.venv.new"
@@ -238,6 +256,7 @@ pip_install_requirements() {
         return 0
     fi
     [[ -f "$REQUIREMENTS_FILE" ]] || die "Missing ${REQUIREMENTS_FILE}"
+    log "Installing $(basename "$REQUIREMENTS_FILE") into ${venv_dir}"
 
     # Force PyPI only. Raspberry Pi OS often enables piwheels via pip.conf /
     # PIP_EXTRA_INDEX_URL, which can mix incompatible wheels with pinned deps.
@@ -249,7 +268,29 @@ pip_install_requirements() {
     source "${venv_dir}/bin/activate"
     pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 --no-cache-dir -U pip setuptools wheel
     pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 --no-cache-dir -r "$REQUIREMENTS_FILE"
+    uninstall_unlisted_torch_stack "$venv_dir"
     deactivate || true
+}
+
+requirements_lists_pkg() {
+    local pkg="$1"
+    [[ -f "$REQUIREMENTS_FILE" ]] || return 1
+    grep -qE "^${pkg}(==|>=|<=|~=|===|>|<|!=|[[:space:]])" "$REQUIREMENTS_FILE"
+}
+
+uninstall_unlisted_torch_stack() {
+    # pip install -r does not remove dropped pins. Older Kittyflap venvs still
+    # contain torch/ultralytics after target requirements.txt stopped listing them.
+    if requirements_lists_pkg torch; then
+        return 0
+    fi
+    log "Removing leftover torch/ultralytics (not listed in $(basename "$REQUIREMENTS_FILE"))"
+    local pip_bin="${venv_dir}/bin/pip"
+    if [[ -x "$pip_bin" ]]; then
+        "$pip_bin" uninstall -y torch torchvision ultralytics ultralytics-thop >/dev/null 2>&1 || true
+    else
+        pip uninstall -y torch torchvision ultralytics ultralytics-thop >/dev/null 2>&1 || true
+    fi
 }
 
 purge_pip_cache() {
@@ -279,15 +320,25 @@ smoke_test_venv() {
         warn "Smoke test failed: core imports (shiny/starlette/uvicorn/cv2/numpy)"
         return 1
     fi
-
-    # ML stack is large; soft by default so a transient wheel glitch does not brick boot
-    # after a successful core install. Use --smoke-strict for update-time prepare.
-    if ! "$py" -c 'import torch' >/dev/null 2>&1; then
+    if ! "$py" -c 'import ncnn' >/dev/null 2>&1; then
         if [[ "$SMOKE_STRICT" -eq 1 ]]; then
-            warn "Smoke test failed: torch"
+            warn "Smoke test failed: ncnn"
             return 1
         fi
-        warn "torch import failed (non-strict); continuing"
+        warn "ncnn import failed (non-strict); continuing"
+    fi
+
+    # ML extras are large; soft by default so a transient wheel glitch does not brick
+    # boot after a successful core install. Use --smoke-strict for update-time prepare.
+    # torch is remote-only; do not require it when installing the Kittyflap file.
+    if requirements_lists_pkg torch; then
+        if ! "$py" -c 'import torch' >/dev/null 2>&1; then
+            if [[ "$SMOKE_STRICT" -eq 1 ]]; then
+                warn "Smoke test failed: torch"
+                return 1
+            fi
+            warn "torch import failed (non-strict); continuing"
+        fi
     fi
     if ! "$py" -c 'import ai_edge_litert' >/dev/null 2>&1; then
         if [[ "$SMOKE_STRICT" -eq 1 ]]; then

@@ -4918,6 +4918,34 @@ msgstr "Eingegangen: {n}"
 msgid "Blocked: {n}"
 msgstr "Blockiert: {n}"
 
+msgid "Last seen inside"
+msgstr "Zuletzt drinnen"
+
+msgid "Last seen outside"
+msgstr "Zuletzt draußen"
+
+msgid "Based on the last flap passage"
+msgstr "Basierend auf dem letzten Klappendurchgang"
+
+msgid "Other door/window"
+msgstr "Andere Tür/Fenster"
+
+msgid "Came in another way (inferred)"
+msgstr "Anders reingekommen (vermutet)"
+
+msgid "Left another way (inferred)"
+msgstr "Anders rausgegangen (vermutet)"
+
+msgid ""
+"Inside/outside times and the location badge only use Kittyflap passages. "
+"If a cat goes through another door or window, those times can be too long "
+"or missing, and the location can be wrong until the next flap event."
+msgstr ""
+"Zeiten drinnen/draußen und die Ortsanzeige nutzen nur Durchgänge durch die "
+"Kittyflap. Wenn eine Katze eine andere Tür oder ein Fenster benutzt, können "
+"diese Zeiten zu lang oder fehlend sein, und der Ort kann bis zum nächsten "
+"Klappenereignis falsch sein."
+
 msgid "Persistent outside detection"
 msgstr "Anhaltende Erkennung außen"
 

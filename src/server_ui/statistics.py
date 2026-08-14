@@ -55,6 +55,8 @@ def _dashboard_labels() -> DashboardLabels:
         inside=_("Inside"),
         outside=_("Outside"),
         location_unknown=_("Unknown"),
+        last_seen_inside=_("Last seen inside"),
+        last_seen_outside=_("Last seen outside"),
     )
 
 
@@ -127,6 +129,11 @@ def _heatmap_html(payload: dict) -> str:
     hour_cells = "".join(
         f'<div class="stats-heatmap-hour">{html.escape(str(h))}</div>' for h in hours
     )
+    scale = (
+        '<div class="stats-heatmap-scale" aria-hidden="true">'
+        "<span>0</span><span>6</span><span>12</span><span>18</span><span>23</span>"
+        "</div>"
+    )
     body = []
     for i, day in enumerate(weekdays):
         row = cells[i] if i < len(cells) else [0] * 24
@@ -146,6 +153,7 @@ def _heatmap_html(payload: dict) -> str:
     return (
         f'<div class="stats-heatmap" role="img" '
         f'aria-label="{html.escape(_("Activity by hour of day"))}">'
+        f"{scale}"
         f'<div class="stats-heatmap-row stats-heatmap-head">'
         f'<div class="stats-heatmap-day"></div>{hour_cells}</div>'
         f'{"".join(body)}</div>'
@@ -154,9 +162,9 @@ def _heatmap_html(payload: dict) -> str:
 
 def _location_label(location: str, labels: DashboardLabels) -> str:
     if location == "inside":
-        return labels.inside
+        return labels.last_seen_inside
     if location == "outside":
-        return labels.outside
+        return labels.last_seen_outside
     return labels.location_unknown
 
 
@@ -178,13 +186,57 @@ def _cat_cards_ui(payload: dict, labels: DashboardLabels):
                 class_="stats-cat-thumb stats-cat-thumb--empty",
             )
         name = cat.get("name") or labels.unknown
+        extra_items = [
+            ui.div(
+                ui.span(_("Typical first exit"), class_="stats-cat-metric-label"),
+                ui.span(cat.get("typical_first_exit") or "—"),
+            ),
+            ui.div(
+                ui.span(_("Typical last return"), class_="stats-cat-metric-label"),
+                ui.span(cat.get("typical_last_return") or "—"),
+            ),
+            ui.div(
+                ui.span(_("Longest time outside"), class_="stats-cat-metric-label"),
+                ui.span(
+                    format_duration(
+                        cat.get("longest_outside_s"),
+                        d=labels.duration_d,
+                        h=labels.duration_h,
+                        m=labels.duration_m,
+                    )
+                ),
+            ),
+            ui.div(
+                ui.span(_("Median time outside"), class_="stats-cat-metric-label"),
+                ui.span(
+                    format_duration(
+                        cat.get("median_outside_s"),
+                        d=labels.duration_d,
+                        h=labels.duration_h,
+                        m=labels.duration_m,
+                    )
+                ),
+            ),
+        ]
+        other_n = int(cat.get("other_access") or 0)
+        if other_n:
+            extra_items.append(
+                ui.div(
+                    ui.span(_("Other door/window"), class_="stats-cat-metric-label"),
+                    ui.span(str(other_n)),
+                )
+            )
         cards.append(
             ui.div(
                 ui.div(
                     img,
                     ui.div(
                         ui.span(name, class_="stats-cat-name"),
-                        ui.span(_location_label(loc, labels), class_=loc_class),
+                        ui.span(
+                            _location_label(loc, labels),
+                            class_=loc_class,
+                            title=_("Based on the last flap passage"),
+                        ),
                         class_="stats-cat-identity",
                     ),
                     class_="stats-cat-head",
@@ -208,39 +260,7 @@ def _cat_cards_ui(payload: dict, labels: DashboardLabels):
                     ),
                     class_="stats-cat-metrics",
                 ),
-                ui.div(
-                    ui.div(
-                        ui.span(_("Typical first exit"), class_="stats-cat-metric-label"),
-                        ui.span(cat.get("typical_first_exit") or "—"),
-                    ),
-                    ui.div(
-                        ui.span(_("Typical last return"), class_="stats-cat-metric-label"),
-                        ui.span(cat.get("typical_last_return") or "—"),
-                    ),
-                    ui.div(
-                        ui.span(_("Longest time outside"), class_="stats-cat-metric-label"),
-                        ui.span(
-                            format_duration(
-                                cat.get("longest_outside_s"),
-                                d=labels.duration_d,
-                                h=labels.duration_h,
-                                m=labels.duration_m,
-                            )
-                        ),
-                    ),
-                    ui.div(
-                        ui.span(_("Median time outside"), class_="stats-cat-metric-label"),
-                        ui.span(
-                            format_duration(
-                                cat.get("median_outside_s"),
-                                d=labels.duration_d,
-                                h=labels.duration_h,
-                                m=labels.duration_m,
-                            )
-                        ),
-                    ),
-                    class_="stats-cat-extra",
-                ),
+                ui.div(*extra_items, class_="stats-cat-extra"),
                 class_="stats-cat-card",
             )
         )
@@ -279,6 +299,8 @@ def _numbers_table(payload: dict) -> str:
         (_("Attempts without passing"), kpis.get("attempts", 0)),
         (_("Denied entry"), kpis.get("denied_entry", 0)),
         (_("Denied exit"), kpis.get("denied_exit", 0)),
+        (_("Came in another way (inferred)"), kpis.get("other_entry", 0)),
+        (_("Left another way (inferred)"), kpis.get("other_exit", 0)),
         (_("Avg. time outside"), kpis.get("avg_outside", "—")),
         (_("Median time outside"), kpis.get("median_outside", "—")),
         (_("Avg. time inside"), kpis.get("avg_inside", "—")),
@@ -430,6 +452,14 @@ def register_statistics(input, output, session, ctx: SessionContext):
                     f"{kpis.get('avg_inside') or '—'} / {kpis.get('median_inside') or '—'}",
                 ),
                 class_="stats-kpis",
+            ),
+            ui.p(
+                _(
+                    "Inside/outside times and the location badge only use Kittyflap passages. "
+                    "If a cat goes through another door or window, those times can be too long "
+                    "or missing, and the location can be wrong until the next flap event."
+                ),
+                class_="stats-note",
             ),
             ui.div(
                 ui.div(

@@ -75,14 +75,30 @@
         }
     }
 
+    function isNarrow() {
+        try {
+            return window.matchMedia("(max-width: 575.98px)").matches;
+        } catch (e) {
+            return false;
+        }
+    }
+
     function commonOptions(colors, stacked) {
+        var narrow = isNarrow();
         return {
             responsive: true,
             maintainAspectRatio: false,
             interaction: { mode: "index", intersect: false },
+            layout: { padding: narrow ? { right: 2, left: 0 } : 0 },
             plugins: {
                 legend: {
-                    labels: { color: colors.text, boxWidth: 12, font: { size: 11 } }
+                    position: narrow ? "bottom" : "top",
+                    labels: {
+                        color: colors.text,
+                        boxWidth: narrow ? 8 : 12,
+                        font: { size: narrow ? 9 : 11 },
+                        padding: narrow ? 6 : 10
+                    }
                 },
                 tooltip: {
                     backgroundColor: colors.bg,
@@ -95,13 +111,20 @@
             scales: {
                 x: {
                     stacked: !!stacked,
-                    ticks: { color: colors.muted, maxRotation: 45, minRotation: 0, font: { size: 10 } },
+                    ticks: {
+                        color: colors.muted,
+                        maxRotation: narrow ? 0 : 45,
+                        minRotation: 0,
+                        autoSkip: true,
+                        maxTicksLimit: narrow ? 6 : 12,
+                        font: { size: narrow ? 9 : 10 }
+                    },
                     grid: { color: withAlpha(colors.grid, 0.45) }
                 },
                 y: {
                     stacked: !!stacked,
                     beginAtZero: true,
-                    ticks: { color: colors.muted, precision: 0 },
+                    ticks: { color: colors.muted, precision: 0, font: { size: narrow ? 9 : 11 } },
                     grid: { color: withAlpha(colors.grid, 0.45) }
                 }
             }
@@ -131,7 +154,7 @@
         var raw = payloadEl ? (payloadEl.textContent || "") : "";
         var theme = "";
         try { theme = document.documentElement.getAttribute("data-bs-theme") || ""; } catch (e) {}
-        var sig = theme + "\n" + raw;
+        var sig = theme + "\n" + (isNarrow() ? "n" : "w") + "\n" + raw;
         var liveCanvas = q("#chart-passages");
         var hasLiveChart = !!(
             liveCanvas && window.Chart && window.Chart.getChart && window.Chart.getChart(liveCanvas)
@@ -288,6 +311,13 @@
         try {
             themeObserver = new MutationObserver(function () { run(); });
             themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-bs-theme"] });
+        } catch (e) {}
+
+        try {
+            var mq = window.matchMedia("(max-width: 575.98px)");
+            var onMq = function () { lastSig = ""; run(); };
+            if (mq.addEventListener) mq.addEventListener("change", onMq);
+            else if (mq.addListener) mq.addListener(onMq);
         } catch (e) {}
     }
 

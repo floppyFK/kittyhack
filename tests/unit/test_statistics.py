@@ -11,6 +11,7 @@ from src.statistics import (
     build_dashboard,
     classify_visit,
     format_duration,
+    infer_other_access,
     pair_duration,
     record_motion_conclusion,
     resolve_bucket,
@@ -238,9 +239,72 @@ def test_build_dashboard_kpis_and_heatmap(tmp_kittyhack_db):
     assert payload["cats"][0]["location"] == "inside"
     heat_sum = sum(sum(row) for row in payload["heatmap"]["cells"])
     assert heat_sum == 2  # only passed events
+    assert payload["kpis"]["other_entry"] == 0
+    assert payload["kpis"]["other_exit"] == 0
 
 
 def test_build_dashboard_empty_without_history(tmp_kittyhack_db):
     payload = build_dashboard(tmp_kittyhack_db, range_key="7d")
     assert payload["empty"] is True
     assert payload["has_history"] is False
+
+
+def test_infer_other_access_from_same_direction():
+    assert infer_other_access("out", "out") == "in"
+    assert infer_other_access("in", "in") == "out"
+    assert infer_other_access("in", "out") is None
+    assert infer_other_access("out", None) is None
+
+
+def test_same_direction_passages_infer_other_door_and_skip_duration(tmp_kittyhack_db):
+    tz = ZoneInfo("UTC")
+    base = datetime(2026, 8, 12, 8, 0, tzinfo=timezone.utc)
+    # Left via flap, came back through a window, left via flap again, then came in via flap.
+    record_motion_conclusion(
+        tmp_kittyhack_db,
+        created_at=DateTimeUtil.get_utc_date_string(base.timestamp()),
+        rfid="RFID001",
+        cat_name="Mia",
+        event_type=EventType.CAT_WENT_OUTSIDE,
+    )
+    record_motion_conclusion(
+        tmp_kittyhack_db,
+        created_at=DateTimeUtil.get_utc_date_string((base + timedelta(hours=3)).timestamp()),
+        rfid="RFID001",
+        cat_name="Mia",
+        event_type=EventType.CAT_WENT_OUTSIDE,
+    )
+    record_motion_conclusion(
+        tmp_kittyhack_db,
+        created_at=DateTimeUtil.get_utc_date_string((base + timedelta(hours=4)).timestamp()),
+        rfid="RFID001",
+        cat_name="Mia",
+        event_type=EventType.CAT_WENT_INSIDE,
+    )
+
+    rows = VisitStatsRepo.query_range(
+        tmp_kittyhack_db,
+        "2000-01-01 00:00:00.0000+00:00",
+        "2100-01-01 00:00:00.0000+00:00",
+        "RFID001",
+    )
+    assert len(rows) == 3
+    assert rows[1]["duration_inside_s"] is None
+    assert rows[1]["duration_outside_s"] is None
+    assert rows[2]["duration_outside_s"] == 3600
+
+    payload = build_dashboard(
+        tmp_kittyhack_db,
+        range_key="custom",
+        bucket_key="hour",
+        cat_filter=CAT_FILTER_ALL,
+        custom_start=datetime(2026, 8, 12, tzinfo=tz).date(),
+        custom_end=datetime(2026, 8, 12, tzinfo=tz).date(),
+        tz=tz,
+    )
+    assert payload["kpis"]["exits"] == 2
+    assert payload["kpis"]["entries"] == 1
+    assert payload["kpis"]["other_entry"] == 1
+    assert payload["kpis"]["other_exit"] == 0
+    assert payload["cats"][0]["other_access"] == 1
+    assert payload["cats"][0]["location"] == "inside"

@@ -108,13 +108,29 @@ def parse_utc_datetime(value) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
+def infer_other_access(direction: str, last_direction: str | None) -> str | None:
+    """If two flap passages in a row go the same way, the opposite crossing
+    happened through another door or window.
+
+    Returns the inferred missing direction (``in`` or ``out``), or None.
+    """
+    if last_direction and last_direction == direction and direction in ("in", "out"):
+        return "in" if direction == "out" else "out"
+    return None
+
+
 def pair_duration(
     database: str,
     cat_rfid: str,
     direction: str,
     created_at: str,
 ) -> tuple[float | None, float | None]:
-    """Return (duration_outside_s, duration_inside_s) vs the previous opposite passage."""
+    """Return (duration_outside_s, duration_inside_s) vs the previous opposite passage.
+
+    Same-direction consecutive passages are left unpaired: the cat likely used
+    another door or window for the missing opposite crossing, so that interval
+    is not a real inside/outside stay.
+    """
     if not cat_rfid or direction not in ("in", "out"):
         return None, None
     last = VisitStatsRepo.get_last_passed(database, cat_rfid)
@@ -435,6 +451,8 @@ class DashboardLabels:
     inside: str = "Inside"
     outside: str = "Outside"
     location_unknown: str = "Unknown"
+    last_seen_inside: str = "Last seen inside"
+    last_seen_outside: str = "Last seen outside"
 
 
 def build_dashboard(
@@ -509,9 +527,15 @@ def build_dashboard(
             "uncertain": 0,
             "dur_out": [],
             "dur_in": [],
+            "other_access": 0,
+            "other_entry": 0,
+            "other_exit": 0,
             "first_exit_by_day": {},
             "last_return_by_day": {},
         }
+
+    other_entry = other_exit = 0
+    last_passed_dir: dict[str, str] = {}
 
     for row in rows:
         local = _row_local_dt(row, tz)
@@ -531,6 +555,20 @@ def build_dashboard(
             uncertain += 1
             if cat:
                 cat["uncertain"] += 1
+
+        if passed and direction in ("in", "out") and ck != CAT_FILTER_UNKNOWN:
+            missing = infer_other_access(direction, last_passed_dir.get(ck))
+            if missing == "in":
+                other_entry += 1
+                if cat:
+                    cat["other_entry"] += 1
+                    cat["other_access"] += 1
+            elif missing == "out":
+                other_exit += 1
+                if cat:
+                    cat["other_exit"] += 1
+                    cat["other_access"] += 1
+            last_passed_dir[ck] = direction
 
         if passed and direction == "in":
             entries += 1
@@ -632,6 +670,9 @@ def build_dashboard(
                 "longest_outside_s": max(cat["dur_out"]) if cat["dur_out"] else None,
                 "typical_first_exit": _typical_hhmm(list(cat["first_exit_by_day"].values())),
                 "typical_last_return": _typical_hhmm(list(cat["last_return_by_day"].values())),
+                "other_access": cat["other_access"],
+                "other_entry": cat["other_entry"],
+                "other_exit": cat["other_exit"],
             }
         )
 
@@ -684,6 +725,9 @@ def build_dashboard(
             "median_inside": format_duration(
                 _median(dur_in_all), d=labels.duration_d, h=labels.duration_h, m=labels.duration_m
             ),
+            "other_entry": other_entry,
+            "other_exit": other_exit,
+            "other_access": other_entry + other_exit,
         },
         "passages": {"labels": bucket_ids, "datasets": passage_datasets},
         "prey": {

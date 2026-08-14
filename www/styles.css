@@ -1197,8 +1197,21 @@ html[data-bs-theme="dark"] .date-separator-row td {
   cursor: default;
 }
 
+  /* Delay the disconnect overlay so a brief mobile background (frozen/closed
+     websocket) can reconnect in-place without covering unsaved form edits. */
   #shiny-disconnected-overlay {
-    opacity: 0.75;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    animation: kh-disconnect-overlay-show 8s step-end forwards;
+  }
+
+  @keyframes kh-disconnect-overlay-show {
+    to {
+      opacity: 0.75;
+      visibility: visible;
+      pointer-events: auto;
+    }
   }
 
   #shiny-disconnected-overlay::after {

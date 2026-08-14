@@ -56,6 +56,14 @@ else:
 def register_session_setup(input, output, session, ctx: SessionContext):
     """Register session preamble: remote sync, live stream, shared effects."""
 
+    # Keep the browser session reconnectable after brief mobile backgrounding.
+    # Shiny for Python 1.2.1 has no session.allow_reconnect(); send the protocol
+    # message that shiny.js already understands ("force" = reconnect without Shiny Server).
+    try:
+        session._send_message_sync({"allowReconnect": "force"})
+    except Exception:
+        logging.debug("[SESSION] Could not enable Shiny client reconnect", exc_info=True)
+
     @reactive.effect
     def update_live_view_warning_html():
         # Keep warning rendering independent from live image rendering.

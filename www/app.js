@@ -597,6 +597,209 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
+    // --- Shiny session keep-alive (mobile background / brief disconnects) ---
+    // Mobile browsers freeze or close the WebSocket after a few seconds in the
+    // background. Prefer Shiny's in-page reconnect (keeps DOM + input values)
+    // over a full reload, which wipes unsaved form edits.
+    const KH_FORM_SNAPSHOT_KEY = 'kittyhack_form_snapshot_v1';
+    const KH_RESTORE_FLAG_KEY = 'kittyhack_restore_form_v1';
+    const KH_SNAPSHOT_TTL_MS = 10 * 60 * 1000;
+    const KH_RELOAD_FALLBACK_MS = 45000;
+    const KH_VISIBILITY_FLICKER_MS = 750;
+    const KH_ZOMBIE_PROBE_MS = 2000;
+
+    function getShinyApp() {
+        try {
+            return (window.Shiny && window.Shiny.shinyapp) ? window.Shiny.shinyapp : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function enableShinyReconnect() {
+        const app = getShinyApp();
+        if (!app) return;
+        // "force": reconnect even when not hosted on Shiny Server / Posit Connect.
+        app.$allowReconnect = 'force';
+    }
+
+    function shinySocketIsOpen() {
+        const app = getShinyApp();
+        const sock = app && app.$socket;
+        return !!(sock && sock.readyState === WebSocket.OPEN);
+    }
+
+    function snapshotUnsavedInputs() {
+        const data = {};
+        const nodes = document.querySelectorAll('input, select, textarea');
+        for (let i = 0; i < nodes.length; i++) {
+            const el = nodes[i];
+            if (!el.id) continue;
+            const type = (el.type || '').toLowerCase();
+            if (type === 'button' || type === 'submit' || type === 'reset' || type === 'file' || type === 'image') continue;
+            if (type === 'checkbox' || type === 'radio') {
+                data[el.id] = { t: type, v: !!el.checked };
+            } else {
+                data[el.id] = { t: type || el.tagName.toLowerCase(), v: el.value };
+            }
+        }
+        try {
+            sessionStorage.setItem(KH_FORM_SNAPSHOT_KEY, JSON.stringify({ ts: Date.now(), data: data }));
+        } catch (e) {}
+    }
+
+    function loadFormSnapshot() {
+        try {
+            const raw = sessionStorage.getItem(KH_FORM_SNAPSHOT_KEY);
+            if (!raw) return null;
+            const snap = JSON.parse(raw);
+            if (!snap || !snap.data || !snap.ts) return null;
+            if ((Date.now() - snap.ts) > KH_SNAPSHOT_TTL_MS) return null;
+            return snap;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function applyFormSnapshot(snap) {
+        if (!snap || !snap.data) return 0;
+        let restored = 0;
+        Object.keys(snap.data).forEach(function(id) {
+            const item = snap.data[id];
+            const el = document.getElementById(id);
+            if (!el || !item) return;
+            const desired = item.v;
+            if (item.t === 'checkbox' || item.t === 'radio') {
+                if (el.checked === !!desired) return;
+                el.checked = !!desired;
+            } else {
+                if (String(el.value) === String(desired)) return;
+                el.value = desired;
+                try {
+                    if (window.jQuery) {
+                        const sel = window.jQuery(el).data('selectize');
+                        if (sel && typeof sel.setValue === 'function') {
+                            sel.setValue(desired, true);
+                        }
+                    }
+                } catch (e) {}
+            }
+            try {
+                if (window.Shiny && typeof window.Shiny.setInputValue === 'function') {
+                    window.Shiny.setInputValue(id, desired, { priority: 'event' });
+                }
+            } catch (e) {}
+            try {
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            } catch (e) {}
+            restored++;
+        });
+        return restored;
+    }
+
+    let restorePollTimer = null;
+    function scheduleFormRestore(reason) {
+        const snap = loadFormSnapshot();
+        if (!snap) return;
+        console.log('Scheduling form restore after', reason);
+        if (restorePollTimer) clearInterval(restorePollTimer);
+        let attempts = 0;
+        restorePollTimer = setInterval(function() {
+            attempts++;
+            const current = loadFormSnapshot();
+            if (!current) {
+                clearInterval(restorePollTimer);
+                restorePollTimer = null;
+                return;
+            }
+            applyFormSnapshot(current);
+            if (attempts >= 40) {
+                clearInterval(restorePollTimer);
+                restorePollTimer = null;
+            }
+        }, 250);
+    }
+
+    let lastReconnectAttemptMs = 0;
+    function tryShinyReconnect(reason) {
+        enableShinyReconnect();
+        const app = getShinyApp();
+        if (!app) return false;
+        if (shinySocketIsOpen()) return true;
+        try {
+            if (app.$socket && app.$socket.readyState === WebSocket.CLOSED) {
+                if (typeof app.$removeSocket === 'function') app.$removeSocket();
+            }
+            if (app.$socket && (app.$socket.readyState === WebSocket.CONNECTING || app.$socket.readyState === WebSocket.CLOSING)) {
+                return true;
+            }
+            if (!app.isConnected()) {
+                const now = Date.now();
+                if (now - lastReconnectAttemptMs < 800) return true;
+                lastReconnectAttemptMs = now;
+                console.log('Shiny reconnect:', reason);
+                app.reconnect();
+                scheduleFormRestore(reason);
+                return true;
+            }
+        } catch (e) {
+            console.warn('Shiny reconnect failed:', e);
+        }
+        return false;
+    }
+
+    function probeShinySocket(reason) {
+        enableShinyReconnect();
+        const app = getShinyApp();
+        if (!app) return;
+        if (!shinySocketIsOpen()) {
+            tryShinyReconnect(reason);
+            return;
+        }
+        // Socket may look OPEN after backgrounding while the OS already dropped it.
+        try {
+            app.$socket.send(JSON.stringify({ method: 'update', data: {} }));
+        } catch (e) {
+            console.warn('Shiny socket probe failed, reconnecting:', e);
+            try {
+                if (typeof app.$removeSocket === 'function') app.$removeSocket();
+            } catch (e2) {}
+            tryShinyReconnect(reason + ' (probe failed)');
+        }
+    }
+
+    enableShinyReconnect();
+    (function pollEnableReconnect() {
+        let tries = 0;
+        const timer = setInterval(function() {
+            tries++;
+            enableShinyReconnect();
+            if (getShinyApp() || tries >= 40) clearInterval(timer);
+        }, 100);
+    })();
+    if (window.jQuery) {
+        window.jQuery(document).on('shiny:connected', function() {
+            enableShinyReconnect();
+            try {
+                if (sessionStorage.getItem(KH_RESTORE_FLAG_KEY) === '1') {
+                    sessionStorage.removeItem(KH_RESTORE_FLAG_KEY);
+                    scheduleFormRestore('shiny:connected (reload)');
+                }
+            } catch (e) {}
+        });
+        window.jQuery(document).on('shiny:disconnected', function() {
+            snapshotUnsavedInputs();
+            enableShinyReconnect();
+        });
+        window.jQuery(document).on('shiny:idle', function() {
+            if (restorePollTimer) {
+                const snap = loadFormSnapshot();
+                if (snap) applyFormSnapshot(snap);
+            }
+        });
+    }
+
     function attemptReload(reason, opts) {
         const options = opts || {};
         const entry = {
@@ -620,6 +823,8 @@ document.addEventListener("DOMContentLoaded", function() {
             console.warn('[ReloadDebug] suppressed (page hidden)');
             return;
         }
+        snapshotUnsavedInputs();
+        try { sessionStorage.setItem(KH_RESTORE_FLAG_KEY, '1'); } catch (e) {}
         // Persist the active tab so the reload lands on the same view.
         if (typeof window.__kh_saveActiveTab === 'function') {
             try { window.__kh_saveActiveTab(); } catch (e) {}
@@ -659,7 +864,7 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
-    // --- Add functionality to reload on shiny-disconnected-overlay ---
+    // --- Disconnect overlay: reconnect in-place; reload only as a last resort ---
     (function() {
         let reloadInterval = null;
         let reloadedOnce = false;
@@ -676,9 +881,9 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         }
 
-        function scheduleReload(reason) {
-            // Defer reload so transient disconnects (e.g. brief tab-switch on mobile)
-            // have a chance to resolve before we force a full page reload.
+        function scheduleReloadFallback(reason) {
+            // Full reload wipes unsaved edits. Wait long enough for Shiny reconnect
+            // (and a brief mobile background) to recover the existing page first.
             if (pendingReloadTimeout || reloadedOnce) return;
             if (isNavigatingAway || isPageHidden) return;
             pendingReloadTimeout = setTimeout(() => {
@@ -688,20 +893,23 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (!stillOverlay) return;
                 reloadedOnce = true;
                 attemptReload(reason);
-            }, 1000);
+            }, KH_RELOAD_FALLBACK_MS);
         }
 
         // Listen for navigation attempts
         window.addEventListener('beforeunload', function() {
+            snapshotUnsavedInputs();
             isNavigatingAway = true;
-            // Stop any pending forced reload loops when user navigates away
             clearReloadTimers();
         });
 
-        // Mobile browsers are more reliable with pagehide/unload than beforeunload.
-        window.addEventListener('pagehide', function() {
-            isNavigatingAway = true;
-            clearReloadTimers();
+        // Mobile browsers fire pagehide when backgrounding (bfcache) as well as on leave.
+        window.addEventListener('pagehide', function(e) {
+            snapshotUnsavedInputs();
+            if (!e.persisted) {
+                isNavigatingAway = true;
+                clearReloadTimers();
+            }
         });
         window.addEventListener('unload', function() {
             isNavigatingAway = true;
@@ -709,13 +917,16 @@ document.addEventListener("DOMContentLoaded", function() {
         });
 
         // Reset flags when page is shown from bfcache or app switch
-        window.addEventListener('pageshow', function() {
+        window.addEventListener('pageshow', function(e) {
             isNavigatingAway = false;
             isPageHidden = (document.visibilityState !== 'visible');
+            if (e.persisted) {
+                probeShinySocket('pageshow-bfcache');
+            }
             // Attempt service worker update on HTTPS
             if (navigator.serviceWorker && navigator.serviceWorker.ready) {
                 navigator.serviceWorker.ready.then(reg => {
-                    try { reg.update(); } catch (e) {}
+                    try { reg.update(); } catch (e2) {}
                 });
             }
         });
@@ -728,29 +939,30 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         });
 
+        document.addEventListener('freeze', function() {
+            snapshotUnsavedInputs();
+        });
+        document.addEventListener('resume', function() {
+            probeShinySocket('resume');
+        });
+
+        let overlayReconnectStarted = false;
         function checkForDisconnectOverlay() {
             const overlay = document.getElementById("shiny-disconnected-overlay");
 
             if (overlay) {
-                scheduleReload("Detected disconnection overlay. Reloading...");
-
-                if (!reloadInterval) {
-                    reloadInterval = setInterval(() => {
-                        const stillOverlay = document.getElementById("shiny-disconnected-overlay");
-                        if (isNavigatingAway || isPageHidden) {
-                            // User is leaving; stop reload attempts
-                            clearReloadTimers();
-                            return;
-                        }
-                        if (stillOverlay) {
-                            console.log("Still disconnected. Reloading again...");
-                            attemptReload('Still disconnected. Reloading again...');
-                        } else {
-                            clearReloadTimers();
-                            reloadedOnce = false;
-                        }
-                    }, 5000);
+                enableShinyReconnect();
+                if (!isNavigatingAway && !isPageHidden) {
+                    if (!overlayReconnectStarted) {
+                        overlayReconnectStarted = true;
+                        tryShinyReconnect('disconnect-overlay');
+                    }
+                    scheduleReloadFallback("Detected disconnection overlay. Reloading...");
                 }
+            } else {
+                overlayReconnectStarted = false;
+                clearReloadTimers();
+                reloadedOnce = false;
             }
         }
 
@@ -918,6 +1130,10 @@ document.addEventListener("DOMContentLoaded", function() {
 
         // When a Bootstrap tab is shown, update the URL bar.
         document.addEventListener('shown.bs.tab', function(event) {
+            if (restorePollTimer) {
+                var snap = loadFormSnapshot();
+                if (snap) applyFormSnapshot(snap);
+            }
             var link = event.target;
             if (!link || !link.getAttribute) return;
             var value = link.getAttribute('data-value');
@@ -1080,38 +1296,37 @@ document.addEventListener("DOMContentLoaded", function() {
     function tryReconnect(opts) {
         const options = opts || {};
         const source = options.source || 'unknown';
-        const allowOverlayReload = (options.allowOverlayReload === true);
+        const probeZombieSocket = (options.probeZombieSocket === true);
 
-        // If Shiny overlay exists, optionally reload.
-        // NOTE: The overlay may already be present when returning from background, and
-        // the MutationObserver won't fire again; in that case we need an explicit check.
+        if (isNavigatingAway || document.visibilityState !== 'visible') return;
+
+        enableShinyReconnect();
+
         const overlay = document.getElementById("shiny-disconnected-overlay");
-        if (overlay) {
-            if (allowOverlayReload && !isNavigatingAway && document.visibilityState === 'visible') {
-                attemptReload(`Reconnect(${source}): overlay present`);
-            } else {
-                console.log(`Reconnect(${source}): overlay present (no reload)`);
-            }
+        if (overlay || !shinySocketIsOpen()) {
+            tryShinyReconnect(`Reconnect(${source})`);
             return;
         }
-        // Lightweight ping to check reachability
+
+        if (probeZombieSocket) {
+            probeShinySocket(`Reconnect(${source})`);
+            return;
+        }
+
+        // Lightweight ping to check reachability when the socket still looks open.
         fetch('/', { cache: 'no-store', method: 'HEAD' })
             .then(() => {
-                // If reachable, optionally trigger a Shiny input to reinitialize
                 console.log("Reconnect: server reachable");
             })
             .catch(() => {
                 console.log("Reconnect: server not reachable, showing offline page...");
-                // Persist the active tab so we can restore it when coming back online.
                 if (typeof window.__kh_saveActiveTab === 'function') {
                     try { window.__kh_saveActiveTab(); } catch (e) {}
                 }
-                // Prefer offline page to avoid blank screen when SW is present
                 if (!isNavigatingAway) {
                     try {
                         window.location.href = '/offline.html';
                     } catch (e) {
-                        // Fallback to reload if redirect fails
                         attemptReload('Reconnect: offline redirect failed');
                     }
                 }
@@ -1126,6 +1341,7 @@ document.addEventListener("DOMContentLoaded", function() {
         if (nowState === 'hidden') {
             lastVisibilityState = 'hidden';
             lastHiddenAtMs = Date.now();
+            snapshotUnsavedInputs();
             return;
         }
 
@@ -1134,20 +1350,19 @@ document.addEventListener("DOMContentLoaded", function() {
             lastHiddenAtMs = null;
             lastVisibilityState = 'visible';
 
-            // Only treat this as a real "return to foreground" if we were hidden long enough.
-            // This avoids address-bar / UI flicker on Android Firefox triggering reconnect logic.
-            if (hiddenDurationMs >= 750) {
-                // Only auto-reload when overlay is present if we were hidden long enough that
-                // a websocket idle timeout is plausible. This avoids rare bounce-backs.
-                const allowOverlayReload = (hiddenDurationMs >= 2500);
-                tryReconnect({ source: `visibility/${hiddenDurationMs}ms`, allowOverlayReload });
+            // Ignore address-bar / UI flicker on Android Firefox.
+            if (hiddenDurationMs >= KH_VISIBILITY_FLICKER_MS) {
+                tryReconnect({
+                    source: `visibility/${hiddenDurationMs}ms`,
+                    probeZombieSocket: (hiddenDurationMs >= KH_ZOMBIE_PROBE_MS)
+                });
             } else {
                 console.log('Visibility returned quickly; skip reconnect (ms):', hiddenDurationMs);
             }
         }
     });
 
-    window.addEventListener('online', () => tryReconnect({ source: 'online', allowOverlayReload: true }));
+    window.addEventListener('online', () => tryReconnect({ source: 'online', probeZombieSocket: true }));
 
     // ---- Instant photo-card removal on delete (un-grouped pictures view) ----
     (function initPhotoDeleteHandler() {

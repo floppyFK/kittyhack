@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,8 +17,12 @@ from src.model.camera_config import (
     _remote_internal_proxy_url,
 )
 from src.model.detection import _parse_yolo_detection_results
-from src.model.model_handler import ModelHandler, _yolo_model_worker_process
+from src.model.model_handler import ModelHandler
 from src.model.remote_trainer import RemoteModelTrainer
+from src.model.yolo_inference_worker import (
+    configure_worker_compute,
+    yolo_model_worker_process,
+)
 from src.model.yolo_model import YoloModel
 
 
@@ -344,7 +349,36 @@ def test_yolo_worker_process_is_forking_picklable():
     import io
     from multiprocessing.reduction import ForkingPickler
 
-    assert "<locals>" not in _yolo_model_worker_process.__qualname__
+    assert "<locals>" not in yolo_model_worker_process.__qualname__
     buf = io.BytesIO()
-    ForkingPickler(buf).dump(_yolo_model_worker_process)
+    ForkingPickler(buf).dump(yolo_model_worker_process)
     assert buf.tell() > 0
+
+
+def test_yolo_worker_module_has_no_heavy_toplevel_imports():
+    """OpenMP/NCNN must not initialize before configure_worker_compute() runs."""
+    import ast
+    from pathlib import Path
+
+    src = Path("src/model/yolo_inference_worker.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    imported: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            imported.extend(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.append(node.module.split(".")[0])
+    heavy = {"cv2", "numpy", "torch", "ultralytics", "ncnn", "psutil"}
+    assert not (set(imported) & heavy)
+
+
+def test_configure_worker_compute_sets_thread_env(monkeypatch):
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.delenv("OMP_THREAD_LIMIT", raising=False)
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3}, raising=False)
+    monkeypatch.setattr(os, "sched_setaffinity", lambda _pid, _mask: None, raising=False)
+    cores = configure_worker_compute(1)
+    assert os.environ["OMP_NUM_THREADS"] == "1"
+    assert os.environ["OMP_THREAD_LIMIT"] == "1"
+    assert os.environ["OMP_WAIT_POLICY"] == "PASSIVE"
+    assert cores == [0]

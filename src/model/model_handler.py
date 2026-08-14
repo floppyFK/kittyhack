@@ -29,88 +29,10 @@ from .camera_config import (
     _is_remote_internal_proxy_stream,
 )
 from .detection import _parse_yolo_detection_results
+from .yolo_inference_worker import yolo_model_worker_process
 
 if TYPE_CHECKING:
     from ai_edge_litert.interpreter import Interpreter
-
-
-def _yolo_model_worker_process(
-    model_path,
-    input_queue,
-    output_queue,
-    num_threads=1,
-    inference_device="cpu",
-):
-    """YOLO inference subprocess (CPU-affinity-limited worker).
-
-    Must stay at module level. Python 3.14 changed the default multiprocessing
-    start method on Linux from ``fork`` to ``forkserver``, which pickles the
-    process target. A nested ``load_model()`` function is not picklable and
-    crashes ``Process.start()`` before the camera videostream is created.
-    """
-    try:
-        import psutil
-        from ultralytics import YOLO
-
-        from src.baseconfig import CONFIG, configure_logging
-
-        process = psutil.Process()
-
-        requested = list(range(int(num_threads) if num_threads else 1))
-        try:
-            allowed = process.cpu_affinity()  # type: ignore[call-arg]
-        except Exception:
-            allowed = []
-
-        cores_to_use = requested
-        if allowed:
-            cores_to_use = [c for c in requested if c in allowed]
-            if not cores_to_use:
-                cores_to_use = list(allowed)
-
-        try:
-            if cores_to_use:
-                process.cpu_affinity(cores_to_use)
-                logging.info(f"[MODEL] Worker process running on CPU cores {cores_to_use}")
-            else:
-                logging.info("[MODEL] Worker process running without CPU affinity (no cores resolved)")
-        except OSError as e:
-            logging.warning(f"[MODEL] CPU affinity not supported/allowed here; continuing without pinning: {e}")
-        except Exception as e:
-            logging.warning(f"[MODEL] Failed to set CPU affinity; continuing without pinning: {e}")
-
-        logging.getLogger("ultralytics").setLevel(logging.WARNING)
-        logging.getLogger("ultralytics.yolo.engine.model").setLevel(logging.WARNING)
-        model = YOLO(model_path, task="detect", verbose=False)
-        configure_logging(CONFIG["LOGLEVEL"])
-
-        while True:
-            job = input_queue.get()
-            if job is None:
-                break
-
-            job_id, frame, input_size, labels, cat_names, min_threshold = job
-
-            _worker_kwargs: dict = dict(stream=True, imgsz=input_size)
-            if inference_device != "cpu":
-                _worker_kwargs["device"] = inference_device
-            results = model(frame, **_worker_kwargs)
-
-            mouse_probability, own_cat_probability, detected_objects = _parse_yolo_detection_results(
-                results,
-                labels,
-                cat_names,
-                min_threshold,
-            )
-
-            output_queue.put((job_id, mouse_probability, own_cat_probability, detected_objects))
-
-    except Exception as e:
-        logging.error(f"[MODEL] Worker process error: {e}")
-        import traceback
-        logging.error(traceback.format_exc())
-    finally:
-        logging.info("[MODEL] Worker process exiting")
 
 
 class ModelHandler:
@@ -308,13 +230,14 @@ class ModelHandler:
                 self._model_worker = None
             else:
                 # Limited-core path: run YOLO in a child process with CPU affinity.
-                # Use the default context (forkserver on Python 3.14 / Linux) with a
-                # module-level target so the worker is picklable.
+                # Python 3.14's default start method on Linux is forkserver (not
+                # fork). The worker target lives in yolo_inference_worker so the
+                # child can cap OpenMP/NCNN threads before cv2/torch import.
                 ctx = multiprocessing.get_context()
                 self._input_queue = ctx.Queue()
                 self._output_queue = ctx.Queue()
                 self._model_worker = ctx.Process(
-                    target=_yolo_model_worker_process,
+                    target=yolo_model_worker_process,
                     args=(self.modeldir, self._input_queue, self._output_queue, self.num_threads, resolved_inference_device),
                 )
                 self._model_worker.daemon = True
@@ -337,7 +260,7 @@ class ModelHandler:
         ))
         return job_id
     
-    def _get_result(self, job_id, timeout=1.0):
+    def _get_result(self, job_id, timeout=15.0):
         """Wait for and return the YOLO worker result for `job_id`, or None."""
         try:
             # Check if we've received the result
@@ -349,6 +272,9 @@ class ModelHandler:
                 try:
                     result_job_id, mouse_prob, cat_prob, objects = self._output_queue.get(timeout=timeout)
                 except Exception:
+                    logging.warning(
+                        f"[MODEL] Timed out waiting {timeout:.1f}s for YOLO worker result (job_id={job_id})"
+                    )
                     return None
 
                 # Drop results that arrived later than expected for an already-abandoned job_id.

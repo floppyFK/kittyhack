@@ -2969,9 +2969,28 @@ html[data-bs-theme="dark"] .live-view-banner {
 
 @media (max-width: 575.98px) {
     .stats-filters {
-        top: 3.1rem;
-        padding: 0.65rem;
+        position: static;
+        top: auto;
+        padding: 0.45rem 0.55rem;
+        gap: 0.35rem 0.5rem;
+        margin-bottom: 0.7rem;
         grid-template-columns: 1fr;
+    }
+    .stats-filters .control-label,
+    .stats-filters label {
+        font-size: 0.75rem;
+        margin-bottom: 0.15rem;
+    }
+    .stats-filters .form-select,
+    .stats-filters select,
+    .stats-filters .form-control {
+        min-height: 2.1em;
+        font-size: 0.875rem;
+        padding: 0.28em 2.2em 0.28em 0.7em;
+    }
+    .stats-filters .shiny-input-container,
+    .stats-filters .form-group {
+        margin-bottom: 0;
     }
     .stats-kpis {
         grid-template-columns: 1fr 1fr;

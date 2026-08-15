@@ -401,6 +401,31 @@ msgstr "Benachrichtigungen"
 msgid "Close"
 msgstr "Schließen"
 
+msgid "Do not notify again"
+msgstr "Nicht mehr benachrichtigen"
+
+msgid "Reset silenced notifications"
+msgstr "Unterdrückte Hinweise zurücksetzen"
+
+msgid ""
+"Some warnings can be hidden with **Do not notify again**. "
+"This restores all of them."
+msgstr ""
+"Einige Warnungen können mit **Nicht mehr benachrichtigen** ausgeblendet "
+"werden. Damit werden alle wieder angezeigt."
+
+#, python-brace-format
+msgid "Currently silenced: {n}"
+msgstr "Aktuell unterdrückt: {n}"
+
+msgid "Silenced notifications were reset. These warnings can appear again."
+msgstr ""
+"Unterdrückte Hinweise wurden zurückgesetzt. Diese Warnungen können wieder "
+"erscheinen."
+
+msgid "There are no silenced notifications."
+msgstr "Es gibt keine unterdrückten Hinweise."
+
 msgid "Remote target host not configured"
 msgstr "Remote-Zielhost nicht konfiguriert"
 

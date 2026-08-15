@@ -882,24 +882,45 @@ class UserNotifications:
     Class to handle user notifications.
     The notifications are stored in a json file and will be displayed to the user when he opens the web interface.
     """
+    ID_INSIDE_UNLOCK_HELD_AFTER_MAX_TIME = "inside_unlock_held_after_max_time"
+
     notifications = []
+    muted_ids = []
 
     def __init__(cls):
         cls.load()
+
+    @classmethod
+    def _normalized_muted_ids(cls, muted) -> list:
+        if not isinstance(muted, list):
+            return []
+        return [str(item) for item in muted if item]
 
     @classmethod
     def load(cls):
         """
         Load notifications from the json file.
         """
+        cls.notifications = []
+        cls.muted_ids = []
         try:
             with open("notifications.json", "r") as f:
-                cls.notifications = json.load(f)
+                data = json.load(f)
         except FileNotFoundError:
-            cls.notifications = []
+            return
         except json.JSONDecodeError:
             logging.error("[USR_NOTIFICATIONS] Failed to decode notifications.json. Starting with an empty list.")
-            cls.notifications = []
+            return
+
+        # Legacy files were a bare list of notification dicts.
+        if isinstance(data, list):
+            cls.notifications = data
+            return
+        if isinstance(data, dict):
+            notes = data.get("notifications", [])
+            cls.notifications = notes if isinstance(notes, list) else []
+            cls.muted_ids = cls._normalized_muted_ids(data.get("muted_ids", []))
+            return
 
     @classmethod
     def save(cls):
@@ -907,10 +928,49 @@ class UserNotifications:
         Save notifications to the json file.
         """
         with open("notifications.json", "w") as f:
-            json.dump(cls.notifications, f, indent=4)
+            json.dump(
+                {
+                    "notifications": cls.notifications,
+                    "muted_ids": cls.muted_ids,
+                },
+                f,
+                indent=4,
+            )
 
     @classmethod
-    def add(cls, header, message, type="default", id=None, skip_if_id_exists=False):
+    def is_muted(cls, id: str) -> bool:
+        """Return True if the user asked not to see this notification again."""
+        return bool(id) and id in cls.muted_ids
+
+    @classmethod
+    def mute(cls, id: str):
+        """Permanently suppress a notification id and drop any pending copy."""
+        if not id:
+            return False
+        if id not in cls.muted_ids:
+            cls.muted_ids.append(id)
+        cls.notifications = [n for n in cls.notifications if n.get("id") != id]
+        cls.save()
+        logging.info(f"[USR_NOTIFICATIONS] Muted notification id: {id}")
+        return True
+
+    @classmethod
+    def get_muted_ids(cls) -> list:
+        """Return a copy of the muted notification ids."""
+        return list(cls.muted_ids)
+
+    @classmethod
+    def clear_muted(cls) -> int:
+        """Clear all muted notification ids. Returns how many were unmuted."""
+        count = len(cls.muted_ids)
+        if count:
+            cls.muted_ids = []
+            cls.save()
+            logging.info("[USR_NOTIFICATIONS] Cleared all muted notification ids")
+        return count
+
+    @classmethod
+    def add(cls, header, message, type="default", id=None, skip_if_id_exists=False, muteable=False):
         """
         Add a notification to the list.
         Args:
@@ -919,17 +979,24 @@ class UserNotifications:
             type (str): The type of the notification. Can be "default", "message", "warning", "error"
             id (str): The id of the notification. If None, a random id will be generated.
             skip_if_id_exists (bool): If True, skip adding the notification if the id already exists.
+            muteable (bool): If True, the UI may offer a "do not notify again" action.
         """
         if id is None:
             id = str(uuid.uuid4())
+        if cls.is_muted(id):
+            logging.debug(f"[USR_NOTIFICATIONS] Skipped muted notification id: {id}")
+            return
         if skip_if_id_exists and any(n['id'] == id for n in cls.notifications):
             return
-        cls.notifications.append({
+        entry = {
             "id": id,
             "header": header,
             "message": message,
             "type": type
-        })
+        }
+        if muteable:
+            entry["muteable"] = True
+        cls.notifications.append(entry)
         cls.save()
         logging.info(f"[USR_NOTIFICATIONS] Added notification: {header} - {message} (type: {type})")
         return id

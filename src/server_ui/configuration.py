@@ -12,6 +12,7 @@ from src.baseconfig import (
     save_config,
     configure_logging,
     DEFAULT_CONFIG,
+    UserNotifications,
 )
 from src.helper import Versioning, SystemInfo
 from src.system import (
@@ -362,6 +363,31 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     style_="color: grey;",
                                 ),
                             )
+                        ),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.input_action_button(
+                                    "btn_reset_muted_notifications",
+                                    _("Reset silenced notifications"),
+                                    class_="btn-outline-secondary",
+                                ),
+                            ),
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _(
+                                        "Some warnings can be hidden with **Do not notify again**. "
+                                        "This restores all of them."
+                                    )
+                                    + "\n\n"
+                                    + _("Currently silenced: {n}").format(
+                                        n=len(UserNotifications.get_muted_ids())
+                                    )
+                                ),
+                                style_="color: grey;",
+                            ),
                         ),
                         class_="generic-container align-left",
                         style_="padding-left: 1rem !important; padding-right: 1rem !important;",
@@ -2201,6 +2227,24 @@ def register_configuration(input, output, session, ctx: SessionContext):
             ),
         )
         return ui_config
+
+    @reactive.Effect
+    @reactive.event(input.btn_reset_muted_notifications)
+    def on_reset_muted_notifications():
+        count = UserNotifications.clear_muted()
+        if count:
+            ui.notification_show(
+                _("Silenced notifications were reset. These warnings can appear again."),
+                duration=6,
+                type="message",
+            )
+            reload_trigger_config.set(reload_trigger_config.get() + 1)
+        else:
+            ui.notification_show(
+                _("There are no silenced notifications."),
+                duration=5,
+                type="message",
+            )
 
     @render.text
     def hostname_preview():

@@ -139,11 +139,14 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         ctx.live_view_warning_dismissed.set(True)
         ctx.live_view_warning_html.set("")
 
+    muteable_ids_in_current_modal = []
+
     def show_user_notifications():
         user_notifications = UserNotifications.get_all()
         if len(user_notifications) > 0:
             # Create a combined message from all notifications
             combined_message = ""
+            muteable_ids_in_current_modal.clear()
             for i, notification in enumerate(user_notifications):
                 combined_message += (
                     f"## {notification['header']}\n\n{notification['message']}"
@@ -151,9 +154,21 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                 # Add a separator between notifications, but not after the last one
                 if i < len(user_notifications) - 1:
                     combined_message += "\n\n---\n\n"
+                if notification.get("muteable") and notification.get("id"):
+                    muteable_ids_in_current_modal.append(notification["id"])
                 UserNotifications.remove(notification["id"])
 
-                # Show all notifications in a single modal
+            footer_items = [ui.input_action_button("btn_modal_cancel", _("Close"))]
+            if muteable_ids_in_current_modal:
+                footer_items.insert(
+                    0,
+                    ui.input_action_button(
+                        "btn_mute_user_notifications",
+                        _("Do not notify again"),
+                        class_="btn-outline-secondary",
+                    ),
+                )
+
             ui.modal_show(
                 ui.modal(
                     ui.div(
@@ -162,11 +177,17 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                     title=_("Notifications"),
                     easy_close=False,
                     size="lg",
-                    footer=ui.div(
-                        ui.input_action_button("btn_modal_cancel", _("Close")),
-                    ),
+                    footer=ui.div(*footer_items),
                 )
             )
+
+    @reactive.Effect
+    @reactive.event(input.btn_mute_user_notifications)
+    def mute_shown_user_notifications():
+        for notification_id in list(muteable_ids_in_current_modal):
+            UserNotifications.mute(notification_id)
+        muteable_ids_in_current_modal.clear()
+        ui.modal_remove()
 
     @output
     @render.ui

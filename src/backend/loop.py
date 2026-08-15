@@ -449,8 +449,9 @@ def backend_main(
                     + _("- Train the model with typical false-detection frames")
                 ),
                 type="warning",
-                id="inside_unlock_held_after_max_time",
+                id=UserNotifications.ID_INSIDE_UNLOCK_HELD_AFTER_MAX_TIME,
                 skip_if_id_exists=True,
+                muteable=True,
             )
         except Exception as e:
             logging.warning(f"[BACKEND] Failed to add magnet-protection user notification: {e}")

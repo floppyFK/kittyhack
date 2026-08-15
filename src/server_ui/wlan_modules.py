@@ -199,6 +199,33 @@ def wlan_modify_server(input, output, session, ssid: str):
     @reactive.event(input.btn_wlan_delete)
     def wlan_delete():
         ssid = input.txtWlanSSID()
+        ui.modal_remove()
+        ui.modal_show(
+            ui.modal(
+                _("Do you really want to delete the WLAN connection {}?").format(
+                    ssid
+                ),
+                title=_("Delete WLAN"),
+                easy_close=False,
+                footer=ui.div(
+                    ui.input_action_button(
+                        "btn_modal_delete_wlan_ok",
+                        _("Delete"),
+                        class_="btn-danger",
+                    ),
+                    ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                    ui.div(
+                        ui.input_text("txtWlanDeleteSSID", "", ssid),
+                        style_="display:none;",
+                    ),
+                ),
+            )
+        )
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_delete_wlan_ok)
+    def wlan_delete_confirmed():
+        ssid = input.txtWlanDeleteSSID()
         success = WlanManager.delete_wlan_connection(ssid)
         if success:
             ui.notification_show(

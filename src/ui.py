@@ -1,7 +1,6 @@
 from shiny import ui
 from faicons import icon_svg
 from pathlib import Path
-from src.mode import is_remote_mode
 from src.baseconfig import CONFIG, set_language
 
 js_file = Path(__file__).parent.parent / "www" / "app.js"
@@ -44,7 +43,7 @@ except Exception:
 # Prepare gettext for translations
 _ = set_language(CONFIG['LANGUAGE'])
 
-# Build navigation panels (conditionally add WLAN config for target-mode)
+# Build navigation panels
 _nav_items = [
     ui.nav_panel(
         _("Live view"),
@@ -72,12 +71,6 @@ _nav_items = [
         value="manage-cats",
     ),
     ui.nav_panel(
-        _("Add new cat"),
-        ui.output_ui("ui_add_new_cat"),
-        ui.br(),
-        value="add-new-cat",
-    ),
-    ui.nav_panel(
         _("AI Training"),
         ui.output_ui("ui_ai_training"),
         ui.br(),
@@ -94,16 +87,6 @@ _nav_items = [
         value="configuration",
     ),
 ]
-
-if not is_remote_mode():
-    _nav_items.append(
-        ui.nav_panel(
-            _("WLAN Configuration"),
-            ui.output_ui("ui_wlan_configured_connections"),
-            ui.output_ui("ui_wlan_available_networks"),
-            value="wlan-configuration",
-        )
-    )
 
 _nav_items.append(
     ui.nav_panel(

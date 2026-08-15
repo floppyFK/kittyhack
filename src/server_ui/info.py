@@ -33,7 +33,7 @@ from src.shiny_wrappers import uix
 import src.startup as startup
 from src.server_ui.state import set_update_progress, get_update_progress
 from src.server_ui.context import SessionContext
-from src.server_ui.helpers import changelog_expandable_item
+from src.server_ui.helpers import changelog_expandable_item, centered_form_row
 
 _ = set_language(CONFIG["LANGUAGE"])
 
@@ -997,12 +997,14 @@ def register_info(input, output, session, ctx: SessionContext):
                     # Group: Restore Kittyhack DB
                     ui.div(
                         ui.div(
-                            uix.input_file(
-                                "upload_kittyhack_db",
-                                _("Restore Kittyhack Database (.db)"),
-                                accept=[".db"],
-                                multiple=False,
-                                width="90%",
+                            centered_form_row(
+                                uix.input_file(
+                                    "upload_kittyhack_db",
+                                    _("Restore Kittyhack Database (.db)"),
+                                    accept=[".db"],
+                                    multiple=False,
+                                    width="90%",
+                                ),
                             ),
                             ui.div(
                                 ui.input_task_button(
@@ -1015,8 +1017,8 @@ def register_info(input, output, session, ctx: SessionContext):
                             ),
                             class_="generic-container",
                             style_=(
-                                "border: 1px solid #ddd; border-radius: 6px; padding: 10px; margin-top: 8px;"
-                                "background: #fafafa;"
+                                "border: 1px solid var(--bs-border-color, #ddd); border-radius: 6px; padding: 10px; margin-top: 8px;"
+                                "background: var(--bs-tertiary-bg, #fafafa);"
                             ),
                         )
                     ),
@@ -1034,12 +1036,14 @@ def register_info(input, output, session, ctx: SessionContext):
                     # Group: Restore Configuration
                     ui.div(
                         ui.div(
-                            uix.input_file(
-                                "upload_config",
-                                _("Restore Configuration File (config.ini)"),
-                                accept=[".ini"],
-                                multiple=False,
-                                width="90%",
+                            centered_form_row(
+                                uix.input_file(
+                                    "upload_config",
+                                    _("Restore Configuration File (config.ini)"),
+                                    accept=[".ini"],
+                                    multiple=False,
+                                    width="90%",
+                                ),
                             ),
                             ui.div(
                                 ui.input_task_button(
@@ -1052,8 +1056,8 @@ def register_info(input, output, session, ctx: SessionContext):
                             ),
                             class_="generic-container",
                             style_=(
-                                "border: 1px solid #ddd; border-radius: 6px; padding: 10px; margin-top: 8px;"
-                                "background: #fafafa;"
+                                "border: 1px solid var(--bs-border-color, #ddd); border-radius: 6px; padding: 10px; margin-top: 8px;"
+                                "background: var(--bs-tertiary-bg, #fafafa);"
                             ),
                         )
                     ),

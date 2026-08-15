@@ -827,6 +827,26 @@ def show_event_server(input, output, session, block_id: int):
     @reactive.effect
     @reactive.event(input.btn_delete_event)
     def delete_event():
+        ui.modal_remove()
+        ui.modal_show(
+            ui.modal(
+                _("Delete this event and all its pictures?"),
+                title=_("Delete event"),
+                easy_close=False,
+                footer=ui.div(
+                    ui.input_action_button(
+                        "btn_modal_delete_event_ok",
+                        _("Delete"),
+                        class_="btn-danger",
+                    ),
+                    ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                ),
+            )
+        )
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_delete_event_ok)
+    def delete_event_confirmed():
         logging.info(f"Delete all pictures of event with block_id {block_id}")
         EventsRepo.delete_photos_by_block_id(
             CONFIG["KITTYHACK_DATABASE_PATH"], block_id

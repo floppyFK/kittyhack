@@ -1047,11 +1047,9 @@ document.addEventListener("DOMContentLoaded", function() {
             'pictures':            '/pictures/',
             'statistics':          '/statistics/',
             'manage-cats':         '/manage-cats/',
-            'add-new-cat':         '/add-new-cat/',
             'ai-training':         '/ai-training/',
             'system':              '/system/',
             'configuration':       '/configuration/',
-            'wlan-configuration':  '/wlan-configuration/',
             'info':                '/info/'
         };
 
@@ -1062,6 +1060,17 @@ document.addEventListener("DOMContentLoaded", function() {
             var p = TAB_ROUTES[tab];
             PATH_TO_TAB[p] = tab;
             PATH_TO_TAB[p.replace(/\/$/, '')] = tab;
+        }
+        // Retired top-level tabs: keep old URLs working.
+        PATH_TO_TAB['/add-new-cat/'] = 'manage-cats';
+        PATH_TO_TAB['/add-new-cat'] = 'manage-cats';
+        PATH_TO_TAB['/wlan-configuration/'] = 'system';
+        PATH_TO_TAB['/wlan-configuration'] = 'system';
+
+        function resolveTabAlias(tabValue) {
+            if (tabValue === 'add-new-cat') return 'manage-cats';
+            if (tabValue === 'wlan-configuration') return 'system';
+            return tabValue;
         }
 
         function getActiveTabValue() {
@@ -1104,8 +1113,8 @@ document.addEventListener("DOMContentLoaded", function() {
 
         // On page load: determine which tab to show from URL → sessionStorage → default.
         function initTabFromUrl() {
-            var urlTab = tabFromUrl();
-            var sessionTab = loadTabFromSession();
+            var urlTab = resolveTabAlias(tabFromUrl());
+            var sessionTab = resolveTabAlias(loadTabFromSession());
             var target = urlTab || sessionTab || null;
 
             if (target) {
@@ -1119,11 +1128,15 @@ document.addEventListener("DOMContentLoaded", function() {
                         }
                     }, 100);
                 }
-                // If we used the sessionStorage fallback on "/", push the correct path.
-                if (!urlTab && target && TAB_ROUTES[target]) {
-                    try {
-                        history.replaceState({ tab: target }, '', TAB_ROUTES[target]);
-                    } catch (e) {}
+                // Canonicalize aliased or session-restored URLs to the live tab path.
+                if (target && TAB_ROUTES[target]) {
+                    var desired = TAB_ROUTES[target];
+                    var cur = window.location.pathname;
+                    if (cur !== desired && cur !== desired.replace(/\/$/, '')) {
+                        try {
+                            history.replaceState({ tab: target }, '', desired);
+                        } catch (e) {}
+                    }
                 }
             }
         }
@@ -1152,7 +1165,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
         // Handle browser back / forward buttons.
         window.addEventListener('popstate', function() {
-            var tab = tabFromUrl();
+            var tab = resolveTabAlias(tabFromUrl());
             if (tab) {
                 activateTab(tab);
                 saveTabToSession(tab);
@@ -1369,6 +1382,19 @@ document.addEventListener("DOMContentLoaded", function() {
         document.addEventListener('click', function(e) {
             const btn = e.target.closest('[id^="photo_delete_"]');
             if (!btn) return;
+            if (btn.getAttribute('data-kh-delete-confirmed') !== '1') {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                var msgEl = document.getElementById('kh_photo_delete_i18n');
+                var msg = (msgEl && msgEl.getAttribute('data-msg')) || 'Delete this picture?';
+                if (window.confirm(msg)) {
+                    btn.setAttribute('data-kh-delete-confirmed', '1');
+                    btn.click();
+                }
+                return;
+            }
+            btn.removeAttribute('data-kh-delete-confirmed');
             const card = btn.closest('.kh-photo-card');
             if (!card) return;
             // Animate card out instantly
@@ -1393,7 +1419,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     }
                 }
             }, 300);
-        });
+        }, true);
     })();
 
     // ---- Photo lightbox modal (un-grouped pictures view) ----

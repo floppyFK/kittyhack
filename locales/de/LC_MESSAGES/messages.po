@@ -5009,3 +5009,61 @@ msgstr "- Erhöhe den Schwellwert für die Katzenerkennung"
 msgid "- Train the model with typical false-detection frames"
 msgstr "- Trainiere das Modell mit typischen Fehl-Erkennungsbildern"
 
+msgid "No cats in the database yet. Add one below."
+msgstr "Noch keine Katzen in der Datenbank. Füge unten eine hinzu."
+
+#, python-brace-format
+msgid "Delete {}"
+msgstr "{} löschen"
+
+msgid ""
+"**Important:** Individual entry/exit switches only apply when "
+"the matching door mode is set to `Individual configuration per cat`."
+msgstr ""
+"**Wichtig:** Die individuellen Einlass-/Ausgangsschalter gelten nur, "
+"wenn der passende Klappenmodus auf `Individuelle Konfiguration pro Katze` steht."
+
+#, python-brace-format
+msgid "Do you really want to delete {} from the database?"
+msgstr "Möchtest du {} wirklich aus der Datenbank löschen?"
+
+msgid "Delete cat"
+msgstr "Katze löschen"
+
+msgid "Unlock inside"
+msgstr "Innenseite öffnen"
+
+msgid "You have unsaved configuration changes. Leave this page without saving?"
+msgstr "Du hast ungespeicherte Konfigurationsänderungen. Seite ohne Speichern verlassen?"
+
+msgid "This will block all cats from entering. Continue?"
+msgstr "Dadurch können keine Katzen mehr hineingehen. Fortfahren?"
+
+msgid "Change entry mode"
+msgstr "Eingangsmodus ändern"
+
+msgid "This will block all cats from exiting. Continue?"
+msgstr "Dadurch können keine Katzen mehr hinausgehen. Fortfahren?"
+
+msgid "Change exit mode"
+msgstr "Ausgangsmodus ändern"
+
+msgid "Continue"
+msgstr "Fortfahren"
+
+msgid "Delete this event and all its pictures?"
+msgstr "Dieses Ereignis und alle zugehörigen Bilder löschen?"
+
+msgid "Delete event"
+msgstr "Ereignis löschen"
+
+#, python-brace-format
+msgid "Do you really want to delete the WLAN connection {}?"
+msgstr "Möchtest du die WLAN-Verbindung {} wirklich löschen?"
+
+msgid "Delete WLAN"
+msgstr "WLAN löschen"
+
+msgid "Delete this picture?"
+msgstr "Dieses Bild löschen?"
+

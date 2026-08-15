@@ -27,6 +27,7 @@ TAB_PATHS = frozenset({
     "live-view", "pictures", "statistics", "manage-cats", "add-new-cat",
     "ai-training", "system", "configuration", "wlan-configuration", "info",
 })
+# add-new-cat and wlan-configuration stay routable so old bookmarks still load.
 
 
 class TabRoutingMiddleware:

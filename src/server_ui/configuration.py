@@ -2202,11 +2202,15 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         style_="padding-left: 1rem !important; padding-right: 1rem !important;",
                     ),
                 ),
-                ui.br(),
-                ui.br(),
-                ui.br(),
-                ui.br(),
-                ui.br(),
+                ui.tags.div(
+                    {
+                        "id": "kh_config_leave_i18n",
+                        "style": "display:none;",
+                        "data-msg": _(
+                            "You have unsaved configuration changes. Leave this page without saving?"
+                        ),
+                    }
+                ),
                 ui.panel_absolute(
                     ui.panel_well(
                         ui.input_action_button(

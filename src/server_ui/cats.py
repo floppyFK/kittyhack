@@ -283,12 +283,11 @@ def register_cats(input, output, session, ctx: SessionContext):
                         ui.HTML(img_html),
                         ui.card_footer(
                             ui.div(
-                                ui.input_checkbox(
-                                    id=f"mng_cat_del_{data_row['id']}",
-                                    label=_("Delete {} from the database").format(
-                                        data_row["name"]
-                                    ),
-                                    value=False,
+                                ui.input_action_button(
+                                    id=f"mng_cat_del_btn_{data_row['id']}",
+                                    label=_("Delete {}").format(data_row["name"]),
+                                    icon=icon_svg("trash"),
+                                    class_="btn-outline-danger",
                                 ),
                                 style_="padding-top: 20px; display: flex; justify-content: center;",
                             )
@@ -311,6 +310,8 @@ def register_cats(input, output, session, ctx: SessionContext):
                         ),
                     }
                 ),
+                ui.output_ui("ui_add_new_cat"),
+                ui.br(),
                 ui.div(
                     *ui_cards,
                     id="manage_cats_container",
@@ -336,11 +337,13 @@ def register_cats(input, output, session, ctx: SessionContext):
             )
         else:
             return ui.div(
-                ui.help_text(
-                    _(
-                        "No cats found in the database. Please go to the [ADD NEW CAT] section to add a new cat."
-                    )
+                ui.div(
+                    ui.help_text(
+                        _("No cats in the database yet. Add one below.")
+                    ),
+                    style_="text-align: center; margin-bottom: 1rem;",
                 ),
+                ui.output_ui("ui_add_new_cat"),
             )
 
     @reactive.Effect
@@ -387,76 +390,51 @@ def register_cats(input, output, session, ctx: SessionContext):
                         card_allow_exit = bool(int(prev.get("allow_exit", 1)))
                     except Exception:
                         card_allow_exit = True
-                card_del = input[f"mng_cat_del_{db_id}"]()
+                # Get image path, if a file was uploaded
+                card_pic: list[FileInfo] | None = input[f"mng_cat_pic_{db_id}"]()
+                if card_pic is not None:
+                    card_pic_path = card_pic[0]["datapath"]
+                else:
+                    card_pic_path = None
 
-                # Check if the cat should be deleted
-                if card_del:
+                    # Only update the cat data if the values have changed
+                if (
+                    (db_name != card_name)
+                    or (db_rfid != card_rfid)
+                    or (db_prey != card_prey)
+                    or (db_allow_entry != card_allow_entry)
+                    or (db_allow_exit != card_allow_exit)
+                    or (card_pic_path is not None)
+                ):
+                    # Add the ID to the list of updated cats
                     updated_cats.append(db_id)
-                    result = CatsRepo.db_delete_cat_by_id(
-                        CONFIG["KITTYHACK_DATABASE_PATH"], db_id
+
+                    result = CatsRepo.db_update_cat_data_by_id(
+                        CONFIG["KITTYHACK_DATABASE_PATH"],
+                        db_id,
+                        card_name,
+                        card_rfid,
+                        card_pic_path,
+                        card_prey,
+                        card_allow_entry,
+                        card_allow_exit,
                     )
                     if result.success:
                         ui.notification_show(
-                            _("{} deleted successfully from the database.").format(
-                                db_name
+                            _("Data for {} updated successfully.").format(
+                                card_name
                             ),
                             duration=5,
                             type="message",
                         )
                     else:
                         ui.notification_show(
-                            _("Failed to delete {} from the database: {}").format(
-                                db_name, result.message
+                            _("Failed to update cat details: {}").format(
+                                result.message
                             ),
                             duration=10,
                             type="error",
                         )
-                else:
-                    # Get image path, if a file was uploaded
-                    card_pic: list[FileInfo] | None = input[f"mng_cat_pic_{db_id}"]()
-                    if card_pic is not None:
-                        card_pic_path = card_pic[0]["datapath"]
-                    else:
-                        card_pic_path = None
-
-                        # Only update the cat data if the values have changed
-                    if (
-                        (db_name != card_name)
-                        or (db_rfid != card_rfid)
-                        or (db_prey != card_prey)
-                        or (db_allow_entry != card_allow_entry)
-                        or (db_allow_exit != card_allow_exit)
-                        or (card_pic_path is not None)
-                    ):
-                        # Add the ID to the list of updated cats
-                        updated_cats.append(db_id)
-
-                        result = CatsRepo.db_update_cat_data_by_id(
-                            CONFIG["KITTYHACK_DATABASE_PATH"],
-                            db_id,
-                            card_name,
-                            card_rfid,
-                            card_pic_path,
-                            card_prey,
-                            card_allow_entry,
-                            card_allow_exit,
-                        )
-                        if result.success:
-                            ui.notification_show(
-                                _("Data for {} updated successfully.").format(
-                                    card_name
-                                ),
-                                duration=5,
-                                type="message",
-                            )
-                        else:
-                            ui.notification_show(
-                                _("Failed to update cat details: {}").format(
-                                    result.message
-                                ),
-                                duration=10,
-                                type="error",
-                            )
 
             if not updated_cats:
                 ui.notification_show(
@@ -597,9 +575,8 @@ def register_cats(input, output, session, ctx: SessionContext):
                         ui.div(
                             ui.markdown(
                                 _(
-                                    "**Important:** Please read the notes about the prerequisites for the "
-                                    "individual entry/exit configuration in the `MANAGE CATS` section "
-                                    "if you want to use these features."
+                                    "**Important:** Individual entry/exit switches only apply when "
+                                    "the matching door mode is set to `Individual configuration per cat`."
                                 )
                             ),
                             style_="text-align: center;",
@@ -753,6 +730,80 @@ def register_cats(input, output, session, ctx: SessionContext):
             ui.notification_show(
                 _("An error occurred while adding the new cat: {}").format(
                     result.message
+                ),
+                duration=10,
+                type="error",
+            )
+
+    pending_cat_delete = reactive.Value(None)
+    _cat_delete_registered_ids = set()
+
+    def _register_cat_delete_button(db_id: int):
+        @reactive.effect
+        @reactive.event(input[f"mng_cat_del_btn_{db_id}"])
+        def _ask_delete_cat():
+            try:
+                name = (input[f"mng_cat_name_{db_id}"]() or "").strip() or str(db_id)
+            except Exception:
+                name = str(db_id)
+            pending_cat_delete.set({"id": int(db_id), "name": name})
+            ui.modal_show(
+                ui.modal(
+                    _("Do you really want to delete {} from the database?").format(
+                        name
+                    ),
+                    title=_("Delete cat"),
+                    easy_close=False,
+                    footer=ui.div(
+                        ui.input_action_button(
+                            "btn_modal_delete_cat_ok",
+                            _("Delete"),
+                            class_="btn-danger",
+                        ),
+                        ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                    ),
+                )
+            )
+
+    @reactive.effect
+    def _ensure_cat_delete_handlers():
+        ctx.reload_trigger_cats.get()
+        df_cats = CatsRepo.db_get_cats(
+            CONFIG["KITTYHACK_DATABASE_PATH"], ReturnDataCatDB.all_except_photos
+        )
+        if df_cats.empty:
+            return
+        for db_id in df_cats["id"].tolist():
+            db_id = int(db_id)
+            if db_id in _cat_delete_registered_ids:
+                continue
+            _cat_delete_registered_ids.add(db_id)
+            _register_cat_delete_button(db_id)
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_delete_cat_ok)
+    def on_modal_delete_cat_ok():
+        pending = pending_cat_delete.get() or {}
+        ui.modal_remove()
+        pending_cat_delete.set(None)
+        db_id = pending.get("id")
+        db_name = pending.get("name") or str(db_id)
+        if not db_id:
+            return
+        result = CatsRepo.db_delete_cat_by_id(
+            CONFIG["KITTYHACK_DATABASE_PATH"], db_id
+        )
+        if result.success:
+            ui.notification_show(
+                _("{} deleted successfully from the database.").format(db_name),
+                duration=5,
+                type="message",
+            )
+            ctx.reload_trigger_cats.set(ctx.reload_trigger_cats.get() + 1)
+        else:
+            ui.notification_show(
+                _("Failed to delete {} from the database: {}").format(
+                    db_name, result.message
                 ),
                 duration=10,
                 type="error",

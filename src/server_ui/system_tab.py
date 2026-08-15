@@ -22,6 +22,7 @@ from src.server_ui.state import (
     get_update_progress,
 )
 from src.server_ui.context import SessionContext
+from src.server_ui.helpers import centered_form_row
 
 _ = set_language(CONFIG["LANGUAGE"])
 
@@ -160,8 +161,13 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             ui.output_ui("ui_api_tokens_table"),
             ui.hr(),
             ui.h5(_("Create new token"), style_="text-align: center;"),
-            ui.input_text(
-                "api_token_label", _("Label"), placeholder=_("e.g. stream-deck")
+            centered_form_row(
+                ui.input_text(
+                    "api_token_label",
+                    _("Label"),
+                    placeholder=_("e.g. stream-deck"),
+                    width="90%",
+                ),
             ),
             ui.div(
                 ui.input_action_button(
@@ -207,6 +213,15 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             ),
             ui.br(),
             ui.div(api_tokens_card, width="400px"),
+            (
+                ui.div(
+                    ui.br(),
+                    ui.output_ui("ui_wlan_configured_connections"),
+                    ui.output_ui("ui_wlan_available_networks"),
+                )
+                if not is_remote_mode()
+                else ui.HTML("")
+            ),
             ui.br(),
             ui.br(),
         )
@@ -546,7 +561,11 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             tid = t.get("id", "")
             label = t.get("label", "?")
             choices[tid] = f"{label} ({tid})"
-        return ui.input_select("api_token_revoke_id", None, choices=choices)
+        return centered_form_row(
+            ui.input_select(
+                "api_token_revoke_id", None, choices=choices, width="90%"
+            ),
+        )
 
     @reactive.effect
     @reactive.event(input.btn_create_api_token)

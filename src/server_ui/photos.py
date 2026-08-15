@@ -137,7 +137,16 @@ def register_photos(input, output, session, ctx: SessionContext):
             ),
             class_="container",  # Adds centering within a smaller container
         )
-        return uiDateBar
+        return ui.div(
+            ui.tags.div(
+                {
+                    "id": "kh_photo_delete_i18n",
+                    "style": "display:none;",
+                    "data-msg": _("Delete this picture?"),
+                }
+            ),
+            uiDateBar,
+        )
 
     @reactive.Effect
     @reactive.event(input.button_cat_only)

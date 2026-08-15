@@ -150,6 +150,54 @@
         }, true);
     }
 
+    function configHasUnsavedChanges() {
+        var container = q('#config_tab_container');
+        var saveBtn = q('#bSaveKittyhackConfig');
+        if (!container || !saveBtn) return false;
+        if (saveBtn.classList.contains('save-button-highlight')) return true;
+        return !!q('.unsaved-input', container);
+    }
+
+    function initConfigTabLeaveConfirm() {
+        if (!onceFlag(window, '__khConfigTabLeaveConfirm')) return;
+        // Bootstrap already starts the tab change on click before a nested
+        // window.confirm() returns, so Cancel cannot stop a click handler.
+        // show.bs.tab is cancelable and fires before the pane switches.
+        var allowingTabChange = false;
+        document.addEventListener('show.bs.tab', function (ev) {
+            var link = ev.target;
+            if (!link || !link.getAttribute) return;
+            var dest = link.getAttribute('data-value');
+            if (dest === 'configuration') return;
+            var from = ev.relatedTarget;
+            var fromVal = (from && from.getAttribute) ? from.getAttribute('data-value') : '';
+            if (fromVal && fromVal !== 'configuration') return;
+            if (allowingTabChange) {
+                allowingTabChange = false;
+                return;
+            }
+            if (!configHasUnsavedChanges()) return;
+
+            ev.preventDefault();
+
+            var msgEl = q('#kh_config_leave_i18n');
+            var msg = (msgEl && msgEl.getAttribute('data-msg')) ||
+                'You have unsaved configuration changes. Leave this page without saving?';
+            if (!window.confirm(msg)) return;
+
+            allowingTabChange = true;
+            try {
+                if (window.bootstrap && window.bootstrap.Tab) {
+                    window.bootstrap.Tab.getOrCreateInstance(link).show();
+                } else {
+                    link.click();
+                }
+            } catch (err) {
+                allowingTabChange = false;
+            }
+        });
+    }
+
     function initIpCameraUrlToggle() {
         // Toggle IP camera specific inputs visibility based on #camera_source
         // Expects containers: #ip_camera_url_container, #ip_camera_warning, #ip_camera_pipeline_settings
@@ -407,6 +455,7 @@
         // Unsaved change markers
         initUnsavedChangesHighlighter({ containerId: 'config_tab_container', saveButtonId: 'bSaveKittyhackConfig', initDelayMs: 1000, sliderSelector: 'input.js-range-slider' });
         initUnsavedChangesHighlighter({ containerId: 'manage_cats_container', saveButtonId: 'mng_cat_save_changes', initDelayMs: 800 });
+        initConfigTabLeaveConfirm();
     }
 
     function installMutationInit() {

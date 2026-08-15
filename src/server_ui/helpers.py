@@ -49,6 +49,11 @@ def collapsible_section(section_id, title, intro, content):
     )
 
 
+def centered_form_row(*children):
+    """Center Shiny form controls inside a generic-container card."""
+    return ui.div(*children, class_="kh-centered-form-row")
+
+
 def changelog_expandable_item(item_id: str, title: str, body_content):
     """Compact single-line changelog row that expands to the full release text."""
     return ui.div(
@@ -76,9 +81,11 @@ def changelog_expandable_item(item_id: str, title: str, body_content):
 def wlan_add_dialog():
     """Show the modal dialog for adding a new WLAN connection."""
     m = ui.modal(
-        ui.div(ui.input_text("txtWlanSSID", _("SSID"), "")),
-        ui.div(ui.input_password("txtWlanPassword", _("Password"), "")),
-        ui.input_numeric("numWlanPriority", _("Priority"), 0, min=0, max=100, step=1),
+        centered_form_row(
+            ui.input_text("txtWlanSSID", _("SSID"), ""),
+            ui.input_password("txtWlanPassword", _("Password"), ""),
+            ui.input_numeric("numWlanPriority", _("Priority"), 0, min=0, max=100, step=1),
+        ),
         ui.help_text(
             _(
                 "The priority determines the order in which the WLANs are tried to connect. Higher numbers are tried first."

@@ -152,7 +152,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
             ui.card(
                 ui.input_action_button(
                     id="bManualOverride",
-                    label=_("Manual unlock not yet initialized..."),
+                    label=_("Unlock inside"),
                     icon=icon_svg("unlock"),
                     disabled=True,
                 ),
@@ -171,25 +171,104 @@ def register_live_view(input, output, session, ctx: SessionContext):
             ),
         )
 
+    pending_lock_enter = reactive.Value(None)
+    pending_lock_exit = reactive.Value(None)
+
+    def _apply_allowed_to_enter(value: str):
+        CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter(value)
+        update_single_config_parameter("ALLOWED_TO_ENTER")
+        update_mqtt_config("ALLOWED_TO_ENTER")
+        reload_trigger_config.set(reload_trigger_config.get() + 1)
+
+    def _apply_allowed_to_exit(value: str):
+        from src.baseconfig import AllowedToExit as ATE
+
+        CONFIG["ALLOWED_TO_EXIT"] = ATE(value)
+        update_single_config_parameter("ALLOWED_TO_EXIT")
+        update_mqtt_config("ALLOWED_TO_EXIT")
+        reload_trigger_config.set(reload_trigger_config.get() + 1)
+
     @reactive.Effect
     @reactive.event(input.quick_allowed_to_enter)
     def quick_update_allowed_to_enter():
-        CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter(input.quick_allowed_to_enter())
-        update_single_config_parameter("ALLOWED_TO_ENTER")
-        update_mqtt_config("ALLOWED_TO_ENTER")
-        # Sync config page input
-        reload_trigger_config.set(reload_trigger_config.get() + 1)
+        new = str(input.quick_allowed_to_enter() or "")
+        old = str(CONFIG["ALLOWED_TO_ENTER"].value)
+        if new == old:
+            return
+        if new == AllowedToEnter.NONE.value:
+            pending_lock_enter.set(new)
+            ui.update_select("quick_allowed_to_enter", selected=old)
+            ui.modal_show(
+                ui.modal(
+                    _("This will block all cats from entering. Continue?"),
+                    title=_("Change entry mode"),
+                    easy_close=False,
+                    footer=ui.div(
+                        ui.input_action_button(
+                            "btn_modal_confirm_lock_enter_ok", _("Continue")
+                        ),
+                        ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                    ),
+                )
+            )
+            return
+        _apply_allowed_to_enter(new)
 
     @reactive.Effect
     @reactive.event(input.quick_allowed_to_exit)
     def quick_update_allowed_to_exit():
         from src.baseconfig import AllowedToExit as ATE
 
-        CONFIG["ALLOWED_TO_EXIT"] = ATE(input.quick_allowed_to_exit())
-        update_single_config_parameter("ALLOWED_TO_EXIT")
-        update_mqtt_config("ALLOWED_TO_EXIT")
-        # Sync config page input
-        reload_trigger_config.set(reload_trigger_config.get() + 1)
+        new = str(input.quick_allowed_to_exit() or "")
+        old = str(CONFIG["ALLOWED_TO_EXIT"].value)
+        if new == old:
+            return
+        if new == ATE.DENY.value:
+            pending_lock_exit.set(new)
+            ui.update_select("quick_allowed_to_exit", selected=old)
+            ui.modal_show(
+                ui.modal(
+                    _("This will block all cats from exiting. Continue?"),
+                    title=_("Change exit mode"),
+                    easy_close=False,
+                    footer=ui.div(
+                        ui.input_action_button(
+                            "btn_modal_confirm_lock_exit_ok", _("Continue")
+                        ),
+                        ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                    ),
+                )
+            )
+            return
+        _apply_allowed_to_exit(new)
+
+    @reactive.Effect
+    @reactive.event(input.btn_modal_confirm_lock_enter_ok)
+    def on_confirm_lock_enter():
+        value = pending_lock_enter.get()
+        pending_lock_enter.set(None)
+        ui.modal_remove()
+        if not value:
+            return
+        _apply_allowed_to_enter(value)
+        ui.update_select("quick_allowed_to_enter", selected=value)
+
+    @reactive.Effect
+    @reactive.event(input.btn_modal_confirm_lock_exit_ok)
+    def on_confirm_lock_exit():
+        value = pending_lock_exit.get()
+        pending_lock_exit.set(None)
+        ui.modal_remove()
+        if not value:
+            return
+        _apply_allowed_to_exit(value)
+        ui.update_select("quick_allowed_to_exit", selected=value)
+
+    @reactive.Effect
+    @reactive.event(input.btn_modal_cancel)
+    def on_cancel_lock_mode():
+        pending_lock_enter.set(None)
+        pending_lock_exit.set(None)
 
     @reactive.Effect
     @reactive.event(input.bManualOverride)

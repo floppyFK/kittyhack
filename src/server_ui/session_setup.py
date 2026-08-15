@@ -1104,7 +1104,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                     try:
                         ui.update_action_button(
                             "bManualOverride",
-                            label=_("Manual unlock not yet initialized..."),
+                            label=_("Unlock inside"),
                             icon=icon_svg("unlock"),
                             disabled=True,
                         )
@@ -1133,7 +1133,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                 try:
                     ui.update_action_button(
                         "bManualOverride",
-                        label=_("Manual unlock not yet initialized..."),
+                        label=_("Unlock inside"),
                         icon=icon_svg("unlock"),
                         disabled=True,
                     )

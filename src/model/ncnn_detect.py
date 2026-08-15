@@ -55,8 +55,15 @@ def decode_yolo_ncnn(
     if arr.ndim != 2:
         raise ValueError(f"Unexpected NCNN output shape {arr.shape}")
 
-    # Ultralytics export is typically (4+nc, num_boxes).
-    if arr.shape[0] < arr.shape[1]:
+    # Orient to (num_boxes, channels). Ultralytics export is typically
+    # (4+nc, num_boxes); after NMS it is already (num_boxes, channels).
+    # Do not use "rows < cols" alone: a 2-class head with few proposals is
+    # (6, N) with N<=6, which that heuristic would leave untransposed.
+    channel_widths = {4 + max(1, num_classes), 5 + num_classes, 6}
+    rows, cols = arr.shape
+    if cols not in channel_widths and rows in channel_widths:
+        arr = arr.T
+    elif cols not in channel_widths and rows < cols:
         arr = arr.T
 
     n_cols = arr.shape[1]

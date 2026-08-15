@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import time
 import zipfile
 from datetime import datetime
@@ -126,7 +127,7 @@ def download_and_extract(*, base_url: str, result_id: str, model_name: str, toke
 
     logging.info("[MODEL_DL_WORKER] Start download for result_id=%s", result_id)
 
-    tmp_zip_path = os.path.join("/tmp", f"kittyhack_model_{result_id}.zip")
+    tmp_zip_path = os.path.join(tempfile.gettempdir(), f"kittyhack_model_{result_id}.zip")
     try:
         if os.path.exists(tmp_zip_path):
             os.remove(tmp_zip_path)

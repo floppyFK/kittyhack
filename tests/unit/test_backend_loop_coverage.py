@@ -667,6 +667,25 @@ def test_camera_motion_hold_after_max_unlock_without_pir(harness):
     assert harness.magnets.get_inside_state() is False
 
 
+def test_magnet_protection_does_not_queue_pir_suggestion(harness, monkeypatch):
+    added = []
+
+    def _capture(*args, **kwargs):
+        added.append(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(loop_mod.UserNotifications, "add", _capture)
+    _enable_camera_motion_all(harness)
+    _inject_live_camera_cat(harness)
+    harness.pump(5)
+    harness.advance(3.5)
+    harness.pump(5)
+    assert harness.magnets.get_inside_state() is False
+    ids = [item.get("id") for item in added]
+    assert baseconfig.UserNotifications.ID_INSIDE_UNLOCK_HELD_AFTER_MAX_TIME in ids
+    assert baseconfig.UserNotifications.ID_SUGGEST_PIR_SECOND_FACTOR not in ids
+
+
 def test_camera_motion_hold_pir_rising_reunlocks(harness):
     _enable_camera_motion_all(harness)
     _inject_live_camera_cat(harness)

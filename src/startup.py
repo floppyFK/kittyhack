@@ -47,6 +47,7 @@ from src.clock import monotonic_time
 from src.mode import is_remote_mode
 from src.paths import kittyhack_root
 from src.model import RemoteModelTrainer
+from src.backend.decisions import sync_pir_second_factor_suggestion
 _ = set_language(CONFIG["LANGUAGE"])
 
 git_version = "unknown"
@@ -697,6 +698,11 @@ def run() -> None:
         logging.info("Remote-mode detected: skipping WLAN txpower and power-save configuration.")
     else:
         WlanManager.apply_wlan_runtime_settings()
+
+    try:
+        sync_pir_second_factor_suggestion()
+    except Exception as e:
+        logging.warning(f"[USR_NOTIFICATIONS] Failed to sync PIR-second-factor suggestion: {e}")
 
     logging.info("Starting frontend...")
 

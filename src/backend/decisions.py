@@ -120,6 +120,57 @@ def pir_ok_for_camera_entry(
     return bool(pir_outside_active)
 
 
+def should_suggest_pir_second_factor(
+    require_pir: bool,
+    use_camera_for_motion: bool,
+    use_camera_for_cat_detection: bool,
+) -> bool:
+    """True when camera-based entry is on and PIR 2FA is still optional/off."""
+    if require_pir:
+        return False
+    return bool(use_camera_for_motion or use_camera_for_cat_detection)
+
+
+def sync_pir_second_factor_suggestion() -> bool:
+    """Queue or drop the muteable PIR-2FA tip from the current CONFIG.
+
+    Returns True if a new notification was added.
+    """
+    from src.baseconfig import CONFIG, UserNotifications, set_language
+
+    _ = set_language(CONFIG.get("LANGUAGE", "en"))
+    nid = UserNotifications.ID_SUGGEST_PIR_SECOND_FACTOR
+    should = should_suggest_pir_second_factor(
+        bool(CONFIG.get("REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY", False)),
+        bool(CONFIG.get("USE_CAMERA_FOR_MOTION_DETECTION", False)),
+        bool(CONFIG.get("USE_CAMERA_FOR_CAT_DETECTION", False)),
+    )
+    if not should:
+        if UserNotifications.get_by_id(nid):
+            UserNotifications.remove(nid)
+        return False
+    added = UserNotifications.add(
+        header=_("PIR confirmation for camera entry"),
+        message=(
+            _("You are using the camera to detect cats, but the outside PIR is not configured "
+              "as a second factor for entry.")
+            + "\n\n"
+            + _("If the camera keeps detecting a cat when none is at the flap, magnet protection "
+                "will lock the inside. A real cat without RFID can then only enter when the "
+                "outside PIR also triggers.")
+            + "\n\n"
+            + _("Consider enabling **Require outside PIR for camera-based entry** in Configuration. "
+                "This is useful if the camera sometimes falsely detects a cat due to sun glare "
+                "or reflections.")
+        ),
+        type="warning",
+        id=nid,
+        skip_if_id_exists=True,
+        muteable=True,
+    )
+    return added == nid
+
+
 def build_unlock_inside_conditions(
     *,
     motion_outside: bool,

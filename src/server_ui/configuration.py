@@ -29,6 +29,10 @@ from src.backend import (
     update_mqtt_language,
     reload_model_handler_runtime,
 )
+from src.backend.decisions import (
+    should_suggest_pir_second_factor,
+    sync_pir_second_factor_suggestion,
+)
 from src.server_ui.state import (
     reload_trigger_config,
     live_view_refresh_nonce,
@@ -2286,6 +2290,11 @@ def register_configuration(input, output, session, ctx: SessionContext):
             prev_max_photos_count = int(CONFIG.get("MAX_PHOTOS_COUNT") or 0)
         except Exception:
             prev_max_photos_count = 0
+        prev_suggest_pir = should_suggest_pir_second_factor(
+            bool(CONFIG.get("REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY", False)),
+            bool(CONFIG.get("USE_CAMERA_FOR_MOTION_DETECTION", False)),
+            bool(CONFIG.get("USE_CAMERA_FOR_CAT_DETECTION", False)),
+        )
 
         camera_settings_changed = (
             CONFIG.get("CAMERA_SOURCE") != input.camera_source()
@@ -2988,6 +2997,16 @@ def register_configuration(input, output, session, ctx: SessionContext):
             ui.update_select(
                 "quick_allowed_to_exit", selected=str(CONFIG["ALLOWED_TO_EXIT"].value)
             )
+            try:
+                queued_pir_tip = sync_pir_second_factor_suggestion()
+                if queued_pir_tip and not prev_suggest_pir:
+                    show_notes = getattr(ctx, "show_user_notifications", None)
+                    if callable(show_notes):
+                        show_notes()
+            except Exception as e:
+                logging.warning(
+                    f"[CONFIG] Failed to sync PIR-second-factor suggestion: {e}"
+                )
             # Trigger UI components that depend on these settings to re-render
             reload_trigger_config.set(reload_trigger_config.get() + 1)
 

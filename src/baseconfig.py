@@ -883,6 +883,7 @@ class UserNotifications:
     The notifications are stored in a json file and will be displayed to the user when he opens the web interface.
     """
     ID_INSIDE_UNLOCK_HELD_AFTER_MAX_TIME = "inside_unlock_held_after_max_time"
+    ID_SUGGEST_PIR_SECOND_FACTOR = "suggest_pir_second_factor_for_camera_entry"
 
     notifications = []
     muted_ids = []

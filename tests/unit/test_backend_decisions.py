@@ -1,12 +1,14 @@
 """Backend decision helpers: exit, prey gating, unlock gates, event conclusion."""
 
-from src.baseconfig import AllowedToEnter, AllowedToExit
+from src.baseconfig import AllowedToEnter, AllowedToExit, UserNotifications
 from src.backend.decisions import (
     build_unlock_inside_conditions,
     compute_mouse_check,
     conclude_motion_event_type,
     no_prey_within_timeout,
     pir_ok_for_camera_entry,
+    should_suggest_pir_second_factor,
+    sync_pir_second_factor_suggestion,
     resolve_per_cat_exit,
     resolve_prey_detection_enabled,
     time_in_exit_ranges,
@@ -106,6 +108,51 @@ def test_pir_ok_for_camera_entry():
     assert pir_ok_for_camera_entry(True, True, False, True) is True
     assert pir_ok_for_camera_entry(True, False, True, False) is False
     assert pir_ok_for_camera_entry(True, False, True, True) is True
+
+
+def test_should_suggest_pir_second_factor():
+    assert should_suggest_pir_second_factor(False, True, False) is True
+    assert should_suggest_pir_second_factor(False, False, True) is True
+    assert should_suggest_pir_second_factor(False, True, True) is True
+    assert should_suggest_pir_second_factor(True, True, True) is False
+    assert should_suggest_pir_second_factor(False, False, False) is False
+
+
+def test_sync_pir_second_factor_suggestion_queues_and_clears(tmp_path, monkeypatch):
+    import src.baseconfig as baseconfig
+
+    monkeypatch.chdir(tmp_path)
+    UserNotifications.notifications = []
+    UserNotifications.muted_ids = []
+    baseconfig.CONFIG["USE_CAMERA_FOR_MOTION_DETECTION"] = True
+    baseconfig.CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = False
+    baseconfig.CONFIG["REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY"] = False
+    assert sync_pir_second_factor_suggestion() is True
+    nid = UserNotifications.ID_SUGGEST_PIR_SECOND_FACTOR
+    note = UserNotifications.get_by_id(nid)
+    assert note is not None
+    assert note.get("muteable") is True
+    assert sync_pir_second_factor_suggestion() is False
+    assert UserNotifications.get_by_id(nid) is not None
+
+    baseconfig.CONFIG["REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY"] = True
+    assert sync_pir_second_factor_suggestion() is False
+    assert UserNotifications.get_by_id(nid) is None
+
+
+def test_sync_pir_second_factor_suggestion_respects_mute(tmp_path, monkeypatch):
+    import src.baseconfig as baseconfig
+
+    monkeypatch.chdir(tmp_path)
+    UserNotifications.notifications = []
+    UserNotifications.muted_ids = []
+    nid = UserNotifications.ID_SUGGEST_PIR_SECOND_FACTOR
+    UserNotifications.mute(nid)
+    baseconfig.CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = True
+    baseconfig.CONFIG["USE_CAMERA_FOR_MOTION_DETECTION"] = False
+    baseconfig.CONFIG["REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY"] = False
+    assert sync_pir_second_factor_suggestion() is False
+    assert UserNotifications.get_by_id(nid) is None
 
 
 def test_full_entry_path_with_fakes_and_gates():

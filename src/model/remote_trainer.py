@@ -19,7 +19,7 @@ from src.helper import (
     DateTimeUtil,
     is_valid_uuid4,
 )
-from src.paths import models_yolo_root
+from src.paths import kittyhack_root, models_yolo_root
 
 from .json_util import (
     _atomic_write_json,
@@ -79,7 +79,10 @@ class RemoteModelTrainer:
         if state.get("status") in ("downloading", "extracting") and _pid_alive(int(state.get("pid") or 0)):
             # Do not start a second concurrent worker.
             return False
-        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        # Repo root (directory that contains `src/`). remote_trainer.py lives in
+        # `src/model/`, so a single `..` would cwd into `src/` and
+        # `python -m src.model_download_worker` fails with ModuleNotFoundError.
+        root_dir = kittyhack_root()
         args = [
             sys.executable,
             "-m",
@@ -114,6 +117,8 @@ class RemoteModelTrainer:
                 "finalized": False,
             }
         )
+        if state.get("retry_at"):
+            init_state["retry_at"] = state.get("retry_at")
         try:
             RemoteModelTrainer._write_model_download_state(init_state)
         except Exception:
@@ -453,28 +458,30 @@ class RemoteModelTrainer:
 
             if state_matches and dl_status in ("downloading", "extracting"):
                 training_status = dl_status
-            elif state_matches and dl_status in ("done", "error"):
-                # Finalize (clear config + add persistent notification) in the main process.
-                if not bool(dl_state.get("finalized")):
-                    if dl_status == "done":
-                        try:
-                            CONFIG["MODEL_TRAINING"] = ""
-                            update_single_config_parameter("MODEL_TRAINING")
-                        except Exception as e:
-                            logging.warning(f"[MODEL_TRAINING] Failed to clear MODEL_TRAINING after download: {e}")
-                        try:
-                            UserNotifications.add(
-                                header=_("Model downloaded"),
-                                message=_(
-                                    "Model training completed and the new model was downloaded successfully. You can select it now in the 'Configuration' section."
-                                ),
-                                type="message",
-                                id=f"model_download_success_{dl_state.get('result_id')}",
-                                skip_if_id_exists=True,
-                            )
-                        except Exception as e:
-                            logging.warning(f"[MODEL_TRAINING] Failed to add success notification: {e}")
-                    else:
+            elif state_matches and dl_status == "error":
+                err = str(dl_state.get("error") or "")
+                no_progress = int(dl_state.get("bytes_downloaded") or 0) == 0
+                start_failed = (
+                    "worker_died" in err
+                    or "No module named" in err
+                    or "failed_to_start_worker" in err
+                )
+                last_retry = float(dl_state.get("retry_at") or 0)
+                can_retry = no_progress and start_failed and (tm.time() - last_retry) > 60
+                if can_retry and dl_state.get("result_id"):
+                    dl_state["retry_at"] = tm.time()
+                    dl_state["finalized"] = False
+                    try:
+                        RemoteModelTrainer._write_model_download_state(dl_state)
+                    except Exception:
+                        pass
+                    RemoteModelTrainer.start_download_model_async(
+                        job_id,
+                        str(dl_state.get("result_id")),
+                    )
+                    training_status = "downloading"
+                else:
+                    if not bool(dl_state.get("finalized")):
                         try:
                             UserNotifications.add(
                                 header=_("Model download failed"),
@@ -487,6 +494,34 @@ class RemoteModelTrainer:
                             )
                         except Exception as e:
                             logging.warning(f"[MODEL_TRAINING] Failed to add error notification: {e}")
+                        dl_state["finalized"] = True
+                        if not dl_state.get("training_job_id"):
+                            dl_state["training_job_id"] = job_id
+                        try:
+                            RemoteModelTrainer._write_model_download_state(dl_state)
+                        except Exception:
+                            pass
+                    training_status = "download_error"
+            elif state_matches and dl_status == "done":
+                # Finalize (clear config + add persistent notification) in the main process.
+                if not bool(dl_state.get("finalized")):
+                    try:
+                        CONFIG["MODEL_TRAINING"] = ""
+                        update_single_config_parameter("MODEL_TRAINING")
+                    except Exception as e:
+                        logging.warning(f"[MODEL_TRAINING] Failed to clear MODEL_TRAINING after download: {e}")
+                    try:
+                        UserNotifications.add(
+                            header=_("Model downloaded"),
+                            message=_(
+                                "Model training completed and the new model was downloaded successfully. You can select it now in the 'Configuration' section."
+                            ),
+                            type="message",
+                            id=f"model_download_success_{dl_state.get('result_id')}",
+                            skip_if_id_exists=True,
+                        )
+                    except Exception as e:
+                        logging.warning(f"[MODEL_TRAINING] Failed to add success notification: {e}")
 
                     dl_state["finalized"] = True
                     # Preserve job_id for future checks
@@ -497,7 +532,7 @@ class RemoteModelTrainer:
                     except Exception:
                         pass
 
-                training_status = "downloaded" if dl_status == "done" else "download_error"
+                training_status = "downloaded"
             else:
                 # No relevant download state yet; poll the model server.
                 response = RemoteModelTrainer.get_model_training_status(job_id)

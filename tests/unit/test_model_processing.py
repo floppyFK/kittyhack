@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -337,3 +338,64 @@ def test_start_download_model_async_guards(monkeypatch, tmp_path):
         RemoteModelTrainer.start_download_model_async("job", "new", model_name="m")
         is False
     )
+
+
+def test_start_download_model_async_uses_repo_root_cwd(monkeypatch, tmp_path):
+    """Worker must be started from the repo root so `-m src.model_download_worker` resolves."""
+    import src.model.remote_trainer as rt
+    from src.paths import kittyhack_root
+
+    state_path = str(tmp_path / "dl_state.json")
+    monkeypatch.setattr("src.model.remote_trainer._MODEL_DL_STATE_PATH", state_path)
+    captured: dict[str, object] = {}
+
+    class _Proc:
+        pid = 12345
+
+    def fake_popen(args, cwd=None, **kwargs):
+        captured["args"] = args
+        captured["cwd"] = cwd
+        return _Proc()
+
+    monkeypatch.setattr("src.model.remote_trainer.subprocess.Popen", fake_popen)
+
+    assert RemoteModelTrainer.start_download_model_async("job", "rid", model_name="m") is True
+    assert captured["cwd"] == kittyhack_root()
+    assert Path(str(captured["cwd"]), "src", "model_download_worker.py").is_file()
+    args = captured["args"]
+    assert isinstance(args, list)
+    assert args[1:3] == ["-m", "src.model_download_worker"]
+    # The previous `join(__file__, "..")` cwd was `src/`, which cannot import package `src`.
+    old_cwd = os.path.abspath(os.path.join(os.path.dirname(rt.__file__), ".."))
+    assert captured["cwd"] != old_cwd
+
+
+def test_check_model_training_retries_worker_died(monkeypatch, tmp_path):
+    job_id = "f920f776-6726-44d2-a2d5-66dcac27d96d"
+    state_path = str(tmp_path / "dl_state.json")
+    monkeypatch.setattr("src.model.remote_trainer._MODEL_DL_STATE_PATH", state_path)
+    monkeypatch.setitem(baseconfig.CONFIG, "MODEL_TRAINING", job_id)
+
+    RemoteModelTrainer._write_model_download_state(
+        {
+            "status": "error",
+            "error": "worker_died",
+            "training_job_id": job_id,
+            "result_id": "rid-1",
+            "bytes_downloaded": 0,
+            "finalized": True,
+            "retry_at": 0,
+        }
+    )
+    started: list[tuple[str, str]] = []
+
+    def fake_start(training_job_id, result_id, model_name="", token=None):
+        started.append((training_job_id, result_id))
+        return True
+
+    monkeypatch.setattr(RemoteModelTrainer, "start_download_model_async", fake_start)
+    status = RemoteModelTrainer.check_model_training_result(
+        show_notification=False, return_pretty_status=False
+    )
+    assert started == [(job_id, "rid-1")]
+    assert status == "downloading"

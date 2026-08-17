@@ -1372,6 +1372,72 @@ html[data-bs-theme="dark"] .date-separator-row td {
     font-size: 0.85em;
 }
 
+/* REST API documentation modal (System tab) */
+.kh-api-docs {
+    text-align: left;
+    overflow-x: auto;
+    max-height: min(70vh, 40rem);
+    overflow-y: auto;
+    padding-right: 0.25rem;
+}
+
+.kh-api-docs h1 {
+    font-size: 1.4rem;
+}
+
+.kh-api-docs h2 {
+    font-size: 1.2rem;
+    margin-top: 1.25rem;
+}
+
+.kh-api-docs h3 {
+    font-size: 1.05rem;
+    margin-top: 1rem;
+}
+
+.kh-api-docs table {
+    width: 100%;
+    margin: 0.75rem 0;
+    border-collapse: collapse;
+    font-size: 0.9em;
+}
+
+.kh-api-docs th,
+.kh-api-docs td {
+    text-align: left;
+    vertical-align: top;
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    padding: 0.4rem 0.55rem;
+}
+
+.kh-api-docs pre {
+    background: var(--bs-tertiary-bg, #f5f5f5);
+    color: var(--bs-body-color, #212529);
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    border-radius: 4px;
+    padding: 0.6rem 0.75rem;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.kh-api-docs code {
+    font-size: 0.9em;
+}
+
+.kh-api-docs blockquote {
+    border-left: 4px solid var(--bs-warning, #ffc107);
+    margin: 0.75rem 0;
+    padding: 0.4rem 0.75rem;
+    background: var(--bs-tertiary-bg, #f8f9fa);
+}
+
+.kh-api-docs-lang-note {
+    color: var(--bs-secondary-color, #6c757d);
+    font-size: 0.9em;
+    margin-bottom: 0.75rem;
+}
+
 .collapsible-header-btn {
     width: 100%;
     text-align: left;

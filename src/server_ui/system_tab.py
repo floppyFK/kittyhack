@@ -21,10 +21,28 @@ from src.server_ui.state import (
     set_update_progress,
     get_update_progress,
 )
+from src.paths import kittyhack_root
 from src.server_ui.context import SessionContext
 from src.server_ui.helpers import centered_form_row
 
 _ = set_language(CONFIG["LANGUAGE"])
+
+
+def _load_api_docs_markdown() -> str | None:
+    """Return the bundled REST API docs, or None if the file cannot be read."""
+    path = os.path.join(kittyhack_root(), "doc", "api.md")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except Exception as e:
+        logging.warning(f"[API] Failed to load API documentation '{path}': {e}")
+        return None
+    # Drop a leading H1 — the modal title already names the document.
+    lines = text.splitlines()
+    if lines and re.match(r"^\s*#\s+", lines[0]):
+        text = "\n".join(lines[1:]).lstrip("\n")
+    return text
+
 
 if is_remote_mode():
     from src.remote.hardware import Magnets, Pir  # type: ignore
@@ -148,14 +166,29 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             ui.card_header(
                 ui.h4(_("API Tokens"), style_="text-align: center;"),
             ),
-            ui.markdown(
-                _(
-                    "Tokens authenticate REST API calls (see **doc/api.md**). "
-                    "Each token is shown only once at creation — store it safely. "
-                    "Send it via `Authorization: Bearer <token>` header, or — for "
-                    "URL-only clients like Stream Deck — as a `?token=<token>` "
-                    "query parameter."
-                )
+            ui.div(
+                ui.markdown(
+                    _(
+                        "Tokens let scripts and devices — for example Home Assistant, "
+                        "Stream Deck, or iOS Shortcuts — control the flap through the "
+                        "REST API. Each token is shown only once when you create it, "
+                        "so copy it immediately and store it in a safe place."
+                        "\n\n"
+                        "Send the token as an `Authorization: Bearer <token>` header. "
+                        "If a client can only open a URL (Stream Deck, bookmarks), "
+                        "you can pass it as a `?token=<token>` query parameter instead."
+                    )
+                ),
+                style_="text-align: left;",
+            ),
+            ui.div(
+                ui.input_action_button(
+                    "btn_api_docs",
+                    _("Open API documentation"),
+                    icon=icon_svg("book"),
+                    class_="btn-default",
+                ),
+                style_="text-align: center; margin-top: 0.5rem;",
             ),
             ui.br(),
             ui.output_ui("ui_api_tokens_table"),
@@ -190,9 +223,14 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 ),
                 style_="text-align: center;",
             ),
+            ui.br(),
             full_screen=False,
             class_="generic-container",
-            style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+            style_=(
+                "padding-left: 1rem !important; "
+                "padding-right: 1rem !important; "
+                "padding-bottom: 1.5rem !important;"
+            ),
         )
 
         return ui.div(
@@ -506,6 +544,35 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         # API token management (System tab)
         # ------------------------------------------------------------------
 
+    @reactive.effect
+    @reactive.event(input.btn_api_docs)
+    def on_show_api_docs():
+        docs_md = _load_api_docs_markdown()
+        if docs_md is None:
+            body = ui.markdown(_("The API documentation could not be loaded."))
+        else:
+            parts = []
+            if str(CONFIG.get("LANGUAGE") or "en").strip().lower() == "de":
+                parts.append(
+                    ui.p(
+                        _("This documentation is currently available in English only."),
+                        class_="kh-api-docs-lang-note",
+                    )
+                )
+            parts.append(ui.markdown(docs_md))
+            body = ui.div(*parts, class_="kh-api-docs")
+        ui.modal_show(
+            ui.modal(
+                body,
+                title=_("REST API documentation"),
+                easy_close=True,
+                size="xl",
+                footer=ui.div(
+                    ui.input_action_button("btn_modal_cancel", _("Close")),
+                ),
+            )
+        )
+
     @output
     @render.ui
     def ui_api_tokens_table():
@@ -607,10 +674,11 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             ),
             ui.markdown(
                 _(
-                    "Use it as an `Authorization: Bearer <token>` header, or — for URL-only "
-                    "clients like Stream Deck — as a `?token=<token>` query parameter. "
-                    "URL-based tokens may appear in web-server access logs and browser "
-                    "history; prefer headers whenever possible."
+                    "Use it as an `Authorization: Bearer <token>` header. If a client "
+                    "can only open a URL (Stream Deck, bookmarks), you can pass it as "
+                    "a `?token=<token>` query parameter instead. Tokens in URLs may "
+                    "appear in web-server access logs and browser history — prefer a "
+                    "header whenever possible."
                 )
             ),
             title=_("Token created"),

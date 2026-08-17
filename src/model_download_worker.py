@@ -14,6 +14,7 @@ import hashlib
 
 import requests
 
+from src.model.model_server_api import model_server_headers
 from src.paths import models_yolo_root
 
 
@@ -91,7 +92,15 @@ def _sha256_file(path: str, *, chunk_size: int = 1024 * 1024) -> str:
     return h.hexdigest()
 
 
-def _acknowledge_download(*, base_url: str, result_id: str, delete_token: str, sha256: str, size_bytes: int) -> None:
+def _acknowledge_download(
+    *,
+    base_url: str,
+    result_id: str,
+    delete_token: str,
+    sha256: str,
+    size_bytes: int,
+    headers: dict[str, str] | None = None,
+) -> None:
     url = f"{base_url}/download/{result_id}/ack"
     payload = {
         "delete_token": delete_token,
@@ -99,7 +108,7 @@ def _acknowledge_download(*, base_url: str, result_id: str, delete_token: str, s
         "size_bytes": int(size_bytes),
     }
     try:
-        resp = requests.post(url, json=payload, verify=True, timeout=(5, 30))
+        resp = requests.post(url, json=payload, headers=headers, verify=True, timeout=(5, 30))
         if resp.status_code != 200:
             logging.warning("[MODEL_DL_WORKER] Ack failed (%s): %s", resp.status_code, getattr(resp, "text", ""))
             return
@@ -108,7 +117,15 @@ def _acknowledge_download(*, base_url: str, result_id: str, delete_token: str, s
         logging.warning("[MODEL_DL_WORKER] Ack exception: %s", e)
 
 
-def download_and_extract(*, base_url: str, result_id: str, model_name: str, token: str | None, state_path: str) -> None:
+def download_and_extract(
+    *,
+    base_url: str,
+    result_id: str,
+    model_name: str,
+    token: str | None,
+    state_path: str,
+    version: str = "3.0.0",
+) -> None:
     started_at = time.time()
 
     state = {
@@ -135,9 +152,7 @@ def download_and_extract(*, base_url: str, result_id: str, model_name: str, toke
         pass
 
     url = f"{base_url}/download/{result_id}"
-    headers: dict[str, str] = {}
-    if token:
-        headers["token"] = token
+    headers = model_server_headers(job_token=token, version=version)
 
     expected_sha256 = ""
     expected_size = 0
@@ -226,6 +241,7 @@ def download_and_extract(*, base_url: str, result_id: str, model_name: str, toke
                 delete_token=delete_token,
                 sha256=computed_sha,
                 size_bytes=downloaded_size,
+                headers=headers,
             )
         else:
             logging.warning("[MODEL_DL_WORKER] No delete token received; cannot ack download")
@@ -261,6 +277,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--result-id", required=True)
     parser.add_argument("--model-name", default="")
     parser.add_argument("--token", default="")
+    parser.add_argument("--version", default="3.0.0")
     parser.add_argument("--state-path", required=True)
     parser.add_argument("--base-url", required=True)
     args = parser.parse_args(argv)
@@ -275,6 +292,7 @@ def main(argv: list[str]) -> int:
             model_name=args.model_name,
             token=token,
             state_path=args.state_path,
+            version=args.version or "3.0.0",
         )
         return 0
     except Exception:

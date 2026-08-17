@@ -13,3 +13,4 @@
 - **Simpler menu**: Adding a new cat is now on the *Manage cats* page. WLAN settings are on the *System* tab.
 - **Better on phones**: The Web UI stays connected more reliably on mobile devices.
 - **Faster detection**: Cat and prey detection on the Kittyflap is now a bit faster.
+- **Model training API**: Kittyhack now authenticates to the training server. Older v2.x versions keep working for a short transition period; after that, update to v3 to train models.

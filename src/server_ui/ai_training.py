@@ -832,8 +832,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             ui.notification_show(
                 _("No model training in progress."), duration=15, type="error"
             )
-            CONFIG["MODEL_TRAINING"] = ""
-            update_single_config_parameter("MODEL_TRAINING")
+            RemoteModelTrainer._clear_training_job()
             reload_trigger_ai.set(reload_trigger_ai.get() + 1)
             return
 
@@ -855,8 +854,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         ui.modal_remove()
         # Cancel the model training
         RemoteModelTrainer.cancel_model_training(CONFIG["MODEL_TRAINING"])
-        CONFIG["MODEL_TRAINING"] = ""
-        update_single_config_parameter("MODEL_TRAINING")
+        RemoteModelTrainer._clear_training_job()
         ui.notification_show(
             _("Model training cancelled."), duration=15, type="message"
         )
@@ -1210,6 +1208,15 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             # Update the config with the training details
             CONFIG["MODEL_TRAINING"] = result
             update_single_config_parameter("MODEL_TRAINING")
+        elif result == "client_outdated":
+            ui.notification_show(
+                _(
+                    "This Kittyhack version can no longer submit training jobs. Please update Kittyhack."
+                ),
+                duration=15,
+                type="error",
+            )
+            return
         elif result == "invalid_file":
             ui.notification_show(
                 _(

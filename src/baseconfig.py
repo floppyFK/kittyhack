@@ -186,6 +186,7 @@ SETTINGS_SCHEMA: list[Setting] = [
     _S("EMAIL", ""),
     _S("USER_NAME", ""),
     _S("MODEL_TRAINING", ""),
+    _S("MODEL_TRAINING_JOB_TOKEN", ""),
     _S("YOLO_MODEL", ""),
     _S("INFERENCE_DEVICE", "cpu"),
     _S("STARTUP_SHUTDOWN_FLAG", False, "bool"),

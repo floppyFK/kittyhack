@@ -119,9 +119,10 @@ def test_sha256_file(tmp_path):
 def test_acknowledge_download_ok_and_errors(monkeypatch):
     calls = {}
 
-    def fake_post(url, json=None, verify=True, timeout=None):
+    def fake_post(url, json=None, verify=True, timeout=None, **kwargs):
         calls["url"] = url
         calls["json"] = json
+        calls["headers"] = kwargs.get("headers")
         return SimpleNamespace(status_code=200, text="acked")
 
     monkeypatch.setattr(worker.requests, "post", fake_post)

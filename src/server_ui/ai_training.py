@@ -657,10 +657,12 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         )
         return ui_ai_training
 
+    @output
     @render.ui
-    @reactive.event(reload_trigger_ai, ignore_none=True)
     def manage_yolo_models_table():
         # Keep the table reasonably fresh while the AI tab is open.
+        # Do not wrap this output in @reactive.event: that isolates invalidate_later().
+        reload_trigger_ai.get()
         reactive.invalidate_later(60)
 
         try:

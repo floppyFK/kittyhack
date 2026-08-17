@@ -8,6 +8,7 @@ import pytest
 
 import src.baseconfig as baseconfig
 import src.backend.loop as loop_mod
+import src.backend.model_runtime as model_runtime
 from src.baseconfig import AllowedToEnter, AllowedToExit
 from src.camera import DetectedObject, image_buffer
 from src.helper import Result
@@ -866,3 +867,32 @@ def test_passage_resets_max_unlock_escalation(harness):
     _inject_live_camera_cat(harness)
     harness.pump(5)
     assert harness.magnets.get_inside_state() is True
+
+
+def test_persists_effective_fps_to_yolo_metadata(harness, monkeypatch):
+    """Backend must write EFFECTIVE_FPS into the active YOLO model's info.json.
+
+    Regression: the loop refactor dropped ``datetime`` / ``YoloModel`` imports,
+    so this persist path raised NameError and was swallowed at debug level.
+    """
+    captured: dict = {}
+
+    def fake_update(unique_id, updates):
+        captured["uid"] = unique_id
+        captured["updates"] = dict(updates)
+        return True
+
+    monkeypatch.setattr(loop_mod.YoloModel, "update_model_metadata", fake_update)
+    baseconfig.CONFIG["YOLO_MODEL"] = "job-a"
+    baseconfig.CONFIG["TFLITE_MODEL_VERSION"] = ""
+
+    handler = model_runtime.model_handler
+    handler.paused = False
+    handler._last_effective_fps = 12.5
+    handler._last_fps_update_tm = harness.clock.wall_time()
+
+    harness.pump(1)
+
+    assert captured.get("uid") == "job-a"
+    assert captured["updates"]["EFFECTIVE_FPS"] == 12.5
+    assert "EFFECTIVE_FPS_UPDATED_AT_UTC" in captured["updates"]

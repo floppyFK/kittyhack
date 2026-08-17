@@ -11,6 +11,10 @@
 ## Improvements
 
 - **Simpler menu**: Adding a new cat is now on the *Manage cats* page. WLAN settings are on the *System* tab.
-- **Better on phones**: The Web UI stays connected more reliably on mobile devices.
+- **Mobile optimization**: The Web UI stays reliably connected on smartphones even if the browser is briefly sent to the background.
 - **Faster detection**: Cat and prey detection on the Kittyflap is now a bit faster.
-- **Model training API**: Kittyhack now authenticates to the training server. Older v2.x versions keep working for a short transition period; after that, update to v3 to train models.
+- **Model training API**: Kittyhack now authenticates to the model training server. Older v2.x versions keep working for a short transition period; after that, the update to v3 is mandatory to train models.
+
+## Bugfixes
+
+- **Average FPS**: The display of the average FPS per model in the model management interface was no longer being updated. This has now been fixed.

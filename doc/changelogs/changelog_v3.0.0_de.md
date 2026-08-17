@@ -11,6 +11,10 @@
 ## Verbesserungen
 
 - **Einfacheres Menü**: Eine neue Katze wird jetzt auf der Seite *Katzen verwalten* hinzugefügt. Die WLAN-Einstellungen findest du im Tab *System*.
-- **Besser am Handy**: Die Weboberfläche bleibt auf dem Smartphone zuverlässiger verbunden.
+- **Optimierung fürs Smartphone**: Die Weboberfläche bleibt auf dem Smartphone zuverlässiger verbunden, wenn der Browser mal kurz im Hintergrund ist.
 - **Schnellere Erkennung**: Die Katzen- und Beuteerkennung auf der Kittyflap ist nun etwas performanter.
-- **Modell-Training-API**: Kittyhack authentifiziert sich jetzt am Trainingsserver. Ältere v2.x-Versionen funktionieren noch für eine kurze Übergangszeit; danach ist ein Update auf v3 nötig, um Modelle zu trainieren.
+- **Modell-Training-API**: Kittyhack authentifiziert sich jetzt am Server für das Modell-Training. Ältere v2.x-Versionen funktionieren noch für eine kurze Übergangszeit; danach ist ein Update auf v3 zwingend nötig, um Modelle zu trainieren.
+
+## Bugfixes
+
+- **Durchschnittliche FPS**: Die Anzeige der durchschnittlichen FPS pro Modell in der Modellverwaltung wurde nicht mehr aktualisiert. Das ist jetzt behoben.

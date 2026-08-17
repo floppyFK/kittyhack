@@ -2,6 +2,7 @@
 import threading
 import time as tm
 import logging
+from datetime import datetime, timezone
 from threading import Lock
 from src.clock import monotonic_time, wall_time
 from src.baseconfig import AllowedToEnter, AllowedToExit, CONFIG, set_language, UserNotifications
@@ -35,6 +36,7 @@ from src.backend.constants import (
 )
 import src.backend.model_runtime as model_runtime
 import src.backend.mqtt_bridge as mqtt_bridge
+from src.model import YoloModel
 from src.backend.entry_policy import (
     _identified_tag_for_entry,
     _compute_tag_id_valid_for_entry,
@@ -757,14 +759,16 @@ def backend_main(
                             or abs(float(effective_fps) - float(last_written_effective_fps)) >= 0.2
                             or (now_mono - last_fps_metadata_write_mono) >= 600.0
                         ):
-                            YoloModel.update_model_metadata(
+                            wrote = YoloModel.update_model_metadata(
                                 active_yolo_id,
                                 {
                                     "EFFECTIVE_FPS": round(float(effective_fps), 2),
                                     "EFFECTIVE_FPS_UPDATED_AT_UTC": datetime.now(timezone.utc).isoformat(),
                                 },
                             )
-                            last_written_effective_fps = float(effective_fps)
+                            if wrote:
+                                last_written_effective_fps = float(effective_fps)
+                            # Rate-limit retries even if the write failed (missing model, FS error).
                             last_fps_metadata_write_mono = now_mono
         except Exception as e:
             logging.debug(f"[BACKEND] Failed to persist effective FPS to model info.json: {e}")

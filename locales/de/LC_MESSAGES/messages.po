@@ -786,14 +786,23 @@ msgstr "Heute"
 msgid "Show detected cats only"
 msgstr "Nur erkannte Katzen anzeigen"
 
+msgid "Show only pictures with a detected cat"
+msgstr "Nur Bilder mit erkannter Katze anzeigen"
+
 msgid "Show detected mice only"
 msgstr "Nur erkannte Mäuse anzeigen"
+
+msgid "Show only pictures with detected prey"
+msgstr "Nur Bilder mit erkannter Beute anzeigen"
 
 msgid "Show detection overlay"
 msgstr "Overlay in Bildern anzeigen"
 
 msgid "Group pictures to events"
 msgstr "Bilder zu Ereignissen gruppieren"
+
+msgid "Group pictures into events, or show them one by one"
+msgstr "Bilder zu Ereignissen gruppieren oder einzeln anzeigen"
 
 msgid "Page"
 msgstr "Seite"
@@ -808,6 +817,24 @@ msgstr "Unbekannte RFID: {}"
 msgid "Mouse probability"
 msgstr "Maus-Wahrscheinlichkeit"
 
+msgid "Cats"
+msgstr "Katzen"
+
+msgid "Filter by…"
+msgstr "Filtern nach…"
+
+msgid "Overlay"
+msgstr "Overlay"
+
+msgid "Group"
+msgstr "Gruppieren"
+
+msgid "Events"
+msgstr "Ereignisse"
+
+msgid "Prey probability"
+msgstr "Beute-Wahrscheinlichkeit"
+
 msgid "Download picture"
 msgstr "Bild herunterladen"
 
@@ -819,6 +846,13 @@ msgstr "Bild löschen"
 
 msgid "No pictures for the selected filter criteria found."
 msgstr "Keine Bilder für die ausgewählten Filter gefunden."
+
+msgid "No pictures"
+msgstr "Keine Bilder"
+
+#, python-brace-format
+msgid "Event {}"
+msgstr "Ereignis {}"
 
 #, python-brace-format
 msgid "Photo {} deleted successfully."

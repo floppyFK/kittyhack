@@ -1,13 +1,13 @@
 """Pictures tab handlers."""
 
 import os
+import html
 import pandas as pd
 from datetime import datetime, timedelta
 from shiny import render, ui, reactive
 import logging
 from zoneinfo import ZoneInfo
 from faicons import icon_svg
-import math
 import asyncio
 from src.baseconfig import CONFIG, set_language, update_single_config_parameter
 from src.helper import DateTimeUtil
@@ -23,6 +23,7 @@ from src.mode import is_remote_mode
 from src.labelstudio_api import upload_image_to_labelstudio_project
 from src.server_ui.state import reload_trigger_photos
 from src.server_ui.context import SessionContext
+from src.server_ui.event_modal import btn_show_event, show_event_server
 
 _ = set_language(CONFIG["LANGUAGE"])
 
@@ -36,106 +37,109 @@ else:
 def register_photos(input, output, session, ctx: SessionContext):
     """Register Pictures tab UI and handlers."""
 
+    def _photos_local_today():
+        return datetime.now(DateTimeUtil.get_timezone()).date()
+
     @output
     @render.ui
     def ui_photos_date():
-        """
-        Creates a UI component for selecting and filtering photos by date.
-
-        The UI component includes:
-        - A date selector with decrement and increment buttons.
-        - A "Today" button to quickly select the current date.
-        - Switches to filter photos to show only detected cats or mice.
-
-        Returns:
-            uiDateBar (ui.div): A UI div element containing the date selection and filtering controls.
-        """
+        """Date picker and compact filter chips for the Pictures tab."""
         uiDateBar = ui.div(
-            ui.row(
-                ui.div(
-                    ui.div(
-                        ui.input_action_button(
-                            "button_decrement",
-                            "",
-                            icon=icon_svg("angle-left", margin_right="auto"),
-                            class_="btn-date-control",
-                        ),
-                        class_="col-auto px-1",
-                    ),
-                    ui.div(
-                        ui.input_date(
-                            "date_selector", "", format=CONFIG["DATE_FORMAT"]
-                        ),
-                        class_="col-auto px-1",
-                    ),
-                    ui.div(
-                        ui.input_action_button(
-                            "button_increment",
-                            "",
-                            icon=icon_svg("angle-right", margin_right="auto"),
-                            class_="btn-date-control",
-                        ),
-                        class_="col-auto px-1",
-                    ),
-                    class_="d-flex justify-content-center align-items-center flex-nowrap",
+            ui.div(
+                ui.input_action_button(
+                    "button_decrement",
+                    "",
+                    icon=icon_svg("angle-left", margin_right="auto"),
+                    class_="btn-date-control",
                 ),
-                ui.div(
-                    ui.input_action_button(
-                        "button_today",
-                        _("Today"),
-                        icon=icon_svg("calendar-day"),
-                        class_="btn-date-filter",
-                    ),
-                    class_="col-auto px-1",
+                ui.input_date(
+                    "date_selector",
+                    "",
+                    value=_photos_local_today(),
+                    format=CONFIG["DATE_FORMAT"],
                 ),
-                ui.div(
-                    ui.input_action_button(
-                        "button_reload",
-                        "",
-                        icon=icon_svg("rotate", margin_right="auto"),
-                        class_="btn-date-filter",
-                    ),
-                    class_="col-auto px-1",
+                ui.input_action_button(
+                    "button_increment",
+                    "",
+                    icon=icon_svg("angle-right", margin_right="auto"),
+                    class_="btn-date-control",
                 ),
-                class_="d-flex justify-content-center align-items-center",  # Centers elements horizontally and prevents wrapping
+                ui.input_action_button(
+                    "button_today",
+                    _("Today"),
+                    class_="kh-photo-today-btn",
+                ),
+                class_="kh-photo-filter-date",
             ),
-            ui.br(),
-            ui.row(
+            ui.div(
                 ui.div(
-                    ui.input_switch(
-                        "button_cat_only",
-                        _("Show detected cats only"),
-                        CONFIG["SHOW_CATS_ONLY"],
+                    ui.span(_("Filter by…"), class_="kh-photo-filter-group-label"),
+                    ui.div(
+                        ui.tooltip(
+                            ui.div(
+                                ui.input_switch(
+                                    "button_cat_only",
+                                    _("Cats"),
+                                    CONFIG["SHOW_CATS_ONLY"],
+                                ),
+                                class_="kh-photo-filter-chip",
+                            ),
+                            _("Show only pictures with a detected cat"),
+                            options={"trigger": "hover"},
+                            placement="bottom",
+                        ),
+                        ui.tooltip(
+                            ui.div(
+                                ui.input_switch(
+                                    "button_mouse_only",
+                                    _("Prey"),
+                                    CONFIG["SHOW_MICE_ONLY"],
+                                ),
+                                class_="kh-photo-filter-chip",
+                            ),
+                            _("Show only pictures with detected prey"),
+                            options={"trigger": "hover"},
+                            placement="bottom",
+                        ),
+                        class_="kh-photo-filter-group-chips",
                     ),
-                    class_="col-auto btn-date-filter px-1",
+                    class_="kh-photo-filter-group",
                 ),
                 ui.div(
-                    ui.input_switch(
-                        "button_mouse_only",
-                        _("Show detected mice only"),
-                        CONFIG["SHOW_MICE_ONLY"],
-                    ),
-                    class_="col-auto btn-date-filter px-1",
-                ),
-                ui.div(
-                    ui.input_switch(
-                        "button_detection_overlay",
+                    ui.tooltip(
+                        ui.div(
+                            ui.input_switch(
+                                "button_detection_overlay",
+                                _("Overlay"),
+                                CONFIG["SHOW_IMAGES_WITH_OVERLAY"],
+                            ),
+                            class_="kh-photo-filter-chip",
+                        ),
                         _("Show detection overlay"),
-                        CONFIG["SHOW_IMAGES_WITH_OVERLAY"],
+                        options={"trigger": "hover"},
+                        placement="bottom",
                     ),
-                    class_="col-auto btn-date-filter px-1",
-                ),
-                ui.div(
-                    ui.input_switch(
-                        "button_events_view",
-                        _("Group pictures to events"),
-                        CONFIG["GROUP_PICTURES_TO_EVENTS"],
+                    ui.tooltip(
+                        ui.div(
+                            ui.input_switch(
+                                "button_events_view",
+                                _("Group"),
+                                CONFIG["GROUP_PICTURES_TO_EVENTS"],
+                            ),
+                            class_="kh-photo-filter-chip",
+                        ),
+                        _(
+                            "Group pictures into events, or show them one by one"
+                        ),
+                        options={"trigger": "hover"},
+                        placement="bottom",
                     ),
-                    class_="col-auto btn-date-filter px-1",
+                    class_="kh-photo-filter-view",
                 ),
-                class_="d-flex justify-content-center align-items-center",  # Centers elements horizontally
+                class_="kh-photo-filter-chips",
             ),
-            class_="container",  # Adds centering within a smaller container
+            ui.input_action_button("photos_load_more", "", class_="d-none"),
+            class_="kh-photo-filter-bar",
         )
         return ui.div(
             ui.tags.div(
@@ -146,6 +150,7 @@ def register_photos(input, output, session, ctx: SessionContext):
                 }
             ),
             uiDateBar,
+            class_="kh-photos-filter-dock",
         )
 
     @reactive.Effect
@@ -222,9 +227,22 @@ def register_photos(input, output, session, ctx: SessionContext):
         )
         return date_start_utc, date_end_utc
 
-    def _photos_total_pages() -> tuple[int, int]:
+    PHOTOS_BATCH = 24
+    _photos_shown = [0]
+    _photos_total = [0]
+    _photos_last_block = [None]
+    _photos_filter_key = [None]
+    _photos_loading = [False]
+
+    def _photos_generation() -> str:
+        key = _photos_filter_key[0]
+        if not key:
+            return ""
+        return "|".join(str(part) for part in key)
+
+    def _photos_count() -> int:
         date_start_utc, date_end_utc = _photos_filters_to_utc_range()
-        total_count = EventsRepo.db_count_photos(
+        return EventsRepo.db_count_photos(
             CONFIG["KITTYHACK_DATABASE_PATH"],
             date_start_utc,
             date_end_utc,
@@ -232,167 +250,252 @@ def register_photos(input, output, session, ctx: SessionContext):
             input.button_mouse_only(),
             CONFIG["MOUSE_THRESHOLD"],
         )
-        per_page = max(1, int(CONFIG["ELEMENTS_PER_PAGE"]))
-        total_pages = max(1, int(math.ceil(float(total_count) / float(per_page))))
-        return total_count, total_pages
 
-    @reactive.Effect
-    @reactive.event(
-        input.button_reload,
-        input.date_selector,
-        input.button_cat_only,
-        input.button_mouse_only,
-        reload_trigger_photos,
-        ignore_none=True,
-    )
-    def reset_photos_page_on_filter_change():
-        if input.button_events_view():
-            return
-        try:
-            __count, total_pages = _photos_total_pages()
-            session.send_input_message(
-                "photos_page", {"value": 1, "min": 1, "max": total_pages}
-            )
-        except Exception:
-            pass
+    def _photos_fetch(offset: int, limit: int, return_data=ReturnDataPhotosDB.all_except_photos):
+        date_start_utc, date_end_utc = _photos_filters_to_utc_range()
+        return EventsRepo.db_get_photos(
+            CONFIG["KITTYHACK_DATABASE_PATH"],
+            return_data,
+            date_start_utc,
+            date_end_utc,
+            input.button_cat_only(),
+            input.button_mouse_only(),
+            CONFIG["MOUSE_THRESHOLD"],
+            0,
+            max(1, int(limit)),
+            True,
+            max(0, int(offset)),
+        )
 
-    @reactive.Effect
-    @reactive.event(input.photos_prev_page, ignore_none=True)
-    def photos_prev_page():
-        if input.button_events_view():
-            return
-        try:
-            __count, total_pages = _photos_total_pages()
-            current = int(input.photos_page() or 1)
-            new_val = max(1, min(total_pages, current - 1))
-            session.send_input_message(
-                "photos_page", {"value": new_val, "min": 1, "max": total_pages}
-            )
-        except Exception:
-            pass
-
-    @reactive.Effect
-    @reactive.event(input.photos_next_page, ignore_none=True)
-    def photos_next_page():
-        if input.button_events_view():
-            return
-        try:
-            __count, total_pages = _photos_total_pages()
-            current = int(input.photos_page() or 1)
-            new_val = max(1, min(total_pages, current + 1))
-            session.send_input_message(
-                "photos_page", {"value": new_val, "min": 1, "max": total_pages}
-            )
-        except Exception:
-            pass
+    def _photos_footer_ui():
+        shown = int(_photos_shown[0] or 0)
+        total = int(_photos_total[0] or 0)
+        has_more = shown < total
+        return ui.div(
+            ui.span(
+                f"{shown} / {total} " + _("pictures"),
+                id="photos_infinite_status",
+                class_="kh-photos-status",
+            ),
+            ui.div(
+                ui.div(class_="spinner-border spinner-border-sm", role="status"),
+                id="photos_infinite_sentinel",
+                class_="kh-photos-sentinel" + ("" if has_more else " d-none"),
+                **{"data-has-more": "1" if has_more else "0"},
+            ),
+            id="photos_infinite_wrap",
+            class_="kh-photos-infinite",
+            **{
+                "data-generation": _photos_generation(),
+                "data-shown": str(shown),
+                "data-total": str(total),
+            },
+        )
 
     @reactive.Effect
     @reactive.event(input.button_today, ignore_none=True)
     def reset_ui_photos_date():
-        # Get the current date
-        now = datetime.now()
-        session.send_input_message("date_selector", {"value": now.strftime("%Y-%m-%d")})
+        today = _photos_local_today()
+        session.send_input_message(
+            "date_selector", {"value": today.strftime("%Y-%m-%d")}
+        )
+
+    _photos_seen_today = [_photos_local_today()]
+    _photo_action_registered_ids: set = set()
+    _event_modal_registered_ids: set = set()
+
+    @reactive.effect
+    def advance_photos_date_after_midnight():
+        """Keep a 'today' selection on the current local day after midnight."""
+        reactive.invalidate_later(30)
+        today = _photos_local_today()
+        prev = _photos_seen_today[0]
+        if today == prev:
+            return
+        _photos_seen_today[0] = today
+        try:
+            selected = input.date_selector()
+        except Exception:
+            return
+        if not selected:
+            return
+        try:
+            selected_date = pd.to_datetime(selected).date()
+        except Exception:
+            return
+        if selected_date == prev:
+            session.send_input_message(
+                "date_selector", {"value": today.strftime("%Y-%m-%d")}
+            )
 
     @output
     @render.ui
     @reactive.event(input.button_events_view, ignore_none=True)
     def ui_photos_events():
         if input.button_events_view():
-            return ui.output_ui("ui_events_by_date")
-        else:
             return ui.div(
-                ui.output_ui("ui_photos_cards_nav"),
-                ui.output_ui("ui_photos_cards"),
+                ui.output_ui("ui_events_by_date"),
+                class_="kh-photos-stage kh-photos-stage--grouped",
             )
+        else:
+            return ui.output_ui("ui_photos_cards")
+
+    def _photos_items_from_df(df_photos, cat_name_dict, show_overlay, extra_class=""):
+        ui_items = []
+        last_block_id = _photos_last_block[0]
+        for _row_i, row in df_photos.iterrows():
+            try:
+                block_id = int(row["block_id"])
+            except Exception:
+                block_id = None
+            if block_id is not None and block_id != last_block_id:
+                last_block_id = block_id
+                btn_id = f"photo_event_{block_id}"
+                if block_id not in _event_modal_registered_ids:
+                    show_event_server(btn_id, block_id)
+                    _event_modal_registered_ids.add(block_id)
+                ui_items.append(_build_event_header(block_id, row))
+            ui_items.append(
+                _build_photo_card(row, cat_name_dict, show_overlay, extra_class)
+            )
+        _photos_last_block[0] = last_block_id
+        return ui_items
 
     @output
     @render.ui
     @reactive.event(
-        input.button_reload,
+        input.button_events_view,
+        input.button_detection_overlay,
         input.date_selector,
         input.button_cat_only,
         input.button_mouse_only,
         reload_trigger_photos,
         ignore_none=True,
     )
-    def ui_photos_cards_nav():
+    def ui_photos_cards():
         if input.button_events_view():
             return ui.div()
 
-        date_start = DateTimeUtil.format_date_minmax(input.date_selector(), True)
-        date_end = DateTimeUtil.format_date_minmax(input.date_selector(), False)
-        timezone = ZoneInfo(CONFIG["TIMEZONE"])
-        date_start = (
-            datetime.strptime(date_start, "%Y-%m-%d %H:%M:%S")
-            .replace(tzinfo=timezone)
-            .astimezone(ZoneInfo("UTC"))
-            .strftime("%Y-%m-%d %H:%M:%S%z")
+        filter_key = (
+            str(input.date_selector()),
+            bool(input.button_cat_only()),
+            bool(input.button_mouse_only()),
+            int(reload_trigger_photos.get() or 0),
         )
-        date_end = (
-            datetime.strptime(date_end, "%Y-%m-%d %H:%M:%S")
-            .replace(tzinfo=timezone)
-            .astimezone(ZoneInfo("UTC"))
-            .strftime("%Y-%m-%d %H:%M:%S%z")
-        )
+        if filter_key != _photos_filter_key[0]:
+            _photos_filter_key[0] = filter_key
+            _photos_shown[0] = 0
+            _photos_last_block[0] = None
 
-        total_count = EventsRepo.db_count_photos(
-            CONFIG["KITTYHACK_DATABASE_PATH"],
-            date_start,
-            date_end,
-            input.button_cat_only(),
-            input.button_mouse_only(),
-            CONFIG["MOUSE_THRESHOLD"],
-        )
+        total_count = _photos_count()
+        _photos_total[0] = total_count
+        limit = PHOTOS_BATCH if _photos_shown[0] == 0 else max(PHOTOS_BATCH, _photos_shown[0])
+        df_photos = _photos_fetch(0, limit) if total_count else pd.DataFrame()
 
-        per_page = max(1, int(CONFIG["ELEMENTS_PER_PAGE"]))
-        total_pages = max(1, int(math.ceil(float(total_count) / float(per_page))))
-
-        try:
-            current_page = int(input.photos_page())
-        except Exception:
-            current_page = 1
-        current_page = max(1, min(total_pages, current_page))
-
-        # Keep input bounds synced (use raw input message since update_numeric isn't used elsewhere)
-        try:
-            session.send_input_message(
-                "photos_page", {"value": current_page, "min": 1, "max": total_pages}
+        if df_photos.empty:
+            _photos_shown[0] = 0
+            logging.info("No pictures for the selected filter criteria found.")
+            return ui.div(
+                ui.div(
+                    ui.div(
+                        ui.HTML(
+                            str(
+                                icon_svg(
+                                    "shield-cat",
+                                    height="1.5em",
+                                    width="1.5em",
+                                    margin_left="0",
+                                    margin_right="0",
+                                )
+                            )
+                        ),
+                        class_="kh-empty-state-icon",
+                    ),
+                    ui.h5(_("No pictures"), class_="kh-empty-state-title"),
+                    ui.p(_("No pictures for the selected filter criteria found.")),
+                    class_="kh-empty-state",
+                ),
+                id="photos_cards_root",
+                class_="kh-photos-stage kh-photos-stage--grid",
+                **{
+                    "data-generation": _photos_generation(),
+                    "data-shown": "0",
+                    "data-total": str(total_count),
+                },
             )
-        except Exception:
-            pass
+
+        cat_name_dict = CatsRepo.get_cat_name_rfid_dict(
+            CONFIG["KITTYHACK_DATABASE_PATH"]
+        )
+        show_overlay = bool(input.button_detection_overlay())
+        _photos_last_block[0] = None
+        ui_items = _photos_items_from_df(df_photos, cat_name_dict, show_overlay)
+        _photos_shown[0] = len(df_photos)
 
         return ui.div(
-            ui.div(
-                ui.input_action_button(
-                    "photos_prev_page",
-                    "",
-                    icon=icon_svg("angle-left"),
-                    class_="btn-page-control",
-                ),
-                ui.input_numeric(
-                    "photos_page",
-                    _("Page"),
-                    value=current_page,
-                    min=1,
-                    max=total_pages,
-                    step=1,
-                    width="4rem",
-                ),
-                ui.tags.span(f"/ {total_pages}", class_="photos-page-total"),
-                ui.input_action_button(
-                    "photos_next_page",
-                    "",
-                    icon=icon_svg("angle-right"),
-                    class_="btn-page-control",
-                ),
-                ui.tags.span(
-                    f"{total_count} " + _("pictures"),
-                    class_="photos-count",
-                ),
-                class_="photos-pager",
+            ui.tags.div(
+                *ui_items,
+                class_="kh-photo-grid",
+                id="photos_grid",
             ),
-            class_="container",
+            _photos_footer_ui(),
+            id="photos_cards_root",
+            class_="kh-photos-stage kh-photos-stage--grid",
+            **{
+                "data-generation": _photos_generation(),
+                "data-shown": str(_photos_shown[0]),
+                "data-total": str(_photos_total[0]),
+            },
         )
+
+    @reactive.Effect
+    @reactive.event(input.photos_load_more, ignore_none=True)
+    def load_more_photos():
+        if input.button_events_view():
+            return
+        if _photos_loading[0]:
+            return
+        _photos_loading[0] = True
+        try:
+            total_count = _photos_count()
+            _photos_total[0] = total_count
+            offset = int(_photos_shown[0] or 0)
+            if offset >= total_count:
+                ui.remove_ui("#photos_infinite_wrap")
+                ui.insert_ui(_photos_footer_ui(), "#photos_cards_root", where="beforeEnd")
+                return
+            df_photos = _photos_fetch(offset, PHOTOS_BATCH)
+            if df_photos.empty:
+                ui.remove_ui("#photos_infinite_wrap")
+                ui.insert_ui(_photos_footer_ui(), "#photos_cards_root", where="beforeEnd")
+                return
+            cat_name_dict = CatsRepo.get_cat_name_rfid_dict(
+                CONFIG["KITTYHACK_DATABASE_PATH"]
+            )
+            show_overlay = False
+            try:
+                show_overlay = bool(input.button_detection_overlay())
+            except Exception:
+                pass
+            ui_items = _photos_items_from_df(
+                df_photos, cat_name_dict, show_overlay, extra_class="kh-fadein"
+            )
+            ui.insert_ui(
+                ui.TagList(*ui_items), "#photos_grid", where="beforeEnd"
+            )
+            for pid in df_photos["id"].tolist():
+                pid_int = int(pid)
+                if pid_int not in _photo_action_registered_ids:
+                    _photo_action_registered_ids.add(pid_int)
+                    _register_single_photo_delete(pid_int)
+                    _register_single_photo_send_ls(pid_int)
+            _photos_shown[0] = offset + len(df_photos)
+            ui.remove_ui("#photos_infinite_wrap")
+            ui.insert_ui(_photos_footer_ui(), "#photos_cards_root", where="beforeEnd")
+        except Exception:
+            logging.exception("Failed to load more pictures")
+        finally:
+            _photos_loading[0] = False
 
     def _build_photo_card(
         data_row, cat_name_dict, show_overlay: bool, extra_class: str = ""
@@ -420,30 +523,59 @@ def register_photos(input, output, session, ctx: SessionContext):
         else:
             cat_name = _("No RFID found")
 
-        card_footer_mouse = f"{icon_svg('magnifying-glass')} {mouse_probability:.1f}%"
-        if cat_name:
-            card_footer_cat = f" | {icon_svg('cat')} {cat_name}"
-        else:
-            card_footer_cat = ""
-
         pid = int(data_row["id"])
+        try:
+            block_id = int(data_row["block_id"])
+        except Exception:
+            block_id = 0
+        event_label = _("Event {}").format(block_id)
+        event_chip = f"#{block_id}"
         thumb_src = f"/thumb/{pid}.jpg"
         orig_src = f"/orig/{pid}.jpg"
+        is_prey = mouse_probability >= CONFIG["MOUSE_THRESHOLD"]
+        prey_class = "kh-photo-prey-badge" + (" is-prey" if is_prey else "")
+        prey_title = html.escape(_("Prey probability"))
+        cat_icon = str(icon_svg("cat", margin_left="0", margin_right="0.3rem"))
 
         img_html = f'''<div class="kh-photo-thumb" data-photo-id="{pid}" data-orig-src="{orig_src}">
-                <img src="{thumb_src}" loading="lazy" decoding="async" />'''
+                <img src="{thumb_src}" loading="lazy" decoding="async" alt="" />'''
 
         if show_overlay and detected_objects:
+            mouse_threshold = float(CONFIG["MOUSE_THRESHOLD"])
             for detected_object in detected_objects:
+                obj_name = str(detected_object.object_name or "").strip()
+                name_l = obj_name.lower()
+                if name_l == "false-accept":
+                    continue
+                is_prey_obj = name_l in ("prey", "beute")
+                box_class = "kh-detect-box"
+                if is_prey_obj:
+                    if float(detected_object.probability or 0) >= mouse_threshold:
+                        box_class += " is-prey"
+                    else:
+                        box_class += " is-prey-soft"
                 label_pos = "bottom: -26px" if detected_object.y < 16 else "top: -26px"
                 img_html += f'''
-                <div class="kh-detect-box" style="left:{detected_object.x}%; top:{detected_object.y}%; width:{detected_object.width}%; height:{detected_object.height}%;">
+                <div class="{box_class}" style="left:{detected_object.x}%; top:{detected_object.y}%; width:{detected_object.width}%; height:{detected_object.height}%;">
                     <div class="kh-detect-label" style="{label_pos};">
-                        {detected_object.object_name} ({detected_object.probability:.0f}%)
+                        {html.escape(obj_name)} ({detected_object.probability:.0f}%)
                     </div>
                 </div>'''
 
-        img_html += "</div>"
+        img_html += f'''
+            <div class="kh-photo-overlay">
+                <div class="kh-photo-meta-top">
+                    <span class="kh-photo-meta-left">
+                        <span class="kh-photo-time">{html.escape(photo_timestamp)}</span>
+                        <span class="kh-photo-event-chip" title="{html.escape(event_label)}">{html.escape(event_chip)}</span>
+                    </span>
+                    <span class="{prey_class}" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="{prey_title}" title="{prey_title}">{mouse_probability:.0f}%</span>
+                </div>
+                <div class="kh-photo-meta-bottom">
+                    <span class="kh-photo-cat">{cat_icon}{html.escape(str(cat_name))}</span>
+                </div>
+            </div>
+        </div>'''
 
         ls_disabled = (
             not CONFIG.get("LABELSTUDIO_API_TOKEN")
@@ -451,206 +583,100 @@ def register_photos(input, output, session, ctx: SessionContext):
             or not LabelStudioInstall.get_labelstudio_status()
         )
 
-        card_class = "image-container kh-photo-card" + (
-            " image-container-alert"
-            if mouse_probability >= CONFIG["MOUSE_THRESHOLD"]
-            else ""
-        )
+        card_class = "kh-photo-card" + (" kh-photo-card-prey" if is_prey else "")
         if extra_class:
             card_class += f" {extra_class}"
 
         return ui.card(
-            ui.card_header(
+            ui.div(
+                ui.HTML(img_html),
                 ui.div(
-                    ui.HTML(f"{photo_timestamp} | {data_row['id']}"),
-                ),
-            ),
-            ui.HTML(img_html),
-            ui.card_footer(
-                ui.div(
-                    ui.div(
-                        ui.tooltip(
-                            ui.HTML(card_footer_mouse),
-                            _("Mouse probability"),
-                            options={"trigger": "hover"},
-                        ),
-                        ui.HTML(card_footer_cat),
-                        class_="kh-photo-footer-info",
-                    ),
-                    ui.div(
-                        ui.tooltip(
-                            ui.tags.a(
-                                ui.HTML(
-                                    str(
-                                        icon_svg(
-                                            "image", margin_left="0", margin_right="0"
-                                        )
+                    ui.tooltip(
+                        ui.tags.a(
+                            ui.HTML(
+                                str(
+                                    icon_svg(
+                                        "image", margin_left="0", margin_right="0"
                                     )
-                                ),
-                                href=f"/orig/{pid}.jpg",
-                                download=f"kittyhack_photo_{pid}.jpg",
-                                class_="btn btn-icon-square btn-outline-primary kh-photo-action-btn",
+                                )
                             ),
-                            _("Download picture"),
-                            options={"trigger": "hover"},
+                            href=f"/orig/{pid}.jpg",
+                            download=f"kittyhack_photo_{pid}.jpg",
+                            class_="btn btn-icon-square kh-photo-action-btn",
                         ),
-                        ui.tooltip(
-                            ui.input_action_button(
-                                id=f"photo_send_ls_{pid}",
-                                label="",
-                                icon=icon_svg(
-                                    "upload", margin_left="0", margin_right="0"
-                                ),
-                                class_="btn-icon-square btn-outline-secondary kh-photo-action-btn",
-                                disabled_=ls_disabled,
-                            ),
-                            _("Send picture to Label Studio"),
-                            options={"trigger": "hover"},
-                        ),
-                        ui.tooltip(
-                            ui.input_action_button(
-                                id=f"photo_delete_{pid}",
-                                label="",
-                                icon=icon_svg(
-                                    "trash-can", margin_left="0", margin_right="0"
-                                ),
-                                class_="btn-icon-square btn-outline-danger kh-photo-action-btn",
-                            ),
-                            _("Delete picture"),
-                            options={"trigger": "hover"},
-                        ),
-                        class_="kh-photo-actions",
+                        _("Download picture"),
+                        options={"trigger": "hover"},
                     ),
-                    class_="kh-photo-footer-row",
+                    ui.tooltip(
+                        ui.input_action_button(
+                            id=f"photo_send_ls_{pid}",
+                            label="",
+                            icon=icon_svg(
+                                "upload", margin_left="0", margin_right="0"
+                            ),
+                            class_="btn-icon-square kh-photo-action-btn",
+                            disabled_=ls_disabled,
+                        ),
+                        _("Send picture to Label Studio"),
+                        options={"trigger": "hover"},
+                    ),
+                    ui.tooltip(
+                        ui.input_action_button(
+                            id=f"photo_delete_{pid}",
+                            label="",
+                            icon=icon_svg(
+                                "trash-can", margin_left="0", margin_right="0"
+                            ),
+                            class_="btn-icon-square kh-photo-action-btn kh-photo-action-danger",
+                        ),
+                        _("Delete picture"),
+                        options={"trigger": "hover"},
+                    ),
+                    class_="kh-photo-actions",
                 ),
+                class_="kh-photo-tile",
             ),
             id=f"photo_card_{pid}",
             class_=card_class,
         )
 
-    @output
-    @render.ui
-    @reactive.event(
-        input.photos_page,
-        input.button_events_view,  # to clear when switching view mode
-        input.button_detection_overlay,  # to toggle overlays without extra reloads
-        input.button_reload,
-        input.date_selector,
-        input.button_cat_only,
-        input.button_mouse_only,
-        reload_trigger_photos,
-        ignore_none=True,
-    )
-    def ui_photos_cards():
-        if input.button_events_view():
-            return ui.div()
-
-        date_start_utc, date_end_utc = _photos_filters_to_utc_range()
-
-        total_count = EventsRepo.db_count_photos(
-            CONFIG["KITTYHACK_DATABASE_PATH"],
-            date_start_utc,
-            date_end_utc,
-            input.button_cat_only(),
-            input.button_mouse_only(),
-            CONFIG["MOUSE_THRESHOLD"],
-        )
-        per_page = max(1, int(CONFIG["ELEMENTS_PER_PAGE"]))
-        total_pages = max(1, int(math.ceil(float(total_count) / float(per_page))))
-
+    def _build_event_header(block_id: int, data_row):
+        """Full-width gallery header for a motion-block group."""
         try:
-            page_number = int(input.photos_page())
+            event_time = pd.to_datetime(
+                DateTimeUtil.get_local_date_from_utc_date(data_row["created_at"])
+            ).strftime("%H:%M:%S")
         except Exception:
-            page_number = 1
-        page_number = max(1, min(total_pages, page_number))
-
-        # EventsRepo.db_get_photos uses a reverse paging scheme; convert "newest page=1" into its index.
-        page_index = max(0, total_pages - page_number)
-
-        df_photos = EventsRepo.db_get_photos(
-            CONFIG["KITTYHACK_DATABASE_PATH"],
-            ReturnDataPhotosDB.all_except_photos,
-            date_start_utc,
-            date_end_utc,
-            input.button_cat_only(),
-            input.button_mouse_only(),
-            CONFIG["MOUSE_THRESHOLD"],
-            page_index,
-            per_page,
-        )
-
-        if df_photos.empty:
-            logging.info("No pictures for the selected filter criteria found.")
-            return ui.div(
-                ui.div(
-                    ui.HTML(f"{icon_svg('image', height='2.5em', width='2.5em')}"),
-                    ui.p(_("No pictures for the selected filter criteria found.")),
-                    class_="kh-empty-state",
-                ),
-            )
-
-        cat_name_dict = CatsRepo.get_cat_name_rfid_dict(
-            CONFIG["KITTYHACK_DATABASE_PATH"]
-        )
-        show_overlay = bool(input.button_detection_overlay())
-
-        ui_cards = [
-            _build_photo_card(row, cat_name_dict, show_overlay)
-            for _, row in df_photos.iterrows()
+            event_time = ""
+        btn_id = f"photo_event_{int(block_id)}"
+        head_main = [
+            ui.span(_("Event {}").format(int(block_id)), class_="kh-photo-event-id")
         ]
-
+        if event_time:
+            head_main.append(ui.span(event_time, class_="kh-photo-event-time"))
         return ui.div(
-            ui.tags.div(
-                *ui_cards,
-                class_="kh-photo-grid",
-                id="photos_grid",
-                **{"data-per-page": str(per_page)},
+            ui.div(*head_main, class_="kh-photo-event-head-main"),
+            ui.tooltip(
+                btn_show_event(btn_id),
+                _("Show event details"),
+                options={"trigger": "hover"},
             ),
+            class_="kh-photo-event-head",
         )
-
-        # Per-photo action handlers: delete, send to Label Studio
-        # These are dynamic based on photo IDs currently on the page.
-
-    _photo_action_registered_ids: set = set()
 
     @reactive.effect
     def _register_photo_actions():
         """Dynamically register per-photo action handlers for current page."""
         try:
+            reload_trigger_photos.get()
             if input.button_events_view():
                 return
         except Exception:
             pass
 
         try:
-            date_start_utc, date_end_utc = _photos_filters_to_utc_range()
-            total_count = EventsRepo.db_count_photos(
-                CONFIG["KITTYHACK_DATABASE_PATH"],
-                date_start_utc,
-                date_end_utc,
-                input.button_cat_only(),
-                input.button_mouse_only(),
-                CONFIG["MOUSE_THRESHOLD"],
-            )
-            per_page = max(1, int(CONFIG["ELEMENTS_PER_PAGE"]))
-            total_pages = max(1, int(math.ceil(float(total_count) / float(per_page))))
-            try:
-                page_number = int(input.photos_page() or 1)
-            except Exception:
-                page_number = 1
-            page_number = max(1, min(total_pages, page_number))
-            page_index = max(0, total_pages - page_number)
-            df_photos = EventsRepo.db_get_photos(
-                CONFIG["KITTYHACK_DATABASE_PATH"],
-                ReturnDataPhotosDB.only_ids,
-                date_start_utc,
-                date_end_utc,
-                input.button_cat_only(),
-                input.button_mouse_only(),
-                CONFIG["MOUSE_THRESHOLD"],
-                page_index,
-                per_page,
-            )
+            shown = max(PHOTOS_BATCH, int(_photos_shown[0] or PHOTOS_BATCH))
+            df_photos = _photos_fetch(0, shown, ReturnDataPhotosDB.only_ids)
         except Exception:
             df_photos = pd.DataFrame()
 
@@ -680,84 +706,15 @@ def register_photos(input, output, session, ctx: SessionContext):
                     type="message",
                 )
                 # Card is removed client-side instantly via JS.
-                # Backfill: pull the next photo into the current page so it stays full.
                 try:
-                    date_start_utc, date_end_utc = _photos_filters_to_utc_range()
-                    total_count = EventsRepo.db_count_photos(
-                        CONFIG["KITTYHACK_DATABASE_PATH"],
-                        date_start_utc,
-                        date_end_utc,
-                        input.button_cat_only(),
-                        input.button_mouse_only(),
-                        CONFIG["MOUSE_THRESHOLD"],
-                    )
-
-                    if total_count == 0:
+                    _photos_shown[0] = max(0, int(_photos_shown[0] or 1) - 1)
+                    _photos_total[0] = max(0, int(_photos_total[0] or 1) - 1)
+                    if _photos_total[0] == 0:
                         reload_trigger_photos.set(reload_trigger_photos.get() + 1)
                         return
-
-                    per_page = max(1, int(CONFIG["ELEMENTS_PER_PAGE"]))
-                    total_pages = max(
-                        1, int(math.ceil(float(total_count) / float(per_page)))
-                    )
-                    current_page = int(input.photos_page() or 1)
-
-                    if current_page > total_pages:
-                        # Current page no longer exists — navigate back
-                        session.send_input_message(
-                            "photos_page",
-                            {
-                                "value": max(1, total_pages),
-                                "min": 1,
-                                "max": total_pages,
-                            },
-                        )
-                        return
-
-                        # Re-query the current page to find a replacement card
-                    page_index = max(0, total_pages - current_page)
-                    df_page = EventsRepo.db_get_photos(
-                        CONFIG["KITTYHACK_DATABASE_PATH"],
-                        ReturnDataPhotosDB.all_except_photos,
-                        date_start_utc,
-                        date_end_utc,
-                        input.button_cat_only(),
-                        input.button_mouse_only(),
-                        CONFIG["MOUSE_THRESHOLD"],
-                        page_index,
-                        per_page,
-                    )
-
-                    if not df_page.empty:
-                        page_ids = set(int(r) for r in df_page["id"].tolist())
-                        # The replacement is any ID from this page we haven't seen yet
-                        new_ids = page_ids - _photo_action_registered_ids
-                        if new_ids:
-                            cat_name_dict = CatsRepo.get_cat_name_rfid_dict(
-                                CONFIG["KITTYHACK_DATABASE_PATH"]
-                            )
-                            show_overlay = False
-                            try:
-                                show_overlay = bool(input.button_detection_overlay())
-                            except Exception:
-                                pass
-                            for new_pid in new_ids:
-                                row = df_page[df_page["id"] == new_pid].iloc[0]
-                                card = _build_photo_card(
-                                    row,
-                                    cat_name_dict,
-                                    show_overlay,
-                                    extra_class="kh-fadein",
-                                )
-                                ui.insert_ui(card, "#photos_grid", where="beforeEnd")
-                                _photo_action_registered_ids.add(new_pid)
-                                _register_single_photo_delete(int(new_pid))
-                                _register_single_photo_send_ls(int(new_pid))
-
-                                # Update total-pages display via page input bounds
-                    session.send_input_message(
-                        "photos_page",
-                        {"value": current_page, "min": 1, "max": total_pages},
+                    ui.remove_ui("#photos_infinite_wrap")
+                    ui.insert_ui(
+                        _photos_footer_ui(), "#photos_cards_root", where="beforeEnd"
                     )
                 except Exception:
                     pass

@@ -317,7 +317,11 @@ document.addEventListener("DOMContentLoaded", function() {
         const panelId = row.getAttribute('data-kh-panel-id');
         if (!panelId) return;
 
-        const panel = document.getElementById(panelId);
+        const table = row.closest('table');
+        const escapedId = (window.CSS && CSS.escape) ? CSS.escape(panelId) : panelId;
+        const panel = table
+            ? table.querySelector('#' + escapedId)
+            : document.getElementById(panelId);
         if (!panel) return;
 
         const isShown = panel.classList.contains('show');
@@ -1401,21 +1405,16 @@ document.addEventListener("DOMContentLoaded", function() {
             card.classList.add('kh-removing');
             setTimeout(function() {
                 card.remove();
-                // Update the photo count in pagination
-                var countEl = document.querySelector('.photos-count');
-                if (countEl) {
-                    var m = countEl.textContent.match(/(\d+)/);
+                var statusEl = document.getElementById('photos_infinite_status');
+                if (statusEl) {
+                    var m = statusEl.textContent.match(/(\d+)\s*\/\s*(\d+)/);
                     if (m) {
-                        var newCount = Math.max(0, parseInt(m[1], 10) - 1);
-                        countEl.textContent = countEl.textContent.replace(/\d+/, newCount);
-                        // Update total pages display
-                        var grid = document.getElementById('photos_grid');
-                        var totalEl = document.querySelector('.photos-page-total');
-                        if (grid && totalEl) {
-                            var perPage = parseInt(grid.getAttribute('data-per-page'), 10) || 1;
-                            var newTotal = Math.max(1, Math.ceil(newCount / perPage));
-                            totalEl.textContent = totalEl.textContent.replace(/\d+/, newTotal);
-                        }
+                        var shown = Math.max(0, parseInt(m[1], 10) - 1);
+                        var total = Math.max(0, parseInt(m[2], 10) - 1);
+                        statusEl.textContent = statusEl.textContent.replace(
+                            /\d+\s*\/\s*\d+/,
+                            shown + ' / ' + total
+                        );
                     }
                 }
             }, 300);
@@ -1476,5 +1475,327 @@ document.addEventListener("DOMContentLoaded", function() {
             e.preventDefault();
             openLightbox(thumb.getAttribute('data-orig-src'));
         });
+    })();
+
+    /* Publish the height of the fixed navbar so sticky bars can park right
+       below it on every breakpoint. The expanded mobile menu is ignored to
+       keep the offset stable while it is open. */
+    (function initNavbarHeightVar() {
+        var navbar = document.querySelector('nav.navbar');
+        if (!navbar) return;
+
+        function sync() {
+            var collapse = navbar.querySelector('.navbar-collapse');
+            if (collapse && collapse.classList.contains('show')) return;
+            var height = Math.round(navbar.getBoundingClientRect().height);
+            if (height > 0) {
+                document.documentElement.style.setProperty('--kh-nav-h', height + 'px');
+            }
+        }
+
+        window.addEventListener('resize', sync);
+        window.addEventListener('orientationchange', sync);
+        if (typeof ResizeObserver === 'function') {
+            new ResizeObserver(sync).observe(navbar);
+        }
+        sync();
+    })();
+
+    // Lazy-load for the Pictures grid. The document is the only scrollport, so
+    // every decision is derived from where the sentinel sits in the viewport.
+    (function initPhotosInfiniteScroll() {
+        var TRIGGER_PX = 320;    // load once the end comes this close
+        var REARM_PX = 200;      // extra scrolling required before the next batch
+        var PREFILL_LIMIT = 12;  // safety cap while filling the first viewport
+
+        var state = 'reset'; // reset | prefill | waiting | loading | done
+        var generation = null;
+        var inflightGeneration = null;
+        var loadReason = null;
+        var completionTimer = null;
+        var requestedShown = null;
+        var evaluateQueued = false;
+        var scrollQueued = false;
+        var prefillCount = 0;
+        var armed = false;
+        var armAnchor = null;
+
+        function modalOpen() {
+            return !!(
+                document.querySelector('.kh-photo-modal-backdrop') ||
+                document.querySelector('.modal.show')
+            );
+        }
+
+        function cardsRoot() {
+            return document.getElementById('photos_cards_root');
+        }
+
+        function footer() {
+            return document.getElementById('photos_infinite_wrap');
+        }
+
+        function sentinel() {
+            var sentinel = document.getElementById('photos_infinite_sentinel');
+            if (!sentinel || sentinel.classList.contains('d-none')) return null;
+            if (sentinel.getAttribute('data-has-more') !== '1') return null;
+            return sentinel;
+        }
+
+        function currentGeneration() {
+            var root = cardsRoot();
+            var foot = footer();
+            return (root && root.getAttribute('data-generation')) ||
+                (foot && foot.getAttribute('data-generation')) || '';
+        }
+
+        /* Distance in px between the end of the gallery and the bottom edge of
+           the viewport. Negative means the end is already on screen. Returns
+           null while the tab is hidden, where all measurements are zero. */
+        function distanceToEnd() {
+            var marker = sentinel();
+            if (!marker) return null;
+            var rect = marker.getBoundingClientRect();
+            if (rect.width <= 0 && rect.height <= 0) return null;
+            return rect.top - window.innerHeight;
+        }
+
+        /* How many px of scrolling the page still offers. Below ~0 the gallery
+           does not even fill one viewport, so the reader has no way to ask for
+           more and we have to top it up ourselves. */
+        function scrollableSlack() {
+            var doc = document.documentElement;
+            var height = Math.max(
+                doc.scrollHeight,
+                document.body ? document.body.scrollHeight : 0
+            );
+            return height - (doc.clientHeight || window.innerHeight);
+        }
+
+        function clearCompletionTimer() {
+            if (completionTimer !== null) {
+                window.clearTimeout(completionTimer);
+                completionTimer = null;
+            }
+        }
+
+        function requestMore(reason) {
+            if (state === 'loading' || modalOpen()) return false;
+            var marker = sentinel();
+            if (!marker) {
+                state = 'done';
+                return false;
+            }
+            var btn = document.getElementById('photos_load_more');
+            state = 'loading';
+            loadReason = reason;
+            inflightGeneration = generation;
+            var currentFooter = footer();
+            requestedShown = currentFooter
+                ? parseInt(currentFooter.getAttribute('data-shown') || '0', 10)
+                : 0;
+            if (reason === 'scroll') armed = false;
+            marker.classList.add('is-loading');
+            if (btn && typeof btn.click === 'function') {
+                btn.click();
+            } else if (window.Shiny && typeof window.Shiny.setInputValue === 'function') {
+                window.Shiny.setInputValue('photos_load_more', Date.now(), { priority: 'event' });
+            } else {
+                state = 'waiting';
+                inflightGeneration = null;
+                requestedShown = null;
+                marker.classList.remove('is-loading');
+                return false;
+            }
+            clearCompletionTimer();
+            completionTimer = window.setTimeout(function() {
+                if (state !== 'loading') return;
+                state = 'waiting';
+                inflightGeneration = null;
+                requestedShown = null;
+                loadReason = null;
+                armed = true;
+                armAnchor = null;
+                var current = sentinel();
+                if (current) current.classList.remove('is-loading');
+            }, 20000);
+            return true;
+        }
+
+        function scheduleEvaluation() {
+            if (evaluateQueued) return;
+            evaluateQueued = true;
+            window.requestAnimationFrame(function() {
+                window.requestAnimationFrame(function() {
+                    evaluateQueued = false;
+                    evaluate();
+                });
+            });
+        }
+
+        function resetController(nextGeneration, resetScroll) {
+            clearCompletionTimer();
+            generation = nextGeneration;
+            inflightGeneration = null;
+            requestedShown = null;
+            loadReason = null;
+            prefillCount = 0;
+            armed = false;
+            armAnchor = null;
+            state = sentinel() ? 'prefill' : 'done';
+            if (resetScroll && distanceToEnd() !== null) {
+                window.scrollTo(0, 0);
+            }
+            scheduleEvaluation();
+        }
+
+        function completeBatch() {
+            if (state !== 'loading') {
+                scheduleEvaluation();
+                return;
+            }
+            if (inflightGeneration !== generation) return;
+            var currentFooter = footer();
+            var completedShown = currentFooter
+                ? parseInt(currentFooter.getAttribute('data-shown') || '0', 10)
+                : 0;
+            if (
+                sentinel() &&
+                requestedShown !== null &&
+                completedShown <= requestedShown
+            ) {
+                return;
+            }
+            clearCompletionTimer();
+            inflightGeneration = null;
+            requestedShown = null;
+            var reason = loadReason;
+            loadReason = null;
+
+            if (!sentinel()) {
+                state = 'done';
+                return;
+            }
+            if (reason === 'prefill') {
+                state = 'prefill';
+                scheduleEvaluation();
+                return;
+            }
+            /* A scroll-triggered batch stays disarmed until the reader moves on
+               by REARM_PX, so one gesture can never chain several requests. */
+            state = 'waiting';
+            armed = false;
+            armAnchor = distanceToEnd();
+            scheduleEvaluation();
+        }
+
+        function evaluate() {
+            if (modalOpen()) return;
+            var rootNode = cardsRoot();
+            if (!rootNode) {
+                state = 'done';
+                return;
+            }
+            var nextGeneration = currentGeneration();
+            if (generation !== nextGeneration) {
+                resetController(nextGeneration, true);
+                return;
+            }
+            if (state === 'loading') return;
+
+            if (distanceToEnd() === null) {
+                // No sentinel (everything shown) or the tab is hidden.
+                if (!sentinel()) state = 'done';
+                return;
+            }
+            if (state === 'reset') state = 'prefill';
+
+            if (state === 'prefill') {
+                if (scrollableSlack() < 96 && prefillCount < PREFILL_LIMIT) {
+                    prefillCount += 1;
+                    requestMore('prefill');
+                } else {
+                    state = 'waiting';
+                    armed = true;
+                    armAnchor = null;
+                }
+                return;
+            }
+            /* Resizing the window or deleting pictures can leave the page
+               unscrollable again; top it up, otherwise wait for a scroll. */
+            if (
+                state === 'waiting' &&
+                scrollableSlack() < 96 &&
+                prefillCount < PREFILL_LIMIT
+            ) {
+                state = 'prefill';
+                scheduleEvaluation();
+            }
+        }
+
+        function onScroll() {
+            if (state === 'done' || state === 'loading') return;
+            var distance = distanceToEnd();
+            if (distance === null) return;
+            if (!armed) {
+                if (
+                    distance > TRIGGER_PX ||
+                    (armAnchor !== null && armAnchor - distance > REARM_PX)
+                ) {
+                    armed = true;
+                    armAnchor = null;
+                }
+                return;
+            }
+            if (state === 'waiting' && distance < TRIGGER_PX) {
+                requestMore('scroll');
+            }
+        }
+
+        var mutationObserver = new MutationObserver(function(mutations) {
+            for (var i = 0; i < mutations.length; i++) {
+                var nodes = mutations[i].addedNodes;
+                for (var j = 0; j < nodes.length; j++) {
+                    var node = nodes[j];
+                    if (!node || node.nodeType !== 1) continue;
+                    if (
+                        node.id === 'photos_cards_root' ||
+                        (node.querySelector && node.querySelector('#photos_cards_root'))
+                    ) {
+                        var nextGeneration = currentGeneration();
+                        if (generation !== nextGeneration) {
+                            resetController(nextGeneration, true);
+                        } else {
+                            scheduleEvaluation();
+                        }
+                    }
+                    if (
+                        node.id === 'photos_infinite_wrap' ||
+                        (node.querySelector && node.querySelector('#photos_infinite_wrap'))
+                    ) {
+                        completeBatch();
+                    }
+                }
+            }
+        });
+        mutationObserver.observe(document.body, { childList: true, subtree: true });
+
+        /* Capture phase so the handler also sees scrolls from nested scrollers. */
+        document.addEventListener('scroll', function() {
+            if (scrollQueued) return;
+            scrollQueued = true;
+            window.requestAnimationFrame(function() {
+                scrollQueued = false;
+                onScroll();
+            });
+        }, { passive: true, capture: true });
+
+        window.addEventListener('resize', scheduleEvaluation);
+        window.addEventListener('orientationchange', scheduleEvaluation);
+        document.addEventListener('shown.bs.tab', scheduleEvaluation, true);
+        if (window.jQuery) {
+            window.jQuery(document).on('shiny:idle shown.bs.tab', scheduleEvaluation);
+        }
+        scheduleEvaluation();
     })();
 });

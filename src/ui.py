@@ -54,9 +54,14 @@ _nav_items = [
     ),
     ui.nav_panel(
         _("Pictures"),
-        ui.output_ui("ui_photos_date"),
-        ui.output_ui("ui_photos_events"),
-        ui.br(),
+        ui.div(
+            ui.output_ui("ui_photos_date"),
+            ui.div(
+                ui.output_ui("ui_photos_events"),
+                class_="kh-photos-body",
+            ),
+            class_="kh-photos-page",
+        ),
         value="pictures",
     ),
     ui.nav_panel(

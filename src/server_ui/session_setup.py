@@ -1684,11 +1684,6 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         startup.immediate_bg_task("site load")
 
     @reactive.Effect
-    @reactive.event(input.button_reload)
-    def immediate_bg_task_reload_button():
-        startup.immediate_bg_task("reload button")
-
-    @reactive.Effect
     @reactive.event(input.button_today)
     def immediate_bg_task_reload_button():
         startup.immediate_bg_task("today button")

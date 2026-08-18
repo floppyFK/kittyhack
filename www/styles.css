@@ -41,6 +41,50 @@
     overflow: hidden;
 }
 
+/* Collapsed navbar (hamburger, <768px): larger tap targets, thin separators */
+@media (max-width: 767.98px) {
+    .navbar .navbar-collapse {
+        margin-top: 0.2rem;
+        padding: 0.1rem 0 0.35rem;
+        border-top: 1px solid var(--bs-border-color, #dee2e6);
+    }
+
+    .navbar .navbar-collapse .navbar-nav,
+    .navbar .navbar-collapse .nav {
+        width: 100%;
+        flex-direction: column !important;
+        align-items: stretch;
+        gap: 0;
+        padding: 0;
+    }
+
+    .navbar .navbar-collapse .nav-item {
+        width: 100%;
+        margin: 0;
+        border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+    }
+
+    .navbar .navbar-collapse .nav-item:last-child {
+        border-bottom: none;
+    }
+
+    .navbar .navbar-collapse .nav-link {
+        display: flex;
+        align-items: center;
+        min-height: 44px;
+        padding: 0.7rem 1rem !important;
+        margin: 0;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+        line-height: 1.2;
+    }
+
+    .navbar .navbar-collapse .nav-link.active {
+        font-weight: 600;
+    }
+}
+
 /* On desktop, keep the theme toggle on the far right */
 @media (min-width: 1400px) {
     .theme-toggle-container {
@@ -168,65 +212,410 @@ html[data-bs-theme="dark"] .spinner {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Pictures section (non-grouped view) - modern gallery + pager                */
+/* Pictures tab                                                               */
 /* -------------------------------------------------------------------------- */
 
-.photos-pager {
+:root {
+    --kh-photos-gutter: clamp(0.65rem, 2vw, 1.75rem);
+    --kh-photos-max-width: 100rem;
+    --kh-nav-h: 3.4rem;
+}
+
+/* The page itself is the only scrollport for the Pictures tab. Nothing in the
+   ancestor chain may clip or scroll, otherwise the sticky control bar below
+   would be pinned to an inner box that never scrolls. */
+.kh-photos-page {
+    width: 100%;
+    min-width: 0;
+    padding-bottom: 1rem;
+}
+
+.tab-pane:has(.kh-photos-page),
+.tab-pane:has(.kh-photos-page) > * {
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* Sticky against the document scroll, parked directly under the fixed navbar.
+   The wrapper stays transparent so pictures at the same vertical position keep
+   showing to the left and right of the glass control card. */
+.kh-photos-page > #ui_photos_date {
+    position: sticky;
+    top: var(--kh-nav-h, 3.4rem);
+    z-index: 40;
+    min-width: 0;
+    pointer-events: none;
+}
+
+.kh-photos-filter-dock {
+    position: relative;
+    padding: 0.45rem var(--kh-photos-gutter) 0.6rem;
+    background: transparent;
+    pointer-events: none;
+}
+
+/* Frosted band: content scrolling underneath stays visible, just blurred and
+   slightly dimmed instead of being hidden behind an opaque bar. */
+.kh-photos-filter-dock::before {
+    content: "";
+    position: absolute;
+    inset: -0.35rem 0 0;
+    background: color-mix(in srgb, var(--bs-body-bg, #fff) 45%, transparent);
+    backdrop-filter: blur(10px) saturate(1.1);
+    -webkit-backdrop-filter: blur(10px) saturate(1.1);
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 1) 65%,
+        rgba(0, 0, 0, 0) 100%
+    );
+    mask-image: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 1) 65%,
+        rgba(0, 0, 0, 0) 100%
+    );
+    pointer-events: none;
+}
+
+.kh-photo-filter-bar {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem 1rem;
+    padding: 0.6rem 0.8rem;
+    margin: 0 auto;
+    max-width: 960px;
+    border: 1px solid color-mix(
+        in srgb,
+        var(--bs-border-color, #dee2e6) 72%,
+        transparent
+    );
+    border-radius: 0.75rem;
+    background: rgba(var(--bs-body-bg-rgb, 255, 255, 255), 0.88);
+    background: color-mix(
+        in srgb,
+        var(--bs-body-bg, #fff) 82%,
+        transparent
+    );
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.10);
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    box-sizing: border-box;
+    pointer-events: auto;
+}
+
+.kh-photos-body {
+    min-width: 0;
+    padding-bottom: 2rem;
+}
+
+.kh-photos-stage {
+    width: 100%;
+    max-width: var(--kh-photos-max-width);
+    margin-inline: auto;
+    padding-inline: var(--kh-photos-gutter);
+    box-sizing: border-box;
+}
+
+.kh-photos-stage--grouped .generic-container {
+    max-width: 100%;
+}
+
+.kh-photos-grouped-card {
+    margin: 0.25rem 0 2rem;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .kh-photo-filter-bar {
+        background: var(--bs-body-bg, #fff);
+    }
+
+    .kh-photos-filter-dock::before {
+        background: color-mix(in srgb, var(--bs-body-bg, #fff) 88%, transparent);
+    }
+}
+
+.kh-photo-filter-date {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+
+.kh-photo-filter-date .shiny-input-container,
+.kh-photo-filter-date .form-group,
+.kh-photo-filter-chips .shiny-input-container,
+.kh-photo-filter-chips .form-group {
+    margin: 0 !important;
+    width: auto !important;
+}
+
+.kh-photo-filter-date #date_selector {
+    margin: 0;
+    width: auto;
+}
+
+.kh-photo-filter-date #date_selector-label {
+    display: none;
+}
+
+.kh-photo-filter-date #date_selector .form-control {
+    text-align: center;
+    min-width: 8.5rem;
+    height: 34px;
+    padding: 0.25rem 0.5rem;
+}
+
+/* Keep the calendar above the sticky pictures pager */
+.datepicker,
+.datepicker-dropdown,
+.bootstrap-datepicker,
+.air-datepicker-global-container,
+.air-datepicker {
+    z-index: 1080 !important;
+}
+
+.kh-photo-filter-date .btn-date-control {
+    height: 34px;
+    width: 34px;
+    padding: 0;
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.kh-photo-today-btn {
+    height: 34px;
+    padding: 0 0.75rem;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.875rem;
+    line-height: 1;
+}
+
+.kh-photo-filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.kh-photo-filter-chips > * {
+    display: inline-flex;
+    align-items: center;
+}
+
+.kh-photo-filter-group {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+    height: 34px;
+    padding: 0 0.5rem 0 0;
+    margin: 0 0.9rem 0 0;
+    border: none;
+    border-right: 1px solid var(--bs-border-color, #dee2e6);
+    border-radius: 0;
+    background: transparent;
+}
+
+.kh-photo-filter-view {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.kh-photo-filter-group-label {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    opacity: 0.65;
+    padding: 0;
+    line-height: 34px;
+    white-space: nowrap;
+}
+
+.kh-photo-filter-group-chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.kh-photo-filter-chip .form-check,
+.kh-photo-filter-chip .form-switch {
+    display: flex;
+    align-items: center;
+    margin: 0;
+    padding: 0.28rem 0.75rem !important;
+    min-height: 34px;
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    border-radius: 999px;
+    background: var(--bs-tertiary-bg, #f8f9fa);
+    color: var(--bs-body-color, #212529);
+    cursor: pointer;
+    user-select: none;
+}
+
+.kh-photo-filter-chip .form-check-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.kh-photo-filter-chip .form-check-label {
+    margin: 0;
+    padding: 0;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+}
+
+.kh-photo-filter-chip .form-check:has(.form-check-input:checked),
+.kh-photo-filter-chip .form-switch:has(.form-check-input:checked) {
+    background: var(--bs-primary, #0d6efd);
+    border-color: var(--bs-primary, #0d6efd);
+    color: #fff;
+}
+
+@media (max-width: 767.98px) {
+    .kh-photos-filter-dock {
+        padding: 0.35rem var(--kh-photos-gutter) 0.5rem;
+    }
+
+    .kh-photo-filter-bar {
+        justify-content: center;
+        gap: 0.55rem;
+        padding: 0.55rem 0.65rem;
+    }
+
+    .kh-photo-filter-date,
+    .kh-photo-filter-chips {
+        justify-content: center;
+        width: 100%;
+    }
+
+    .kh-photo-filter-group {
+        height: auto;
+        flex-wrap: wrap;
+        justify-content: center;
+        border-right: none;
+        margin-right: 0;
+        padding-right: 0;
+    }
+
+    .kh-photo-filter-view {
+        flex-basis: 100%;
+        width: 100%;
+        justify-content: center;
+        padding-top: 0.5rem;
+        margin-top: 0.35rem;
+        border-top: 1px solid var(--bs-border-color, #dee2e6);
+    }
+}
+
+.kh-photos-infinite {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0.75rem 0 1.5rem;
+}
+
+.kh-photos-status {
+    font-size: 0.85rem;
+    font-weight: 600;
+    opacity: 0.65;
+}
+
+.kh-photos-sentinel {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin: 10px 0 14px 0;
+    min-height: 2rem;
 }
 
-/* Keep Shiny's label for accessibility, but don't let it affect layout */
-.photos-pager #photos_page-label {
-    position: absolute !important;
-    width: 1px !important;
-    height: 1px !important;
-    padding: 0 !important;
-    margin: -1px !important;
-    overflow: hidden !important;
-    clip: rect(0, 0, 0, 0) !important;
-    white-space: nowrap !important;
-    border: 0 !important;
+.kh-photos-sentinel .spinner-border {
+    visibility: hidden;
 }
 
-/* Remove default spacing from Shiny/Bootstrap wrappers inside the pager */
-.photos-pager .shiny-input-container,
-.photos-pager .form-group {
-    margin: 0 !important;
-}
-
-.btn-page-control {
-    padding: 6px 10px;
-}
-
-.photos-page-total {
-    opacity: 0.75;
-    font-size: 0.95rem;
-}
-
-.photos-count {
-    flex-basis: 100%;
-    text-align: center;
-    opacity: 0.75;
-    font-size: 0.95rem;
-    margin-left: 0;
-    margin-top: 2px;
+.kh-photos-sentinel.is-loading .spinner-border {
+    visibility: visible;
 }
 
 .kh-photo-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(
+        auto-fill,
+        minmax(min(100%, 17.5rem), 1fr)
+    );
+    gap: 0.75rem;
     align-items: start;
 }
 
-.kh-photo-card {
+.kh-photo-event-head {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin: 0.35rem 0 0;
+    padding: 0.2rem 0.15rem 0.45rem;
+    border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+}
+
+.kh-photo-event-head:first-child {
+    margin-top: 0;
+}
+
+.kh-photo-event-head-main {
+    display: flex;
+    align-items: baseline;
+    gap: 0.65rem;
+    min-width: 0;
+}
+
+.kh-photo-event-id {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--bs-body-color, #212529);
+}
+
+.kh-photo-event-time {
+    font-size: 0.82rem;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.7;
+}
+
+.kh-photo-event-head .btn-icon-square {
+    width: 32px !important;
+    height: 32px !important;
+    padding: 0 !important;
+}
+
+.kh-photo-card.card {
     margin: 0;
+    padding: 0;
+    overflow: hidden;
+    border-radius: 0.75rem;
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    background: var(--bs-tertiary-bg, #f8f9fa);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
     transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.kh-photo-card .card-body {
+    padding: 0 !important;
+}
+
+.kh-photo-card-prey {
+    box-shadow: 0 0 0 2px #ef4444;
 }
 
 .kh-photo-card.kh-removing {
@@ -244,6 +633,10 @@ html[data-bs-theme="dark"] .spinner {
     to   { opacity: 1; transform: translateY(0); }
 }
 
+.kh-photo-tile {
+    position: relative;
+}
+
 .kh-photo-thumb {
     position: relative;
     display: block;
@@ -254,43 +647,148 @@ html[data-bs-theme="dark"] .spinner {
     display: block;
     width: 100%;
     height: auto;
-    border-radius: 8px;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    border-radius: 0;
 }
 
-/* Footer layout for per-photo action buttons */
-.kh-photo-footer-row {
+.kh-photo-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 0.45rem 0.5rem;
+    background: linear-gradient(
+        180deg,
+        rgba(0, 0, 0, 0.5) 0%,
+        transparent 38%,
+        transparent 58%,
+        rgba(0, 0, 0, 0.58) 100%
+    );
+    color: #fff;
+    pointer-events: none;
+}
+
+.kh-photo-meta-top,
+.kh-photo-meta-bottom {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 6px;
-    flex-wrap: wrap;
+    gap: 0.4rem;
+    min-width: 0;
 }
 
-.kh-photo-footer-info {
-    flex: 1 1 auto;
+.kh-photo-meta-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
     min-width: 0;
+}
+
+.kh-photo-event-chip {
+    flex-shrink: 0;
+    border-radius: 999px;
+    padding: 0.08rem 0.4rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    background: rgba(255, 255, 255, 0.22);
+    color: #fff;
+}
+
+.kh-photo-meta-bottom {
+    padding-right: 6.4rem;
+}
+
+.kh-photo-time {
+    font-size: 0.8rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+.kh-photo-cat {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    font-size: 0.78rem;
+    font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+.kh-photo-cat svg {
+    flex-shrink: 0;
+    height: 0.85rem;
+    width: auto;
+}
+
+.kh-photo-prey-badge {
+    flex-shrink: 0;
+    border-radius: 999px;
+    padding: 0.08rem 0.45rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    background: rgba(255, 255, 255, 0.22);
+    color: #fff;
+    pointer-events: auto;
+    cursor: help;
+}
+
+.kh-photo-prey-badge.is-prey {
+    background: #ef4444;
 }
 
 .kh-photo-actions {
+    position: absolute;
+    right: 0.4rem;
+    bottom: 0.4rem;
     display: flex;
     gap: 4px;
-    flex-shrink: 0;
+    z-index: 2;
 }
 
 .kh-photo-action-btn {
-    width: 34px !important;
-    height: 34px !important;
+    width: 30px !important;
+    height: 30px !important;
     padding: 0 !important;
     border-radius: 8px !important;
+    border: none !important;
+    background: rgba(17, 24, 39, 0.72) !important;
+    color: #fff !important;
+}
+
+.kh-photo-action-btn:hover,
+.kh-photo-action-btn:focus {
+    background: rgba(17, 24, 39, 0.92) !important;
+    color: #fff !important;
+}
+
+.kh-photo-action-btn.kh-photo-action-danger:hover,
+.kh-photo-action-btn.kh-photo-action-danger:focus {
+    background: #dc3545 !important;
 }
 
 .kh-photo-action-btn svg {
-    height: 1rem !important;
+    height: 0.9rem !important;
     width: auto !important;
-    max-width: 1rem;
+    max-width: 0.9rem;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .kh-photo-actions {
+        opacity: 0;
+        transition: opacity 0.15s ease;
+    }
+
+    .kh-photo-card:hover .kh-photo-actions,
+    .kh-photo-card:focus-within .kh-photo-actions {
+        opacity: 1;
+    }
 }
 
 /* Photo preview modal (lightbox) */
@@ -367,20 +865,38 @@ html[data-bs-theme="dark"] .kh-photo-modal-close:hover {
 
 .kh-detect-box {
     position: absolute;
-    border: 2px solid #ff0000;
-    background-color: rgba(255, 0, 0, 0.05);
+    border: 2px solid #00b400;
+    background-color: rgba(0, 180, 0, 0.05);
     pointer-events: none;
 }
 
 .kh-detect-label {
     position: absolute;
     left: 0px;
-    background-color: rgba(255, 0, 0, 0.7);
+    background-color: rgba(0, 180, 0, 0.7);
     color: white;
     padding: 2px 5px;
     border-radius: 5px;
     white-space: nowrap;
     font-size: 12px;
+}
+
+.kh-detect-box.is-prey {
+    border-color: #ff0000;
+    background-color: rgba(255, 0, 0, 0.05);
+}
+
+.kh-detect-box.is-prey .kh-detect-label {
+    background-color: rgba(255, 0, 0, 0.7);
+}
+
+.kh-detect-box.is-prey-soft {
+    border-color: #fca5a5;
+    background-color: rgba(252, 165, 165, 0.05);
+}
+
+.kh-detect-box.is-prey-soft .kh-detect-label {
+    background-color: rgba(252, 165, 165, 0.7);
 }
 
 /* Event modal: picture loading spinner overlay */
@@ -520,7 +1036,7 @@ html[data-bs-theme="dark"] .event-modal-picture-spinner {
     margin: 0 auto;
 }
 
-.generic-container table th, 
+.generic-container table th,
 .generic-container table td {
     text-align: center;
     background-color: transparent !important;
@@ -558,23 +1074,53 @@ html[data-bs-theme="dark"] .event-modal-picture-spinner {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 3rem 1.5rem;
+    gap: 0.55rem;
+    margin: 1.5rem auto 2rem;
+    max-width: 28rem;
+    padding: 2.1rem 1.5rem;
     text-align: center;
-    color: #6c757d;
-    gap: 0.75rem;
+    color: var(--bs-secondary-color, #6c757d);
+    background: var(--bs-tertiary-bg, #f8f9fa);
+    border: 1px dashed var(--bs-border-color, #dee2e6);
+    border-radius: 0.75rem;
 }
 
-.kh-empty-state svg {
-    opacity: 0.4;
+.kh-empty-state-icon {
+    display: grid;
+    place-items: center;
+    width: 3.25rem;
+    height: 3.25rem;
+    margin-bottom: 0.2rem;
+    border-radius: 50%;
+    background: var(--bs-body-bg, #fff);
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+.kh-empty-state-icon svg {
+    margin: 0 !important;
+    position: static !important;
+    vertical-align: middle !important;
+    overflow: visible;
+    opacity: 0.9;
+}
+
+.kh-empty-state-title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 650;
+    color: var(--bs-body-color, #212529);
 }
 
 .kh-empty-state p {
     margin: 0;
-    font-size: 1.05rem;
+    max-width: 22rem;
+    font-size: 0.92rem;
+    line-height: 1.45;
 }
 
 html[data-bs-theme="dark"] .kh-empty-state {
-    color: #adb5bd;
+    color: var(--bs-secondary-color, #adb5bd);
 }
 
 .card {
@@ -606,7 +1152,7 @@ html[data-bs-theme="dark"] .kh-empty-state {
     margin: 0 auto;
 }
 
-#date_selector .form-control { 
+#date_selector .form-control {
     text-align: center;
 }
 
@@ -1082,7 +1628,7 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
   .transparent-modal-content + div {
     padding: 0 !important;
   }
- 
+
 
 /* Live view panel - Event table */
 .date-separator-row td {

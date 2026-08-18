@@ -340,27 +340,20 @@ def register_live_view(input, output, session, ctx: SessionContext):
             return ui.HTML(
                 '<div class="spinner-container"><div class="spinner"></div></div>'
             )
-        return get_events_table_html(block_count=25)
+        return get_events_table_html(block_count=25, panel_prefix="last")
 
     @output
     @render.ui
     def ui_events_by_date():
-        return ui.layout_column_wrap(
-            ui.div(
-                ui.card(
-                    ui.output_ui("ui_events_by_date_table"),
-                    full_screen=False,
-                    class_="generic-container",
-                    style_="margin-bottom: 40px;",
-                    min_height="150px",
-                ),
-                width="400px",
-            )
+        return ui.card(
+            ui.output_ui("ui_events_by_date_table"),
+            full_screen=False,
+            class_="generic-container kh-photos-grouped-card",
+            min_height="150px",
         )
 
     @render.text
     @reactive.event(
-        input.button_reload,
         input.date_selector,
         input.button_cat_only,
         input.button_mouse_only,
@@ -393,6 +386,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
             input.button_cat_only(),
             input.button_mouse_only(),
             CONFIG["MOUSE_THRESHOLD"],
+            panel_prefix="photos",
         )
 
     def get_events_table_html(
@@ -402,6 +396,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
         cats_only=False,
         mouse_only=False,
         mouse_probability=0.0,
+        panel_prefix="last",
     ):
         try:
             logging.info(
@@ -534,7 +529,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
 
                 event_info = event_icons[idx]
                 block_id = int(row["block_id"])
-                panel_id = f"event-timeline-{block_id}"
+                panel_id = f"event-timeline-{panel_prefix}-{block_id}"
                 timeline_entries = timelines_by_block.get(block_id)
                 if not timeline_entries:
                     timeline_entries = timeline_fallback_from_event_type(

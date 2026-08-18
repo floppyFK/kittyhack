@@ -1617,30 +1617,6 @@ def register_configuration(input, output, session, ctx: SessionContext):
                             ),
                         ),
                         ui.hr(),
-                        ui.row(
-                            ui.column(
-                                4,
-                                ui.input_numeric(
-                                    "numElementsPerPage",
-                                    _("Maximum pictures per page"),
-                                    CONFIG["ELEMENTS_PER_PAGE"],
-                                    min=1,
-                                ),
-                            ),
-                            ui.column(
-                                8,
-                                ui.markdown(
-                                    _(
-                                        "This setting applies only to the `PICTURES` section in the ungrouped view mode."
-                                    )
-                                    + "\n\n"
-                                    + _(
-                                        "NOTE: Too many pictures per page could slow down the performance drastically!"
-                                    )
-                                ),
-                                style_="color: grey;",
-                            ),
-                        ),
                         ui.br(),
                         full_screen=False,
                         class_="generic-container align-left",
@@ -2526,7 +2502,6 @@ def register_configuration(input, output, session, ctx: SessionContext):
             CONFIG["MIN_SECONDS_TO_ANALYZE"] = float(
                 DEFAULT_CONFIG["Settings"]["min_seconds_to_analyze"]
             )
-        CONFIG["ELEMENTS_PER_PAGE"] = int(input.numElementsPerPage())
         CONFIG["MAX_PHOTOS_COUNT"] = int(input.numMaxPhotosCount())
         CONFIG["LOGLEVEL"] = input.txtLoglevel()
         CONFIG["MOUSE_CHECK_ENABLED"] = input.btnDetectPrey()

@@ -624,7 +624,8 @@ class EventsRepo:
                       mouse_probability=0.0, 
                       page_index = 0, 
                       elements_per_page = sys.maxsize,
-                      ignore_deleted = True):
+                      ignore_deleted = True,
+                      offset: int | None = None):
         """Query events/photos with filters and optional paging (newest first)."""
         # Discover optional columns once to keep queries compatible across schema versions.
         columns_info = DatabaseCore.read_column_info_from_database(database, "events")
@@ -656,12 +657,12 @@ class EventsRepo:
         stmt = f"{stmt} ORDER BY id DESC"
 
         if elements_per_page != sys.maxsize:
-            # calculate the total number of pages
-            total_rows = DatabaseCore.read_df_from_database(database, f"SELECT COUNT(*) as count FROM ({stmt})").iloc[0]['count']
-            total_pages = (total_rows + elements_per_page - 1) // elements_per_page
-            # calculate the offset for the current page
-            offset = (total_pages - page_index - 1) * elements_per_page
-            stmt = f"{stmt} LIMIT {elements_per_page} OFFSET {offset}"
+            if offset is None:
+                # Reverse paging: page_index 0 is the oldest page.
+                total_rows = DatabaseCore.read_df_from_database(database, f"SELECT COUNT(*) as count FROM ({stmt})").iloc[0]['count']
+                total_pages = (total_rows + elements_per_page - 1) // elements_per_page
+                offset = (total_pages - page_index - 1) * elements_per_page
+            stmt = f"{stmt} LIMIT {int(elements_per_page)} OFFSET {int(offset)}"
 
         logging.debug(f"[DATABASE] query EventsRepo.db_get_photos: return_data={return_data}, date_start={date_start}, date_end={date_end}, cats_only={cats_only}, mouse_only={mouse_only}, mouse_probability={mouse_probability}, page_index={page_index}, elements_per_page={elements_per_page}, ignore_deleted={ignore_deleted}")
 

@@ -13,12 +13,14 @@ Examples:
     python3 tools/dev.py --reset-default
     python3 tools/dev.py --checkout v2.7.0
     python3 tools/dev.py --checkout python3.14_statistics
+    python3 tools/dev.py --ensure-venv
     python3 tools/dev.py --restart
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -563,6 +565,135 @@ def cmd_reset_db(args: argparse.Namespace) -> int:
     return 0
 
 
+def is_remote_host() -> bool:
+    mode = os.environ.get("KITTYHACK_MODE", "").strip().lower()
+    if mode in {"remote", "remote-mode"}:
+        return True
+    if mode in {"target", "target-mode"}:
+        return False
+    return (ROOT / ".remote-mode").is_file()
+
+
+def requirements_file() -> Path:
+    name = "requirements_remote.txt" if is_remote_host() else "requirements.txt"
+    return ROOT / name
+
+
+def sha256_file(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def venv_python_mm() -> str | None:
+    py = ROOT / ".venv" / "bin" / "python"
+    if not py.is_file():
+        return None
+    result = run(
+        [str(py), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+        capture=True,
+        check=False,
+    )
+    ver = (result.stdout or "").strip()
+    return ver or None
+
+
+def required_python() -> str | None:
+    path = ROOT / "setup" / "REQUIRED_PYTHON"
+    if not path.is_file():
+        return None
+    ver = path.read_text(encoding="utf-8").strip()
+    return ver or None
+
+
+def run_ensure_venv(mode: str, req: Path) -> None:
+    script = ROOT / "setup" / "ensure_venv.sh"
+    if not script.is_file():
+        raise DevError(f"{script} not found")
+    cmd = ["/bin/bash", str(script), mode, "--root", str(ROOT)]
+    if req.is_file():
+        cmd.extend(["--requirements", str(req)])
+    log(f"ensure_venv.sh {mode} (required Python {required_python() or '?'})")
+    run(cmd, capture=False)
+
+
+def pip_install_into_venv(req: Path) -> None:
+    activate = ROOT / ".venv" / "bin" / "activate"
+    if not activate.is_file():
+        raise DevError(".venv is missing; cannot pip install")
+    if not req.is_file():
+        raise DevError(f"{req.name} not found")
+    torch_uninstall = ""
+    if not is_remote_host():
+        torch_uninstall = (
+            f" && if ! grep -qE '^torch(==|>=|<=|~=|>|<|!=)' {req}; then "
+            "pip uninstall -y torch torchvision ultralytics ultralytics-thop || true; "
+            "fi"
+        )
+    cmd = [
+        "/bin/bash",
+        "-c",
+        (
+            "export PIP_CONFIG_FILE=/dev/null PIP_EXTRA_INDEX_URL= "
+            "PIP_INDEX_URL=https://pypi.org/simple; "
+            f"source {activate} && "
+            "pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 "
+            f"--no-cache-dir -r {req}"
+            f"{torch_uninstall}"
+        ),
+    ]
+    log(f"pip install -r {req.name} into .venv …")
+    run(cmd, capture=False)
+
+
+def setup_venv_for_current_tree(*, req_hash_before: str | None, force_pip: bool) -> None:
+    """Align .venv with the checked-out tree. Call only while services are stopped.
+
+    Mirrors the production updater:
+    - ``ensure_venv.sh --prepare`` builds ``.venv.new`` when REQUIRED_PYTHON mismatches.
+    - ``--apply`` swaps it in immediately (safe here because services are down).
+    - If Python already matches, pip-install this tree's requirements when they
+      changed (or when ``force_pip`` is set).
+    """
+    req = requirements_file()
+    want = required_python()
+    have = venv_python_mm()
+    log(f"venv Python {have or 'missing'}; tree wants {want or 'unspecified'}")
+
+    ensure_script = ROOT / "setup" / "ensure_venv.sh"
+    venv_new = ROOT / ".venv.new"
+
+    if ensure_script.is_file() and want:
+        run_ensure_venv("--prepare", req)
+        if venv_new.is_dir():
+            log("Python runtime prepared in .venv.new; applying swap now (services are stopped)")
+            run_ensure_venv("--apply", req)
+            log(f"active venv is now Python {venv_python_mm() or '?'}")
+            return
+        # --prepare is a no-op when Python already matches. Still refresh
+        # packages if this version's requirements differ from the previous tree.
+        hash_after = sha256_file(req)
+        if not (ROOT / ".venv" / "bin" / "python").exists():
+            raise DevError(".venv missing after ensure_venv --prepare")
+        if force_pip or req_hash_before != hash_after:
+            if req_hash_before != hash_after:
+                log(f"{req.name} changed with this version")
+            pip_install_into_venv(req)
+        else:
+            log(f"Python {have} and {req.name} unchanged; skipping pip")
+        return
+
+    if not req.is_file():
+        warn("no requirements file and no ensure_venv.sh; leaving .venv as-is")
+        return
+    log("this version has no ensure_venv.sh; installing requirements into the existing .venv")
+    pip_install_into_venv(req)
+
+
 def _resolve_checkout_ref(ref: str) -> tuple[list[str], str]:
     """Return (git checkout argv without 'git', description)."""
     if git_ok("rev-parse", "--verify", "--quiet", ref):
@@ -606,6 +737,8 @@ def cmd_checkout(args: argparse.Namespace) -> int:
         if args.force and not args.stash:
             checkout_args = ["checkout", "--force", *checkout_args[1:]]
 
+        req_hash_before = sha256_file(requirements_file())
+
         log(f"git {' '.join(checkout_args)}")
         git(*checkout_args, capture=False)
 
@@ -614,19 +747,10 @@ def cmd_checkout(args: argparse.Namespace) -> int:
         if new_state["branch"] == "HEAD":
             log("detached HEAD — normal when checking out a tag or commit")
 
-        if not args.no_deps:
-            ensure_script = ROOT / "setup" / "ensure_venv.sh"
-            req = ROOT / "requirements.txt"
-            if ensure_script.is_file():
-                cmd = ["/bin/bash", str(ensure_script), "--prepare", "--root", str(ROOT)]
-                if req.is_file():
-                    cmd.extend(["--requirements", str(req)])
-                log("running ensure_venv.sh --prepare (no-op if Python/venv already match) …")
-                run(cmd, capture=False)
-            else:
-                warn(f"{ensure_script} not found; skipping venv prepare")
+        if args.no_deps:
+            log("skipping venv setup (--no-deps)")
         else:
-            log("skipping ensure_venv (--no-deps)")
+            setup_venv_for_current_tree(req_hash_before=req_hash_before, force_pip=False)
     except Exception:
         warn("checkout failed; services are still stopped")
         raise
@@ -793,17 +917,17 @@ def cmd_db_check(_args: argparse.Namespace) -> int:
     return 1
 
 
-def cmd_ensure_venv(_args: argparse.Namespace) -> int:
-    script = ROOT / "setup" / "ensure_venv.sh"
-    req = ROOT / "requirements.txt"
-    if not script.is_file():
-        raise DevError(f"{script} not found")
-    cmd = ["/bin/bash", str(script), "--prepare", "--root", str(ROOT)]
-    if req.is_file():
-        cmd.extend(["--requirements", str(req)])
-    log("ensure_venv.sh --prepare …")
-    run(cmd, capture=False)
-    log("done. ExecStartPre --apply runs on the next service start.")
+def cmd_ensure_venv(args: argparse.Namespace) -> int:
+    if args.no_deps:
+        log("skipping venv setup (--no-deps)")
+        return 0
+    stop_services()
+    try:
+        setup_venv_for_current_tree(req_hash_before=None, force_pip=True)
+    except Exception:
+        warn("venv setup failed; services are still stopped")
+        raise
+    maybe_restart(args)
     return 0
 
 
@@ -836,7 +960,7 @@ COMMANDS: dict[str, str] = {
     "delete_backup": "Delete a snapshot by name",
     "reset_default": "Reset config.ini to factory defaults (current file is copied aside)",
     "reset_db": "Wipe kittyhack.db (copied aside first)",
-    "checkout": "git fetch + checkout a tag, branch, or commit, then restart",
+    "checkout": "git fetch + checkout a tag/branch/commit, set up matching venv, restart",
     "status": "Show git HEAD, services, disk, venv, and persistent files",
     "restart": "Restart kittyhack_control and kittyhack",
     "stop": "Stop both services (control first, so it cannot respawn kittyhack)",
@@ -847,7 +971,7 @@ COMMANDS: dict[str, str] = {
     "versions": "List recent version tags",
     "compile_locales": "Compile locales/*/LC_MESSAGES/messages.po → .mo",
     "db_check": "PRAGMA integrity_check on kittyhack.db",
-    "ensure_venv": "Run setup/ensure_venv.sh --prepare",
+    "ensure_venv": "Align .venv with this tree (required Python + pip install)",
     "reboot": "Reboot the device",
     "show_config": "Print config.ini",
 }
@@ -869,6 +993,7 @@ examples:
   %(prog)s --reset-default --yes
   %(prog)s --checkout v2.7.0
   %(prog)s --checkout python3.14_statistics --stash
+  %(prog)s --ensure-venv
   %(prog)s --restart
   %(prog)s --logs --follow
 
@@ -878,6 +1003,13 @@ with --backup-dir or $KITTYHACK_DEV_BACKUP_DIR.
 
 --checkout does NOT wipe the working tree the way the in-app updater does.
 Dirty trees are refused unless you pass --stash or --force.
+
+--checkout also aligns the venv with that version: ensure_venv.sh --prepare
+builds .venv.new when REQUIRED_PYTHON changes, then --apply swaps it in
+(services are already stopped). If Python already matches, requirements.txt
+is pip-installed when it changed. Pass --no-deps to skip. --ensure-venv
+does the same alignment for the current tree (always pip-installs when
+Python already matches).
 """,
     )
 
@@ -915,7 +1047,7 @@ Dirty trees are refused unless you pass --stash or --force.
     opts.add_argument(
         "--no-restart",
         action="store_true",
-        help="Do not restart services after restore / reset / checkout",
+        help="Do not restart services after restore / reset / checkout / ensure-venv",
     )
     opts.add_argument(
         "--force",
@@ -930,7 +1062,7 @@ Dirty trees are refused unless you pass --stash or --force.
     opts.add_argument(
         "--no-deps",
         action="store_true",
-        help="checkout: skip setup/ensure_venv.sh --prepare",
+        help="checkout/ensure-venv: skip Python venv swap and pip install",
     )
     opts.add_argument(
         "--with-pictures",

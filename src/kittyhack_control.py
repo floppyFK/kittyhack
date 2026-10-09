@@ -1178,7 +1178,17 @@ async def _handle_sync_request(ws: WebSocketServerProtocol, include_labelstudio:
     finally:
         STATE.sync_in_progress = False
 
-async def _handle_update_request(ws: WebSocketServerProtocol, latest_version: str = "", current_version: str = ""):
+async def _handle_update_request(
+    ws: WebSocketServerProtocol,
+    latest_version: str = "",
+    current_version: str = "",
+    *,
+    update_owner: str = "",
+    update_repo: str = "",
+    update_ref: str = "",
+    update_mode: str = "",
+    use_remote_update_source: bool = False,
+):
     """Run kittyhack update on target device and report begin/end status."""
     STATE.sync_in_progress = True
     try:
@@ -1195,6 +1205,11 @@ async def _handle_update_request(ws: WebSocketServerProtocol, latest_version: st
                 current_version or None,
                 halt_backend_first=False,
                 defer_service_updates=True,
+                update_owner=update_owner or None,
+                update_repo=update_repo or None,
+                update_ref_override=update_ref or None,
+                update_mode_override=update_mode or None,
+                use_remote_update_source=use_remote_update_source,
             )
         )
         if bool(ok):
@@ -1363,7 +1378,19 @@ async def _handler(ws: WebSocketServerProtocol):
             if t == "update_request":
                 latest_version = str(data.get("latest_version") or "")
                 current_version = str(data.get("current_version") or "")
-                await _handle_update_request(ws, latest_version=latest_version, current_version=current_version)
+                # Present only when the controller knows its update repository.
+                # Older controllers omit these keys; the flap then uses its own config.
+                use_remote_update_source = "update_owner" in data or "update_repo" in data
+                await _handle_update_request(
+                    ws,
+                    latest_version=latest_version,
+                    current_version=current_version,
+                    update_owner=str(data.get("update_owner") or ""),
+                    update_repo=str(data.get("update_repo") or ""),
+                    update_ref=str(data.get("update_ref") or ""),
+                    update_mode=str(data.get("update_mode") or ""),
+                    use_remote_update_source=use_remote_update_source,
+                )
                 continue
 
             if t == "reboot_request":

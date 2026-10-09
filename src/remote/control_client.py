@@ -279,13 +279,26 @@ class RemoteControlClient:
                 }
             )
 
-        self._send_async(
-            {
-                "type": "update_request",
-                "latest_version": str(latest_version or ""),
-                "current_version": str(current_version or ""),
-            }
-        )
+        payload: dict[str, Any] = {
+            "type": "update_request",
+            "latest_version": str(latest_version or ""),
+            "current_version": str(current_version or ""),
+        }
+        # The flap updater must follow this device's repository, not its own
+        # config.ini. A branch-channel latest_version is ``ref@sha`` and is not
+        # a git ref the flap can check out on its own.
+        try:
+            from src.helper import Versioning
+
+            owner, repo, ref, _git_url, mode = Versioning.resolved_update_repo()
+            payload["update_owner"] = str(owner or "")
+            payload["update_repo"] = str(repo or "")
+            payload["update_ref"] = str(ref or "")
+            payload["update_mode"] = str(mode or "")
+        except Exception as e:
+            logging.warning(f"[REMOTE_CTRL] Could not attach update source to target update: {e}")
+
+        self._send_async(payload)
         return True
 
     def get_target_update_status(self) -> dict[str, Any]:

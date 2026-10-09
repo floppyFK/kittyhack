@@ -652,9 +652,67 @@ class Versioning:
             return "unknown"
 
     @staticmethod
-    def resolve_update_checkout_ref(target_version: str | None = None) -> str | None:
-        """Return the git ref for an update target (tag, branch, or short SHA)."""
-        _owner, _repo, update_ref, _git_url, _mode = Versioning.resolved_update_repo()
+    def split_branch_display_version(version: str | None) -> tuple[str, str] | None:
+        """Split a branch-channel label ``ref@sha`` into ``(branch, sha)``.
+
+        Tag names never use this form. The ``@sha`` suffix is only how the UI
+        compares an installed commit with a moving branch; it is not a git ref.
+        """
+        ver = str(version or "").strip()
+        if "@" not in ver:
+            return None
+        branch, _, sha = ver.rpartition("@")
+        branch = branch.strip()
+        sha = sha.strip()
+        if not branch or not sha:
+            return None
+        if branch.startswith("-") or sha.startswith("-"):
+            return None
+        if not re.fullmatch(r"[\w./\-]+", branch):
+            return None
+        if not re.fullmatch(r"[0-9a-fA-F]{7,40}", sha):
+            return None
+        return branch, sha
+
+    @staticmethod
+    def explicit_update_source(
+        owner: str | None, repo: str | None, ref: str | None
+    ) -> tuple[str, str, str | None] | None:
+        """Validate a controller-supplied ``(owner, repo, ref)`` update source.
+
+        ``ref`` is None for tag mode (standard, beta, or custom without ``@ref``).
+        Returns None when the names are not safe to pass to git.
+        """
+        owner_s = str(owner or "").strip()
+        repo_s = str(repo or "").strip()
+        if not re.fullmatch(r"[\w.-]+", owner_s) or not re.fullmatch(r"[\w.-]+", repo_s):
+            return None
+        ref_s = str(ref or "").strip()
+        if not ref_s:
+            return owner_s, repo_s, None
+        if ref_s.startswith("-") or not re.fullmatch(r"[\w./\-]+", ref_s):
+            return None
+        return owner_s, repo_s, ref_s
+
+    @staticmethod
+    def git_checkout_command(update_ref: str | None, latest_version: str | None) -> list[str]:
+        """Argv for the update checkout.
+
+        Branch mode resets a local branch to ``origin/<ref>``. A ``ref@sha``
+        label is never passed to git; it is turned back into that branch.
+        Anything else is checked out as a tag or commit name.
+        """
+        if update_ref:
+            return ["/bin/git", "checkout", "-B", update_ref, f"origin/{update_ref}"]
+        display = Versioning.split_branch_display_version(latest_version)
+        if display:
+            branch, _sha = display
+            return ["/bin/git", "checkout", "-B", branch, f"origin/{branch}"]
+        return ["/bin/git", "checkout", str(latest_version or "").strip()]
+
+    @staticmethod
+    def _object_ref_for_version(target_version: str | None, update_ref: str | None) -> str | None:
+        """Git object name for file compares (tag, branch, or the sha from ``ref@sha``)."""
         if update_ref is not None:
             ver = str(target_version or "").strip()
             if "@" in ver:
@@ -665,7 +723,16 @@ class Versioning:
         ver = str(target_version or "").strip()
         if not ver or ver == "unknown":
             return None
+        display = Versioning.split_branch_display_version(ver)
+        if display:
+            return display[1]
         return ver
+
+    @staticmethod
+    def resolve_update_checkout_ref(target_version: str | None = None) -> str | None:
+        """Return the git ref for an update target (tag, branch, or short SHA)."""
+        _owner, _repo, update_ref, _git_url, _mode = Versioning.resolved_update_repo()
+        return Versioning._object_ref_for_version(target_version, update_ref)
 
     @staticmethod
     def _normalize_repo_file_for_compare(rel_path: str, text: str | None) -> str | None:
@@ -768,21 +835,31 @@ class Versioning:
 
     @staticmethod
     def get_runtime_file_changes(
-        target_version: str | None = None, *, use_git_show: bool = False
+        target_version: str | None = None,
+        *,
+        use_git_show: bool = False,
+        update_source: tuple[str, str, str | None] | None = None,
     ) -> dict[str, bool]:
         """Return which heavy-update files differ from the target ref.
 
         Keys are paths from ``heavy_update_repo_files()``. A path is omitted (or
         False) when it could not be resolved — transient failures must not look
         like a change.
+
+        ``update_source`` is ``(owner, repo, ref_or_none)`` when the caller
+        already resolved the update target (remote-driven flap updates). None
+        uses this device's configured update repository.
         """
         tracked = heavy_update_repo_files()
         changes = {path: False for path in tracked}
-        ref = Versioning.resolve_update_checkout_ref(target_version)
+        if update_source is not None:
+            owner, repo, update_ref = update_source
+            ref = Versioning._object_ref_for_version(target_version, update_ref)
+        else:
+            ref = Versioning.resolve_update_checkout_ref(target_version)
+            owner, repo, update_ref, _git_url, _mode = Versioning.resolved_update_repo()
         if not ref:
             return changes
-
-        owner, repo, update_ref, _git_url, _mode = Versioning.resolved_update_repo()
         github_refs = [ref]
         if update_ref and update_ref not in github_refs:
             github_refs.append(update_ref)
@@ -831,11 +908,14 @@ class Versioning:
 
     @staticmethod
     def update_changes_runtime_files(
-        target_version: str | None = None, *, use_git_show: bool = False
+        target_version: str | None = None,
+        *,
+        use_git_show: bool = False,
+        update_source: tuple[str, str, str | None] | None = None,
     ) -> bool:
         """True if target differs from local in REQUIRED_PYTHON or this host's requirements file."""
         changes = Versioning.get_runtime_file_changes(
-            target_version, use_git_show=use_git_show
+            target_version, use_git_show=use_git_show, update_source=update_source
         )
         return any(changes.values())
 

@@ -820,6 +820,11 @@ class KittyhackUpdater:
         *,
         halt_backend_first: bool = True,
         defer_service_updates: bool = False,
+        update_owner: str | None = None,
+        update_repo: str | None = None,
+        update_ref_override: str | None = None,
+        update_mode_override: str | None = None,
+        use_remote_update_source: bool = False,
     ):
         """Git-fetch/checkout Kittyhack, refresh deps/units; return (ok, message)."""
 
@@ -992,22 +997,55 @@ class KittyhackUpdater:
         did_prepare_new_venv = False
 
         # Resolve the configured update source (standard vs custom repo / branch).
+        # A remote controller passes its own source: the flap's config.ini often
+        # still says "standard" and must not decide the checkout.
         versioning_cls = None
         update_git_url = None
         update_ref = None
         update_mode = "standard"
+        update_source: tuple[str, str, str | None] | None = None
         try:
             from src.helper import Versioning as versioning_cls
-            _owner, _repo, update_ref, update_git_url, update_mode = (
-                versioning_cls.resolved_update_repo()
-            )
         except Exception as e:
-            logging.debug(
-                f"[UPDATE] Versioning.resolved_update_repo not available ({e}); using existing origin"
+            logging.debug(f"[UPDATE] Versioning import failed ({e}); using existing origin")
+            versioning_cls = None
+
+        if use_remote_update_source and versioning_cls is not None:
+            parsed = versioning_cls.explicit_update_source(
+                update_owner, update_repo, update_ref_override
             )
-            update_git_url = None
-            update_ref = None
-            update_mode = "standard"
+            if parsed is not None:
+                owner, repo, update_ref = parsed
+                update_git_url = f"https://github.com/{owner}/{repo}.git"
+                mode_s = str(update_mode_override or "").strip().lower()
+                if mode_s in {"standard", "beta", "custom"}:
+                    update_mode = mode_s
+                else:
+                    update_mode = "custom" if update_ref else "standard"
+                update_source = (owner, repo, update_ref)
+                logging.info(
+                    "[UPDATE] Using update source from remote controller: "
+                    f"{owner}/{repo}" + (f"@{update_ref}" if update_ref else "")
+                )
+            else:
+                logging.warning(
+                    "[UPDATE] Remote controller sent an invalid update source; "
+                    "using this device's configured repository"
+                )
+
+        if update_source is None:
+            try:
+                if versioning_cls is not None:
+                    _owner, _repo, update_ref, update_git_url, update_mode = (
+                        versioning_cls.resolved_update_repo()
+                    )
+            except Exception as e:
+                logging.debug(
+                    f"[UPDATE] Versioning.resolved_update_repo not available ({e}); using existing origin"
+                )
+                update_git_url = None
+                update_ref = None
+                update_mode = "standard"
 
         try:
             # Point origin at the configured update source (best-effort) before fetch.
@@ -1034,7 +1072,9 @@ class KittyhackUpdater:
                 try:
                     needs_heavy_disk = bool(
                         versioning_cls.update_changes_runtime_files(
-                            latest_version, use_git_show=True
+                            latest_version,
+                            use_git_show=True,
+                            update_source=update_source,
                         )
                     )
                 except Exception as e:
@@ -1077,15 +1117,26 @@ class KittyhackUpdater:
             req_hash_before = _sha256_file(requirements_path)
 
             # 4 — checkout either a tag (standard / custom+tag) or a branch (custom+branch).
-            if update_ref is not None:
-                # Branch mode: create/reset a local branch tracking origin/<ref> to HEAD.
-                _run_step(
-                    4,
-                    f"Checking out branch {update_ref}",
-                    ["/bin/git", "checkout", "-B", update_ref, f"origin/{update_ref}"],
-                )
+            # Never pass a branch-channel label (``ref@sha``) to git; that string is
+            # not a ref. The controller's update_ref, or the branch half of the label,
+            # is checked out from origin instead.
+            display_branch = None
+            if versioning_cls is not None:
+                checkout_cmd = versioning_cls.git_checkout_command(update_ref, latest_version)
+                parsed_display = versioning_cls.split_branch_display_version(latest_version)
+                if parsed_display:
+                    display_branch = parsed_display[0]
+            elif update_ref:
+                checkout_cmd = ["/bin/git", "checkout", "-B", update_ref, f"origin/{update_ref}"]
             else:
-                _run_step(4, f"Checking out {latest_version}", ["/bin/git", "checkout", latest_version])
+                checkout_cmd = ["/bin/git", "checkout", str(latest_version or "")]
+            if update_ref:
+                checkout_msg = f"Checking out branch {update_ref}"
+            elif display_branch:
+                checkout_msg = f"Checking out branch {display_branch}"
+            else:
+                checkout_msg = f"Checking out {latest_version}"
+            _run_step(4, checkout_msg, checkout_cmd)
 
             req_hash_after = _sha256_file(requirements_path)
             requirements_unchanged = (

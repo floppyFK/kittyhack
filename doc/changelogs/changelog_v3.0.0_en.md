@@ -18,3 +18,4 @@
 ## Bugfixes
 
 - **Average FPS**: The display of the average FPS per model in the model management interface was no longer being updated. This has now been fixed.
+- **Remote update from a custom branch**: Updating the Kittyflap from a remote device now uses the update repository configured on the remote.

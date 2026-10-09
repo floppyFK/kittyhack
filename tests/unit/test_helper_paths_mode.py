@@ -115,6 +115,58 @@ def test_parse_repo_spec():
     assert owner == "floppyFK" and repo == "kittyhack" and ref == "v2.6.3_beta_1"
 
 
+def test_branch_display_version_is_not_a_checkout_ref():
+    """``branch@sha`` is a UI label. Git must be given the branch, not that string."""
+    label = "python3.14_statistics@e991f8f"
+    assert Versioning.split_branch_display_version(label) == (
+        "python3.14_statistics",
+        "e991f8f",
+    )
+    assert Versioning.split_branch_display_version("v3.0.0") is None
+    assert Versioning.split_branch_display_version("python3.14_statistics@not-a-sha") is None
+
+    assert Versioning.git_checkout_command(None, "v3.0.0") == [
+        "/bin/git",
+        "checkout",
+        "v3.0.0",
+    ]
+    assert Versioning.git_checkout_command("python3.14_statistics", label) == [
+        "/bin/git",
+        "checkout",
+        "-B",
+        "python3.14_statistics",
+        "origin/python3.14_statistics",
+    ]
+    # Flap config still on standard: the label alone must not be checked out.
+    assert Versioning.git_checkout_command(None, label) == [
+        "/bin/git",
+        "checkout",
+        "-B",
+        "python3.14_statistics",
+        "origin/python3.14_statistics",
+    ]
+    assert "python3.14_statistics@e991f8f" not in Versioning.git_checkout_command(None, label)
+
+
+def test_explicit_update_source_from_controller():
+    assert Versioning.explicit_update_source(
+        "floppyFK", "kittyhack", "python3.14_statistics"
+    ) == ("floppyFK", "kittyhack", "python3.14_statistics")
+    assert Versioning.explicit_update_source("floppyFK", "kittyhack", "") == (
+        "floppyFK",
+        "kittyhack",
+        None,
+    )
+    assert Versioning.explicit_update_source("floppyFK", "kittyhack", None) == (
+        "floppyFK",
+        "kittyhack",
+        None,
+    )
+    assert Versioning.explicit_update_source("../etc", "kittyhack", "main") is None
+    assert Versioning.explicit_update_source("floppyFK", "kittyhack", "-evil") is None
+    assert Versioning.explicit_update_source("", "kittyhack", "main") is None
+
+
 def test_update_changes_runtime_files(monkeypatch):
     """Heavy-update detection compares REQUIRED_PYTHON and this host's requirements file."""
     import src.baseconfig as baseconfig

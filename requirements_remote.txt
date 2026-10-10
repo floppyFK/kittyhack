@@ -1,6 +1,6 @@
 # Kittyhack dependencies for remote-mode hosts (Linux PC/VM), Python 3.14
 # (see setup/REQUIRED_PYTHON).
-# Same base as requirements.txt plus torch/torchvision/ultralytics for
+# Same base as requirements.txt plus torch/torchvision/ultralytics/openvino for
 # GPU/OpenVINO and in-process Ultralytics inference.
 # Native pins were raised only where the previous 3.12 lock had no cp314
 # manylinux aarch64 + x86_64 wheels (torch 2.9.1 is the oldest 3.14-capable pair).
@@ -37,6 +37,7 @@ narwhals==1.40.0
 ncnn==1.0.20260526
 networkx==3.4.2
 numpy==2.3.5
+openvino==2026.4.1
 opencv-python==4.11.0.86
 opencv-python-headless==4.11.0.86
 orjson==3.11.9

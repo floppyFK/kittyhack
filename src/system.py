@@ -302,6 +302,11 @@ class DependencyInstaller:
             logging.error("[CAMERA] ffmpeg installation command finished, but ffmpeg is still unavailable.")
         return installed
 
+    # Pinned in requirements_remote.txt as well. Ultralytics auto-installs a missing
+    # OpenVINO via bare `pip`, which on Debian hits the externally managed system
+    # interpreter instead of this venv.
+    OPENVINO_PIP_SPEC = "openvino==2026.4.1"
+
     @staticmethod
     def ensure_openvino_installed() -> bool:
         """Ensure the openvino package is available. Try to install it via pip if missing."""
@@ -315,7 +320,7 @@ class DependencyInstaller:
         logging.warning("[MODEL] openvino package not found. Attempting to install via pip...")
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--no-cache-dir", "openvino"],
+                [sys.executable, "-m", "pip", "install", "--no-cache-dir", DependencyInstaller.OPENVINO_PIP_SPEC],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,

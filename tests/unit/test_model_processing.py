@@ -456,3 +456,36 @@ def test_configure_worker_compute_sets_thread_env(monkeypatch):
     assert os.environ["OMP_THREAD_LIMIT"] == "1"
     assert os.environ["OMP_WAIT_POLICY"] == "PASSIVE"
     assert cores == [0]
+
+
+def test_openvino_load_uses_venv_installer(tmp_path, monkeypatch, tmp_kittyhack_db):
+    from src.system import DependencyInstaller
+
+    baseconfig.CONFIG["KITTYHACK_DATABASE_PATH"] = tmp_kittyhack_db
+    baseconfig.CONFIG["INFERENCE_DEVICE"] = "intel:gpu"
+    monkeypatch.setattr("src.model.model_handler.is_remote_mode", lambda: True)
+
+    labels = tmp_path / "labels.txt"
+    labels.write_text("prey\n", encoding="utf-8")
+    h = ModelHandler(
+        model="yolo",
+        modeldir=str(tmp_path),
+        labelfile="labels.txt",
+        model_image_size=320,
+    )
+    h.inference_device = "intel:gpu"
+
+    called = {"n": 0}
+
+    def _fail_install():
+        called["n"] += 1
+        return False
+
+    monkeypatch.setattr(DependencyInstaller, "ensure_openvino_installed", staticmethod(_fail_install))
+    with pytest.raises(RuntimeError, match="virtualenv"):
+        h.load_model()
+    assert called["n"] == 1
+
+    spec = DependencyInstaller.OPENVINO_PIP_SPEC
+    requirements = Path(__file__).resolve().parents[2] / "requirements_remote.txt"
+    assert spec in requirements.read_text(encoding="utf-8")

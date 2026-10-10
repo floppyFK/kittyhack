@@ -177,6 +177,14 @@ class ModelHandler:
             from src.baseconfig import configure_logging
 
             if self._uses_openvino_backend():
+                # Install into this venv before Ultralytics runs `pip install`, which
+                # uses the system interpreter and fails on Debian (PEP 668).
+                from src.system import DependencyInstaller
+                if not DependencyInstaller.ensure_openvino_installed():
+                    raise RuntimeError(
+                        "OpenVINO is required for this inference device and could not "
+                        "be installed into the Kittyhack virtualenv."
+                    )
                 self._ensure_openvino_model_export()
 
             resolved_inference_device = self._resolved_inference_device()

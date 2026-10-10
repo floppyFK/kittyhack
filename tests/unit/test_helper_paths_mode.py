@@ -225,16 +225,27 @@ def test_update_changes_runtime_files(monkeypatch):
 
 def test_heavy_update_repo_files_remote_uses_remote_requirements(monkeypatch):
     """Remote hosts watch requirements_remote.txt, not the Kittyflap file."""
+    from src.baseconfig import CONFIG
     from src.helper import heavy_update_repo_files
 
-    monkeypatch.setattr("src.mode.is_remote_mode", lambda: False)
-    assert heavy_update_repo_files() == ("setup/REQUIRED_PYTHON", "requirements.txt")
+    previous = CONFIG.get("INFERENCE_DEVICE")
+    CONFIG["INFERENCE_DEVICE"] = "cpu"
+    try:
+        monkeypatch.setattr("src.mode.is_remote_mode", lambda: False)
+        assert heavy_update_repo_files() == ("setup/REQUIRED_PYTHON", "requirements.txt")
 
-    monkeypatch.setattr("src.mode.is_remote_mode", lambda: True)
-    assert heavy_update_repo_files() == (
-        "setup/REQUIRED_PYTHON",
-        "requirements_remote.txt",
-    )
+        monkeypatch.setattr("src.mode.is_remote_mode", lambda: True)
+        assert heavy_update_repo_files() == (
+            "setup/REQUIRED_PYTHON",
+            "requirements_remote.txt",
+        )
+        CONFIG["INFERENCE_DEVICE"] = "cuda:0"
+        assert heavy_update_repo_files() == (
+            "setup/REQUIRED_PYTHON",
+            "requirements_remote_cuda.txt",
+        )
+    finally:
+        CONFIG["INFERENCE_DEVICE"] = previous
 
 
 def test_read_latest_kittyhack_version_beta_channel(monkeypatch):

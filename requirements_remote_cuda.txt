@@ -1,0 +1,67 @@
+# Optional remote install for inference device cuda:0.
+# The default requirements_remote.txt does not install PyTorch.
+# This file does, from PyPI, which on x86_64 is the CUDA build and pulls
+# several GB of nvidia-* wheels.
+#
+#   setup/ensure_venv.sh --bootstrap --root /root/kittyhack --cuda
+#
+# Ultralytics requires opencv-python (the GUI build). Do not also pin
+# opencv-python-headless; the installer removes the other build.
+anyio==4.9.0
+appdirs==1.4.4
+asgiref==3.8.1
+certifi==2025.4.26
+charset-normalizer==3.4.2
+click==8.1.8
+colorama==0.4.6
+ConfigUpdater==3.2
+faicons==0.2.2
+h11==0.16.0
+htmltools==0.6.0
+idna==3.10
+Jinja2==3.1.6
+linkify-it-py==2.0.3
+markdown-it-py==3.0.0
+MarkupSafe==3.0.3
+matplotlib==3.10.9
+mdit-py-plugins==0.4.2
+mdurl==0.1.2
+narwhals==1.40.0
+ncnn==1.0.20260526
+numpy==2.3.5
+openvino==2026.4.1
+opencv-python==4.11.0.86
+orjson==3.11.9
+packaging==25.0
+paho-mqtt==2.1.0
+pandas==2.3.3
+pillow==11.3.0
+prompt-toolkit==3.0.51
+psutil==7.0.0
+py-cpuinfo==9.0.0
+python-dateutil==2.9.0.post0
+python-multipart==0.0.20
+pytz==2025.2
+PyYAML==6.0.3
+questionary==2.1.0
+requests==2.32.3
+scipy==1.16.3
+seaborn==0.13.2
+shiny==1.2.1
+six==1.17.0
+sniffio==1.3.1
+starlette==0.41.2
+ai-edge-litert==2.1.6
+torch==2.9.1
+torchvision==0.24.1
+tqdm==4.67.1
+typing_extensions==4.13.2
+tzdata==2025.2
+uc-micro-py==1.0.3
+ultralytics==8.3.119
+ultralytics-thop==2.0.14
+urllib3==2.4.0
+uvicorn==0.34.2
+watchfiles==1.1.1
+wcwidth==0.2.13
+websockets==15.0.1

@@ -875,8 +875,10 @@ class KittyhackUpdater:
             content = content.replace("/root/kittyhack", kittyhack_root())
             try:
                 if is_remote_mode() and "--requirements" not in content:
+                    from src.helper import active_requirements_filename
+
                     apply_root = f"--apply --root {kittyhack_root()}"
-                    req = os.path.join(kittyhack_root(), "requirements_remote.txt")
+                    req = os.path.join(kittyhack_root(), active_requirements_filename())
                     content = content.replace(
                         apply_root, f"{apply_root} --requirements {req}"
                     )
@@ -955,24 +957,23 @@ class KittyhackUpdater:
                 pass
 
         try:
-            _is_remote_update = bool(is_remote_mode())
+            from src.helper import active_requirements_filename
+
+            _req_name = active_requirements_filename()
         except Exception:
-            _is_remote_update = False
-        _req_name = "requirements_remote.txt" if _is_remote_update else "requirements.txt"
+            _req_name = "requirements.txt"
         requirements_path = os.path.join(kittyhack_root(), _req_name)
         ensure_venv_script = os.path.join(kittyhack_root(), "setup", "ensure_venv.sh")
         venv_new_dir = os.path.join(kittyhack_root(), ".venv.new")
         venv_activate = os.path.join(kittyhack_root(), ".venv", "bin", "activate")
-        # pip install does not uninstall dropped pins. On the Kittyflap, strip
-        # leftover torch/ultralytics from older venvs after installing the target file.
+        # pip install does not uninstall dropped pins. Strip leftover CUDA torch
+        # when the selected requirements file does not list it.
         _uninstall_leftover_torch = (
-            ""
-            if _is_remote_update
-            else (
-                f" && if ! grep -qE '^torch(==|>=|<=|~=|>|<|!=)' {requirements_path}; then "
-                "pip uninstall -y torch torchvision ultralytics ultralytics-thop || true; "
-                "fi"
-            )
+            f" && if ! grep -qE '^torch(==|>=|<=|~=|>|<|!=)' {requirements_path}; then "
+            "pip uninstall -y torch torchvision ultralytics ultralytics-thop || true; "
+            "extras=$(pip freeze | awk -F'==' 'tolower($1) ~ /^(nvidia-|triton$)/ {print $1}'); "
+            "if [ -n \"$extras\" ]; then pip uninstall -y $extras || true; fi; "
+            "fi"
         )
         pip_install_cmd = [
             "/bin/bash",

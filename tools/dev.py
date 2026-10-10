@@ -575,8 +575,18 @@ def is_remote_host() -> bool:
 
 
 def requirements_file() -> Path:
-    name = "requirements_remote.txt" if is_remote_host() else "requirements.txt"
-    return ROOT / name
+    if not is_remote_host():
+        return ROOT / "requirements.txt"
+    config = ROOT / "config.ini"
+    if config.is_file():
+        for line in config.read_text(encoding="utf-8", errors="replace").splitlines():
+            stripped = line.strip().lower()
+            if stripped.startswith("inference_device") and "=" in stripped:
+                value = stripped.split("=", 1)[1].strip()
+                if value.startswith("cuda"):
+                    return ROOT / "requirements_remote_cuda.txt"
+                break
+    return ROOT / "requirements_remote.txt"
 
 
 def sha256_file(path: Path) -> str | None:
@@ -627,13 +637,13 @@ def pip_install_into_venv(req: Path) -> None:
         raise DevError(".venv is missing; cannot pip install")
     if not req.is_file():
         raise DevError(f"{req.name} not found")
-    torch_uninstall = ""
-    if not is_remote_host():
-        torch_uninstall = (
-            f" && if ! grep -qE '^torch(==|>=|<=|~=|>|<|!=)' {req}; then "
-            "pip uninstall -y torch torchvision ultralytics ultralytics-thop || true; "
-            "fi"
-        )
+    torch_uninstall = (
+        f" && if ! grep -qE '^torch(==|>=|<=|~=|>|<|!=)' {req}; then "
+        "pip uninstall -y torch torchvision ultralytics ultralytics-thop || true; "
+        "extras=$(pip freeze | awk -F'==' 'tolower($1) ~ /^(nvidia-|triton$)/ {print $1}'); "
+        'if [ -n "$extras" ]; then pip uninstall -y $extras || true; fi; '
+        "fi"
+    )
     cmd = [
         "/bin/bash",
         "-c",

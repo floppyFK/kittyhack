@@ -14,6 +14,7 @@
 - **Mobile optimization**: The Web UI stays reliably connected on smartphones even if the browser is briefly sent to the background.
 - **Faster detection**: Cat and prey detection on the Kittyflap is now a bit faster.
 - **Model training API**: Kittyhack now authenticates to the model training server. Older v2.x versions keep working for a short transition period; after that, the update to v3 is mandatory to train models.
+- **Smaller remote install**: A remote host no longer installs the CUDA PyTorch stack. Intel GPU inference uses OpenVINO directly. NVIDIA CUDA stays available via `requirements_remote_cuda.txt`.
 
 ## Bugfixes
 

@@ -248,16 +248,37 @@ HEAVY_UPDATE_REPO_FILES = ("setup/REQUIRED_PYTHON", "requirements.txt")
 MIN_HEAVY_UPDATE_FREE_DISK_MB = 2048
 
 
+def active_requirements_filename() -> str:
+    """Requirements file this host should pip-install.
+
+    Kittyflap: ``requirements.txt``. Remote default: ``requirements_remote.txt``
+    (OpenVINO, no PyTorch). Remote with ``INFERENCE_DEVICE`` ``cuda:*``:
+    ``requirements_remote_cuda.txt`` (PyPI CUDA torch).
+    """
+    from src.mode import is_remote_mode
+
+    if not is_remote_mode():
+        return "requirements.txt"
+    device = ""
+    try:
+        from src.baseconfig import CONFIG
+
+        device = str(CONFIG.get("INFERENCE_DEVICE", "") or "").strip().lower()
+    except Exception:
+        device = ""
+    if device.startswith("cuda"):
+        return "requirements_remote_cuda.txt"
+    return "requirements_remote.txt"
+
+
 def heavy_update_repo_files() -> tuple[str, ...]:
     """Runtime files whose change implies a venv rebuild and/or full pip reinstall.
 
     Kittyflap installs ``requirements.txt`` (no torch). Remote hosts install
-    ``requirements_remote.txt``.
+    ``requirements_remote.txt``, or ``requirements_remote_cuda.txt`` when the
+    configured inference device is CUDA.
     """
-    from src.mode import is_remote_mode
-
-    req = "requirements_remote.txt" if is_remote_mode() else "requirements.txt"
-    return ("setup/REQUIRED_PYTHON", req)
+    return ("setup/REQUIRED_PYTHON", active_requirements_filename())
 
 class Versioning:
     """Git/version comparison, update-repo resolution, changelogs, release notes."""

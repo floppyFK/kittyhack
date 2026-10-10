@@ -41,7 +41,7 @@ Setup files: `setup/kittyhack.service`, `setup/kittyhack_control.service`, `setu
 | TFLite / LiteRT inference | `src/model/model_handler.py` | `from ai_edge_litert.interpreter import Interpreter` (replaces `tflite_runtime` on Python 3.12+) |
 | Required Python pin | `setup/REQUIRED_PYTHON` | Currently `3.14`; enforced by `setup/ensure_venv.sh` |
 | Target deps | `requirements.txt` | Kittyflap venv. No torch/ultralytics (native NCNN + LiteRT). |
-| Remote deps | `requirements_remote.txt` | Remote host venv. Adds torch/torchvision/ultralytics. |
+| Remote deps | `requirements_remote.txt` | Remote host venv. Adds OpenVINO. No torch. CUDA extra: `requirements_remote_cuda.txt`. OpenVINO export: `requirements_openvino_export.txt` (CPU torch). |
 | DB access | `src/database.py` | `db_get_cats`, `db_get_motion_blocks`, `get_cat_settings_map`, backup helpers |
 | MQTT | `src/mqtt.py` | `MqttPublisher`, topics, `handle_manual_override()` bridge in backend |
 | REST API (PR #153, not yet merged to main) | `src/api.py` | Token storage, auth, Starlette routes, middleware |
@@ -112,8 +112,8 @@ Tags are **lightweight** (no annotation, `git tag vX.Y.Z`). Follow the style.
 3. `git remote set-url origin <resolved_url>` (if custom update repo configured)
 4. `git fetch --all --tags`
 5. `git checkout <tag>` (tag mode) OR `git checkout -B <ref> origin/<ref>` (branch mode)
-6. `setup/ensure_venv.sh --prepare` (no-op while `REQUIRED_PYTHON` matches `.venv`; otherwise builds `.venv.new`). Passes `--requirements` for the host: `requirements.txt` on the Kittyflap, `requirements_remote.txt` in remote mode.
-7. `pip install -r` that same file if its hash changed **and** no `.venv.new` was prepared. On the Kittyflap, leftover torch/ultralytics from older venvs are uninstalled (pip does not drop removed pins).
+6. `setup/ensure_venv.sh --prepare` (no-op while `REQUIRED_PYTHON` matches `.venv`; otherwise builds `.venv.new`). Passes `--requirements` for the host: `requirements.txt` on the Kittyflap, `requirements_remote.txt` in remote mode (`requirements_remote_cuda.txt` when `inference_device` is `cuda:*`, or `--cuda`).
+7. `pip install -r` that same file if its hash changed **and** no `.venv.new` was prepared. If that file does not pin torch, leftover torch/ultralytics and the `nvidia-*` / triton packages are uninstalled (pip does not drop removed pins).
 8. Install systemd unit files, `daemon-reload`, apply boot semantics (enable/start may be deferred when updating from `kittyhack_control`)
 9. Rollback branch (`git checkout <current_version>`) on any failure; also removes a half-prepared `.venv.new`
 

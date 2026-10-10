@@ -19,11 +19,13 @@ MODE="--apply"
 ROOT=""
 SKIP_PIP=0
 SMOKE_STRICT=0
+USE_CUDA=0
+REQUIREMENTS_EXPLICIT=0
 REQUIREMENTS_FILE=""
 
 usage() {
     cat <<'EOF'
-Usage: ensure_venv.sh [--bootstrap|--prepare|--apply] [--root DIR] [--requirements FILE] [--skip-pip] [--smoke-strict]
+Usage: ensure_venv.sh [--bootstrap|--prepare|--apply] [--root DIR] [--requirements FILE] [--cuda] [--skip-pip] [--smoke-strict]
 
   --bootstrap       Create .venv in place (fresh install / recovery with services stopped).
   --prepare         Build .venv.new if the active .venv Python mismatches REQUIRED_PYTHON.
@@ -31,6 +33,9 @@ Usage: ensure_venv.sh [--bootstrap|--prepare|--apply] [--root DIR] [--requiremen
   --root DIR        Kittyhack install root (default: parent of setup/).
   --requirements F  requirements file (default: requirements.txt, or
                     requirements_remote.txt when this host is in remote mode).
+  --cuda            Remote only: install requirements_remote_cuda.txt (PyPI CUDA
+                    torch). Also selected when config.ini inference_device is cuda:*.
+                    Ignored when --requirements is set.
   --skip-pip        Skip pip install -r <requirements> (bootstrap/testing only).
   --smoke-strict    Fail smoke test if listed ML packages cannot be imported.
 EOF
@@ -40,7 +45,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --bootstrap|--prepare|--apply) MODE="$1"; shift ;;
         --root) ROOT="${2:-}"; shift 2 ;;
-        --requirements) REQUIREMENTS_FILE="${2:-}"; shift 2 ;;
+        --requirements) REQUIREMENTS_FILE="${2:-}"; REQUIREMENTS_EXPLICIT=1; shift 2 ;;
+        --cuda) USE_CUDA=1; shift ;;
         --skip-pip) SKIP_PIP=1; shift ;;
         --smoke-strict) SMOKE_STRICT=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -67,8 +73,16 @@ is_remote_host() {
     [[ -f "${ROOT}/.remote-mode" ]]
 }
 
+config_wants_cuda() {
+    local cfg="${ROOT}/config.ini"
+    [[ -f "$cfg" ]] || return 1
+    grep -Eiq '^[[:space:]]*inference_device[[:space:]]*=[[:space:]]*cuda' "$cfg"
+}
+
 if [[ -z "$REQUIREMENTS_FILE" ]]; then
-    if is_remote_host; then
+    if is_remote_host && { [[ "$USE_CUDA" -eq 1 ]] || config_wants_cuda; }; then
+        REQUIREMENTS_FILE="${ROOT}/requirements_remote_cuda.txt"
+    elif is_remote_host; then
         REQUIREMENTS_FILE="${ROOT}/requirements_remote.txt"
     else
         REQUIREMENTS_FILE="${ROOT}/requirements.txt"
@@ -269,6 +283,7 @@ pip_install_requirements() {
     pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 --no-cache-dir -U pip setuptools wheel
     pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 --no-cache-dir -r "$REQUIREMENTS_FILE"
     uninstall_unlisted_torch_stack "$venv_dir"
+    uninstall_other_opencv "$venv_dir"
     deactivate || true
 }
 
@@ -279,17 +294,36 @@ requirements_lists_pkg() {
 }
 
 uninstall_unlisted_torch_stack() {
-    # pip install -r does not remove dropped pins. Older Kittyflap venvs still
-    # contain torch/ultralytics after target requirements.txt stopped listing them.
+    # pip install -r does not remove dropped pins. Older venvs still contain the
+    # CUDA torch stack after requirements_remote.txt stopped listing it.
     if requirements_lists_pkg torch; then
         return 0
     fi
     log "Removing leftover torch/ultralytics (not listed in $(basename "$REQUIREMENTS_FILE"))"
     local pip_bin="${venv_dir}/bin/pip"
-    if [[ -x "$pip_bin" ]]; then
-        "$pip_bin" uninstall -y torch torchvision ultralytics ultralytics-thop >/dev/null 2>&1 || true
-    else
-        pip uninstall -y torch torchvision ultralytics ultralytics-thop >/dev/null 2>&1 || true
+    if [[ ! -x "$pip_bin" ]]; then
+        pip_bin="pip"
+    fi
+    "$pip_bin" uninstall -y torch torchvision ultralytics ultralytics-thop >/dev/null 2>&1 || true
+    # The PyPI torch wheel depends on nvidia-* and triton. Uninstalling torch
+    # leaves those multi-GB packages installed.
+    local extras
+    extras="$("$pip_bin" freeze 2>/dev/null | awk -F'==' 'tolower($1) ~ /^(nvidia-|triton$)/ {print $1}')"
+    if [[ -n "$extras" ]]; then
+        # shellcheck disable=SC2086
+        "$pip_bin" uninstall -y $extras >/dev/null 2>&1 || true
+    fi
+}
+
+uninstall_other_opencv() {
+    # opencv-python and opencv-python-headless both provide cv2. Keep only the
+    # build named in the requirements file.
+    local pip_bin="${venv_dir}/bin/pip"
+    [[ -x "$pip_bin" ]] || pip_bin="pip"
+    if requirements_lists_pkg opencv-python-headless && ! requirements_lists_pkg opencv-python; then
+        "$pip_bin" uninstall -y opencv-python >/dev/null 2>&1 || true
+    elif requirements_lists_pkg opencv-python && ! requirements_lists_pkg opencv-python-headless; then
+        "$pip_bin" uninstall -y opencv-python-headless >/dev/null 2>&1 || true
     fi
 }
 

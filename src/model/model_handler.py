@@ -106,39 +106,18 @@ class ModelHandler:
             return "intel:gpu"
         return device or "cpu"
 
-    def _ensure_openvino_model_export(self) -> None:
-        """Export model.pt to OpenVINO IR on demand and verify the output exists."""
-        if not self._uses_openvino_backend():
-            return
-
+    def _require_openvino_ir(self) -> None:
+        """Require an already exported OpenVINO IR. Export is a separate one-shot tool."""
         xml_exists = os.path.isdir(self.modeldir) and any(
             name.endswith(".xml") for name in os.listdir(self.modeldir)
         )
         if xml_exists:
             return
-
-        pt_model_path = os.path.join(self._model_rootdir, "model.pt")
-        if not os.path.exists(pt_model_path):
-            raise FileNotFoundError(f"OpenVINO export requires '{pt_model_path}'")
-
-        logging.info(f"[MODEL] OpenVINO export missing. Exporting '{pt_model_path}' to '{self.modeldir}'...")
-
-        from ultralytics import YOLO
-
-        export_model = YOLO(pt_model_path, task="detect", verbose=False)
-        export_result = export_model.export(
-            format="openvino",
-            imgsz=self.input_size,
+        raise FileNotFoundError(
+            "OpenVINO model is missing (.xml). Export it once with tools/export_openvino.py "
+            "after installing requirements_openvino_export.txt (CPU PyTorch wheels, not the "
+            f"CUDA stack). Expected the IR in {self.modeldir}"
         )
-
-        if isinstance(export_result, str) and export_result.strip():
-            self.modeldir = export_result
-
-        xml_exists = os.path.isdir(self.modeldir) and any(
-            name.endswith(".xml") for name in os.listdir(self.modeldir)
-        )
-        if not xml_exists:
-            raise RuntimeError(f"OpenVINO export did not produce a valid model directory: {self.modeldir}")
 
     def _load_labels(self) -> None:
         """Load class labels from `self.labelfile` into `self.labels`."""
@@ -174,74 +153,97 @@ class ModelHandler:
             self._model_worker = None
 
         elif self.model == "yolo":
-            from src.baseconfig import configure_logging
-
             if self._uses_openvino_backend():
-                # Install into this venv before Ultralytics runs `pip install`, which
-                # uses the system interpreter and fails on Debian (PEP 668).
                 from src.system import DependencyInstaller
                 if not DependencyInstaller.ensure_openvino_installed():
                     raise RuntimeError(
                         "OpenVINO is required for this inference device and could not "
                         "be installed into the Kittyhack virtualenv."
                     )
-                self._ensure_openvino_model_export()
+                self._require_openvino_ir()
+                from .openvino_detect import OpenVinoYoloDetector
+
+                detector = OpenVinoYoloDetector(
+                    self.modeldir,
+                    self._resolved_inference_device(),
+                    self.input_size,
+                )
+
+                def openvino_inference(frame, input_size):
+                    return detector.predict(
+                        frame,
+                        self.labels,
+                        self.cat_names,
+                        CONFIG.get("MIN_THRESHOLD", 0),
+                        input_size,
+                    )
+
+                self._yolo = openvino_inference
+                self._yolo_model = None
+                self._model_worker = None
+                self._Interpreter = None
+                return
 
             resolved_inference_device = self._resolved_inference_device()
+            is_cuda = resolved_inference_device.startswith("cuda")
 
             all_cores = multiprocessing.cpu_count()
-            # GPU/OpenVINO always use the direct path (the device handles parallelism).
             # On Kittyflap hardware never use all cores — that undervolts the Pi.
+            # Remote CPU may use every core in-process. CUDA stays on Ultralytics.
             if not is_remote_mode():
                 using_all_cores = False
             else:
-                using_all_cores = (
-                    self.num_threads >= all_cores
-                    or self.inference_device.lower() != "cpu"
-                )
+                using_all_cores = self.num_threads >= all_cores
 
-            # If using all cores (or GPU), run the model directly for better performance
-            if using_all_cores:
+            if is_cuda:
+                from src.baseconfig import configure_logging
                 from ultralytics import YOLO
-                if self.inference_device.lower() == 'cpu':
-                    _device_label = 'cpu (NCNN)'
-                elif self._uses_openvino_backend():
-                    _device_label = f'{self.inference_device} via OpenVINO AUTO'
-                else:
-                    _device_label = self.inference_device
-                logging.info(f"[MODEL] Loading YOLO model directly in main process (device={_device_label})")
+
+                logging.info(
+                    f"[MODEL] Loading YOLO model directly in main process (device={resolved_inference_device})"
+                )
                 logging.getLogger("ultralytics").setLevel(logging.WARNING)
                 logging.getLogger("ultralytics.yolo.engine.model").setLevel(logging.WARNING)
                 self._yolo_model = YOLO(self.modeldir, task="detect", verbose=False)
-                # Re-Configure logging to silence the model's output
                 configure_logging(CONFIG['LOGLEVEL'])
 
-                # Capture device info for the closure
                 _inference_device = resolved_inference_device
-                _is_openvino = self._uses_openvino_backend()
 
-                # Create a wrapper function to match the expected interface
                 def direct_inference(frame, input_size):
-                    # Run inference directly. Ultralytics handles letterboxing internally.
-                    # For OpenVINO models, do NOT pass device: Ultralytics hardcodes
-                    # device_name="AUTO" internally, and select_device() does not
-                    # understand Intel GPU strings (it only knows CUDA/CPU/MPS).
-                    # OpenVINO AUTO mode automatically selects the best available
-                    # device (GPU if available, CPU as fallback).
-                    # For CUDA, pass the device explicitly as usual.
-                    _predict_kwargs: dict = dict(stream=True, imgsz=input_size, verbose=False)
-                    if _inference_device != 'cpu' and not _is_openvino:
-                        _predict_kwargs['device'] = _inference_device
-                    results = self._yolo_model(frame, **_predict_kwargs)
+                    results = self._yolo_model(
+                        frame,
+                        stream=True,
+                        imgsz=input_size,
+                        verbose=False,
+                        device=_inference_device,
+                    )
                     return _parse_yolo_detection_results(
                         results,
                         self.labels,
                         self.cat_names,
                         CONFIG.get('MIN_THRESHOLD', 0),
                     )
-                
+
                 self._yolo = direct_inference
                 self._model_worker = None
+            elif using_all_cores:
+                from .ncnn_detect import NcnnYoloDetector
+
+                detector = NcnnYoloDetector(self.modeldir, self.num_threads, self.input_size)
+
+                def ncnn_inference(frame, input_size):
+                    return detector.predict(
+                        frame,
+                        self.labels,
+                        self.cat_names,
+                        CONFIG.get("MIN_THRESHOLD", 0),
+                        input_size,
+                    )
+
+                self._yolo = ncnn_inference
+                self._yolo_model = None
+                self._model_worker = None
+                self._Interpreter = None
             else:
                 # Limited-core path: NCNN in a child process (no PyTorch).
                 # Python 3.14's default start method on Linux is forkserver.

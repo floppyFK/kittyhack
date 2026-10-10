@@ -45,6 +45,18 @@ def get_update_progress():
         return update_progress_state.copy()
 
 
+def update_dialog_is_open() -> bool:
+    """True while the update progress or reboot/error dialog should stay in front.
+
+    A remote update drops the control websocket on purpose. That must not raise
+    the "remote disconnected" modal over the update dialog.
+    """
+    state = get_update_progress()
+    if state.get("in_progress"):
+        return True
+    return state.get("result") in ("ok", "error", "reboot_dialog")
+
+
 user_wlan_action_in_progress = False
 
 

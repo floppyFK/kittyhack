@@ -41,6 +41,7 @@ from src.server_ui.state import (
     reload_trigger_config,
     live_view_refresh_nonce,
     live_view_aspect,
+    update_dialog_is_open,
 )
 from src.server_ui.context import SessionContext
 
@@ -492,6 +493,11 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         reactive.invalidate_later(0.5)
 
         if bool(ctx.remote_setup_active.get()):
+            return
+
+        # An update stops the control link on purpose. Keep the update / reboot
+        # dialog in front instead of covering it with "remote disconnected".
+        if update_dialog_is_open():
             return
 
         host, is_ready, manual_disconnect = ctx._remote_connection_state()

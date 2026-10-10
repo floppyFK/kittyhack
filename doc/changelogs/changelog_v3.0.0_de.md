@@ -19,3 +19,4 @@
 
 - **Durchschnittliche FPS**: Die Anzeige der durchschnittlichen FPS pro Modell in der Modellverwaltung wurde nicht mehr aktualisiert. Das ist jetzt behoben.
 - **Remote-Update von einem eigenen Branch**: Ein Update der Kittyflap über ein Remote-Gerät verwendet jetzt das Update-Repository, das auf dem Remote-Gerät eingestellt ist.
+- **Update-Fenster auf einem Remote-Gerät**: Während eines Updates verdeckt der Hinweis "Remote-Verbindung getrennt" nicht mehr das Update- und Neustart-Fenster.

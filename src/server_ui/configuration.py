@@ -2097,6 +2097,10 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         + "> "
                                         + _(
                                             "Note: This is an experimental feature. While it can significantly speed up inference and reduce CPU load, it may also cause instability on unsupported hardware or with incompatible model formats."
+                                        )
+                                        + "\n\n"
+                                        + _(
+                                            "Saving a different device installs the packages it needs. NVIDIA CUDA downloads a large PyTorch build. Intel GPU uses OpenVINO and exports the model once if that file is not there yet."
                                         ),
                                     ),
                                 ),
@@ -2517,26 +2521,10 @@ def register_configuration(input, output, session, ctx: SessionContext):
             )
             CONFIG["YOLO_MODEL"] = ""
 
+        previous_inference_device = CONFIG.get("INFERENCE_DEVICE", "cpu")
         CONFIG["INFERENCE_DEVICE"] = (
             input.inference_device() if is_remote_mode() else "cpu"
         )
-
-        if is_remote_mode() and str(
-            input.inference_device() or ""
-        ).strip().lower().startswith("intel:"):
-            openvino_ok = DependencyInstaller.ensure_openvino_installed()
-            if not openvino_ok:
-                ui.notification_show(
-                    _("OpenVINO: ")
-                    + _(
-                        "The `openvino` package could not be installed automatically. "
-                        "Please run `pip install openvino` manually and try again. "
-                        "Changes were not saved."
-                    ),
-                    duration=None,
-                    type="error",
-                )
-                return
 
         CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = input.btnUseCameraForCatDetection()
         CONFIG["CAT_THRESHOLD"] = float(input.sldCatThreshold())
@@ -2724,6 +2712,58 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 duration=None,
                 type="warning",
             )
+
+        if inference_device_changed:
+            model_root = ""
+            model_imgsz = 320
+            if CONFIG.get("YOLO_MODEL"):
+                model_root = YoloModel.get_model_path(CONFIG["YOLO_MODEL"]) or ""
+                try:
+                    model_imgsz = int(
+                        YoloModel.get_model_image_size(CONFIG["YOLO_MODEL"]) or 320
+                    )
+                except Exception:
+                    model_imgsz = 320
+            ui.notification_show(
+                _(
+                    "Installing packages for the new inference device. This can take several minutes."
+                ),
+                duration=None,
+                type="message",
+            )
+            prepare_ok, prepare_error = DependencyInstaller.prepare_inference_device(
+                str(CONFIG.get("INFERENCE_DEVICE") or "cpu"),
+                model_root,
+                model_imgsz,
+            )
+            if not prepare_ok:
+                CONFIG["INFERENCE_DEVICE"] = previous_inference_device
+                prepare_messages = {
+                    "cuda_install_failed": _(
+                        "The NVIDIA CUDA packages could not be installed. Changes were not saved."
+                    ),
+                    "openvino_install_failed": _(
+                        "The OpenVINO package could not be installed. Changes were not saved."
+                    ),
+                    "model_pt_missing": _(
+                        "This model has no model.pt file, so it cannot be prepared for that device. Changes were not saved."
+                    ),
+                    "export_failed": _(
+                        "The model could not be exported for this device. Changes were not saved."
+                    ),
+                    "opencv_install_failed": _(
+                        "OpenCV could not be installed for this device. Changes were not saved."
+                    ),
+                }
+                ui.notification_show(
+                    prepare_messages.get(
+                        prepare_error,
+                        _("Could not switch the inference device. Changes were not saved."),
+                    ),
+                    duration=None,
+                    type="error",
+                )
+                return
 
         if save_config():
             ui.notification_show(

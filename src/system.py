@@ -343,6 +343,281 @@ class DependencyInstaller:
         except Exception:
             return False
 
+    CPU_TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
+
+    @staticmethod
+    def _pip_env() -> dict:
+        env = os.environ.copy()
+        env["PIP_CONFIG_FILE"] = "/dev/null"
+        env.pop("PIP_INDEX_URL", None)
+        env.pop("PIP_EXTRA_INDEX_URL", None)
+        return env
+
+    @staticmethod
+    def _pip_install(args: list[str], timeout: int) -> bool:
+        cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir", "--timeout", "120", *args]
+        logging.info("[MODEL] " + " ".join(cmd))
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=timeout,
+                check=False,
+                env=DependencyInstaller._pip_env(),
+            )
+        except Exception as e:
+            logging.error(f"[MODEL] pip install failed: {e}")
+            return False
+        if result.returncode != 0:
+            tail = (result.stdout or "").strip()[-2000:]
+            logging.error(f"[MODEL] pip install exited {result.returncode}: {tail}")
+            return False
+        import importlib
+        importlib.invalidate_caches()
+        return True
+
+    @staticmethod
+    def _pip_uninstall(names: list[str]) -> None:
+        if not names:
+            return
+        subprocess.run(
+            [sys.executable, "-m", "pip", "uninstall", "-y", *names],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=300,
+            check=False,
+            env=DependencyInstaller._pip_env(),
+        )
+
+    @staticmethod
+    def _installed_pip_names() -> list[str]:
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "freeze"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=120,
+                check=False,
+                env=DependencyInstaller._pip_env(),
+            )
+        except Exception:
+            return []
+        names = []
+        for line in (result.stdout or "").splitlines():
+            name = line.split("==", 1)[0].strip()
+            if name:
+                names.append(name)
+        return names
+
+    @staticmethod
+    def _uninstall_torch_stack() -> None:
+        """Drop PyTorch and the CUDA libraries it pulls in. Keep OpenVINO."""
+        DependencyInstaller._pip_uninstall(
+            ["torch", "torchvision", "ultralytics", "ultralytics-thop"]
+        )
+        extras = [
+            name
+            for name in DependencyInstaller._installed_pip_names()
+            if name.lower().startswith("nvidia-") or name.lower() == "triton"
+        ]
+        DependencyInstaller._pip_uninstall(extras)
+
+    @staticmethod
+    def _package_installed(name: str) -> bool:
+        import importlib.util
+        try:
+            return importlib.util.find_spec(name) is not None
+        except Exception:
+            return False
+
+    @staticmethod
+    def _requirement_spec(filename: str, package: str) -> str:
+        path = os.path.join(kittyhack_root(), filename)
+        prefix = package + "=="
+        try:
+            with open(path, encoding="utf-8") as handle:
+                for line in handle:
+                    stripped = line.strip()
+                    if stripped.startswith(prefix):
+                        return stripped
+        except OSError:
+            pass
+        return package
+
+    @staticmethod
+    def _dir_has_file_suffix(path: str, suffix: str) -> bool:
+        if not os.path.isdir(path):
+            return False
+        return any(name.endswith(suffix) for name in os.listdir(path))
+
+    @staticmethod
+    def _relocate_export(root: str, expected_name: str, produced_names: list[str], suffix: str) -> bool:
+        expected = os.path.join(root, expected_name)
+        if DependencyInstaller._dir_has_file_suffix(expected, suffix):
+            return True
+        for name in produced_names:
+            produced = os.path.join(root, name)
+            if not DependencyInstaller._dir_has_file_suffix(produced, suffix):
+                continue
+            if os.path.isdir(expected):
+                shutil.rmtree(expected, ignore_errors=True)
+            os.rename(produced, expected)
+            return DependencyInstaller._dir_has_file_suffix(expected, suffix)
+        return False
+
+    @staticmethod
+    def _export_yolo(pt_path: str, export_format: str, imgsz: int) -> bool:
+        script = os.path.join(kittyhack_root(), "tools", "export_openvino.py")
+        logging.info(f"[MODEL] Exporting {pt_path} to {export_format}")
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    script,
+                    pt_path,
+                    "--format",
+                    export_format,
+                    "--imgsz",
+                    str(int(imgsz)),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=1800,
+                check=False,
+                env=DependencyInstaller._pip_env(),
+            )
+        except Exception as e:
+            logging.error(f"[MODEL] Model export failed: {e}")
+            return False
+        if result.returncode != 0:
+            tail = (result.stdout or "").strip()[-2000:]
+            logging.error(f"[MODEL] Model export exited {result.returncode}: {tail}")
+            return False
+        return True
+
+    @staticmethod
+    def _ensure_export(model_root: str, export_format: str, imgsz: int, ready) -> str | None:
+        """Return an error code, or None when the export is present.
+
+        ``ready`` is a zero-arg predicate. A missing ``model.pt`` is only an
+        error when the export itself is missing.
+        """
+        if ready():
+            return None
+        pt_path = os.path.join(model_root, "model.pt")
+        if not os.path.isfile(pt_path):
+            return "model_pt_missing"
+        had_ultralytics = DependencyInstaller._package_installed("ultralytics")
+        if not had_ultralytics:
+            req = os.path.join(kittyhack_root(), "requirements_openvino_export.txt")
+            installed = DependencyInstaller._pip_install(
+                [
+                    "--index-url",
+                    DependencyInstaller.CPU_TORCH_INDEX,
+                    "--extra-index-url",
+                    "https://pypi.org/simple",
+                    "-r",
+                    req,
+                ],
+                timeout=1800,
+            )
+            if not installed:
+                return "export_failed"
+        if not DependencyInstaller._export_yolo(pt_path, export_format, imgsz) or not ready():
+            if not had_ultralytics:
+                DependencyInstaller._uninstall_torch_stack()
+                DependencyInstaller._ensure_headless_opencv()
+            return "export_failed"
+        return None
+
+    @staticmethod
+    def _ensure_headless_opencv() -> bool:
+        if DependencyInstaller._package_installed("cv2"):
+            # The GUI wheel and the headless wheel both provide cv2. Prefer headless
+            # once CUDA's opencv-python is no longer required.
+            names = {name.lower() for name in DependencyInstaller._installed_pip_names()}
+            if "opencv-python" not in names:
+                return True
+        DependencyInstaller._pip_uninstall(["opencv-python"])
+        spec = DependencyInstaller._requirement_spec(
+            "requirements_remote.txt", "opencv-python-headless"
+        )
+        return DependencyInstaller._pip_install(
+            ["--index-url", "https://pypi.org/simple", spec],
+            timeout=600,
+        )
+
+    @staticmethod
+    def prepare_inference_device(device: str, model_root: str, imgsz: int) -> tuple[bool, str]:
+        """Install the packages (and model export) the selected device needs.
+
+        Returns ``(ok, error_code)``. ``error_code`` is empty on success.
+        """
+        import importlib
+
+        selected = str(device or "cpu").strip().lower()
+        if selected == "gpu":
+            selected = "intel:gpu"
+        is_cuda = selected.startswith("cuda")
+        is_openvino = selected in {"intel:gpu", "intel:cpu", "intel:npu"}
+        root = str(model_root or "").strip()
+
+        if is_cuda:
+            if root and not os.path.isfile(os.path.join(root, "model.pt")):
+                return False, "model_pt_missing"
+            logging.info(f"[MODEL] Installing CUDA inference stack for {selected}")
+            DependencyInstaller._pip_uninstall(["opencv-python-headless"])
+            req = os.path.join(kittyhack_root(), "requirements_remote_cuda.txt")
+            if not DependencyInstaller._pip_install(
+                ["--index-url", "https://pypi.org/simple", "-r", req],
+                timeout=3600,
+            ):
+                return False, "cuda_install_failed"
+            importlib.invalidate_caches()
+            return True, ""
+
+        if root and is_openvino:
+            def _openvino_ready() -> bool:
+                return DependencyInstaller._relocate_export(
+                    root,
+                    "model_openvino_model",
+                    ["model_openvino_model"],
+                    ".xml",
+                )
+
+            export_error = DependencyInstaller._ensure_export(
+                root, "openvino", imgsz, _openvino_ready
+            )
+            if export_error:
+                return False, export_error
+        elif root and not is_openvino:
+            def _ncnn_ready() -> bool:
+                return DependencyInstaller._relocate_export(
+                    root,
+                    "best_ncnn_model",
+                    ["best_ncnn_model", "model_ncnn_model"],
+                    ".param",
+                )
+
+            export_error = DependencyInstaller._ensure_export(
+                root, "ncnn", imgsz, _ncnn_ready
+            )
+            if export_error:
+                return False, export_error
+
+        DependencyInstaller._uninstall_torch_stack()
+        if is_openvino and not DependencyInstaller.ensure_openvino_installed():
+            return False, "openvino_install_failed"
+        if not DependencyInstaller._ensure_headless_opencv():
+            return False, "opencv_install_failed"
+        importlib.invalidate_caches()
+        return True, ""
+
 class ServiceOps:
     """systemctl/systemcmd wrappers and service status helpers."""
 

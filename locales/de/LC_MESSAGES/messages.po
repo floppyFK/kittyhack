@@ -3086,6 +3086,30 @@ msgstr ""
 msgid "OpenVINO: "
 msgstr "OpenVINO: "
 
+msgid "Installing packages for the new inference device. This can take several minutes."
+msgstr "Pakete für das neue Inferenz-Gerät werden installiert. Das kann einige Minuten dauern."
+
+msgid "The NVIDIA CUDA packages could not be installed. Changes were not saved."
+msgstr "Die NVIDIA-CUDA-Pakete konnten nicht installiert werden. Die Änderungen wurden nicht gespeichert."
+
+msgid "The OpenVINO package could not be installed. Changes were not saved."
+msgstr "Das OpenVINO-Paket konnte nicht installiert werden. Die Änderungen wurden nicht gespeichert."
+
+msgid "This model has no model.pt file, so it cannot be prepared for that device. Changes were not saved."
+msgstr "Dieses Modell hat keine model.pt-Datei und kann deshalb nicht für dieses Gerät vorbereitet werden. Die Änderungen wurden nicht gespeichert."
+
+msgid "The model could not be exported for this device. Changes were not saved."
+msgstr "Das Modell konnte nicht für dieses Gerät exportiert werden. Die Änderungen wurden nicht gespeichert."
+
+msgid "OpenCV could not be installed for this device. Changes were not saved."
+msgstr "OpenCV konnte für dieses Gerät nicht installiert werden. Die Änderungen wurden nicht gespeichert."
+
+msgid "Could not switch the inference device. Changes were not saved."
+msgstr "Das Inferenz-Gerät konnte nicht gewechselt werden. Die Änderungen wurden nicht gespeichert."
+
+msgid "Saving a different device installs the packages it needs. NVIDIA CUDA downloads a large PyTorch build. Intel GPU uses OpenVINO and exports the model once if that file is not there yet."
+msgstr "Beim Speichern eines anderen Geräts werden die dafür nötigen Pakete installiert. NVIDIA CUDA lädt einen großen PyTorch-Build herunter. Die Intel-GPU nutzt OpenVINO und exportiert das Modell einmalig, falls diese Datei noch fehlt."
+
 msgid ""
 "The `openvino` package could not be installed automatically. Please run `pip "
 "install openvino` manually and try again. Changes were not saved."

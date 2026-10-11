@@ -30,6 +30,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Export model.pt to OpenVINO IR")
     parser.add_argument("model", help="Path to model.pt or the model directory that contains it")
     parser.add_argument("--imgsz", type=int, default=480, help="Export image size (square)")
+    parser.add_argument(
+        "--format",
+        choices=("openvino", "ncnn"),
+        default="openvino",
+        help="Export format",
+    )
     args = parser.parse_args(argv)
 
     pt_path = _model_pt(Path(args.model).expanduser().resolve())
@@ -42,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     model = YOLO(str(pt_path), task="detect", verbose=False)
-    exported = model.export(format="openvino", imgsz=int(args.imgsz))
+    exported = model.export(format=args.format, imgsz=int(args.imgsz))
     print(exported)
     return 0
 

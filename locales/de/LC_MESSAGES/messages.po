@@ -3089,6 +3089,21 @@ msgstr "OpenVINO: "
 msgid "Installing packages for the new inference device. This can take several minutes."
 msgstr "Pakete für das neue Inferenz-Gerät werden installiert. Das kann einige Minuten dauern."
 
+msgid "Installing the NVIDIA CUDA packages."
+msgstr "Die NVIDIA-CUDA-Pakete werden installiert."
+
+msgid "Exporting the model for this device."
+msgstr "Das Modell wird für dieses Gerät exportiert."
+
+msgid "Removing the temporary PyTorch packages."
+msgstr "Die temporären PyTorch-Pakete werden entfernt."
+
+msgid "Installing OpenVINO."
+msgstr "OpenVINO wird installiert."
+
+msgid "Installing OpenCV."
+msgstr "OpenCV wird installiert."
+
 msgid "The NVIDIA CUDA packages could not be installed. Changes were not saved."
 msgstr "Die NVIDIA-CUDA-Pakete konnten nicht installiert werden. Die Änderungen wurden nicht gespeichert."
 

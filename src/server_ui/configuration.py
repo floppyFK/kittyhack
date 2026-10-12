@@ -1,6 +1,8 @@
 """Configuration tab and save handler."""
 
+import asyncio
 import os
+import time
 from shiny import render, ui, reactive
 import logging
 from faicons import icon_svg
@@ -2254,7 +2256,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
 
     @reactive.Effect
     @reactive.event(input.bSaveKittyhackConfig)
-    def on_save_kittyhack_config():
+    async def on_save_kittyhack_config():
         global _
         global model_handler
 
@@ -2724,18 +2726,50 @@ def register_configuration(input, output, session, ctx: SessionContext):
                     )
                 except Exception:
                     model_imgsz = 320
-            ui.notification_show(
-                _(
-                    "Installing packages for the new inference device. This can take several minutes."
-                ),
-                duration=None,
-                type="message",
+            phase_detail = {
+                "cuda": _("Installing the NVIDIA CUDA packages."),
+                "export": _("Exporting the model for this device."),
+                "torch_cleanup": _("Removing the temporary PyTorch packages."),
+                "openvino": _("Installing OpenVINO."),
+                "opencv": _("Installing OpenCV."),
+            }
+            install_message = _(
+                "Installing packages for the new inference device. This can take several minutes."
             )
-            prepare_ok, prepare_error = DependencyInstaller.prepare_inference_device(
-                str(CONFIG.get("INFERENCE_DEVICE") or "cpu"),
-                model_root,
-                model_imgsz,
-            )
+            with ui.Progress() as install_progress:
+                install_progress.set(message=install_message)
+                # Let the progress panel reach the browser before the install starts.
+                await asyncio.sleep(0)
+                loop = asyncio.get_running_loop()
+                reported = {"at": 0.0, "phase": ""}
+
+                def _report(phase: str, detail: str = "") -> None:
+                    now = time.monotonic()
+                    if phase == reported["phase"] and (now - reported["at"]) < 0.4:
+                        return
+                    reported["at"] = now
+                    reported["phase"] = phase
+                    text = (detail or phase_detail.get(phase) or "").strip()
+                    if len(text) > 160:
+                        text = text[:157] + "..."
+
+                    def _apply(shown: str = text) -> None:
+                        if install_progress._closed:
+                            return
+                        install_progress.set(
+                            message=install_message,
+                            detail=shown or None,
+                        )
+
+                    loop.call_soon_threadsafe(_apply)
+
+                prepare_ok, prepare_error = await asyncio.to_thread(
+                    DependencyInstaller.prepare_inference_device,
+                    str(CONFIG.get("INFERENCE_DEVICE") or "cpu"),
+                    model_root,
+                    model_imgsz,
+                    _report,
+                )
             if not prepare_ok:
                 CONFIG["INFERENCE_DEVICE"] = previous_inference_device
                 prepare_messages = {

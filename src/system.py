@@ -354,42 +354,78 @@ class DependencyInstaller:
         return env
 
     @staticmethod
-    def _pip_install(args: list[str], timeout: int) -> bool:
-        cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir", "--timeout", "120", *args]
+    def _run_streaming(cmd: list[str], timeout: int, progress=None, phase: str = "pip") -> tuple[int, str]:
+        """Run a command, log each output line, and report it to ``progress(phase, line)``."""
         logging.info("[MODEL] " + " ".join(cmd))
         try:
-            result = subprocess.run(
+            process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                timeout=timeout,
-                check=False,
                 env=DependencyInstaller._pip_env(),
             )
         except Exception as e:
-            logging.error(f"[MODEL] pip install failed: {e}")
-            return False
-        if result.returncode != 0:
-            tail = (result.stdout or "").strip()[-2000:]
-            logging.error(f"[MODEL] pip install exited {result.returncode}: {tail}")
+            logging.error(f"[MODEL] command failed to start: {e}")
+            return 1, str(e)
+
+        lines: list[str] = []
+
+        def _read() -> None:
+            if process.stdout is None:
+                return
+            for line in process.stdout:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                lines.append(stripped)
+                logging.info(f"[MODEL] {stripped}")
+                if progress is None:
+                    continue
+                try:
+                    progress(phase, stripped[:160])
+                except Exception:
+                    pass
+
+        reader = threading.Thread(target=_read, daemon=True)
+        reader.start()
+        try:
+            code = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=15)
+            code = 124
+        except Exception as e:
+            process.kill()
+            logging.error(f"[MODEL] command failed: {e}")
+            code = 1
+        reader.join(timeout=5)
+        return code, "\n".join(lines)
+
+    @staticmethod
+    def _pip_install(args: list[str], timeout: int, progress=None, phase: str = "pip") -> bool:
+        code, output = DependencyInstaller._run_streaming(
+            [sys.executable, "-m", "pip", "install", "--no-cache-dir", "--timeout", "120", *args],
+            timeout,
+            progress=progress,
+            phase=phase,
+        )
+        if code != 0:
+            logging.error(f"[MODEL] pip install exited {code}: {output[-2000:]}")
             return False
         import importlib
         importlib.invalidate_caches()
         return True
 
     @staticmethod
-    def _pip_uninstall(names: list[str]) -> None:
+    def _pip_uninstall(names: list[str], progress=None, phase: str = "pip") -> None:
         if not names:
             return
-        subprocess.run(
+        DependencyInstaller._run_streaming(
             [sys.executable, "-m", "pip", "uninstall", "-y", *names],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=300,
-            check=False,
-            env=DependencyInstaller._pip_env(),
+            300,
+            progress=progress,
+            phase=phase,
         )
 
     @staticmethod
@@ -414,17 +450,21 @@ class DependencyInstaller:
         return names
 
     @staticmethod
-    def _uninstall_torch_stack() -> None:
+    def _uninstall_torch_stack(progress=None) -> None:
         """Drop PyTorch and the CUDA libraries it pulls in. Keep OpenVINO."""
+        if progress is not None:
+            progress("torch_cleanup", "")
         DependencyInstaller._pip_uninstall(
-            ["torch", "torchvision", "ultralytics", "ultralytics-thop"]
+            ["torch", "torchvision", "ultralytics", "ultralytics-thop"],
+            progress=progress,
+            phase="torch_cleanup",
         )
         extras = [
             name
             for name in DependencyInstaller._installed_pip_names()
             if name.lower().startswith("nvidia-") or name.lower() == "triton"
         ]
-        DependencyInstaller._pip_uninstall(extras)
+        DependencyInstaller._pip_uninstall(extras, progress=progress, phase="torch_cleanup")
 
     @staticmethod
     def _package_installed(name: str) -> bool:
@@ -470,38 +510,32 @@ class DependencyInstaller:
         return False
 
     @staticmethod
-    def _export_yolo(pt_path: str, export_format: str, imgsz: int) -> bool:
+    def _export_yolo(pt_path: str, export_format: str, imgsz: int, progress=None) -> bool:
         script = os.path.join(kittyhack_root(), "tools", "export_openvino.py")
         logging.info(f"[MODEL] Exporting {pt_path} to {export_format}")
-        try:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    script,
-                    pt_path,
-                    "--format",
-                    export_format,
-                    "--imgsz",
-                    str(int(imgsz)),
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=1800,
-                check=False,
-                env=DependencyInstaller._pip_env(),
-            )
-        except Exception as e:
-            logging.error(f"[MODEL] Model export failed: {e}")
-            return False
-        if result.returncode != 0:
-            tail = (result.stdout or "").strip()[-2000:]
-            logging.error(f"[MODEL] Model export exited {result.returncode}: {tail}")
+        if progress is not None:
+            progress("export", "")
+        code, output = DependencyInstaller._run_streaming(
+            [
+                sys.executable,
+                script,
+                pt_path,
+                "--format",
+                export_format,
+                "--imgsz",
+                str(int(imgsz)),
+            ],
+            1800,
+            progress=progress,
+            phase="export",
+        )
+        if code != 0:
+            logging.error(f"[MODEL] Model export exited {code}: {output[-2000:]}")
             return False
         return True
 
     @staticmethod
-    def _ensure_export(model_root: str, export_format: str, imgsz: int, ready) -> str | None:
+    def _ensure_export(model_root: str, export_format: str, imgsz: int, ready, progress=None) -> str | None:
         """Return an error code, or None when the export is present.
 
         ``ready`` is a zero-arg predicate. A missing ``model.pt`` is only an
@@ -515,6 +549,8 @@ class DependencyInstaller:
         had_ultralytics = DependencyInstaller._package_installed("ultralytics")
         if not had_ultralytics:
             req = os.path.join(kittyhack_root(), "requirements_openvino_export.txt")
+            if progress is not None:
+                progress("export", "")
             installed = DependencyInstaller._pip_install(
                 [
                     "--index-url",
@@ -525,35 +561,41 @@ class DependencyInstaller:
                     req,
                 ],
                 timeout=1800,
+                progress=progress,
+                phase="export",
             )
             if not installed:
                 return "export_failed"
-        if not DependencyInstaller._export_yolo(pt_path, export_format, imgsz) or not ready():
+        if not DependencyInstaller._export_yolo(pt_path, export_format, imgsz, progress=progress) or not ready():
             if not had_ultralytics:
-                DependencyInstaller._uninstall_torch_stack()
-                DependencyInstaller._ensure_headless_opencv()
+                DependencyInstaller._uninstall_torch_stack(progress=progress)
+                DependencyInstaller._ensure_headless_opencv(progress=progress)
             return "export_failed"
         return None
 
     @staticmethod
-    def _ensure_headless_opencv() -> bool:
+    def _ensure_headless_opencv(progress=None) -> bool:
         if DependencyInstaller._package_installed("cv2"):
             # The GUI wheel and the headless wheel both provide cv2. Prefer headless
             # once CUDA's opencv-python is no longer required.
             names = {name.lower() for name in DependencyInstaller._installed_pip_names()}
             if "opencv-python" not in names:
                 return True
-        DependencyInstaller._pip_uninstall(["opencv-python"])
+        if progress is not None:
+            progress("opencv", "")
+        DependencyInstaller._pip_uninstall(["opencv-python"], progress=progress, phase="opencv")
         spec = DependencyInstaller._requirement_spec(
             "requirements_remote.txt", "opencv-python-headless"
         )
         return DependencyInstaller._pip_install(
             ["--index-url", "https://pypi.org/simple", spec],
             timeout=600,
+            progress=progress,
+            phase="opencv",
         )
 
     @staticmethod
-    def prepare_inference_device(device: str, model_root: str, imgsz: int) -> tuple[bool, str]:
+    def prepare_inference_device(device: str, model_root: str, imgsz: int, progress=None) -> tuple[bool, str]:
         """Install the packages (and model export) the selected device needs.
 
         Returns ``(ok, error_code)``. ``error_code`` is empty on success.
@@ -571,11 +613,17 @@ class DependencyInstaller:
             if root and not os.path.isfile(os.path.join(root, "model.pt")):
                 return False, "model_pt_missing"
             logging.info(f"[MODEL] Installing CUDA inference stack for {selected}")
-            DependencyInstaller._pip_uninstall(["opencv-python-headless"])
+            if progress is not None:
+                progress("cuda", "")
+            DependencyInstaller._pip_uninstall(
+                ["opencv-python-headless"], progress=progress, phase="cuda"
+            )
             req = os.path.join(kittyhack_root(), "requirements_remote_cuda.txt")
             if not DependencyInstaller._pip_install(
                 ["--index-url", "https://pypi.org/simple", "-r", req],
                 timeout=3600,
+                progress=progress,
+                phase="cuda",
             ):
                 return False, "cuda_install_failed"
             importlib.invalidate_caches()
@@ -591,7 +639,7 @@ class DependencyInstaller:
                 )
 
             export_error = DependencyInstaller._ensure_export(
-                root, "openvino", imgsz, _openvino_ready
+                root, "openvino", imgsz, _openvino_ready, progress=progress
             )
             if export_error:
                 return False, export_error
@@ -605,15 +653,18 @@ class DependencyInstaller:
                 )
 
             export_error = DependencyInstaller._ensure_export(
-                root, "ncnn", imgsz, _ncnn_ready
+                root, "ncnn", imgsz, _ncnn_ready, progress=progress
             )
             if export_error:
                 return False, export_error
 
-        DependencyInstaller._uninstall_torch_stack()
-        if is_openvino and not DependencyInstaller.ensure_openvino_installed():
-            return False, "openvino_install_failed"
-        if not DependencyInstaller._ensure_headless_opencv():
+        DependencyInstaller._uninstall_torch_stack(progress=progress)
+        if is_openvino:
+            if progress is not None:
+                progress("openvino", "")
+            if not DependencyInstaller.ensure_openvino_installed():
+                return False, "openvino_install_failed"
+        if not DependencyInstaller._ensure_headless_opencv(progress=progress):
             return False, "opencv_install_failed"
         importlib.invalidate_caches()
         return True, ""

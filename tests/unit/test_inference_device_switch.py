@@ -80,6 +80,7 @@ def test_cuda_switch_installs_cuda_requirements_before_download(tmp_path, monkey
         "_uninstall_torch_stack",
         staticmethod(lambda: (_ for _ in ()).throw(AssertionError("uninstall torch"))),
     )
+    monkeypatch.setattr(DependencyInstaller, "_cv2_importable", staticmethod(lambda: True))
 
     ok, code = DependencyInstaller.prepare_inference_device("cuda:0", str(tmp_path), 320)
     assert ok is False
@@ -90,7 +91,7 @@ def test_cuda_switch_installs_cuda_requirements_before_download(tmp_path, monkey
     ok, code = DependencyInstaller.prepare_inference_device("cuda:0", str(tmp_path), 320)
     assert ok is True
     assert code == ""
-    assert uninstalled == [["opencv-python-headless"]]
+    assert uninstalled == [["opencv-python", "opencv-python-headless"]]
     assert any("requirements_remote_cuda.txt" in arg for arg in pip_args[0])
 
 
@@ -122,3 +123,48 @@ def test_cpu_switch_exports_ncnn_and_drops_torch(tmp_path, monkeypatch):
     assert code == ""
     assert dropped["n"] == 1
     assert (tmp_path / "best_ncnn_model" / "model.ncnn.param").is_file()
+
+
+def test_headless_opencv_reinstalls_when_record_remains_but_cv2_is_gone(monkeypatch):
+    removed: list[list[str]] = []
+    installed: list[list[str]] = []
+    state = {"importable": False}
+
+    monkeypatch.setattr(
+        DependencyInstaller,
+        "_installed_pip_names",
+        staticmethod(lambda: ["opencv-python-headless", "numpy"]),
+    )
+    monkeypatch.setattr(DependencyInstaller, "_cv2_importable", staticmethod(lambda: state["importable"]))
+
+    def _uninstall(names, progress=None, phase="pip"):
+        removed.append(list(names))
+
+    def _install(args, timeout, progress=None, phase="pip"):
+        installed.append(list(args))
+        state["importable"] = True
+        return True
+
+    monkeypatch.setattr(DependencyInstaller, "_pip_uninstall", staticmethod(_uninstall))
+    monkeypatch.setattr(DependencyInstaller, "_pip_install", staticmethod(_install))
+
+    assert DependencyInstaller._ensure_headless_opencv() is True
+    assert removed == [["opencv-python-headless"]]
+    assert "--force-reinstall" in installed[0]
+    assert any(arg.startswith("opencv-python-headless==") for arg in installed[0])
+
+
+def test_headless_opencv_is_left_alone_when_import_works(monkeypatch):
+    monkeypatch.setattr(
+        DependencyInstaller,
+        "_installed_pip_names",
+        staticmethod(lambda: ["opencv-python-headless"]),
+    )
+    monkeypatch.setattr(DependencyInstaller, "_cv2_importable", staticmethod(lambda: True))
+    monkeypatch.setattr(
+        DependencyInstaller,
+        "_pip_install",
+        staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("pip"))),
+    )
+
+    assert DependencyInstaller._ensure_headless_opencv() is True

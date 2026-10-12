@@ -475,6 +475,50 @@ class DependencyInstaller:
             return False
 
     @staticmethod
+    def _cv2_importable() -> bool:
+        """True when a new interpreter can import cv2.
+
+        ``find_spec`` in this process stays true after the files are removed,
+        because the running service has already imported cv2.
+        """
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", "import cv2"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=60,
+                check=False,
+            )
+        except Exception:
+            return False
+        return result.returncode == 0
+
+    @staticmethod
+    def _install_opencv_distribution(spec: str, progress=None, phase: str = "opencv") -> bool:
+        """Replace every OpenCV build with ``spec`` and check that cv2 imports.
+
+        ``opencv-python`` and ``opencv-python-headless`` both own the ``cv2``
+        directory. Removing one deletes those files while the other's pip
+        record remains, and a later install then exits as "already satisfied".
+        """
+        if progress is not None:
+            progress(phase, "")
+        installed = {
+            name
+            for name in DependencyInstaller._installed_pip_names()
+            if name.lower().startswith("opencv-python")
+        }
+        DependencyInstaller._pip_uninstall(sorted(installed), progress=progress, phase=phase)
+        if not DependencyInstaller._pip_install(
+            ["--force-reinstall", "--no-deps", "--index-url", "https://pypi.org/simple", spec],
+            timeout=600,
+            progress=progress,
+            phase=phase,
+        ):
+            return False
+        return DependencyInstaller._cv2_importable()
+
+    @staticmethod
     def _requirement_spec(filename: str, package: str) -> str:
         path = os.path.join(kittyhack_root(), filename)
         prefix = package + "=="
@@ -575,24 +619,17 @@ class DependencyInstaller:
 
     @staticmethod
     def _ensure_headless_opencv(progress=None) -> bool:
-        if DependencyInstaller._package_installed("cv2"):
-            # The GUI wheel and the headless wheel both provide cv2. Prefer headless
-            # once CUDA's opencv-python is no longer required.
-            names = {name.lower() for name in DependencyInstaller._installed_pip_names()}
-            if "opencv-python" not in names:
-                return True
-        if progress is not None:
-            progress("opencv", "")
-        DependencyInstaller._pip_uninstall(["opencv-python"], progress=progress, phase="opencv")
+        names = {
+            name.lower()
+            for name in DependencyInstaller._installed_pip_names()
+            if name.lower().startswith("opencv-python")
+        }
+        if names == {"opencv-python-headless"} and DependencyInstaller._cv2_importable():
+            return True
         spec = DependencyInstaller._requirement_spec(
             "requirements_remote.txt", "opencv-python-headless"
         )
-        return DependencyInstaller._pip_install(
-            ["--index-url", "https://pypi.org/simple", spec],
-            timeout=600,
-            progress=progress,
-            phase="opencv",
-        )
+        return DependencyInstaller._install_opencv_distribution(spec, progress=progress, phase="opencv")
 
     @staticmethod
     def prepare_inference_device(device: str, model_root: str, imgsz: int, progress=None) -> tuple[bool, str]:
@@ -615,8 +652,13 @@ class DependencyInstaller:
             logging.info(f"[MODEL] Installing CUDA inference stack for {selected}")
             if progress is not None:
                 progress("cuda", "")
+            # Drop both OpenCV builds first. They share the cv2 directory, so
+            # removing only the headless build can delete the files the CUDA
+            # package still believes it owns.
             DependencyInstaller._pip_uninstall(
-                ["opencv-python-headless"], progress=progress, phase="cuda"
+                ["opencv-python", "opencv-python-headless"],
+                progress=progress,
+                phase="cuda",
             )
             req = os.path.join(kittyhack_root(), "requirements_remote_cuda.txt")
             if not DependencyInstaller._pip_install(
@@ -626,6 +668,14 @@ class DependencyInstaller:
                 phase="cuda",
             ):
                 return False, "cuda_install_failed"
+            if not DependencyInstaller._cv2_importable():
+                spec = DependencyInstaller._requirement_spec(
+                    "requirements_remote_cuda.txt", "opencv-python"
+                )
+                if not DependencyInstaller._install_opencv_distribution(
+                    spec, progress=progress, phase="cuda"
+                ):
+                    return False, "opencv_install_failed"
             importlib.invalidate_caches()
             return True, ""
 

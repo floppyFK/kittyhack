@@ -30,3 +30,4 @@ config.remote.ini
 .coverage.*
 htmlcov/
 .pytest_cache/
+.local/

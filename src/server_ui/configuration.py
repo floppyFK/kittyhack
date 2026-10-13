@@ -129,9 +129,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
             logging.warning(
                 f"[CONFIG] Failed to load remote-mode documentation '{remote_mode_doc_path}': {e}"
             )
-            remote_mode_doc_markdown = _(
-                "The remote-mode documentation could not be loaded."
-            )
+            remote_mode_doc_markdown = _("The remote mode guide could not be loaded.")
 
         ui_config = ui.div(
             ui.div(
@@ -139,8 +137,8 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 ui.br(),
                 collapsible_section(
                     "general_settings",
-                    _("General settings"),
-                    _("Basic language, timezone, and display options for Kittyhack."),
+                    _("General"),
+                    _("Choose the language, time zone, and display options for Kittyhack."),
                     ui.div(
                         ui.br(),
                         ui.row(
@@ -206,7 +204,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_switch(
                                     "btnPeriodicVersionCheck",
-                                    _("Periodic version check"),
+                                    _("Check for updates automatically"),
                                     CONFIG["PERIODIC_VERSION_CHECK"],
                                 ),
                             ),
@@ -214,7 +212,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "Automatically check for new versions of Kittyhack."
+                                        "Kittyhack will regularly check whether a new version is available."
                                     )
                                 ),
                                 style_="color: grey;",
@@ -226,7 +224,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 6,
                                 ui.input_select(
                                     "update_repository_mode",
-                                    _("Update repository"),
+                                    _("Update source"),
                                     {
                                         "standard": _("Standard"),
                                         "beta": _("Beta"),
@@ -241,10 +239,10 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 6,
                                 ui.input_text(
                                     "update_repository",
-                                    _("Custom repository"),
+                                    _("Custom update source"),
                                     value=CONFIG.get("UPDATE_REPOSITORY", ""),
                                     placeholder=_(
-                                        "e.g. owner/repo@branch or owner:branch"
+                                        "For example: owner/repo@branch or owner:branch"
                                     ),
                                     width="100%",
                                 ),
@@ -254,8 +252,8 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "**Warning:** Beta builds may be unstable. "
-                                        "Create backups of your config (`config.ini`) and "
+                                        "Beta builds may be unstable. "
+                                        "Back up your settings (`config.ini`) and "
                                         "database before switching between **Standard** and **Beta**. "
                                         "Switching from beta back to the latest release may work, "
                                         "but it is not recommended."
@@ -334,7 +332,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.markdown(
                                         _(
-                                            "WLAN settings are not available in remote-mode."
+                                            "WLAN settings are not available in remote mode."
                                         )
                                     ),
                                     style_="color: grey;",
@@ -346,7 +344,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     4,
                                     ui.input_slider(
                                         "sldWlanTxPower",
-                                        _("WLAN TX power (in dBm)"),
+                                        _("WLAN transmit power (dBm)"),
                                         min=0,
                                         max=20,
                                         value=CONFIG["WLAN_TX_POWER"],
@@ -357,7 +355,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     8,
                                     ui.markdown(
                                         _(
-                                            "WARNING: You should keep the TX power as low as possible to avoid interference with the PIR Sensors! You should only increase this value, if you have problems with the WLAN connection."
+                                            "Keep the transmit power as low as possible to avoid interference with the motion sensors. Increase it only if the WLAN connection is unreliable."
                                         )
                                         + "\n\n"
                                         + "*("
@@ -376,7 +374,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_action_button(
                                     "btn_reset_muted_notifications",
-                                    _("Reset silenced notifications"),
+                                    _("Show silenced notifications again"),
                                     class_="btn-outline-secondary",
                                 ),
                             ),
@@ -402,25 +400,22 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 # --- Camera settings ---
                 collapsible_section(
                     "camera_settings",
-                    _("Camera settings"),
-                    _(
-                        "Camera specific settings for the internal and external cameras."
-                    ),
+                    _("Camera"),
+                    _("Choose and configure the camera Kittyhack uses."),
                     ui.div(
                         ui.column(
                             12,
                             info_toggle(
                                 "camera_intro",
-                                _("Show IP camera usage tips"),
+                                _("Show IP camera tips"),
                                 _(
-                                    "You can use an **external IP camera** instead of the internal camera to achieve better viewing angles and better night vision.\n\n"
-                                    "**Important notes:**\n"
-                                    "- Both Kittyflap and the IP camera need a stable WLAN (Ethernet recommended for camera).\n"
+                                    "You can use an **external IP camera** instead of the Kittyflap camera for a better viewing angle or clearer night vision.\n\n"
+                                    "- The Kittyflap and IP camera both need a stable network connection. Ethernet is recommended for the camera.\n"
                                     "- Use a **static IP** for the camera.\n"
                                     "- Ensure a compatible stream (RTSP / HTTP MJPEG / RTMP / UDP / TCP).\n"
-                                    "- Recommended max resolution 1280x720 @ ≤15fps (higher reduces performance).\n"
-                                    "- Configure resolution in camera settings or use alternate stream URLs.\n\n"
-                                    "If you experience interruptions, check WLAN signal and network configuration."
+                                    "- A maximum of 1280x720 at 15 FPS is recommended. Higher settings may reduce performance.\n"
+                                    "- Set the resolution in the camera settings or use another stream URL.\n\n"
+                                    "If the stream is interrupted, check the WLAN signal and network settings."
                                 ),
                             ),
                         ),
@@ -431,8 +426,8 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     "camera_source",
                                     _("Camera source"),
                                     {
-                                        "internal": _("Internal Camera"),
-                                        "ip_camera": _("External IP Camera"),
+                                        "internal": _("Kittyflap camera"),
+                                        "ip_camera": _("External IP camera"),
                                     },
                                     selected=CONFIG["CAMERA_SOURCE"],
                                 ),
@@ -441,7 +436,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_text(
                                     "ip_camera_url",
-                                    _("External IP Camera URL"),
+                                    _("External IP camera URL"),
                                     value=CONFIG["IP_CAMERA_URL"],
                                     placeholder=_(
                                         "e.g. rtsp://user:pass@192.168.1.100:554/stream"
@@ -498,7 +493,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                             12,
                                             ui.input_switch(
                                                 "btnEnableIpCameraDecodeScalePipeline",
-                                                _("Downscale IP camera stream"),
+                                                _("Reduce IP camera resolution"),
                                                 CONFIG.get(
                                                     "ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE",
                                                     False,
@@ -509,11 +504,11 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                             12,
                                             ui.markdown(
                                                 _(
-                                                    "If enabled, the IP camera stream is downscaled before frames reach Kittyhack."
+                                                    "Kittyhack can reduce the IP camera resolution before processing each picture."
                                                 )
                                                 + "  \n"
                                                 + _(
-                                                    "This can reduce CPU load and improve inference FPS for high-resolution streams."
+                                                    "This may lower CPU use and process high-resolution streams more smoothly."
                                                 )
                                             ),
                                             style_="color: grey;",
@@ -547,7 +542,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                             12,
                                             ui.markdown(
                                                 _(
-                                                    "Recommendation: choose `640x360` or `1280x720` for best performance/quality tradeoff."
+                                                    "For a good balance of speed and image quality, choose `640x360` or `1280x720`."
                                                 )
                                             ),
                                             style_="color: grey;",
@@ -558,7 +553,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                             12,
                                             ui.input_select(
                                                 "ip_camera_pipeline_fps_limit",
-                                                _("IP camera FPS limit"),
+                                                _("IP camera frame rate limit"),
                                                 {
                                                     "5": "5 FPS",
                                                     "10": "10 FPS",
@@ -580,7 +575,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                             12,
                                             ui.markdown(
                                                 _(
-                                                    "Default is `10 FPS`. Set to `Unlimited` to disable FPS limiting in the downscale pipeline (may cause higher CPU load)."
+                                                    "The default is `10 FPS`. Choose `Unlimited` to remove the limit; this may increase CPU use."
                                                 )
                                             ),
                                             style_="color: grey;",
@@ -642,10 +637,8 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 # --- Door control settings ---
                 collapsible_section(
                     "door_control_settings",
-                    _("Door control settings"),
-                    _(
-                        "Detection thresholds, model selection and other settings for the door control."
-                    ),
+                    _("Flap"),
+                    _("Choose when the Kittyflap unlocks and how it responds to cats and prey."),
                     ui.div(
                         ui.br(),
                         ui.row(
@@ -653,7 +646,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_slider(
                                     "sldMinThreshold",
-                                    _("Minimum detection threshold"),
+                                    _("Minimum detection confidence"),
                                     min=0,
                                     max=80,
                                     width="90%",
@@ -664,7 +657,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 info_toggle(
                                     "min_threshold_info",
-                                    _("Explain minimum detection threshold"),
+                                    _("Explain minimum detection confidence"),
                                     _(
                                         "Used to decide if an outside motion event is logged. "
                                         "At least one picture must exceed this probability or the "
@@ -681,7 +674,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_slider(
                                     "sldMouseThreshold",
-                                    _("Mouse detection threshold"),
+                                    _("Prey detection confidence"),
                                     min=0,
                                     max=100,
                                     width="90%",
@@ -692,12 +685,12 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 info_toggle(
                                     "mouse_threshold_info",
-                                    _("Explain mouse threshold"),
+                                    _("Explain prey detection confidence"),
                                     _(
-                                        "Kittyhack decides if a picture contains a mouse based on this value. "
-                                        "If probability exceeds it, flap stays closed.\n"
+                                        "Kittyhack uses this value to decide whether a picture contains prey. "
+                                        "If the confidence is higher, the flap stays locked.\n"
                                         "*(Default value: {})*\n\n"
-                                        "**Note:** Minimum is coupled to 'Minimum detection threshold'."
+                                        "The minimum follows the **Minimum detection confidence** setting."
                                     ).format(
                                         DEFAULT_CONFIG["Settings"]["mouse_threshold"]
                                     ),
@@ -710,7 +703,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_slider(
                                     "sldCatThreshold",
-                                    _("Cat detection threshold"),
+                                    _("Cat detection confidence"),
                                     min=0,
                                     max=100,
                                     width="90%",
@@ -721,13 +714,13 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 info_toggle(
                                     "cat_threshold_info",
-                                    _("Explain cat threshold"),
+                                    _("Explain cat detection confidence"),
                                     _(
-                                        "Kittyhack decides based on this value, if a picture contains your cat."
+                                        "Kittyhack uses this value to decide whether a picture contains your cat."
                                     )
                                     + "  \n"
                                     + _(
-                                        "If the detected probability of your cat exceeds this value in a picture, and the setting `Use camera for cat detection` is enabled, the flap will be opened."
+                                        "When the confidence is higher than this value and **Use camera for cat detection** is enabled, the flap unlocks."
                                     )
                                     + "  \n"
                                     + "*("
@@ -738,7 +731,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     + "  \n\n"
                                     + "**"
                                     + _(
-                                        "Note: The minimum of this value is always coupled to the configured value of 'Minimum detection threshold' above."
+                                        "The minimum follows the **Minimum detection confidence** setting above."
                                     )
                                     + "**",
                                 ),
@@ -750,7 +743,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_numeric(
                                     "numMinSecondsToAnalyze",
-                                    _("Seconds before unlock decision"),
+                                    _("Wait before deciding to unlock (seconds)"),
                                     float(
                                         CONFIG.get("MIN_SECONDS_TO_ANALYZE", 1.5) or 1.5
                                     ),
@@ -762,17 +755,17 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 info_toggle(
                                     "min_seconds_info",
-                                    _("Explain unlock decision delay"),
+                                    _("Explain the unlock delay"),
                                     _(
-                                        "Time in seconds after an outside motion trigger before Kittyhack may unlock."
+                                        "After motion is detected outside, Kittyhack waits this long before it may unlock."
                                     )
                                     + "  \n"
                                     + _(
-                                        "Unlock is only possible if no prey was detected during this initial analysis window."
+                                        "The flap unlocks only if no prey is detected during this time."
                                     )
                                     + "  \n\n"
                                     + _(
-                                        "After unlocking: If a later picture reaches the mouse_threshold, the flap is locked again."
+                                        "After unlocking, the flap locks again if a later picture reaches the prey detection confidence."
                                     )
                                     + "  \n\n"
                                     + "*("
@@ -791,7 +784,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_slider(
                                     "sldLockAfterPreyDetect",
-                                    _("Lock duration after prey detection (in s)"),
+                                    _("Keep locked after detecting prey (seconds)"),
                                     min=30,
                                     max=1800,
                                     step=5,
@@ -803,9 +796,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 info_toggle(
                                     "lock_after_prey_info",
-                                    _("Explain lock duration"),
+                                    _("Explain the lock duration"),
                                     _(
-                                        "The flap will remain closed for this time after a prey detection."
+                                        "The flap stays locked for this long after Kittyhack detects prey."
                                     ),
                                 ),
                             ),
@@ -826,10 +819,8 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     "detect_prey_info",
                                     _("Explain prey detection"),
                                     _(
-                                        "If the prey detection is enabled and the mouse detection threshold "
-                                        "is exceeded in a picture, the flap will remain closed.\n\n"
-                                        "**NOTE:** This is the global setting. It can also be configured "
-                                        "per cat in the `MANAGE CATS` section."
+                                        "When prey detection is enabled and a picture exceeds the prey detection confidence, the flap stays locked.\n\n"
+                                            "This setting applies to all cats. You can also choose it for each cat under **Cats**."
                                     ),
                                 ),
                             ),
@@ -840,7 +831,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_select(
                                     "selectedModel",
-                                    _("Version of the object detection model"),
+                                    _("Detection model"),
                                     combined_models,
                                     selected=(
                                         f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}"
@@ -860,23 +851,23 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 info_toggle(
                                     "model_versions_info",
-                                    _("Show model version explanation"),
+                                    _("Show model details"),
                                     "- **"
-                                    + _("Original Kittyflap Model v1:")
+                                    + _("Original Kittyflap model v1:")
                                     + "** "
                                     + _(
                                         "Always tries to detect objects `Mouse` and `No Mouse`, even if there is no such object in the picture."
                                     )
                                     + "\n\n"
                                     + "- **"
-                                    + _("Original Kittyflap Model v2:")
+                                    + _("Original Kittyflap model v2:")
                                     + "** "
                                     + _(
                                         "Only tries to detect objects `Mouse` and `No Mouse` if there is a cat in the picture."
                                     )
                                     + "\n\n"
                                     + "- **"
-                                    + _("Custom Models:")
+                                    + _("Custom models:")
                                     + "** "
                                     + _(
                                         "These are your own trained models, which you have created in the `AI TRAINING` section."
@@ -884,7 +875,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     + "\n\n"
                                     + "> "
                                     + _(
-                                        "If you change this setting, the Kittyflap must be restarted to apply the new model version."
+                                        "Restart the Kittyflap after changing the model."
                                     ),
                                 ),
                             ),
@@ -906,27 +897,27 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     "camera_cat_detection_info",
                                     _("Explain camera cat detection"),
                                     _(
-                                        "If this setting is enabled, the camera will also be used for cat detection (in addition to the RFID reader)."
+                                        "The camera can identify your cat alongside the RFID reader."
                                     )
                                     + "  \n\n"
                                     + _(
-                                        "You can configure the required threshold for the cat detection with the slider `Cat detection threshold`."
+                                        "Set the required confidence with **Cat detection confidence**."
                                     )
                                     + " "
                                     + _(
-                                        "If the detection is successful, the inside direction will be opened."
+                                        "When Kittyhack identifies your cat, it unlocks the flap for entry."
                                     )
                                     + "\n\n"
                                     + _(
-                                        "**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models."
+                                        "This feature needs a custom model trained for your cats. It does not work with the original Kittyflap models."
                                     )
                                     + "\n\n"
                                     + _(
-                                        "This feature depends heavily on the quality of your model and sufficient lighting conditions."
+                                        "Reliable identification needs a good model and enough light."
                                     )
                                     + " "
                                     + _(
-                                        "If one or both are not good, the detection may either fail or other - similiar looking cats may be detected as your cat."
+                                        "Otherwise, Kittyhack may miss your cat or identify a similar-looking cat as yours."
                                     ),
                                 ),
                             ),
@@ -948,50 +939,50 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     "camera_motion_detection_info",
                                     _("Explain camera motion detection"),
                                     _(
-                                        "Disables the outside PIR sensor and uses the camera for motion detection instead."
+                                        "Kittyhack can use the camera instead of the outside motion sensor."
                                     )
                                     + "  \n\n"
                                     + _("**How it works:**")
                                     + "  \n"
                                     + _(
-                                        "- In regular operation, Kittyhack waits for a trigger from the outside PIR sensor before starting camera analysis"
+                                        "- Normally, Kittyhack waits for the outside motion sensor before checking camera pictures."
                                     )
                                     + "  \n"
                                     + _(
-                                        "- With this feature enabled, the PIR sensor is disabled and the camera continuously analyzes images"
+                                        "- When enabled, Kittyhack continuously checks camera pictures instead."
                                     )
                                     + "  \n"
                                     + _(
-                                        "- When a cat is detected in the camera feed, it's treated as equivalent to a motion detection outside"
+                                        "- A cat in the camera picture is treated like motion outside."
                                     )
                                     + "  \n\n"
                                     + _(
-                                        "You can configure the required threshold for the cat detection with the slider `Cat detection threshold`."
+                                        "Set the required confidence with **Cat detection confidence**."
                                     )
                                     + "  \n\n"
                                     + _(
-                                        "This may be very helpful in areas where environmental factors (moving trees, people passing by) permanently cause false PIR triggers."
+                                        "This can help when moving trees or people often trigger the outside motion sensor."
                                     )
                                     + "  \n\n"
                                     + _(
-                                        "**NOTE:** This feature requires a custom trained model for your cat(s). It does not work with the default kittyflap models."
+                                        "This feature needs a custom model trained for your cats. It does not work with the original Kittyflap models."
                                     )
                                     + "\n\n"
                                     + _(
-                                        "This feature depends heavily on the quality of your model and sufficient lighting conditions."
+                                        "Reliable detection needs a good model and enough light."
                                     )
                                     + " "
                                     + _(
-                                        "If one or both are not good, you may experience false triggers or your cat may not be detected correctly."
+                                        "Otherwise, Kittyhack may trigger unexpectedly or miss your cat."
                                     )
                                     + "\n\n"
                                     + _(
-                                        "To protect the lock magnets, camera detection alone will not keep the inside unlocked for more than 60 seconds without a cat passing through."
+                                        "To protect the lock magnets, camera detection alone keeps the inside unlocked for no more than 60 seconds unless a cat passes through."
                                     )
                                     + " "
                                     + _(
-                                        "A detected RFID chip or a new trigger of the outside PIR can open the inside again. "
-                                        "If that still leaves the lock open for another 60 seconds, a 60 second cooldown is applied "
+                                        "A detected RFID chip or a new outside motion trigger can unlock the inside again. "
+                                        "If it stays unlocked for another 60 seconds, Kittyhack pauses camera unlocking for 60 seconds "
                                         "(RFID and manual unlock still work during the cooldown)."
                                     ),
                                 ),
@@ -1004,7 +995,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.input_switch(
                                         "btnRequireOutsidePirForCameraEntry",
-                                        _("Require outside PIR for camera-based entry"),
+                                        _("Require outside motion for camera entry"),
                                         CONFIG.get(
                                             "REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY",
                                             False,
@@ -1016,21 +1007,21 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     12,
                                     info_toggle(
                                         "require_pir_for_camera_entry_info",
-                                        _("Explain PIR second factor for camera entry"),
+                                        _("Explain outside motion confirmation"),
                                         _(
-                                            "When enabled, the inside direction opens for camera-based entry only if the outside PIR sensor is also active."
+                                            "When enabled, Kittyhack unlocks the inside for camera entry only while the outside motion sensor is active."
                                         )
                                         + "  \n\n"
                                         + _(
-                                            "Use this if the camera sometimes detects a cat when none is at the flap (for example sun glare)."
+                                            "Use this if the camera sometimes detects a cat when none is at the flap, for example because of sun glare."
                                         )
                                         + "  \n\n"
                                         + _(
-                                            "Leave this disabled if the camera alone should be enough to open the inside direction."
+                                            "Leave this off if the camera alone should be enough to unlock the inside."
                                         )
                                         + "  \n\n"
                                         + _(
-                                            "**NOTE:** Independent of this setting, Kittyhack always requires a new confirmation after the inside lock has been open for 60 seconds without a passage, and applies a 60 second cooldown if that happens twice in a row."
+                                            "Kittyhack always asks for a new confirmation after the inside has been unlocked for 60 seconds without a cat passing through. If this happens twice in a row, camera unlocking pauses for 60 seconds."
                                         ),
                                     ),
                                 ),
@@ -1043,13 +1034,13 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_select(
                                     "txtAllowedToEnter",
-                                    _("Open inside direction for:"),
+                                    _("Unlock inside for"),
                                     {
                                         AllowedToEnter.ALL.value: _(
-                                            "All cats (unlock on every detected motion)"
+                                            "All cats (unlock for any detected motion)"
                                         ),
                                         AllowedToEnter.ALL_RFIDS.value: _(
-                                            "All cats with a RFID chip"
+                                            "All cats with an RFID chip"
                                         ),
                                         AllowedToEnter.KNOWN.value: _(
                                             "Only registered cats"
@@ -1067,25 +1058,25 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 info_toggle(
                                     "allowed_to_enter_info",
-                                    _("Explain entrance modes"),
+                                    _("Explain entry options"),
                                     _(
-                                        "- **All cats:** *Every* detected motion on the outside will unlock the flap."
+                                        "- **All cats:** Any detected motion outside unlocks the flap."
                                     )
                                     + "  \n"
                                     + _(
-                                        "- **All cats with a RFID chip:** Every successful RFID detection will unlock the flap."
+                                        "- **All cats with an RFID chip:** Any detected RFID chip unlocks the flap."
                                     )
                                     + "  \n"
                                     + _(
-                                        "- **Only registered cats:** Only the cats that are registered in the database will unlock the flap (either by RFID or by camera detection, if enabled)."
+                                        "- **Only registered cats:** Only cats registered in Kittyhack unlock the flap, by RFID or camera identification when enabled."
                                     )
                                     + "  \n"
                                     + _(
-                                        "- **Individual configuration per cat:** Configure per cat if it is allowed to enter (in the `MANAGE CATS` section)."
+                                        "- **Individual settings per cat:** Choose which cats may enter under **Cats**."
                                     )
                                     + "  \n"
                                     + _(
-                                        "- **No cats:** The inside direction will never be opened."
+                                        "- **No cats:** The inside stays locked."
                                     ),
                                 ),
                             ),
@@ -1114,7 +1105,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                             show=_("Show decision logic"),
                                             hide=_("Hide decision logic"),
                                             hint=_(
-                                                "Only the flowchart for the currently selected mode is shown."
+                                                "The diagram shows the currently selected option."
                                             ),
                                         )
                                     ),
@@ -1124,19 +1115,19 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         <div id="entry_logic_expand" class="logic-section" style="display:none; margin-top:10px;">
                                           <div id="entry_logic_images">
                                             <div class="logic-img-wrapper" data-mode="all">
-                                              <img src="{src_all}" alt="Entry logic (ALL)"/>
+                                              <img src="{src_all}" alt="{alt_all}"/>
                                             </div>
                                             <div class="logic-img-wrapper" data-mode="all_rfids">
-                                              <img src="{src_all_rfids}" alt="Entry logic (ALL_RFIDS)"/>
+                                              <img src="{src_all_rfids}" alt="{alt_all_rfids}"/>
                                             </div>
                                             <div class="logic-img-wrapper" data-mode="known">
-                                              <img src="{src_known}" alt="Entry logic (KNOWN)"/>
+                                              <img src="{src_known}" alt="{alt_known}"/>
                                             </div>
                                             <div class="logic-img-wrapper" data-mode="none">
-                                              <img src="{src_none}" alt="Entry logic (NONE)"/>
+                                              <img src="{src_none}" alt="{alt_none}"/>
                                             </div>
                                             <div class="logic-img-wrapper" data-mode="configure_per_cat">
-                                              <img src="{src_cfg}" alt="Entry logic (CONFIGURE_PER_CAT)"/>
+                                              <img src="{src_cfg}" alt="{alt_cfg}"/>
                                             </div>
                                           </div>
                                         </div>
@@ -1148,6 +1139,17 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                             src_none=logic_svg("entry_none"),
                                             src_cfg=logic_svg(
                                                 "entry_configure_per_cat"
+                                            ),
+                                            alt_all=_("Entry logic for all cats"),
+                                            alt_all_rfids=_(
+                                                "Entry logic for cats with an RFID chip"
+                                            ),
+                                            alt_known=_(
+                                                "Entry logic for registered cats"
+                                            ),
+                                            alt_none=_("Entry logic when entry is closed"),
+                                            alt_cfg=_(
+                                                "Entry logic for individual cat settings"
                                             ),
                                         )
                                     ),
@@ -1161,7 +1163,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_select(
                                     "btnAllowedToExit",
-                                    _("Outside direction:"),
+                                    _("Outside"),
                                     {
                                         "allow": _("Allow exit"),
                                         "deny": _("Do not allow exit"),
@@ -1177,21 +1179,21 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 info_toggle(
                                     "allowed_to_exit_info",
-                                    _("Explain exit modes"),
+                                    _("Explain exit options"),
                                     _(
-                                        "- **Allow exit:** The outside direction is always possible. You can also configure time ranges below to restrict the exit times."
+                                        "- **Allow exit:** Cats may leave at any time unless you set time ranges below."
                                     )
                                     + "  \n"
                                     + _(
-                                        "- **Do not allow exit:** The outside direction is always closed."
+                                        "- **Do not allow exit:** The outside stays locked."
                                     )
                                     + "  \n"
                                     + _(
-                                        "- **Individual configuration per cat:** Configure per cat if it is allowed to exit (in the `MANAGE CATS` section). The time ranges below are applied in addition."
+                                        "- **Individual settings per cat:** Choose which cats may leave under **Cats**. The time ranges below also apply."
                                     )
                                     + "  \n  "
                                     + _(
-                                        "**NOTE:** All your cats must be registered **with a RFID chip** to use this mode. Cats without RFID can not go outside in this mode!"
+                                        "To use this option, register every cat with an **RFID chip**. Cats without RFID cannot leave."
                                     ),
                                 ),
                             ),
@@ -1220,7 +1222,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                             show=_("Show decision logic"),
                                             hide=_("Hide decision logic"),
                                             hint=_(
-                                                "Only the flowchart for the currently selected mode is shown."
+                                                "The diagram shows the currently selected option."
                                             ),
                                         )
                                     ),
@@ -1230,13 +1232,13 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         <div id="exit_logic_expand" class="logic-section" style="display:none; margin-top:10px;">
                                           <div id="exit_logic_images">
                                             <div class="logic-img-wrapper" data-mode="allow">
-                                              <img src="{src_allow}" alt="Exit logic (ALLOW)"/>
+                                              <img src="{src_allow}" alt="{alt_allow}"/>
                                             </div>
                                             <div class="logic-img-wrapper" data-mode="deny">
-                                              <img src="{src_deny}" alt="Exit logic (DENY)"/>
+                                              <img src="{src_deny}" alt="{alt_deny}"/>
                                             </div>
                                             <div class="logic-img-wrapper" data-mode="configure_per_cat">
-                                              <img src="{src_cfg}" alt="Exit logic (CONFIGURE_PER_CAT)"/>
+                                              <img src="{src_cfg}" alt="{alt_cfg}"/>
                                             </div>
                                           </div>
                                         </div>
@@ -1245,6 +1247,11 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                             src_allow=logic_svg("exit_allow"),
                                             src_deny=logic_svg("exit_deny"),
                                             src_cfg=logic_svg("exit_configure_per_cat"),
+                                            alt_allow=_("Exit logic when exit is allowed"),
+                                            alt_deny=_("Exit logic when exit is closed"),
+                                            alt_cfg=_(
+                                                "Exit logic for individual cat settings"
+                                            ),
                                         )
                                     ),
                                     class_="d-flex flex-column align-items-center w-100",
@@ -1260,9 +1267,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     12,
                                     info_toggle(
                                         "exit_time_ranges",
-                                        _("Show exit time range rules"),
+                                        _("Show exit time rules"),
                                         _(
-                                            "You can specify up to 3 time ranges, in which your cats are allowed to exit."
+                                            "You can set up to three time ranges when your cats may leave."
                                         )
                                         + "  \n\n"
                                         + _("Rules:")
@@ -1284,7 +1291,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         + "  \n"
                                         + "- "
                                         + _(
-                                            "Outside these windows, no cat may exit, even if the per‑cat setting in 'Manage Cats' allows exit."
+                                            "Outside these windows, no cat may exit, even if the per‑cat setting under 'Cats' allows exit."
                                         )
                                         + "  \n"
                                         + _(
@@ -1292,11 +1299,11 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         )
                                         + "  \n\n"
                                         + _(
-                                            "Enter times in 24h format HH:MM (e.g., 13:00)."
+                                            "Enter times in 24-hour format, such as 13:00."
                                         )
                                         + "  \n"
                                         + _(
-                                            "Example: If ranges are 10:00–18:00 and it is 20:00, no cat may exit, even if that cat is allowed per‑cat in 'Manage Cats'."
+                                            "Example: If ranges are 10:00–18:00 and it is 20:00, no cat may exit, even if that cat is allowed under 'Cats'."
                                         ),
                                     ),
                                 )
@@ -1398,9 +1405,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_slider(
                                     "sldPirInsideThreshold",
-                                    _(
-                                        "Reaction speed (in s) of the motion sensor on the inside"
-                                    ),
+                                    _("Inside motion sensor delay (seconds)"),
                                     min=0.1,
                                     max=6,
                                     step=0.1,
@@ -1412,14 +1417,14 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 info_toggle(
                                     "pir_inside_threshold_info",
-                                    _("Explain inside PIR reaction speed"),
+                                    _("Explain the inside motion sensor delay"),
                                     _(
-                                        "A low value means a fast reaction, but also a higher probability of false alarms. "
-                                        "A high value means a slow reaction, but also a lower probability of false alarms."
+                                        "A lower value reacts faster but may trigger by mistake more often. "
+                                        "A higher value reacts more slowly but is less likely to trigger by mistake."
                                     )
                                     + "  \n"
                                     + _(
-                                        "The default setting should be a good value for most cases."
+                                        "The default works well for most homes."
                                     )
                                     + "  \n"
                                     + "*("
@@ -1438,7 +1443,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_switch(
                                     "btnImmediateLockAfterPassage",
-                                    _("Immediate locking after passage"),
+                                    _("Lock immediately after passage"),
                                     CONFIG["IMMEDIATE_LOCK_AFTER_PASSAGE"],
                                     width="90%",
                                 ),
@@ -1447,17 +1452,17 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 info_toggle(
                                     "immediate_lock_after_passage_info",
-                                    _("About this feature"),
+                                    _("Explain immediate locking"),
                                     _(
-                                        "When enabled, the flap locks again and the motion event is finalized as soon as motion is detected on the opposite side of the flap (cat has crossed)."
+                                        "The flap locks and finishes the event as soon as motion is detected on the other side, showing that the cat has passed through."
                                     )
                                     + "  \n\n"
                                     + _(
-                                        "This feature is useful if your cat is very fast and the flap should not remain open for too long. Will help prevent multiple cats from using the flap in quick succession."
+                                        "This can help with fast cats and makes it harder for several cats to use the flap one after another."
                                     )
                                     + "  \n\n"
                                     + _(
-                                        "If your cat is shy or just needs several attempts to cross, you should not enable this feature. Otherwise, the flap could be accidentally locked while your cat is still trying to cross."
+                                        "Leave this off if your cat is cautious or needs several attempts. The flap could otherwise lock while your cat is still trying to pass."
                                     ),
                                 ),
                             ),
@@ -1470,8 +1475,8 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 # --- Live view settings ---
                 collapsible_section(
                     "live_view_settings",
-                    _("Live view settings"),
-                    _("Update interval for the live camera view in the WebUI."),
+                    _("Live view"),
+                    _("Choose how often the live camera picture refreshes."),
                     ui.div(
                         ui.br(),
                         ui.row(
@@ -1479,9 +1484,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 4,
                                 ui.input_select(
                                     "numLiveViewUpdateInterval",
-                                    _("Live-View update interval:"),
+                                    _("Live view refresh interval"),
                                     {
-                                        _("Refresh the live view every..."): {
+                                        _("Refresh the live view every"): {
                                             0.1: "100ms",
                                             0.2: "200ms",
                                             0.5: "500ms",
@@ -1499,11 +1504,11 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 8,
                                 ui.markdown(
                                     _(
-                                        "NOTE: A high refresh rate could slow down the performance, especially if several users are connected at the same time. Values below 1s require a fast and stable WLAN connection."
+                                        "Frequent updates may slow Kittyhack, especially when several people are connected. Intervals below one second need a fast, stable WLAN connection."
                                     )
                                     + "  \n"
                                     + _(
-                                        "This setting affects only the view in the WebUI and has no impact on the detection process."
+                                        "This changes only the live view and does not affect detection."
                                     )
                                 ),
                                 style_="color: grey;",
@@ -1518,9 +1523,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 # --- Pictures view settings ---
                 collapsible_section(
                     "pictures_view_settings",
-                    _("Pictures view settings"),
+                    _("Pictures"),
                     _(
-                        "Configuration of the pictures view in the WebUI, maximum number of pictures in the database and limits of pictures per event."
+                        "Choose how many pictures Kittyhack keeps and shows for each event."
                     ),
                     ui.div(
                         ui.br(),
@@ -1530,7 +1535,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 ui.input_numeric(
                                     "numMaxPhotosCount",
                                     _(
-                                        "Maximum number of photos to retain in the database"
+                                        "Maximum pictures to keep"
                                     ),
                                     CONFIG["MAX_PHOTOS_COUNT"],
                                     min=100,
@@ -1540,15 +1545,15 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 8,
                                 ui.markdown(
                                     _(
-                                        "The oldest pictures will be deleted if the number of pictures exceeds this value."
+                                        "When the limit is reached, Kittyhack deletes the oldest pictures."
                                     )
                                     + "  \n"
                                     + _(
-                                        "The maximum number of pictures depends on the type of the Raspberry Pi, since some kittyflaps are equipped with 16GB and some with 32GB."
+                                        "The suitable limit depends on the Kittyflap storage size."
                                     )
                                     + "  \n"
                                     + _(
-                                        "As a rule of thumb, you can calculate with 200MB per 1000 pictures. You can check the free disk space in the `INFO` section."
+                                        "As a guide, 1,000 pictures use about 200 MB. Check the available space under **Info**."
                                     )
                                     + "  \n"
                                     + "*("
@@ -1566,7 +1571,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 4,
                                 ui.input_numeric(
                                     "numMaxPicturesPerEventWithRfid",
-                                    _("Maximal pictures per event with RFID"),
+                                    _("Maximum pictures per event with RFID"),
                                     CONFIG["MAX_PICTURES_PER_EVENT_WITH_RFID"],
                                     min=0,
                                 ),
@@ -1575,15 +1580,15 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 8,
                                 ui.markdown(
                                     _(
-                                        "Maximal number of pictures that will be stored to the database for a motion event, if a cat with a RFID chip is detected."
+                                        "Maximum number of pictures kept for an event when an RFID chip is detected."
                                     )
                                     + "  \n"
                                     + _(
-                                        "NOTE: The internal prey detection will still be active for all pictures of this event. This number just limits the number of pictures that will be stored to the database."
+                                        "Prey detection still checks every picture in the event. This setting only limits how many pictures are kept."
                                     )
                                     + "  \n"
                                     + _(
-                                        "If you set this to 0, no event will be logged to the database. Too many pictures can slow down the performance drastically."
+                                        "Set this to 0 to keep no event. Keeping many pictures may slow Kittyhack."
                                     )
                                 ),
                                 style_="color: grey;",
@@ -1595,7 +1600,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 4,
                                 ui.input_numeric(
                                     "numMaxPicturesPerEventWithoutRfid",
-                                    _("Maximal pictures per event without RFID"),
+                                    _("Maximum pictures per event without RFID"),
                                     CONFIG["MAX_PICTURES_PER_EVENT_WITHOUT_RFID"],
                                     min=0,
                                 ),
@@ -1604,15 +1609,15 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 8,
                                 ui.markdown(
                                     _(
-                                        "Maximal number of pictures that will be stored to the database for a motion event, if a motion event without a detected RFID occurs."
+                                        "Maximum number of pictures kept for an event when no RFID chip is detected."
                                     )
                                     + "  \n"
                                     + _(
-                                        "NOTE: The internal prey detection will still be active for all pictures of this event. This number just limits the number of pictures that will be stored to the database."
+                                        "Prey detection still checks every picture in the event. This setting only limits how many pictures are kept."
                                     )
                                     + " \n"
                                     + _(
-                                        "If you set this to 0, no event will be logged to the database. Too many pictures can slow down the performance drastically."
+                                        "Set this to 0 to keep no event. Keeping many pictures may slow Kittyhack."
                                     )
                                 ),
                                 style_="color: grey;",
@@ -1628,8 +1633,8 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 # --- Home Assistant / MQTT settings ---
                 collapsible_section(
                     "home_assistant_settings",
-                    _("Home Assistant configuration"),
-                    _("Configure MQTT integration for Home Assistant."),
+                    _("Home Assistant"),
+                    _("Connect Kittyhack to Home Assistant with MQTT."),
                     ui.div(
                         ui.br(),
                         ui.row(
@@ -1648,7 +1653,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 8,
                                 ui.input_text(
                                     "txtMqttBrokerAddress",
-                                    _("MQTT Broker Address"),
+                                    _("MQTT broker address"),
                                     value=CONFIG.get("MQTT_BROKER_ADDRESS", ""),
                                     placeholder=_("e.g. 192.168.1.10"),
                                     width="100%",
@@ -1658,7 +1663,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 4,
                                 ui.input_numeric(
                                     "numMqttBrokerPort",
-                                    _("MQTT Broker Port"),
+                                    _("MQTT broker port"),
                                     value=CONFIG.get("MQTT_BROKER_PORT", 1883),
                                     min=1,
                                     max=65535,
@@ -1671,7 +1676,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 6,
                                 ui.input_text(
                                     "txtMqttUsername",
-                                    _("MQTT Username"),
+                                    _("MQTT username"),
                                     value=CONFIG.get("MQTT_USERNAME", ""),
                                     placeholder=_("MQTT username"),
                                     width="100%",
@@ -1681,7 +1686,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 6,
                                 ui.input_password(
                                     "txtMqttPassword",
-                                    _("MQTT Password"),
+                                    _("MQTT password"),
                                     value=CONFIG.get("MQTT_PASSWORD", ""),
                                     placeholder=_("MQTT password"),
                                     width="100%",
@@ -1717,20 +1722,20 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.h5(_("Home Assistant Card Example")),
+                                ui.h5(_("Home Assistant card example")),
                                 ui.markdown(
                                     _(
-                                        "Copy this configuration to create a dashboard card in Home Assistant:"
+                                        "Copy this configuration to add a dashboard card in Home Assistant:"
                                     )
                                 ),
                                 ui.markdown(
                                     "```yaml\n"
                                     + "# "
-                                    + _("Home Assistant Dashboard Card")
+                                    + _("Home Assistant dashboard card")
                                     + "\n"
                                     + "type: vertical-stack\n"
                                     + "title: "
-                                    + _("KittyHack Cat Flap")
+                                    + _("Kittyhack cat flap")
                                     + "\n"
                                     + "cards:\n"
                                     + "  - show_state: false\n"
@@ -1748,7 +1753,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     + "    features_position: bottom\n"
                                     + "    vertical: false\n"
                                     + "    name: "
-                                    + _("Last Event")
+                                    + _("Last event")
                                     + "\n"
                                     + "    show_entity_picture: false\n"
                                     + "    hide_state: false\n"
@@ -1775,11 +1780,11 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     + '        icon: ""\n'
                                     + "    state_color: false\n"
                                     + "    title: "
-                                    + _("Magnetic Locks")
+                                    + _("Flap locks")
                                     + "\n"
                                     + "  - type: entities\n"
                                     + "    title: "
-                                    + _("Configuration")
+                                    + _("Settings")
                                     + "\n"
                                     + "    show_header_toggle: false\n"
                                     + "    entities:\n"
@@ -1787,7 +1792,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         CONFIG["MQTT_DEVICE_ID"]
                                     )
                                     + "        name: "
-                                    + _("Open entrance for...")
+                                    + _("Unlock inside for")
                                     + "\n"
                                     + '        icon: ""\n'
                                     + "        secondary_info: none\n"
@@ -1839,10 +1844,8 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 # --- Advanced settings ---
                 collapsible_section(
                     "advanced_settings",
-                    _("Advanced settings"),
-                    _(
-                        "Advanced configuration options for hostname, logging, and performance."
-                    ),
+                    _("Advanced"),
+                    _("Configure network identity, logging, and performance."),
                     ui.div(
                         ui.br(),
                         ui.row(
@@ -1860,7 +1863,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "The hostname of the Kittyflap. You can change it to any unique name in your network for an easier access (mDNS / Avahi must be enabled in your router)."
+                                        "The hostname identifies your Kittyflap on the network. Choose a unique name for easier access. Your router must support mDNS or Avahi."
                                     )
                                     + "  \n"
                                     + _(
@@ -1869,11 +1872,11 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     + "  \n"
                                     + "> "
                                     + _(
-                                        "NOTE: This setting requires a restart of the kittyflap to take effect."
+                                        "Restart the Kittyflap after changing the hostname."
                                     )
                                     + "\n\n"
                                     + _(
-                                        "You can access the Kittyflap via the hostname in your browser:"
+                                        "Open the Kittyflap in your browser at:"
                                     )
                                 ),
                                 ui.output_text_verbatim("hostname_preview"),
@@ -1901,7 +1904,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 8,
                                 ui.markdown(
                                     _(
-                                        "`INFO` is the default log level and should be used in normal operation. `DEBUG` should only be used if it is really necessary!"
+                                        "`INFO` is the default log level for everyday use. Use `DEBUG` only while troubleshooting."
                                     )
                                 ),
                                 style_="color: grey;",
@@ -1937,12 +1940,12 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 ui.markdown(
                                     (
                                         _(
-                                            "Limits the model inference loop to reduce CPU load in remote-mode."
+                                            "Limits how often the detection model runs to reduce CPU use in remote mode."
                                         )
                                         + "\n\n> "
                                         + (
                                             _(
-                                                "This setting is only configurable in remote-mode."
+                                                "You can change this setting only in remote mode."
                                             )
                                             if not is_remote_mode()
                                             else _("Default: 10 FPS")
@@ -1976,7 +1979,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.markdown(
                                         _(
-                                            "If the Kittyflap has been controlled remotely before, it will wait this long for a remote-control takeover after reboot before starting Kittyhack locally."
+                                            "After a restart, a previously remote-controlled Kittyflap waits this long for the remote device before starting Kittyhack locally."
                                         )
                                     ),
                                     style_="color: grey;",
@@ -1991,7 +1994,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.input_switch(
                                     "btnRestartIpCameraStreamOnFailure",
-                                    _("IP camera watchdog"),
+                                    _("Restart interrupted IP camera streams"),
                                     CONFIG["RESTART_IP_CAMERA_STREAM_ON_FAILURE"],
                                 ),
                             ),
@@ -1999,7 +2002,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "If enabled, the stream of an external camera will be automatically restarted if corrupted frames are detected."
+                                        "Kittyhack restarts the external camera stream when it detects damaged pictures."
                                     )
                                 ),
                                 style_="color: grey;",
@@ -2012,7 +2015,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.markdown(
                                         _(
-                                            "WLAN watchdog is not available in remote-mode."
+                                            "WLAN monitoring is not available in remote mode."
                                         )
                                     ),
                                     style_="color: grey;",
@@ -2024,7 +2027,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.input_switch(
                                         "btnWlanWatchdogEnabled",
-                                        _("WLAN watchdog"),
+                                        _("Monitor the WLAN connection"),
                                         CONFIG["WLAN_WATCHDOG_ENABLED"],
                                     ),
                                 ),
@@ -2032,7 +2035,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.markdown(
                                         _(
-                                            "If enabled, the WLAN connection will be monitored and automatically reconnected on failure. If this also fails, the Kittyflap will automatically restart."
+                                            "Kittyhack reconnects the WLAN if the connection fails. If it cannot reconnect, the Kittyflap restarts."
                                         ),
                                     ),
                                     style_="color: grey;",
@@ -2046,7 +2049,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.input_select(
                                         "inference_device",
-                                        _("Inference device (Experimental!)"),
+                                        _("Detection device (experimental)"),
                                         {
                                             "cpu": _("CPU (default)"),
                                             "cuda:0": _("NVIDIA GPU (CUDA)"),
@@ -2069,7 +2072,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     12,
                                     info_toggle(
                                         "inference_device_info",
-                                        _("Show inference device info"),
+                                        _("Show detection device details"),
                                         "- **"
                                         + _("CPU (default):")
                                         + "** "
@@ -2098,7 +2101,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         + "\n\n"
                                         + "> "
                                         + _(
-                                            "Note: This is an experimental feature. While it can significantly speed up inference and reduce CPU load, it may also cause instability on unsupported hardware or with incompatible model formats."
+                                            "This is experimental. It can make detection faster and reduce CPU use, but unsupported hardware or model formats may be unstable."
                                         )
                                         + "\n\n"
                                         + _(
@@ -2114,7 +2117,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     ui.markdown(
                                         "> "
                                         + _(
-                                            "Inference device is fixed to **CPU** on Kittyflap hardware. GPU inference is only available in remote-mode."
+                                            "The Kittyflap uses the **CPU** for detection. GPU detection is available only in remote mode."
                                         )
                                     ),
                                     style_="color: grey;",
@@ -2135,9 +2138,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "If this option is enabled, the RFID reader will NOT be powered when motion is detected. "
-                                        "Use only for troubleshooting hardware defects or undervoltage reboots. "
-                                        "You must rely on 'Open inside direction for: All cats' or camera-based cat detection instead."
+                                        "When enabled, the RFID reader stays off after motion is detected. "
+                                        "Use this only to troubleshoot hardware faults or restarts caused by low voltage. "
+                                        "Choose **Unlock inside for: All cats** or use camera cat detection instead."
                                     )
                                     + "\n\n> "
                                     + _("Default: Disabled")
@@ -2154,8 +2157,8 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 # --- Remote-mode documentation ---
                 collapsible_section(
                     "remote_mode_documentation",
-                    _("Remote-mode guide"),
-                    _("Shows the remote-mode documentation."),
+                    _("Remote mode"),
+                    _("Learn how remote mode works and how to set it up."),
                     ui.div(
                         ui.tags.style(
                             """
@@ -2193,7 +2196,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         "id": "kh_config_leave_i18n",
                         "style": "display:none;",
                         "data-msg": _(
-                            "You have unsaved configuration changes. Leave this page without saving?"
+                            "Your settings have unsaved changes. Leave without saving?"
                         ),
                     }
                 ),
@@ -2301,8 +2304,8 @@ def register_configuration(input, output, session, ctx: SessionContext):
             # Check if value exists and doesn't match the time format
             if value and not re.match(r"^\d{2}:\d{2}$", value):
                 ui.notification_show(
-                    _("Allowed to exit time ranges: ")
-                    + _("Invalid time format. Please use HH:MM format.")
+                    _("Exit time ranges: ")
+                    + _("Enter the time in HH:MM format.")
                     + "\n"
                     + _("Changes were not saved."),
                     duration=10,
@@ -2314,7 +2317,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 hour, minute = map(int, value.split(":"))
                 if hour < 0 or hour > 23 or minute < 0 or minute > 59:
                     ui.notification_show(
-                        _("Allowed to exit time ranges: ")
+                        _("Exit time ranges: ")
                         + _("Time must be between 00:00 and 23:59.")
                         + "\n"
                         + _("Changes were not saved."),
@@ -2324,8 +2327,8 @@ def register_configuration(input, output, session, ctx: SessionContext):
                     return False
             except ValueError:
                 ui.notification_show(
-                    _("Allowed to exit time ranges: ")
-                    + _("Invalid time value.")
+                    _("Exit time ranges: ")
+                    + _("Enter a valid time.")
                     + "\n"
                     + _("Changes were not saved."),
                     duration=10,
@@ -2360,9 +2363,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
             )
             if normalized_update_repo is None:
                 ui.notification_show(
-                    _("Update repository: ")
+                    _("Update source: ")
                     + _(
-                        "Invalid format. Use 'owner/repo', 'owner/repo@branch-or-tag', or 'owner:branch'."
+                        "Use 'owner/repo', 'owner/repo@branch-or-tag', or 'owner:branch'."
                     )
                     + "\n"
                     + _("Changes were not saved."),
@@ -2398,7 +2401,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                     else:
                         msg = _("Custom update repository could not be validated.")
                     ui.notification_show(
-                        _("Update repository: ")
+                        _("Update source: ")
                         + msg
                         + "\n"
                         + _("Changes were not saved."),
@@ -2444,9 +2447,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 re.IGNORECASE,
             ):
                 ui.notification_show(
-                    _("IP Camera URL: ")
+                    _("IP camera URL: ")
                     + _(
-                        "Invalid stream URL format. Please use a valid URL starting with rtsp://, http://, https://, rtmp://, udp://, tcp://, or file://"
+                        "Enter a valid stream URL starting with rtsp://, http://, https://, rtmp://, udp://, tcp://, or file://."
                     )
                     + "\n"
                     + _("Changes were not saved."),
@@ -2464,7 +2467,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                     )
                     + "\n"
                     + _(
-                        "Please install `ffmpeg` manually and try again. Changes were not saved."
+                        "Install `ffmpeg` manually, then try again. Changes were not saved."
                     ),
                     duration=12,
                     type="error",
@@ -2686,9 +2689,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
         ):
             CONFIG["USE_CAMERA_FOR_MOTION_DETECTION"] = False
             ui.notification_show(
-                _("Invalid configuration: ")
+                _("These settings cannot be used together: ")
                 + _(
-                    "You cannot use the camera for motion detection in combination with an original Kittyflap model. You need a custom trained model for this."
+                    "Camera motion detection needs a custom trained model and does not work with an original Kittyflap model."
                 )
                 + "\n"
                 + _('The setting "{}" was disabled.').format(
@@ -2703,9 +2706,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
         ):
             CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = False
             ui.notification_show(
-                _("Invalid configuration: ")
+                _("These settings cannot be used together: ")
                 + _(
-                    "You cannot use the camera for cat detection in combination with an original Kittyflap model. You need a custom trained model for this."
+                    "Camera cat detection needs a custom trained model and does not work with an original Kittyflap model."
                 )
                 + "\n"
                 + _('The setting "{}" was disabled.').format(
@@ -2801,7 +2804,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
 
         if save_config():
             ui.notification_show(
-                _("Kittyhack configuration updated successfully."),
+                _("Settings saved."),
                 duration=5,
                 type="message",
             )
@@ -2887,7 +2890,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
             if language_changed:
                 ui.notification_show(
                     _(
-                        "Please restart the kittyflap in the [SYSTEM] section, to apply the new language."
+                        "Restart the Kittyflap under **System** to use the new language."
                     ),
                     duration=30,
                     type="message",
@@ -2907,7 +2910,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 ui.modal_show(
                     ui.modal(
                         _(
-                            "A restart is required to apply the changes. Do you want to reboot the kittyflap now?"
+                            "Restart the Kittyflap to apply these changes. Restart now?"
                         ),
                         title=_("Restart required"),
                         easy_close=True,
@@ -2956,7 +2959,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                     )
                     modal_parts = [
                         _(
-                            "The update repository was changed. A version check for the new source has been started."
+                            "The update source changed. Kittyhack is checking its latest version."
                         ),
                     ]
                     if (
@@ -2985,7 +2988,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                             [
                                 "\n\n",
                                 _(
-                                    "**Important:** Create backups of your config (`config.ini`) and "
+                                    "Back up your settings (`config.ini`) and "
                                     "database before switching between Standard and Beta."
                                 ),
                             ]
@@ -3007,7 +3010,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         [
                             "\n\n",
                             _(
-                                "If a different version is available, you can review it and start the update yourself on the **INFO** tab."
+                                    "If another version is available, review and install it under **Info**."
                             ),
                         ]
                     )
@@ -3019,7 +3022,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                             easy_close=True,
                             footer=ui.div(
                                 ui.input_action_button(
-                                    "btn_modal_cancel", _("OK")
+                                    "btn_modal_cancel", _("Close")
                                 ),
                             ),
                         )
@@ -3061,7 +3064,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
 
         else:
             ui.notification_show(
-                _("Failed to save the Kittyhack configuration."),
+                _("Kittyhack could not save the settings."),
                 duration=10,
                 type="error",
             )

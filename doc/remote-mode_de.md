@@ -1,108 +1,107 @@
-### Remote-Mode (Remote-Control) - Überblick
+### Remote-Modus im Überblick
 
-Der Remote-Mode ist ein neues, optionales Feature. Damit kann Kittyhack auf zwei Geräte aufgeteilt werden:
+Im Remote-Modus läuft Kittyhack auf zwei Geräten:
 
-- **Kittyflap**: steuert weiterhin lokal die Hardware (z. B. Sensoren, RFID, Verriegelungen).
-- **Remote Gerät** (separater Linux-PC/VM): übernimmt Web-UI und KI-Auswertung.
+- **Kittyflap**: Das Gerät steuert weiterhin seine Sensoren, den RFID-Leser und die Verriegelung der Klappe.
+- **Remote-Gerät** (separater Linux-PC oder VM): Hier laufen die Kittyhack-Weboberfläche und die Erkennung.
 
-Dadurch wird die Kittyflap entlastet und es können - abhängig von der eingesetzten Hardware - deutlich höhere Bildraten bei der Auswertung von Katze und Beute erreicht werden.
-Zudem lassen sich komplexere Modelle einsetzen, die auf dem vergleichsweise leistungsschwachen Raspberry Pi 4 der Kittyflap nicht lauffähig sind.
+Das entlastet die Kittyflap. Je nach Hardware kann die Erkennung von Katzen und Beute auf dem Remote-Gerät außerdem flüssiger laufen.
+Das Remote-Gerät kann komplexere Modelle verwenden, die auf dem Raspberry Pi 4 in der Kittyflap nicht gut laufen.
 
 ---
 
 
-#### Schemata
+#### Diagramme
 
 ##### Architektur: wer spricht mit wem?
 
-![Remote-Mode Architektur](diagrams/remote-mode-architecture.svg)
+![Architektur im Remote-Modus](diagrams/remote-mode-architecture.svg)
 
-##### Control-Übernahme: was passiert beim Verbinden
+##### Steuerungsübernahme: Was passiert beim Verbinden?
 
-![Remote-Mode Control-Übernahme Ablauf](diagrams/remote-mode-control-takeover.svg)
+![Steuerungsübernahme im Remote-Modus](diagrams/remote-mode-control-takeover.svg)
 
-##### Verbindungsverlust (Recovery)
+##### Wiederherstellung nach einem Verbindungsverlust
 
-![Remote-Mode Verbindungsverlust Recovery](diagrams/remote-mode-connection-loss.svg)
+![Wiederherstellung nach Verbindungsverlust im Remote-Modus](diagrams/remote-mode-connection-loss.svg)
 
 ---
 
 #### Was läuft wo?
 
 ##### Auf der Kittyflap
-- Läuft Kittyhack normal wie gewohnt.
-- Wenn ein Remote Gerät die Steuerung übernimmt, zeigt die Kittyflap eine Info-Seite statt der normalen UI.
-- Fällt die Verbindung aus, übernimmt die Kittyflap wieder selbstständig als Fallback.
+- Kittyhack läuft standardmäßig lokal.
+- Wenn ein Remote-Gerät die Steuerung übernimmt, zeigt die Kittyflap eine Infoseite statt der üblichen Oberfläche.
+- Wenn die Verbindung abbricht, kehrt die Kittyflap automatisch zum lokalen Betrieb zurück.
 
-##### Auf dem Remote Gerät
-- Läuft die Kittyhack-Weboberfläche.
-- Das Remote Gerät verbindet sich zur Kittyflap und steuert diese.
+##### Auf dem Remote-Gerät
+- Kittyhack stellt die Weboberfläche und die Erkennung bereit.
+- Kittyhack verbindet sich mit der Kittyflap und steuert das Gerät aus der Ferne.
 
 ---
 
 #### Einrichtung
 
-1. Kittyhack auf der **Kittyflap** normal installieren/aktualisieren.
-2. Auf dem **Remote Gerät** Kittyhack installieren und beim Setup „Remote-Mode“ wählen.
-   Setup script:
+1. Installiere oder aktualisiere Kittyhack wie gewohnt auf der **Kittyflap**.
+2. Installiere Kittyhack auf dem **Remote-Gerät** und wähle bei der Einrichtung „Remote-Modus“.
+   Einrichtungsskript:
    ```bash
    sudo curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh -o /tmp/kittyhack-setup.sh && sudo chmod +x /tmp/kittyhack-setup.sh && sudo /tmp/kittyhack-setup.sh de && sudo rm /tmp/kittyhack-setup.sh
    ```
-3. Im Web-UI des Remote Geräts die IP-Adresse der Kittyflap eintragen.
+3. Trage in der Kittyhack-Weboberfläche auf dem Remote-Gerät die IP-Adresse der Kittyflap ein.
 
-Remote-UI im Browser:
+Öffne die Remote-Weboberfläche im Browser:
 
 - `http://<IP-des-Remote-Geräts>/`
 
 ---
 
-#### Wichtiger Hinweis zur Erst-Synchronisierung
+#### Erste Synchronisierung
 
-Während der Einrichtung können Daten von der Kittyflap auf das Remote Gerät übernommen werden, z. B.:
+Während der Einrichtung kannst du Daten von der Kittyflap auf das Remote-Gerät übertragen:
 
 - Modelle
 - Bilder
 - Datenbank
-- Konfiguration
-- Label Studio Daten
+- Einstellungen
+- Label-Studio-Daten
 
-Diese Synchronisierung ist **nur bei der Einrichtung** möglich.  
-Eine **nachträgliche** Synchronisierung ist aktuell nicht vorgesehen.
+Diese Synchronisierung ist **nur bei der Einrichtung** möglich. Du kannst sie später nicht erneut starten.
 
 ---
 
 #### Wo werden Daten gespeichert?
 
-Wenn die Kittyflap von einem Remote Gerät gesteuert wird:
+Wenn ein Remote-Gerät die Kittyflap steuert:
 
-- neue Events werden **nur auf dem Remote Gerät** gespeichert
-- Änderungen an Einstellungen werden **nur auf dem Remote Gerät** gespeichert
+- Neue Ereignisse werden **nur auf dem Remote-Gerät** gespeichert.
+- Änderungen an den Einstellungen werden **nur auf dem Remote-Gerät** gespeichert.
 
-Wenn das Remote Gerät offline ist, übernimmt die Kittyflap als **fallback** automatisch wieder lokal - dann mit den **lokal auf der Kittyflap gespeicherten Einstellungen**.
+Wenn das Remote-Gerät offline ist, kehrt die Kittyflap automatisch zum lokalen Betrieb zurück. Dabei verwendet sie die **auf der Kittyflap gespeicherten Einstellungen**.
 
-Kurz gesagt: Remote-Gerät und Kittyflap werden sich nach einiger Zeit hinsichtlich ihrer Daten (Events und Konfiguration) unterscheiden!
+Mit der Zeit unterscheiden sich deshalb die Ereignisse und Einstellungen auf dem Remote-Gerät und der Kittyflap.
 
-Die Remote-Verbindung kann im Web-UI des Remote-Geräts beendet werden. Anschließend ist die Konfiguration wieder über das Web-UI der Kittyflap möglich.
+Du kannst die Remote-Verbindung in der Kittyhack-Weboberfläche auf dem Remote-Gerät beenden. Danach kannst du die Einstellungen wieder über die Weboberfläche der Kittyflap ändern.
 
 ---
 
 #### Was passiert bei Verbindungsverlust?
 
 - Die Kittyflap gibt die Fernsteuerung frei.
-- Sicherheitsfunktionen werden sauber beendet.
-- Danach startet die Kittyflap wieder lokal und kann autonom weiterlaufen.
-- Das Remote Gerät versucht später automatisch, die Verbindung wieder aufzubauen.
+- Laufende Sicherheitsaktionen werden sauber beendet.
+- Die Kittyflap kehrt zum lokalen Betrieb zurück.
+- Das Remote-Gerät versucht später automatisch, die Verbindung wiederherzustellen.
 
 ---
 
-#### Software- und Hardware-Voraussetzungen
+#### Software- und Hardwarevoraussetzungen
 
-##### Remote Gerät
-- Debian oder Ubuntu (idealerweise ein System, das ausschließlich für den Betrieb von Kittyhack vorgesehen ist)
+##### Remote-Gerät
+- Debian oder Ubuntu, idealerweise auf einem eigenen System für Kittyhack
 - AMD64- (x86_64) CPU mit mindestens 4 Kernen
-- mindestens 2 GB RAM
+- Mindestens 2 GB RAM
 
 ##### Netzwerk
-- Das Remote Gerät muss die Kittyflap im lokalen Netz erreichen können.
+- Das Remote-Gerät muss die Kittyflap im lokalen Netz erreichen können.
 - Die Kittyflap muss über die Ports `80` und `8888` erreichbar sein.
 - Die Verbindung ist ausschließlich für ein **vertrauenswürdiges LAN** gedacht (nicht ins öffentliche Internet freigeben).

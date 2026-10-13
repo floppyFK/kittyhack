@@ -88,15 +88,15 @@ def wlan_add_dialog():
         ),
         ui.help_text(
             _(
-                "The priority determines the order in which the WLANs are tried to connect. Higher numbers are tried first."
+                "Priority sets the order for connecting to saved WLAN networks. Higher numbers are tried first."
             )
         ),
-        title=_("Add new WLAN configuration"),
+        title=_("Add WLAN network"),
         easy_close=False,
         footer=ui.div(
             ui.input_action_button(
                 id="btn_wlan_save",
-                label=_("Save"),
+                label=_("Save network"),
                 class_="btn-vertical-margin btn-narrow",
             ),
             ui.input_action_button(

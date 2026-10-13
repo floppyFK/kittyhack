@@ -363,10 +363,10 @@ def _ensure_valid_startup_model_selection() -> None:
         update_single_config_parameter("TFLITE_MODEL_VERSION")
         try:
             UserNotifications.add(
-                header=_("Model fallback applied"),
+                header=_("Model selection updated"),
                 message=(
-                    _("The configured YOLO model was not found at startup:") + f" {configured_yolo}\n\n" +
-                    _("Kittyhack switched automatically to another available YOLO model:") + f" {fallback_yolo_name}"
+                    _("The configured YOLO model could not be found:") + f" {configured_yolo}\n\n" +
+                    _("Kittyhack selected another available YOLO model:") + f" {fallback_yolo_name}"
                 ),
                 type="warning",
                 id="model_fallback_missing_yolo",
@@ -383,10 +383,10 @@ def _ensure_valid_startup_model_selection() -> None:
     update_single_config_parameter("TFLITE_MODEL_VERSION")
     try:
         UserNotifications.add(
-            header=_("Model fallback applied"),
+            header=_("Model selection updated"),
             message=(
-                _("The configured YOLO model was not found at startup:") + f" {configured_yolo}\n\n" +
-                _("No other YOLO model was available. Kittyhack switched to the shipped TFLite model:") +
+                _("The configured YOLO model could not be found:") + f" {configured_yolo}\n\n" +
+                _("No other YOLO model was available. Kittyhack selected the included TFLite model:") +
                 " original_kittyflap_model_v2"
             ),
             type="warning",
@@ -419,14 +419,13 @@ def run() -> None:
 
         # Add a entry to the user notifications, which will be shown at the next login in the frontend
         shutdown_message = (
-            _("The kittyflap was not shut down gracefully several times in a row. Please do not power off the device without shutting it down first, otherwise the database may be corrupted!") + "\n\n" +
-            _("If you have shut it down gracefully and see this message, please report it in the") + " " +
-            "[GitHub issue tracker](https://github.com/floppyFK/kittyhack/issues), " +
-            _("thanks!")
+            _("The Kittyflap was not shut down safely several times. Please use the shutdown control before disconnecting power to help protect the database.") + "\n\n" +
+            _("If you shut down the device safely, please report this in the") + " " +
+            "[GitHub issue tracker](https://github.com/floppyFK/kittyhack/issues)."
         )
 
         UserNotifications.add(
-            header=_("Several crashes detected!"),
+            header=_("Repeated unclean shutdowns detected"),
             message=shutdown_message,
                     type="warning",
                     id="not_graceful_shutdown",
@@ -559,7 +558,7 @@ def run() -> None:
                         try:
                             UserNotifications.add(
                                 header=_("Database restored"),
-                                message=_("The kittyhack database was corrupted at startup and has been restored from backup: {}. The corrupted file was archived as: {}").format(latest_backup, corrupt_archive),
+                                message=_("Kittyhack restored the database from backup: {}. The damaged file was archived as {}.").format(latest_backup, corrupt_archive),
                                 type="warning",
                                 id="db_restored",
                                 skip_if_id_exists=True

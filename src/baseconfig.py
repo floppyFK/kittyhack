@@ -643,14 +643,14 @@ def load_config():
             msg = (
                 "Die folgenden Konfigurationsschlüssel hatten ungültige Werte und wurden auf ihre Standardwerte zurückgesetzt:\n"
                 + "\n".join(lines)
-                + "\n\nBitte prüfe deine Einstellungen im Abschnitt KONFIGURATION."
+                + "\n\nPrüfe deine Einstellungen im Abschnitt Einstellungen."
             )
             header = "Ungültige Konfiguration erkannt"
         else:
             msg = (
                 "The following configuration keys contained invalid values and have been reset to their default values:\n"
                 + "\n".join(lines)
-                + "\n\nPlease check your settings in the CONFIGURATION section."
+                + "\n\nCheck your settings in the Settings section."
             )
             header = "Invalid configuration detected"
         try:

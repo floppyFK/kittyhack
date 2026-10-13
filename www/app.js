@@ -46,8 +46,13 @@ document.addEventListener("DOMContentLoaded", function() {
 
     function updateThemeToggleLabel(pref, effective) {
         if (!themeToggleButton) return;
-        const prefLabel = (pref === 'auto') ? 'Auto' : (pref === 'dark' ? 'Dark' : 'Light');
-        themeToggleButton.textContent = `Theme: ${prefLabel}`;
+        const labelPrefix = themeToggleButton.dataset.labelPrefix || 'Appearance';
+        const prefLabel = (pref === 'auto')
+            ? (themeToggleButton.dataset.labelAuto || 'Auto')
+            : (pref === 'dark')
+                ? (themeToggleButton.dataset.labelDark || 'Dark')
+                : (themeToggleButton.dataset.labelLight || 'Light');
+        themeToggleButton.textContent = `${labelPrefix}: ${prefLabel}`;
         themeToggleButton.setAttribute('data-theme-pref', pref);
         themeToggleButton.setAttribute('data-theme-effective', effective);
     }

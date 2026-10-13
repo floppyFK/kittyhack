@@ -324,8 +324,8 @@ def _page_text() -> dict[str, str]:
             "remote_ui": "Remote UI",
             "remote_ui_unknown": "unknown (controller IP not available yet)",
             "p_remote": (
-                "This device is currently controlled remotely. "
-                "The normal Kittyhack UI on this device is stopped while control is active."
+                "This Kittyflap is currently controlled remotely. "
+                "The normal Kittyhack UI on the Kittyflap is stopped while control is active."
             ),
             "p_wait": "This Kittyflap is configured to wait for a remote-control connection after reboot.",
             "autostart_in": "Autostart Kittyhack in",
@@ -335,16 +335,16 @@ def _page_text() -> dict[str, str]:
             "no": "NO",
             "st_remote_active": "remote control active",
             "st_remote_connected": "A remote controller is connected.",
-            "st_starting": "starting...",
+            "st_starting": "starting…",
             "st_starting_msg": "Kittyhack is starting.",
             "st_remote_attempt": "remote attempt detected",
-            "st_remote_attempt_msg": "Remote control attempt detected. Waiting for controller...",
+            "st_remote_attempt_msg": "Remote control attempt detected. Waiting for controller…",
             "seconds_suffix": " s",
             "pending_start": "Autostart Kittyhack in",
-            "btn_reboot": "Reboot device",
+            "btn_reboot": "Restart Kittyflap",
             "pending_msg": "Remote controller disconnected. Waiting for timeout before local Kittyhack starts.",
             "pending_idle": "No pending timeout.",
-            "rebooting": "Rebooting...",
+            "rebooting": "Rebooting…",
         },
         "de": {
             "title_remote": "Kittyhack Fernsteuerung",
@@ -355,8 +355,8 @@ def _page_text() -> dict[str, str]:
             "remote_ui": "Remote-UI",
             "remote_ui_unknown": "unbekannt (Controller-IP noch nicht verfügbar)",
             "p_remote": (
-                "Dieses Gerät wird aktuell ferngesteuert. "
-                "Die normale Kittyhack-UI auf diesem Gerät ist während der Fernsteuerung gestoppt."
+                "Diese Kittyflap wird aktuell ferngesteuert. "
+                "Die normale Kittyhack-UI auf der Kittyflap ist während der Fernsteuerung gestoppt."
             ),
             "p_wait": "Diese Kittyflap ist so konfiguriert, dass sie nach einem Neustart auf eine Fernsteuerungsverbindung wartet.",
             "autostart_in": "Kittyhack automatisch starten in",
@@ -366,16 +366,16 @@ def _page_text() -> dict[str, str]:
             "no": "NEIN",
             "st_remote_active": "Fernsteuerung aktiv",
             "st_remote_connected": "Ein Remote-Controller ist verbunden.",
-            "st_starting": "wird gestartet...",
+            "st_starting": "wird gestartet…",
             "st_starting_msg": "Kittyhack startet.",
             "st_remote_attempt": "Remote-Versuch erkannt",
-            "st_remote_attempt_msg": "Fernsteuerungsversuch erkannt. Warte auf Controller...",
+            "st_remote_attempt_msg": "Fernsteuerungsversuch erkannt. Warten auf Controller…",
             "seconds_suffix": " s",
             "pending_start": "Kittyhack automatisch starten in",
-            "btn_reboot": "Gerät neu starten",
-            "pending_msg": "Remote-Controller getrennt. Warte auf Timeout, bevor lokales Kittyhack startet.",
+            "btn_reboot": "Kittyflap neu starten",
+            "pending_msg": "Remote-Controller getrennt. Warten auf Timeout, bevor lokales Kittyhack startet.",
             "pending_idle": "Kein ausstehender Timeout.",
-            "rebooting": "Neustart...",
+            "rebooting": "Neustart…",
         },
     }
     return texts.get(lang, texts["en"])
@@ -571,7 +571,7 @@ def _build_boot_wait_page_html() -> str:
         f"    <h1>{t['h_wait']}</h1>\n"
         "    <div class=\"card\">\n"
         f"      <p>{t['p_wait']}</p>\n"
-        f"      <p><strong>{t['autostart_in']}:</strong> <span class=\"mono\" id=\"countdown\">...</span></p>\n"
+        f"      <p><strong>{t['autostart_in']}:</strong> <span class=\"mono\" id=\"countdown\">…</span></p>\n"
         "      <p class=\"muted\" id=\"status\" aria-live=\"polite\"></p>\n"
         "      <div class=\"row\">\n"
         f"        <button class=\"primary\" id=\"btnSkip\">{t['btn_skip']}</button>\n"

@@ -85,20 +85,22 @@ class EventType:
     def to_pretty_string(event_type):
         """Return a translated human-readable label for an event type."""
         return {
-            EventType.MOTION_OUTSIDE_ONLY: _("Motion outside only"),
-            EventType.MOTION_OUTSIDE_WITH_MOUSE: _("Motion outside with mouse"),
-            EventType.CAT_WENT_INSIDE: _("Cat went inside"),
-            EventType.CAT_WENT_PROBABLY_INSIDE: _("Cat went probably inside (no motion inside detected, but the flap was unlocked)"),
-            EventType.CAT_WENT_INSIDE_WITH_MOUSE: _("Cat went inside with mouse"),
-            EventType.CAT_WENT_OUTSIDE: _("Cat went outside"),
-            EventType.MANUALLY_UNLOCKED: _("Manually unlocked flap"),
-            EventType.MANUALLY_LOCKED: _("Manually locked flap"),
-            EventType.MAX_UNLOCK_TIME_EXCEEDED: _("Maximum unlock time exceeded"),
-            EventType.PER_CAT_PREY_DISABLED: _("Per-cat mode: prey detection disabled for this cat"),
-            EventType.ENTRY_PER_CAT_ALLOWED: _("Per-cat mode: entry allowed for this cat"),
-            EventType.ENTRY_PER_CAT_DENIED: _("Per-cat mode: entry denied for this cat"),
-            EventType.EXIT_PER_CAT_ALLOWED: _("Per-cat mode: exit allowed for this cat"),
-            EventType.EXIT_PER_CAT_DENIED: _("Per-cat mode: exit denied for this cat"),
+            EventType.MOTION_OUTSIDE_ONLY: _("There was movement outside."),
+            EventType.MOTION_OUTSIDE_WITH_MOUSE: _("Prey was detected outside."),
+            EventType.CAT_WENT_INSIDE: _("Your cat went inside."),
+            EventType.CAT_WENT_PROBABLY_INSIDE: _(
+                "Your cat probably went inside. No movement was detected inside, but the flap was unlocked."
+            ),
+            EventType.CAT_WENT_INSIDE_WITH_MOUSE: _("Your cat went inside with prey."),
+            EventType.CAT_WENT_OUTSIDE: _("Your cat went outside."),
+            EventType.MANUALLY_UNLOCKED: _("The flap was unlocked manually."),
+            EventType.MANUALLY_LOCKED: _("The flap was locked manually."),
+            EventType.MAX_UNLOCK_TIME_EXCEEDED: _("The maximum unlock time was reached."),
+            EventType.PER_CAT_PREY_DISABLED: _("Prey detection is disabled for this cat."),
+            EventType.ENTRY_PER_CAT_ALLOWED: _("This cat may enter."),
+            EventType.ENTRY_PER_CAT_DENIED: _("This cat may not enter."),
+            EventType.EXIT_PER_CAT_ALLOWED: _("This cat may go outside."),
+            EventType.EXIT_PER_CAT_DENIED: _("This cat may not go outside."),
         }.get(event_type, _("Unknown event"))
 
     @staticmethod

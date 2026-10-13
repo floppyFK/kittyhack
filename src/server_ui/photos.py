@@ -66,14 +66,14 @@ def register_photos(input, output, session, ctx: SessionContext):
                 ),
                 ui.input_action_button(
                     "button_today",
-                    _("Today"),
+                    _("Go to today"),
                     class_="kh-photo-today-btn",
                 ),
                 class_="kh-photo-filter-date",
             ),
             ui.div(
                 ui.div(
-                    ui.span(_("Filter by…"), class_="kh-photo-filter-group-label"),
+                    ui.span(_("Filters"), class_="kh-photo-filter-group-label"),
                     ui.div(
                         ui.tooltip(
                             ui.div(
@@ -84,7 +84,7 @@ def register_photos(input, output, session, ctx: SessionContext):
                                 ),
                                 class_="kh-photo-filter-chip",
                             ),
-                            _("Show only pictures with a detected cat"),
+                            _("Show only pictures where a cat was detected"),
                             options={"trigger": "hover"},
                             placement="bottom",
                         ),
@@ -97,7 +97,7 @@ def register_photos(input, output, session, ctx: SessionContext):
                                 ),
                                 class_="kh-photo-filter-chip",
                             ),
-                            _("Show only pictures with detected prey"),
+                            _("Show only pictures where prey was detected"),
                             options={"trigger": "hover"},
                             placement="bottom",
                         ),
@@ -110,12 +110,12 @@ def register_photos(input, output, session, ctx: SessionContext):
                         ui.div(
                             ui.input_switch(
                                 "button_detection_overlay",
-                                _("Overlay"),
+                                _("Detection overlay"),
                                 CONFIG["SHOW_IMAGES_WITH_OVERLAY"],
                             ),
                             class_="kh-photo-filter-chip",
                         ),
-                        _("Show detection overlay"),
+                        _("Show detected objects on pictures"),
                         options={"trigger": "hover"},
                         placement="bottom",
                     ),
@@ -123,13 +123,13 @@ def register_photos(input, output, session, ctx: SessionContext):
                         ui.div(
                             ui.input_switch(
                                 "button_events_view",
-                                _("Group"),
+                                _("Group by event"),
                                 CONFIG["GROUP_PICTURES_TO_EVENTS"],
                             ),
                             class_="kh-photo-filter-chip",
                         ),
                         _(
-                            "Group pictures into events, or show them one by one"
+                            "Group pictures by event or show them one by one"
                         ),
                         options={"trigger": "hover"},
                         placement="bottom",
@@ -412,7 +412,7 @@ def register_photos(input, output, session, ctx: SessionContext):
                         class_="kh-empty-state-icon",
                     ),
                     ui.h5(_("No pictures"), class_="kh-empty-state-title"),
-                    ui.p(_("No pictures for the selected filter criteria found.")),
+                    ui.p(_("Try changing the date or filters.")),
                     class_="kh-empty-state",
                 ),
                 id="photos_cards_root",
@@ -518,10 +518,11 @@ def register_photos(input, output, session, ctx: SessionContext):
 
         if data_row["rfid"]:
             cat_name = cat_name_dict.get(
-                data_row["rfid"], _("Unknown RFID: {}".format(data_row["rfid"]))
+                data_row["rfid"],
+                _("Unknown microchip: {}").format(data_row["rfid"]),
             )
         else:
-            cat_name = _("No RFID found")
+            cat_name = _("No microchip found")
 
         pid = int(data_row["id"])
         try:
@@ -534,7 +535,7 @@ def register_photos(input, output, session, ctx: SessionContext):
         orig_src = f"/orig/{pid}.jpg"
         is_prey = mouse_probability >= CONFIG["MOUSE_THRESHOLD"]
         prey_class = "kh-photo-prey-badge" + (" is-prey" if is_prey else "")
-        prey_title = html.escape(_("Prey probability"))
+        prey_title = html.escape(_("Prey likelihood"))
         cat_icon = str(icon_svg("cat", margin_left="0", margin_right="0.3rem"))
 
         img_html = f'''<div class="kh-photo-thumb" data-photo-id="{pid}" data-orig-src="{orig_src}">
@@ -701,7 +702,7 @@ def register_photos(input, output, session, ctx: SessionContext):
             )
             if result.success:
                 ui.notification_show(
-                    _("Photo {} deleted successfully.").format(pid),
+                    _("Picture {} deleted.").format(pid),
                     duration=5,
                     type="message",
                 )
@@ -720,7 +721,7 @@ def register_photos(input, output, session, ctx: SessionContext):
                     pass
             else:
                 ui.notification_show(
-                    _("An error occurred while deleting the photo: {}").format(
+                    _("Picture could not be deleted: {} Try again.").format(
                         result.message
                     ),
                     duration=10,
@@ -737,7 +738,7 @@ def register_photos(input, output, session, ctx: SessionContext):
             if not project_id or not api_token:
                 ui.notification_show(
                     _(
-                        "Label Studio is not configured. Please set an API token and select a project in the settings."
+                        "Label Studio is not set up. Add an API token and choose a project in Settings."
                     ),
                     type="warning",
                     duration=5,
@@ -746,7 +747,9 @@ def register_photos(input, output, session, ctx: SessionContext):
 
             if not LabelStudioInstall.get_labelstudio_status():
                 ui.notification_show(
-                    _("Label Studio is not running."), type="warning", duration=5
+                    _("Label Studio is not running. Start it and try again."),
+                    type="warning",
+                    duration=5,
                 )
                 return
 
@@ -774,7 +777,9 @@ def register_photos(input, output, session, ctx: SessionContext):
 
             if not isinstance(img_bytes, (bytes, bytearray)) or len(img_bytes) == 0:
                 ui.notification_show(
-                    _("Could not load the image."), type="warning", duration=5
+                    _("The picture could not be loaded. Try again."),
+                    type="warning",
+                    duration=5,
                 )
                 return
 
@@ -782,7 +787,7 @@ def register_photos(input, output, session, ctx: SessionContext):
                 ui.HTML(
                     '<div class="d-flex align-items-center gap-2">'
                     '<div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>'
-                    f"<span>{_('Sending picture to Label Studio...')}</span>"
+                    f"<span>{_('Sending picture to Label Studio…')}</span>"
                     "</div>"
                 ),
                 id="ls_upload_progress",
@@ -803,13 +808,13 @@ def register_photos(input, output, session, ctx: SessionContext):
 
             if success:
                 ui.notification_show(
-                    _("Picture sent to Label Studio successfully."),
+                    _("Picture sent to Label Studio."),
                     type="message",
                     duration=3,
                 )
             else:
                 ui.notification_show(
-                    _("Failed to send picture to Label Studio."),
+                    _("Picture could not be sent to Label Studio. Try again."),
                     type="error",
                     duration=5,
                 )

@@ -98,18 +98,18 @@ def register_live_view(input, output, session, ctx: SessionContext):
                         6,
                         ui.input_select(
                             id="quick_allowed_to_enter",
-                            label=_("Inside direction:"),
+                            label=_("Entry through the flap"),
                             choices={
                                 AllowedToEnter.ALL.value: _(
-                                    "All cats (unlock on every detected motion)"
+                                    "All cats (unlock when motion is detected)"
                                 ),
                                 AllowedToEnter.ALL_RFIDS.value: _(
-                                    "All cats with a RFID chip"
+                                    "All cats with a microchip"
                                 ),
                                 AllowedToEnter.KNOWN.value: _("Only registered cats"),
                                 AllowedToEnter.NONE.value: _("No cats"),
                                 AllowedToEnter.CONFIGURE_PER_CAT.value: _(
-                                    "Individual configuration per cat"
+                                    "Set rules for each cat"
                                 ),
                             },
                             selected=str(CONFIG["ALLOWED_TO_ENTER"].value),
@@ -120,12 +120,12 @@ def register_live_view(input, output, session, ctx: SessionContext):
                         6,
                         ui.input_select(
                             id="quick_allowed_to_exit",
-                            label=_("Outside direction:"),
+                            label=_("Exit through the flap"),
                             choices={
                                 "allow": _("Allow exit"),
-                                "deny": _("Do not allow exit"),
+                                "deny": _("Block exit"),
                                 "configure_per_cat": _(
-                                    "Individual configuration per cat"
+                                    "Set rules for each cat"
                                 ),
                             },
                             selected=str(CONFIG["ALLOWED_TO_EXIT"].value),
@@ -139,7 +139,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
                             "circle-info", margin_left="-0.1em", margin_right="auto"
                         ),
                         _(
-                            "The individual configuration per cat can be set in the CATS section."
+                            "You can set rules for each cat in the Cats section."
                         ),
                         id="tooltip_configure_per_cat_quick",
                         options={"trigger": "hover click"},
@@ -162,7 +162,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
             ui.card(
                 ui.input_action_button(
                     id="bResetPreyCooldown",
-                    label=_("Reset prey cooldown now"),
+                    label=_("Resume prey detection"),
                     icon=icon_svg("clock-rotate-left"),
                     disabled=True,
                 ),
@@ -200,12 +200,12 @@ def register_live_view(input, output, session, ctx: SessionContext):
             ui.update_select("quick_allowed_to_enter", selected=old)
             ui.modal_show(
                 ui.modal(
-                    _("This will block all cats from entering. Continue?"),
-                    title=_("Change entry mode"),
+                    _("Block all cats from entering?"),
+                    title=_("Change entry settings"),
                     easy_close=False,
                     footer=ui.div(
                         ui.input_action_button(
-                            "btn_modal_confirm_lock_enter_ok", _("Continue")
+                            "btn_modal_confirm_lock_enter_ok", _("Block entry")
                         ),
                         ui.input_action_button("btn_modal_cancel", _("Cancel")),
                     ),
@@ -228,12 +228,12 @@ def register_live_view(input, output, session, ctx: SessionContext):
             ui.update_select("quick_allowed_to_exit", selected=old)
             ui.modal_show(
                 ui.modal(
-                    _("This will block all cats from exiting. Continue?"),
-                    title=_("Change exit mode"),
+                    _("Block all cats from exiting?"),
+                    title=_("Change exit settings"),
                     easy_close=False,
                     footer=ui.div(
                         ui.input_action_button(
-                            "btn_modal_confirm_lock_exit_ok", _("Continue")
+                            "btn_modal_confirm_lock_exit_ok", _("Block exit")
                         ),
                         ui.input_action_button("btn_modal_cancel", _("Cancel")),
                     ),
@@ -321,7 +321,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
         return ui.layout_column_wrap(
             ui.div(
                 ui.card(
-                    ui.card_header(ui.h5(_("Last events"))),
+                    ui.card_header(ui.h5(_("Recent events"))),
                     ui.output_ui("ui_last_events_table"),
                     full_screen=False,
                     class_="generic-container",
@@ -415,7 +415,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
             if df_events.empty:
                 return ui.HTML(
                     '<table class="dataframe shiny-table table w-auto">'
-                    "<tbody><tr><td>" + _("No events found.") + "</td></tr></tbody>"
+                    "<tbody><tr><td>" + _("No events yet.") + "</td></tr></tbody>"
                     "</table>"
                 )
 
@@ -471,7 +471,9 @@ def register_live_view(input, output, session, ctx: SessionContext):
             def cat_name_with_icon(rfid):
                 name = cat_name_dict.get(
                     rfid,
-                    _("Unknown RFID") + f": {rfid}" if rfid else _("No RFID found"),
+                    _("Unknown microchip") + f": {rfid}"
+                    if rfid
+                    else _("No microchip found"),
                 )
                 thumb = cat_thumbnails.get(rfid)
                 if thumb:
@@ -571,7 +573,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
             return ui.HTML(
                 '<table class="dataframe shiny-table table w-auto">'
                 '<tbody><tr><td class="error">'
-                + _("Failed to read events from the database.")
+                + _("Events could not be loaded. Try again.")
                 + "</td></tr></tbody>"
                 "</table>"
             )

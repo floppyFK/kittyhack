@@ -60,7 +60,7 @@ def manage_yolo_model_server(input, output, session, unique_id: str):
         model_in_use = model["unique_id"] == CONFIG["YOLO_MODEL"]
         if model_in_use:
             additional_note = ui.div(
-                _("This model is currently in use. You can not delete it."),
+                _("This model is in use. Activate another model before deleting it."),
                 class_="alert alert-info",
                 style_="margin-bottom: 0px; margin-top: 10px; padding: 10px",
             )
@@ -82,14 +82,14 @@ def manage_yolo_model_server(input, output, session, unique_id: str):
                 style_="width: 100%;",
             ),
             ui.hr(),
-            ui.markdown(_("Model created at: {}").format(model["creation_date"])),
+            ui.markdown(_("Created: {}").format(model["creation_date"])),
             additional_note,
-            title=_("Change model configuration"),
+            title=_("Edit model"),
             easy_close=False,
             footer=ui.div(
                 ui.input_action_button(
                     id="btn_model_save",
-                    label=_("Save"),
+                    label=_("Save changes"),
                     class_="btn-vertical-margin btn-narrow",
                 ),
                 ui.input_action_button(
@@ -119,7 +119,7 @@ def manage_yolo_model_server(input, output, session, unique_id: str):
         success = YoloModel.rename_model(unique_id, model_name)
         if success:
             ui.notification_show(
-                _("Model configuration {} updated successfully.").format(model_name),
+                _("Model {} updated.").format(model_name),
                 duration=5,
                 type="message",
             )
@@ -127,7 +127,7 @@ def manage_yolo_model_server(input, output, session, unique_id: str):
             reload_trigger_config.set(reload_trigger_config.get() + 1)
         else:
             ui.notification_show(
-                _("Failed to update model configuration {}").format(model_name),
+                _("Could not update model {}. Try again.").format(model_name),
                 duration=10,
                 type="error",
             )
@@ -148,12 +148,14 @@ def manage_yolo_model_server(input, output, session, unique_id: str):
         ui.modal_remove()
 
         m = ui.modal(
-            _("Do you really want to delete this model?"),
-            title=_("Delete Model"),
+            _("Delete this model?"),
+            title=_("Delete model"),
             easy_close=False,
             footer=ui.div(
                 ui.div(
-                    ui.input_action_button("btn_modal_delete_model_ok", _("OK")),
+                    ui.input_action_button(
+                        "btn_modal_delete_model_ok", _("Delete model")
+                    ),
                     ui.input_action_button("btn_modal_cancel", _("Cancel")),
                 ),
                 ui.div(
@@ -173,7 +175,7 @@ def manage_yolo_model_server(input, output, session, unique_id: str):
         success = YoloModel.delete_model(unique_id)
         if success:
             ui.notification_show(
-                _("Model {} deleted successfully.").format(input.txtModelName()),
+                _("Model {} deleted.").format(input.txtModelName()),
                 duration=5,
                 type="message",
             )
@@ -182,7 +184,9 @@ def manage_yolo_model_server(input, output, session, unique_id: str):
             reload_trigger_config.set(reload_trigger_config.get() + 1)
         else:
             ui.notification_show(
-                _("Failed to delete Model {}").format(input.txtModelName()),
+                _("Could not delete model {}. Try again.").format(
+                    input.txtModelName()
+                ),
                 duration=10,
                 type="error",
             )
@@ -200,7 +204,9 @@ def activate_yolo_model_server(input, output, session, unique_id: str):
 
         if not (unique_id or "").strip():
             ui.notification_show(
-                _("This model cannot be selected because it has no unique ID."),
+                _(
+                    "This model has no unique ID. Refresh the page and choose another model."
+                ),
                 duration=8,
                 type="error",
             )
@@ -217,7 +223,9 @@ def activate_yolo_model_server(input, output, session, unique_id: str):
         model_path = YoloModel.get_model_path(unique_id)
         if not model_path:
             ui.notification_show(
-                _("The selected model was not found on disk."), duration=8, type="error"
+                _("The selected model was not found. Refresh the page and try again."),
+                duration=8,
+                type="error",
             )
             reload_trigger_ai.set(reload_trigger_ai.get() + 1)
             reload_trigger_config.set(reload_trigger_config.get() + 1)
@@ -232,12 +240,12 @@ def activate_yolo_model_server(input, output, session, unique_id: str):
         if reload_ok:
             model_handler = active_model_handler
             ui.notification_show(
-                _("Model switched successfully."), duration=6, type="message"
+                _("Model activated."), duration=6, type="message"
             )
         else:
             ui.notification_show(
                 _(
-                    "Model was selected, but live reload failed. Please reboot to apply the change."
+                    "The model was selected, but Kittyhack could not load it. Reboot the host running Kittyhack to apply the change."
                 ),
                 duration=10,
                 type="warning",

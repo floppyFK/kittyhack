@@ -6,26 +6,26 @@ config:
 ---
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% NOTE: Render this file with https://www.mermaidchart.com
-%% to generate a flowchart diagram of the unlock logic.
+%% Render this file with https://www.mermaidchart.com
+%% to generate a flowchart of the unlock logic.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 flowchart TD
-  %% Mode: All cats with a RFID chip
-  subgraph all_rfids["Mode: All cats with a RFID chip"]
+  %% Mode: All cats with an RFID chip
+  subgraph all_rfids["Mode: All cats with an RFID chip"]
     direction TB
     style all_rfids fill:transparent,stroke:none
 
-    all_motion["Motion outside detected? (by PIR or by camera, depending on the configuration)"] -- No --> all_no_action["No action"]
+    all_motion["Motion detected outside? (by motion sensor or camera, depending on the settings)"] -- No --> all_no_action["No action"]
     all_motion -- Yes --> all_has_rfid{"Any RFID present?"}
     all_has_rfid -- No --> all_no_action
-    all_has_rfid -- Yes --> all_prey_global{"Global Prey check enabled?"}
+    all_has_rfid -- Yes --> all_prey_global{"Prey detection enabled for all cats?"}
     all_prey_global -- No --> all_unlock_inside["Unlock inside"]
-    all_prey_global -- Yes --> all_prey_individual{"Individual Prey check for this cat enabled?"}
-    all_prey_individual -- Yes --> all_prey_ok{"Prey check OK?"}
+    all_prey_global -- Yes --> all_prey_individual{"Prey detection enabled for this cat?"}
+    all_prey_individual -- Yes --> all_prey_ok{"No prey detected?"}
     all_prey_individual -- No --> all_unlock_inside
     all_prey_ok -- Yes --> all_unlock_inside
-    all_prey_ok -- No --> all_keep_closed["Keep closed"]
+    all_prey_ok -- No --> all_keep_closed["Keep locked"]
   end
 
   %% Mode: Only registered cats
@@ -33,16 +33,16 @@ flowchart TD
     direction TB
     style kn_known fill:transparent,stroke:none
 
-    kn_motion["Motion outside detected? (by PIR or by camera, depending on the configuration)"] -- No --> kn_no_action["No action"]
-    kn_motion -- Yes --> kn_identify{"Identify cat (by RFID or Camera, if enabled)?"}
+    kn_motion["Motion detected outside? (by motion sensor or camera, depending on the settings)"] -- No --> kn_no_action["No action"]
+    kn_motion -- Yes --> kn_identify{"Cat identified by RFID or camera?"}
     kn_identify -- No --> kn_no_action
-    kn_identify -- Yes --> kn_in_db{"Cat in database?"}
+    kn_identify -- Yes --> kn_in_db{"Cat registered in Kittyhack?"}
     kn_in_db -- No --> kn_no_action
-    kn_in_db -- Yes --> kn_prey_global{"Global Prey check enabled?"}
-    kn_prey_ok{"Prey check OK?"} -- Yes --> kn_unlock_inside["Unlock inside"]
-    kn_prey_ok -- No --> kn_keep_closed["Keep closed"]
+    kn_in_db -- Yes --> kn_prey_global{"Prey detection enabled for all cats?"}
+    kn_prey_ok{"No prey detected?"} -- Yes --> kn_unlock_inside["Unlock inside"]
+    kn_prey_ok -- No --> kn_keep_closed["Keep locked"]
     kn_prey_global -- No --> kn_unlock_inside
-    kn_prey_global -- Yes --> kn_prey_individual{"Individual Prey check for this cat enabled?"}
+    kn_prey_global -- Yes --> kn_prey_individual{"Prey detection enabled for this cat?"}
     kn_prey_individual -- Yes --> kn_prey_ok
     kn_prey_individual -- No --> kn_unlock_inside
   end
@@ -52,12 +52,12 @@ flowchart TD
     direction TB
     style al_all fill:transparent,stroke:none
 
-    al_motion["Motion outside detected? (by PIR or by camera, depending on the configuration)"] -- No --> al_no_action["No action"]
-    al_motion -- Yes --> al_prey_global{"Global Prey check enabled?"}
+    al_motion["Motion detected outside? (by motion sensor or camera, depending on the settings)"] -- No --> al_no_action["No action"]
+    al_motion -- Yes --> al_prey_global{"Prey detection enabled?"}
     al_prey_global -- No --> al_unlock_inside["Unlock inside"]
-    al_prey_global -- Yes --> al_prey_ok{"Prey check OK?"}
+    al_prey_global -- Yes --> al_prey_ok{"No prey detected?"}
     al_prey_ok -- Yes --> al_unlock_inside
-    al_prey_ok -- No --> al_keep_closed["Keep closed"]
+    al_prey_ok -- No --> al_keep_closed["Keep locked"]
   end
 
   %% Mode: No cats
@@ -65,29 +65,29 @@ flowchart TD
     direction TB
     style no_none fill:transparent,stroke:none
 
-    no_motion["Motion outside detected? (by PIR or by camera, depending on the configuration)"] -- No --> no_no_action["No action"]
+    no_motion["Motion detected outside? (by motion sensor or camera, depending on the settings)"] -- No --> no_no_action["No action"]
     no_motion -- Yes --> no_no_action
   end
 
-  %% Mode: Individual configuration per cat
-  subgraph cfg_per_cat["Mode: Individual configuration per cat"]
+  %% Mode: Individual settings per cat
+  subgraph cfg_per_cat["Mode: Individual settings per cat"]
     direction TB
     style cfg_per_cat fill:transparent,stroke:none
 
-    cfg_motion["Motion outside detected? (by PIR or by camera, depending on the configuration)"] -- No --> cfg_no_action["No action"]
-    cfg_motion -- Yes --> cfg_identify{"Identify cat (by RFID or Camera, if enabled)?"}
+    cfg_motion["Motion detected outside? (by motion sensor or camera, depending on the settings)"] -- No --> cfg_no_action["No action"]
+    cfg_motion -- Yes --> cfg_identify{"Cat identified by RFID or camera?"}
     cfg_identify -- No --> cfg_no_action
-    cfg_identify -- Yes --> cfg_in_db{"Cat in database?"}
+    cfg_identify -- Yes --> cfg_in_db{"Cat registered in Kittyhack?"}
     cfg_in_db -- No --> cfg_no_action
-    cfg_in_db -- Yes --> cfg_allow_entry{"Is the entry for this cat allowed?"}
+    cfg_in_db -- Yes --> cfg_allow_entry{"May this cat enter?"}
     cfg_allow_entry -- No --> cfg_no_action
-    cfg_allow_entry -- Yes --> cfg_prey_global{"Global Prey check enabled?"}
+    cfg_allow_entry -- Yes --> cfg_prey_global{"Prey detection enabled for all cats?"}
     cfg_prey_global -- No --> cfg_unlock_inside["Unlock inside"]
-    cfg_prey_global -- Yes --> cfg_prey_individual{"Individual Prey check for this cat enabled?"}
+    cfg_prey_global -- Yes --> cfg_prey_individual{"Prey detection enabled for this cat?"}
     cfg_prey_individual -- No --> cfg_unlock_inside
-    cfg_prey_individual -- Yes --> cfg_prey_ok{"Prey check OK?"}
+    cfg_prey_individual -- Yes --> cfg_prey_ok{"No prey detected?"}
     cfg_prey_ok -- Yes --> cfg_unlock_inside
-    cfg_prey_ok -- No --> cfg_keep_closed["Keep closed"]
+    cfg_prey_ok -- No --> cfg_keep_closed["Keep locked"]
   end
 
   %% Mode: Allow exit
@@ -95,7 +95,7 @@ flowchart TD
     direction TB
     style ex_allow fill:transparent,stroke:none
 
-    ex_allow_motion["Motion inside detected? (by PIR)"] -- No --> ex_allow_no_action["No action"]
+    ex_allow_motion["Motion detected inside?"] -- No --> ex_allow_no_action["No action"]
     ex_allow_motion -- Yes --> ex_allow_time{"Within allowed time ranges?"}
     ex_allow_time -- No --> ex_allow_denied["Exit denied"]
     ex_allow_time -- Yes --> ex_allow_unlock["Unlock outside"]
@@ -106,16 +106,16 @@ flowchart TD
     direction TB
     style ex_deny fill:transparent,stroke:none
 
-    ex_deny_motion["Motion inside detected? (by PIR)"] -- No --> ex_deny_no_action["No action"]
+    ex_deny_motion["Motion detected inside?"] -- No --> ex_deny_no_action["No action"]
     ex_deny_motion -- Yes --> ex_deny_no_action
   end
 
-  %% Mode: Individual configuration per cat (exit-direction)
-  subgraph ex_cfg["Mode: Individual configuration per cat"]
+  %% Mode: Individual settings per cat (outside)
+  subgraph ex_cfg["Mode: Individual settings per cat"]
     direction TB
     style ex_cfg fill:transparent,stroke:none
 
-    ex_cfg_motion["Motion inside detected? (by PIR)"] -- No --> ex_cfg_no_action["No action"]
+    ex_cfg_motion["Motion detected inside?"] -- No --> ex_cfg_no_action["No action"]
     ex_cfg_motion -- Yes --> ex_cfg_time{"Within allowed time ranges?"}
     ex_cfg_time -- No --> ex_cfg_denied["Exit denied"]
     ex_cfg_time -- Yes --> ex_cfg_identified{"Identified cat by RFID?"}

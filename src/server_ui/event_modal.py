@@ -452,16 +452,16 @@ def show_event_server(input, output, session, block_id: int):
         nav_html = f'''
         <div class="event-modal-toolbar-nav">
             <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
-                    data-action="prev" title="{_("Previous frame")}">
+                    data-action="prev" title="{_("Show previous frame")}">
                 {prev_icon_html}
             </button>
             <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
-                    data-action="play-pause" title="{_("Play/Pause")}">
+                    data-action="play-pause" title="{_("Play or pause")}">
                 <span class="kh-icon-play" {"" if len(pictures) <= 1 else 'style="display:none"'}>{play_icon_html}</span>
                 <span class="kh-icon-pause" {'style="display:none"' if len(pictures) <= 1 else ""}>{pause_icon_html}</span>
             </button>
             <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
-                    data-action="next" title="{_("Next frame")}">
+                    data-action="next" title="{_("Show next frame")}">
                 {next_icon_html}
             </button>
         </div>
@@ -469,7 +469,7 @@ def show_event_server(input, output, session, block_id: int):
 
         overlay_btn_html = f'''
         <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
-                data-action="toggle-overlay" title="{_("Toggle overlay for detected objects")}"
+                data-action="toggle-overlay" title="{_("Show or hide detected objects")}"
                 {"disabled" if fallback_mode[0] else ""}
                 style="{"opacity:0.5" if fallback_mode[0] else ""}">
             <span class="kh-icon-overlay-on" {"" if initial_overlay else 'style="display:none"'}>{overlay_on_icon_html}</span>
@@ -509,7 +509,7 @@ def show_event_server(input, output, session, block_id: int):
                                         "role": "status",
                                     },
                                     ui.tags.span(
-                                        {"class": "visually-hidden"}, _("Loading...")
+                                        {"class": "visually-hidden"}, _("Loading…")
                                     ),
                                 ),
                             ),
@@ -539,7 +539,7 @@ def show_event_server(input, output, session, block_id: int):
                                             ),
                                             class_="btn-icon-square btn-outline-danger",
                                         ),
-                                        _("Delete all pictures of this event"),
+                                        _("Delete all event pictures"),
                                         id="tooltip_delete_event",
                                         options={"trigger": "hover"},
                                     ),
@@ -611,7 +611,7 @@ def show_event_server(input, output, session, block_id: int):
                                             ),
                                             class_="btn-icon-square btn-outline-secondary",
                                         ),
-                                        _("Download all pictures of this event (ZIP)"),
+                                        _("Download all event pictures"),
                                         id="tooltip_download_zip",
                                         options={"trigger": "hover"},
                                     ),
@@ -728,7 +728,7 @@ def show_event_server(input, output, session, block_id: int):
         if not project_id or not api_token:
             ui.notification_show(
                 _(
-                    "Label Studio is not configured. Please set an API token and select a project in the settings."
+                    "Label Studio is not set up. Add an API token and choose a project in Settings."
                 ),
                 type="warning",
                 duration=5,
@@ -737,7 +737,9 @@ def show_event_server(input, output, session, block_id: int):
 
         if not LabelStudioInstall.get_labelstudio_status():
             ui.notification_show(
-                _("Label Studio is not running."), type="warning", duration=5
+                _("Label Studio is not running. Start it and try again."),
+                type="warning",
+                duration=5,
             )
             return
 
@@ -775,7 +777,9 @@ def show_event_server(input, output, session, block_id: int):
 
             if not isinstance(img_bytes, (bytes, bytearray)) or len(img_bytes) == 0:
                 ui.notification_show(
-                    _("Could not load the image."), type="warning", duration=5
+                    _("The picture could not be loaded. Try again."),
+                    type="warning",
+                    duration=5,
                 )
                 return
 
@@ -784,7 +788,7 @@ def show_event_server(input, output, session, block_id: int):
                 ui.HTML(
                     '<div class="d-flex align-items-center gap-2">'
                     '<div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>'
-                    f"<span>{_('Sending picture to Label Studio...')}</span>"
+                    f"<span>{_('Sending picture to Label Studio…')}</span>"
                     "</div>"
                 ),
                 id="ls_upload_progress",
@@ -805,13 +809,13 @@ def show_event_server(input, output, session, block_id: int):
 
             if success:
                 ui.notification_show(
-                    _("Picture sent to Label Studio successfully."),
+                    _("Picture sent to Label Studio."),
                     type="message",
                     duration=3,
                 )
             else:
                 ui.notification_show(
-                    _("Failed to send picture to Label Studio."),
+                    _("Picture could not be sent to Label Studio. Try again."),
                     type="error",
                     duration=5,
                 )
@@ -820,7 +824,9 @@ def show_event_server(input, output, session, block_id: int):
             logging.warning(f"[LABELSTUDIO] Send to Label Studio failed: {e}")
             ui.notification_remove("ls_upload_progress")
             ui.notification_show(
-                _("Failed to send picture to Label Studio."), type="error", duration=5
+                _("Picture could not be sent to Label Studio. Try again."),
+                type="error",
+                duration=5,
             )
 
     # ---- Delete event ----

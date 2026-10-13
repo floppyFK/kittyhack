@@ -518,7 +518,7 @@ class RemoteModelTrainer:
                             UserNotifications.add(
                                 header=_("Model download failed"),
                                 message=_(
-                                    "Model training completed, but the model could not be downloaded. Please retry later."
+                                    "Training finished, but Kittyhack could not download the model. Check the connection and try again later."
                                 ),
                                 type="error",
                                 id=f"model_download_error_{dl_state.get('result_id')}",
@@ -543,9 +543,9 @@ class RemoteModelTrainer:
                         logging.warning(f"[MODEL_TRAINING] Failed to clear MODEL_TRAINING after download: {e}")
                     try:
                         UserNotifications.add(
-                            header=_("Model downloaded"),
+                            header=_("Model ready"),
                             message=_(
-                                "Model training completed and the new model was downloaded successfully. You can select it now in the 'Configuration' section."
+                                "The new model is ready. You can select it in Settings."
                             ),
                             type="message",
                             id=f"model_download_success_{dl_state.get('result_id')}",
@@ -595,10 +595,10 @@ class RemoteModelTrainer:
                     RemoteModelTrainer._clear_training_job()
                     # Show user notification
                     UserNotifications.add(
-                        header=_("Model Training Aborted"),
+                        header=_("Model training stopped"),
                         message=_(
-                            "The model training was aborted. This can happen if the provided training data was not correct. "
-                            "Please ensure you have exported the data from Label Studio as **'YOLO with Images'** and that your labels are set correctly in the images."
+                            "The training data could not be used. Export it from Label Studio as **'YOLO with Images'**, "
+                            "check the image labels, then try again."
                         ),
                         type="error",
                         id="model_training_aborted",
@@ -606,22 +606,22 @@ class RemoteModelTrainer:
                     )
                 else:
                     if show_notification and show_in_progress:
-                        ui.notification_show(_("Model training is in progress. Please check back later."), duration=5, type="default")
+                        ui.notification_show(_("Model training is in progress… Check again later."), duration=5, type="default")
         else:
             training_status = "not_in_progress"
         
         # Map statuses to user-friendly messages
         pretty_status_messages = {
-            "pending": _("The training is pending and will start soon."),
-            "queued": _("The training is queued and waiting for resources."),
-            "completed": _("The training has been successfully completed."),
-            "downloading": _("Training completed. Downloading the model…"),
-            "extracting": _("Training completed. Installing the model…"),
-            "downloaded": _("Training completed. Model downloaded and installed."),
-            "download_error": _("Training completed, but the model download failed."),
-            "aborted": _("The training was aborted. Please try again."),
-            "unknown": _("The training status is unknown. Please check back later."),
-            "not_in_progress": _("No model training is in progress."),
+            "pending": _("Training will start soon…"),
+            "queued": _("Training is waiting for resources…"),
+            "completed": _("Training complete."),
+            "downloading": _("Training complete. Downloading the model…"),
+            "extracting": _("Training complete. Installing the model…"),
+            "downloaded": _("Model ready."),
+            "download_error": _("Could not download the trained model. Check the connection and try again later."),
+            "aborted": _("Training stopped. Check the training data, then try again."),
+            "unknown": _("Training status unavailable. Check again later."),
+            "not_in_progress": _("No model training in progress."),
         }
 
         if return_pretty_status:

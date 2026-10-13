@@ -70,13 +70,13 @@ _nav_items = [
         value="statistics",
     ),
     ui.nav_panel(
-        _("Manage cats"),
+        _("Cats"),
         ui.output_ui("ui_manage_cats"),
         ui.br(),
         value="manage-cats",
     ),
     ui.nav_panel(
-        _("AI Training"),
+        _("Training"),
         ui.output_ui("ui_ai_training"),
         ui.br(),
         value="ai-training",
@@ -87,7 +87,7 @@ _nav_items = [
         value="system",
     ),
     ui.nav_panel(
-        _("Configuration"),
+        _("Settings"),
         ui.output_ui("ui_configuration"),
         value="configuration",
     ),
@@ -139,10 +139,14 @@ app_ui = ui.page_fillable(
                         "id": "theme_toggle_button",
                         "type": "button",
                         "class": "btn btn-sm btn-outline-secondary theme-toggle-btn",
-                        "aria-label": _("Toggle theme"),
-                        "title": _("Toggle theme")
+                        "aria-label": _("Change appearance"),
+                        "title": _("Change appearance"),
+                        "data-label-prefix": _("Appearance"),
+                        "data-label-auto": _("Auto"),
+                        "data-label-dark": _("Dark"),
+                        "data-label-light": _("Light"),
                     },
-                    _("Theme: Auto")
+                    _("Appearance: Auto")
                 ),
             ),
         ),

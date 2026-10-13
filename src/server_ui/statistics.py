@@ -31,8 +31,8 @@ def _dashboard_labels() -> DashboardLabels:
         unknown=_("Unknown"),
         entries=_("Entries"),
         exits=_("Exits"),
-        in_label=_("In"),
-        out_label=_("Out"),
+        in_label=_("Inside"),
+        out_label=_("Outside"),
         prey=_("Prey"),
         prey_entered=_("Entered with prey"),
         prey_blocked=_("Prey blocked"),
@@ -222,7 +222,7 @@ def _cat_cards_ui(payload: dict, labels: DashboardLabels):
         if other_n:
             extra_items.append(
                 ui.div(
-                    ui.span(_("Other door/window"), class_="stats-cat-metric-label"),
+                    ui.span(_("Another way"), class_="stats-cat-metric-label"),
                     ui.span(str(other_n)),
                 )
             )
@@ -274,11 +274,10 @@ def _empty_state(has_history: bool):
         msg = _("No events in this time range.")
         detail = _("Try a longer range or another cat.")
     else:
-        msg = _("No statistics yet")
+        msg = _("No statistics yet.")
         detail = _(
-            "Statistics are stored independently of pictures. Activity that was already "
-            "deleted from the picture archive cannot be reconstructed. New flap events "
-            "will appear here."
+            "New flap activity will appear here. Activity deleted before statistics "
+            "were recorded cannot be restored."
         )
     return ui.div(
         ui.h3(msg, class_="stats-empty-title"),
@@ -299,11 +298,11 @@ def _numbers_table(payload: dict) -> str:
         (_("Attempts without passing"), kpis.get("attempts", 0)),
         (_("Denied entry"), kpis.get("denied_entry", 0)),
         (_("Denied exit"), kpis.get("denied_exit", 0)),
-        (_("Came in another way (inferred)"), kpis.get("other_entry", 0)),
-        (_("Left another way (inferred)"), kpis.get("other_exit", 0)),
-        (_("Avg. time outside"), kpis.get("avg_outside", "—")),
+        (_("Came in another way"), kpis.get("other_entry", 0)),
+        (_("Left another way"), kpis.get("other_exit", 0)),
+        (_("Average time outside"), kpis.get("avg_outside", "—")),
         (_("Median time outside"), kpis.get("median_outside", "—")),
-        (_("Avg. time inside"), kpis.get("avg_inside", "—")),
+        (_("Average time inside"), kpis.get("avg_inside", "—")),
         (_("Median time inside"), kpis.get("median_inside", "—")),
     ]
     body = "".join(
@@ -343,7 +342,7 @@ def register_statistics(input, output, session, ctx: SessionContext):
                     "stats_bucket",
                     _("Grouping"),
                     choices={
-                        "auto": _("Auto"),
+                        "auto": _("Automatic"),
                         "hour": _("Hour"),
                         "day": _("Day"),
                         "week": _("Week"),
@@ -363,7 +362,7 @@ def register_statistics(input, output, session, ctx: SessionContext):
                     "input.stats_range === 'custom'",
                     ui.input_date_range(
                         "stats_custom_dates",
-                        _("From / to"),
+                        _("Date range"),
                         start=today - timedelta(days=30),
                         end=today,
                         format=CONFIG.get("DATE_FORMAT", "yyyy-mm-dd"),
@@ -444,20 +443,20 @@ def register_statistics(input, output, session, ctx: SessionContext):
                 ),
                 _kpi_card(_("Attempts without passing"), str(kpis.get("attempts") or 0)),
                 _kpi_card(
-                    _("Avg. / median outside"),
+                    _("Average / median outside"),
                     f"{kpis.get('avg_outside') or '—'} / {kpis.get('median_outside') or '—'}",
                 ),
                 _kpi_card(
-                    _("Avg. / median inside"),
+                    _("Average / median inside"),
                     f"{kpis.get('avg_inside') or '—'} / {kpis.get('median_inside') or '—'}",
                 ),
                 class_="stats-kpis",
             ),
             ui.p(
                 _(
-                    "Inside/outside times and the location badge only use Kittyflap passages. "
-                    "If a cat goes through another door or window, those times can be too long "
-                    "or missing, and the location can be wrong until the next flap event."
+                    "Times inside and outside, and the location shown, are based only on "
+                    "Kittyflap passages. If a cat uses another way in or out, times may be "
+                    "missing or too long, and the location may be wrong until the next flap passage."
                 ),
                 class_="stats-note",
             ),
@@ -489,7 +488,7 @@ def register_statistics(input, output, session, ctx: SessionContext):
                     class_="stats-chart-card",
                 ),
                 ui.div(
-                    ui.h3(_("Time inside / outside"), class_="stats-chart-title"),
+                    ui.h3(_("Time inside and outside"), class_="stats-chart-title"),
                     ui.div(
                         ui.HTML('<canvas id="chart-durations"></canvas>'),
                         class_="stats-chart-canvas",

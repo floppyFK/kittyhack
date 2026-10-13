@@ -53,12 +53,12 @@ def register_info(input, output, session, ctx: SessionContext):
         ui.modal_show(
             ui.modal(
                 ui.div(
-                    ui.markdown(_("Creating log archive. Please wait...")),
+                    ui.markdown(_("Creating the log archive. This may take a moment.")),
                     ui.HTML(
                         '<div class="spinner-container"><div class="spinner"></div></div>'
                     ),
                 ),
-                title=_("Preparing Download"),
+                title=_("Preparing download"),
                 easy_close=False,
                 footer=None,
             )
@@ -287,7 +287,9 @@ def register_info(input, output, session, ctx: SessionContext):
         except Exception as e:
             logging.error(f"Failed to create logs zip file: {e}")
             ui.notification_show(
-                _("Failed to create logs zip file: {}").format(e),
+                _(
+                    "The log archive could not be created. Check the logs, then try again: {}"
+                ).format(e),
                 duration=10,
                 type="error",
             )
@@ -316,7 +318,7 @@ def register_info(input, output, session, ctx: SessionContext):
                 # Inform user and return a small text file to avoid server-side exceptions
                 ui.notification_show(
                     _(
-                        "Database snapshot is unavailable during image migration ({} pictures remaining). Please try again later."
+                        "The database snapshot is unavailable while pictures are being migrated. {} pictures remain. Try again when the migration is complete."
                     ).format(len(startup.ids_with_original_blob)),
                     duration=12,
                     type="warning",
@@ -335,7 +337,9 @@ def register_info(input, output, session, ctx: SessionContext):
             if not result.success:
                 logging.error(f"[DOWNLOAD_DB] Backup snapshot failed: {result.message}")
                 ui.notification_show(
-                    _("Failed to create a consistent snapshot: {}").format(
+                    _(
+                        "A consistent database snapshot could not be created. Check the logs, then try again: {}"
+                    ).format(
                         result.message
                     ),
                     duration=12,
@@ -354,7 +358,9 @@ def register_info(input, output, session, ctx: SessionContext):
         except Exception as e:
             logging.error(f"[DOWNLOAD_DB] Unexpected error: {e}")
             ui.notification_show(
-                _("Failed to prepare database download: {}").format(e),
+                _(
+                    "The database download could not be prepared. Check the logs, then try again: {}"
+                ).format(e),
                 duration=12,
                 type="error",
             )
@@ -371,7 +377,7 @@ def register_info(input, output, session, ctx: SessionContext):
             return CONFIG["DATABASE_PATH"]
         else:
             ui.notification_show(
-                _("The original kittyflap database file does not exist."),
+                _("The original Kittyflap database file was not found."),
                 duration=10,
                 type="error",
             )
@@ -388,16 +394,28 @@ def register_info(input, output, session, ctx: SessionContext):
                 )
                 if CONFIG["LATEST_VERSION"] == "unknown":
                     ui.notification_show(
-                        _("Latest version check failed."), duration=8, type="warning"
+                        _(
+                            "The latest version could not be checked. Check the internet connection, then try again."
+                        ),
+                        duration=8,
+                        type="warning",
                     )
             else:
                 ui.notification_show(
-                    _("Internet connection not available."), duration=8, type="warning"
+                    _(
+                        "No internet connection is available. Check the network, then try again."
+                    ),
+                    duration=8,
+                    type="warning",
                 )
         except Exception as e:
             logging.warning(f"[VERSION] Retry failed: {e}")
             ui.notification_show(
-                _("Retry failed: {}").format(e), duration=10, type="error"
+                _(
+                    "The version check failed again. Check the internet connection and logs, then try later: {}"
+                ).format(e),
+                duration=10,
+                type="error",
             )
         finally:
             # Trigger re-render of INFO section
@@ -439,7 +457,7 @@ def register_info(input, output, session, ctx: SessionContext):
         if versions_mismatch and not ctx.version_mismatch_warning_shown:
             ui.notification_show(
                 _(
-                    "Remote and Kittyflap versions differ (this device: {}, target device: {}). Please update to match versions."
+                    "Kittyhack versions differ between this device ({}) and the Kittyflap ({}). Update one or both so they match."
                 ).format(startup.git_version, target_git_version),
                 duration=20,
                 type="warning",
@@ -470,8 +488,8 @@ def register_info(input, output, session, ctx: SessionContext):
                 ui.markdown(
                     f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
                     + _(
-                        "Update is disabled because less than 2 GB of free disk space is available ({:.1f} MB free). "
-                        "Free up space first (e.g. reduce the max amount of pictures in the database), then reload this page."
+                        "The update needs at least 2 GB of free disk space, but only {:.1f} MB is available. "
+                        "Free some space, for example by reducing the picture limit, then reload this page."
                     ).format(startup.free_disk_space)
                 ),
                 style_="overflow-wrap: anywhere; word-break: break-word; max-width: 100%;",
@@ -495,14 +513,14 @@ def register_info(input, output, session, ctx: SessionContext):
             ui_update_kittyhack = ui.div(
                 ui.markdown(
                     _(
-                        "Unable to fetch the latest version from github. Please try it again later or check your internet connection."
+                        "The latest version could not be loaded from GitHub. Check the internet connection, then try again."
                     )
                 ),
                 ui.br(),
                 ui.div(
                     ui.input_task_button(
                         "btn_retry_latest_version",
-                        _("Retry latest version check"),
+                        _("Check again"),
                         icon=icon_svg("rotate"),
                     ),
                     style_="text-align: center;",
@@ -515,16 +533,16 @@ def register_info(input, output, session, ctx: SessionContext):
                     ui.hr(),
                     ui.div(
                         ui.markdown(
-                            _("Remote-/Kittyflap-version mismatch detected.")
+                            _("Kittyhack versions do not match.")
                             + " "
                             + _(
-                                "You can update only one side to match versions before running a full update."
+                                "Update either the Kittyflap or this device to make the versions match."
                             )
                         ),
                         ui.div(
                             ui.input_task_button(
                                 "update_target_kittyhack",
-                                _("Update target device only"),
+                                _("Update Kittyflap only"),
                                 icon=icon_svg("download"),
                                 class_="btn-default",
                                 disabled=update_disabled,
@@ -556,7 +574,7 @@ def register_info(input, output, session, ctx: SessionContext):
                 )
                 release_notes_block = ui.div(
                     ui.markdown(
-                        "**" + _("Release Notes for") + " " + latest_version + ":**"
+                        "**" + _("Release notes for") + " " + latest_version + ":**"
                     ),
                     ui.div(ui.markdown(release_notes), class_="release_notes"),
                     ui.br(),
@@ -564,7 +582,12 @@ def register_info(input, output, session, ctx: SessionContext):
             except Exception as e:
                 logging.warning(f"[VERSION] Failed to fetch release notes: {e}")
                 release_notes_block = ui.div(
-                    ui.markdown(_("Release notes unavailable: {}").format(e)), ui.br()
+                    ui.markdown(
+                        _(
+                            "Release notes could not be loaded. Check the internet connection, then try again: {}"
+                        ).format(e)
+                    ),
+                    ui.br(),
                 )
 
             ui_update_kittyhack = (
@@ -590,16 +613,16 @@ def register_info(input, output, session, ctx: SessionContext):
                         venv_update_notice if venv_update_notice else ui.div(),
                         ui.help_text(
                             _(
-                                "Important: A stable WLAN connection is required for the update process."
+                                "Keep the WLAN connection stable while the update runs."
                             )
                         ),
                         ui.br(),
                         ui.help_text(
-                            _("The update will end with a reboot of the Kittyflap.")
+                            _("The Kittyflap will restart when the update is complete.")
                         ),
                         ui.markdown(
                             _(
-                                "Check out the [Changelog](https://github.com/floppyFK/kittyhack/releases) to see what's new in the latest version."
+                                "Read the [changelog](https://github.com/floppyFK/kittyhack/releases) to see what changed."
                             )
                         ),
                     ),
@@ -611,16 +634,16 @@ def register_info(input, output, session, ctx: SessionContext):
                         ui.hr(),
                         ui.div(
                             ui.markdown(
-                                _("Remote-/Kittyflap-version mismatch detected.")
+                                _("Kittyhack versions do not match.")
                                 + " "
                                 + _(
-                                    "Use one of the buttons below if you want to update only one device."
+                                    "Choose one device to update if you want to align the versions first."
                                 )
                             ),
                             ui.div(
                                 ui.input_task_button(
                                     "update_target_kittyhack",
-                                    _("Update target device only"),
+                                    _("Update Kittyflap only"),
                                     icon=icon_svg("download"),
                                     class_="btn-default",
                                     disabled=update_disabled,
@@ -644,7 +667,7 @@ def register_info(input, output, session, ctx: SessionContext):
                     ui.div(
                         ui.markdown(
                             _(
-                                "This installation does not appear to be a git clone. Automatic updates require a git repository (git clone)."
+                                "This Kittyhack installation is not a Git clone, so automatic updates are unavailable. Reinstall it as a Git clone to enable them."
                             )
                         )
                     ),
@@ -673,15 +696,15 @@ def register_info(input, output, session, ctx: SessionContext):
                                 ui.markdown(
                                     f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
                                     + _(
-                                        "WARNING: Local changes detected in the git repository in `{}`."
+                                        "Local changes were found in the Git repository at `{}`."
                                     ).format(kittyhack_root())
                                     + "\n\n"
                                     + _(
-                                        "If you proceed with the update, these changes will be lost (the database and configuration will not be affected)."
+                                        "Updating will discard these changes. The database and configuration will not be affected."
                                     )
                                     + "\n\n"
                                     + _(
-                                        "Please commit or stash your changes manually before updating, if you want to keep them."
+                                        "Commit or stash the changes before updating if you want to keep them."
                                     )
                                 ),
                                 ui.h6(_("Local changes:")),
@@ -698,7 +721,9 @@ def register_info(input, output, session, ctx: SessionContext):
                         ui.div(
                             ui.hr(),
                             ui.markdown(
-                                _("Unable to check local git changes: {}").format(e)
+                                _(
+                                    "Local Git changes could not be checked. Check the repository and logs before updating: {}"
+                                ).format(e)
                             ),
                         ),
                     )
@@ -715,11 +740,11 @@ def register_info(input, output, session, ctx: SessionContext):
                     ui_update_kittyhack,
                     ui.hr(),
                     ui.div(
-                        ui.markdown(_("Remote-/Kittyflap-version mismatch detected.")),
+                        ui.markdown(_("Kittyhack versions do not match.")),
                         ui.div(
                             ui.input_task_button(
                                 "update_target_kittyhack",
-                                _("Update target device only"),
+                                _("Update Kittyflap only"),
                                 icon=icon_svg("download"),
                                 class_="btn-default",
                                 disabled=update_disabled,
@@ -750,17 +775,17 @@ def register_info(input, output, session, ctx: SessionContext):
             )
             if update_repo_mode == "custom":
                 force_update_help = _(
-                    "The current update source is your custom repository. Use this button to pull the latest commit on the selected branch or re-install the selected tag."
+                    "The update source is your custom repository. Use this button to pull the latest commit from the selected branch or reinstall the selected tag."
                 )
             elif update_repo_mode == "beta":
                 force_update_help = _(
                     "The current update source is the official beta channel. "
-                    "Use this button to re-install the latest beta tag (`vX.Y.Z_beta_N`), "
+                    "Use this button to reinstall the latest beta tag (`vX.Y.Z_beta_N`), "
                     "or the latest stable release when no newer beta is available."
                 )
             else:
                 force_update_help = _(
-                    "Re-install the currently selected version from the configured update source."
+                    "Reinstall the selected version from the configured update source."
                 )
             # Show disk/venv notices next to Force update when the primary Update
             # button is not shown (already-latest / unknown-version paths).
@@ -771,13 +796,13 @@ def register_info(input, output, session, ctx: SessionContext):
                 ui_update_kittyhack,
                 ui.hr(),
                 ui.div(
-                    ui.h6(_("Force update")),
+                    ui.h6(_("Reinstall update")),
                     ui.help_text(force_update_help),
                     ui.br(),
                     ui.div(
                         ui.input_task_button(
                             "btn_force_update_kittyhack",
-                            _("Force update now"),
+                            _("Reinstall now"),
                             icon=icon_svg("rotate"),
                             class_="btn-default",
                             disabled=update_disabled,
@@ -806,23 +831,23 @@ def register_info(input, output, session, ctx: SessionContext):
             ui_kittyflap_db = ui.div(
                 ui.markdown(
                     _(
-                        "The original kittyflap database file consumes currently **{:.1f} MB** of disk space."
+                        "The original Kittyflap database currently uses **{:.1f} MB** of disk space."
                     ).format(SystemInfo.get_file_size(CONFIG["DATABASE_PATH"]))
                     + "\n\n"
                     + _(
-                        "The file contains a lot pictures which could not be uploaded to the original kittyflap servers anymore."
+                        "It contains pictures that could no longer be uploaded to the original Kittyflap servers."
                     )
                     + "\n\n"
-                    + _("You could delete the pictures from it to free up disk space.")
+                    + _("Remove these pictures if you want to free disk space.")
                 ),
                 ui.input_task_button(
                     "clear_kittyflap_db",
-                    _("Remove pictures from original Kittyflap Database"),
+                    _("Remove original pictures"),
                     icon=icon_svg("trash"),
                 ),
                 ui.download_button(
                     "download_kittyflap_db",
-                    _("Download Kittyflap Database"),
+                    _("Download Kittyflap database"),
                     icon=icon_svg("download"),
                 ),
             )
@@ -832,7 +857,7 @@ def register_info(input, output, session, ctx: SessionContext):
                 ui.card(
                     ui.card_header(
                         ui.h4(
-                            _("Original Kittyflap Database"),
+                            _("Original Kittyflap database"),
                             style_="text-align: center;",
                         )
                     ),
@@ -855,30 +880,30 @@ def register_info(input, output, session, ctx: SessionContext):
                     ui.br(),
                     ui.markdown(
                         _(
-                            "Kittyhack is an open-source project that enables offline use of the Kittyflap cat door—completely without internet access."
+                            "Kittyhack is open-source software that lets you use the Kittyflap cat flap locally, without an internet connection."
                         )
                         + "\n\n"
                         + _(
-                            "It was created after the manufacturer of Kittyflap filed for bankruptcy, rendering the associated app non-functional."
+                            "It was created after the Kittyflap manufacturer filed for bankruptcy and its app stopped working."
                         )
                     ),
                     ui.hr(),
                     ui.markdown(
-                        _("**Important Notes**")
+                        _("**About this project**")
                         + "\n\n"
                         + _(
-                            "I have no connection to the manufacturer of Kittyflap. This project was developed on my own initiative to continue using my Kittyflap."
+                            "This independent project is not connected to the Kittyflap manufacturer. I created it so I could keep using my Kittyflap."
                         )
                         + "\n\n"
                         + _(
-                            "If you find any bugs or have suggestions for improvement, please report them on the GitHub page."
+                            "Report bugs or share suggestions on GitHub."
                         )
                     ),
                     ui.HTML(
                         "<center><p><a href='https://github.com/floppyFK/kittyhack' target='_blank'>"
                         + str(icon_svg("square-github"))
                         + " "
-                        + _("GitHub Repository")
+                        + _("Open GitHub repository")
                         + "</a></p></center>"
                     ),
                     ui.hr(),
@@ -899,7 +924,7 @@ def register_info(input, output, session, ctx: SessionContext):
                     ui.HTML(
                         "<center><p style='margin-bottom: 0.3rem;'>"
                         + _(
-                            "If you like Kittyhack, you can support the project with a small donation:"
+                            "If Kittyhack is useful to you, you can support the project with a small donation."
                         )
                         + "</p></center>"
                     ),
@@ -920,19 +945,19 @@ def register_info(input, output, session, ctx: SessionContext):
             ui.div(
                 ui.card(
                     ui.card_header(
-                        ui.h4(_("Version Information"), style_="text-align: center;")
+                        ui.h4(_("Version information"), style_="text-align: center;")
                     ),
                     ui.br(),
                     ui.markdown(
                         "**"
-                        + _("Current Version")
+                        + _("Current version")
                         + ":** `"
                         + startup.git_version
                         + "`"
                         + "  \n"
                         + (
                             "**"
-                            + _("Current Version on Kittyflap")
+                            + _("Kittyflap version")
                             + ":** `"
                             + target_git_version
                             + "`"
@@ -941,7 +966,7 @@ def register_info(input, output, session, ctx: SessionContext):
                             else ""
                         )
                         + "**"
-                        + _("Latest Version")
+                        + _("Latest version")
                         + ":** `"
                         + latest_version
                         + "`"
@@ -951,7 +976,7 @@ def register_info(input, output, session, ctx: SessionContext):
                             ui.markdown(
                                 f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
                                 + _(
-                                    "The remote and Kittyflap versions differ. This may lead to malfunction during operation."
+                                    "Kittyhack versions differ between this device and the Kittyflap. Some features may not work correctly until both versions match."
                                 )
                             ),
                             class_="generic-container warning-container",
@@ -965,7 +990,7 @@ def register_info(input, output, session, ctx: SessionContext):
                     ui.div(
                         ui.input_action_button(
                             "btn_changelogs",
-                            _("Show all Changelogs"),
+                            _("Show all changelogs"),
                             icon=icon_svg("info"),
                         )
                     ),
@@ -979,17 +1004,17 @@ def register_info(input, output, session, ctx: SessionContext):
             ui.div(
                 ui.card(
                     ui.card_header(
-                        ui.h4(_("System Information"), style_="text-align: center;")
+                        ui.h4(_("System information"), style_="text-align: center;")
                     ),
                     ui.br(),
                     ui.output_ui("ui_system_info"),
                     ui.hr(),
-                    ui.h5(_("Kittyhack Database")),
-                    ui.h6(_("Backup and Restore your Kittyhack database")),
+                    ui.h5(_("Kittyhack database")),
+                    ui.h6(_("Back up or restore the Kittyhack database")),
                     ui.div(
                         ui.download_button(
                             "download_kittyhack_db",
-                            _("Download Kittyhack Database"),
+                            _("Download Kittyhack database"),
                             icon=icon_svg("download"),
                         )
                     ),
@@ -1000,7 +1025,7 @@ def register_info(input, output, session, ctx: SessionContext):
                             centered_form_row(
                                 uix.input_file(
                                     "upload_kittyhack_db",
-                                    _("Restore Kittyhack Database (.db)"),
+                                    _("Choose Kittyhack database backup (.db)"),
                                     accept=[".db"],
                                     multiple=False,
                                     width="90%",
@@ -1009,7 +1034,7 @@ def register_info(input, output, session, ctx: SessionContext):
                             ui.div(
                                 ui.input_task_button(
                                     "restore_kittyhack_db",
-                                    _("Restore Database"),
+                                    _("Restore database"),
                                     icon=icon_svg("rotate"),
                                     class_="btn-outline-danger",
                                 ),
@@ -1023,12 +1048,12 @@ def register_info(input, output, session, ctx: SessionContext):
                         )
                     ),
                     ui.hr(),
-                    ui.h5(_("Configuration File")),
-                    ui.h6(_("Backup and Restore your Kittyhack configuration")),
+                    ui.h5(_("Configuration file")),
+                    ui.h6(_("Back up or restore the Kittyhack configuration")),
                     ui.div(
                         ui.download_button(
                             "download_config",
-                            _("Download Configuration File"),
+                            _("Download configuration"),
                             icon=icon_svg("download"),
                         )
                     ),
@@ -1039,7 +1064,7 @@ def register_info(input, output, session, ctx: SessionContext):
                             centered_form_row(
                                 uix.input_file(
                                     "upload_config",
-                                    _("Restore Configuration File (config.ini)"),
+                                    _("Choose configuration backup (config.ini)"),
                                     accept=[".ini"],
                                     multiple=False,
                                     width="90%",
@@ -1048,7 +1073,7 @@ def register_info(input, output, session, ctx: SessionContext):
                             ui.div(
                                 ui.input_task_button(
                                     "restore_config",
-                                    _("Restore Configuration"),
+                                    _("Restore configuration"),
                                     icon=icon_svg("rotate"),
                                     class_="btn-outline-danger",
                                 ),
@@ -1064,7 +1089,7 @@ def register_info(input, output, session, ctx: SessionContext):
                     ui.br(),
                     ui.markdown(
                         _(
-                            "> Note: If the database or the configuration gets restored from a backup, then the Kittyflap will be rebooted afterwards to apply the new configuration."
+                            "After you restore the database or configuration, the Kittyflap must restart to apply it."
                         )
                     ),
                     full_screen=False,
@@ -1088,10 +1113,10 @@ def register_info(input, output, session, ctx: SessionContext):
                         + " ["
                         + _("Progressive Web App")
                         + "](https://web.dev/learn/pwa/progressive-web-apps) "
-                        + _("on your Smartphone or computer for easier access.")
+                        + _("on your smartphone or computer for easier access.")
                         + "  \n"
                         + _(
-                            "Such a PWA can be added to your home screen and launched like a native app, without needing to open a web browser."
+                            "You can add the PWA to your home screen and open it like an app."
                         )
                     ),
                     ui.div(
@@ -1099,16 +1124,16 @@ def register_info(input, output, session, ctx: SessionContext):
                         ui.div(
                             ui.markdown(
                                 f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
-                                + _("**HTTPS Required**")
+                                + _("**HTTPS required**")
                                 + "\n\n"
                                 + _(
-                                    "PWA installation requires a secure connection (HTTPS). You are currently accessing Kittyhack via HTTP."
+                                    "Installing the PWA requires a secure HTTPS connection. Kittyhack is currently open over HTTP."
                                 )
                                 + "  \n\n"
-                                + _("You'll need to set up a reverse proxy with HTTPS.")
+                                + _("Set up a reverse proxy with HTTPS to continue.")
                                 + " "
                                 + _(
-                                    "If you want to setup a reverse proxy in your home network, you can watch"
+                                    "For help setting up a reverse proxy on your home network, see"
                                 )
                                 + " ["
                                 + _("this guide")
@@ -1121,7 +1146,7 @@ def register_info(input, output, session, ctx: SessionContext):
                         ui.div(
                             ui.markdown(
                                 f"{icon_svg('circle-check', margin_left='-0.1em')} "
-                                + _("**App is already installed on this device!**")
+                                + _("**App is already installed on this device.**")
                             ),
                             id="pwa_already_installed",
                             style_="display: none; color: #1cc88a; padding: 10px; text-align: center;",
@@ -1130,7 +1155,7 @@ def register_info(input, output, session, ctx: SessionContext):
                         ui.div(
                             ui.markdown(
                                 f"{icon_svg('circle-check', margin_left='-0.1em')} "
-                                + _("**Installation successful!**")
+                                + _("**App installed.**")
                             ),
                             id="pwa_installed_success",
                             style_="display: none; color: #1cc88a; padding: 10px; text-align: center;",
@@ -1139,7 +1164,7 @@ def register_info(input, output, session, ctx: SessionContext):
                         ui.div(
                             ui.input_action_button(
                                 id="pwa_install_button",
-                                label=_("Install as App"),
+                                label=_("Install app"),
                                 icon=icon_svg("download"),
                                 class_="btn-default",
                             ),
@@ -1156,12 +1181,12 @@ def register_info(input, output, session, ctx: SessionContext):
             ),
             ui.div(
                 ui.card(
-                    ui.card_header(ui.h4(_("Logfiles"), style_="text-align: center;")),
+                    ui.card_header(ui.h4(_("Log files"), style_="text-align: center;")),
                     ui.br(),
                     ui.div(
                         ui.download_button(
                             "download_logfile",
-                            _("Download Kittyhack Logfile"),
+                            _("Download Kittyhack logs"),
                             icon=icon_svg("download"),
                         )
                     ),
@@ -1199,7 +1224,7 @@ def register_info(input, output, session, ctx: SessionContext):
             # Get WLAN status information
 
         if is_remote_mode():
-            wlan_info = _("Not available in remote-mode")
+            wlan_info = _("Not available in remote mode")
         else:
             try:
                 wlan = subprocess.run(
@@ -1233,7 +1258,7 @@ def register_info(input, output, session, ctx: SessionContext):
                 else:
                     wlan_info = _("Not connected")
             except Exception:
-                wlan_info = _("Unable to determine")
+                wlan_info = _("Unknown")
 
                 # Create a DataFrame with the system information
         df = pd.DataFrame(
@@ -1242,7 +1267,7 @@ def register_info(input, output, session, ctx: SessionContext):
                     _("Kittyhack database size"),
                     _("Free disk space"),
                     _("Used RAM"),
-                    _("WLAN Status"),
+                    _("WLAN status"),
                 ],
                 "Value": [
                     f"{database_size:.1f} MB",
@@ -1268,7 +1293,7 @@ def register_info(input, output, session, ctx: SessionContext):
             include_beta=(update_mode == "beta"),
         )
         if not entries:
-            body = ui.markdown(_("No changelogs found."))
+            body = ui.markdown(_("No changelogs are available."))
         else:
             rows = []
             for idx, entry in enumerate(entries):
@@ -1287,7 +1312,7 @@ def register_info(input, output, session, ctx: SessionContext):
                     changelog_expandable_item(
                         f"changelog_item_{idx}",
                         title,
-                        ui.markdown(body_md or _("(No release notes.)")),
+                        ui.markdown(body_md or _("No release notes are available.")),
                     )
                 )
             body = ui.div(*rows, class_="changelog-accordion")
@@ -1308,7 +1333,11 @@ def register_info(input, output, session, ctx: SessionContext):
     @reactive.event(input.clear_kittyflap_db)
     def clear_original_kittyflap_db():
         with ui.Progress(min=1, max=2) as p:
-            p.set(1, message="Deleting the pictures", detail="This may take a while...")
+            p.set(
+                1,
+                message=_("Deleting pictures…"),
+                detail=_("This may take a while."),
+            )
             if os.path.exists(CONFIG["DATABASE_PATH"]):
                 try:
                     DbMigrations.clear_original_kittyflap_database(
@@ -1316,7 +1345,7 @@ def register_info(input, output, session, ctx: SessionContext):
                     )
                     ui.notification_show(
                         _(
-                            "The pictures from the original kittyflap database were removed successfully."
+                            "Pictures removed from the original Kittyflap database."
                         ),
                         duration=5,
                         type="message",
@@ -1325,14 +1354,14 @@ def register_info(input, output, session, ctx: SessionContext):
                 except Exception as e:
                     ui.notification_show(
                         _(
-                            "An error occurred while deleting the pictures from the original kittyflap database: {}"
+                            "The pictures could not be removed from the original Kittyflap database. Check the logs, then try again: {}"
                         ).format(e),
                         duration=10,
                         type="error",
                     )
             else:
                 ui.notification_show(
-                    _("The original kittyflap database file does not exist anymore."),
+                    _("The original Kittyflap database file was already removed."),
                     duration=5,
                     type="message",
                 )
@@ -1349,13 +1378,19 @@ def register_info(input, output, session, ctx: SessionContext):
             else:
                 logging.error("config.ini not found")
                 ui.notification_show(
-                    _("config.ini not found"), duration=10, type="error"
+                    _(
+                        "config.ini was not found. Check the installation, then try again."
+                    ),
+                    duration=10,
+                    type="error",
                 )
                 return None
         except Exception as e:
             logging.error(f"Failed to download config.ini file: {e}")
             ui.notification_show(
-                _("Failed to download config.ini file: {}").format(e),
+                _(
+                    "config.ini could not be downloaded. Check the logs, then try again: {}"
+                ).format(e),
                 duration=10,
                 type="error",
             )
@@ -1366,7 +1401,9 @@ def register_info(input, output, session, ctx: SessionContext):
     def on_upload_kittyhack_db():
         files = input.upload_kittyhack_db()
         if not files:
-            ui.notification_show(_("No file selected."), duration=8, type="error")
+            ui.notification_show(
+                _("Choose a database backup to upload."), duration=8, type="error"
+            )
             ctx.last_uploaded_db_path.set(None)
             return
         f = files[0]
@@ -1374,13 +1411,15 @@ def register_info(input, output, session, ctx: SessionContext):
         src_path = f.get("datapath", "")
         if not src_path or not os.path.exists(src_path):
             ui.notification_show(
-                _("Uploaded file not found."), duration=8, type="error"
+                _("The uploaded file was not found. Choose it again, then retry."),
+                duration=8,
+                type="error",
             )
             ctx.last_uploaded_db_path.set(None)
             return
         if not name.lower().endswith(".db"):
             ui.notification_show(
-                _("Invalid file type. Please upload a .db file."),
+                _("This file is not a .db file. Choose a database backup."),
                 duration=10,
                 type="error",
             )
@@ -1389,7 +1428,7 @@ def register_info(input, output, session, ctx: SessionContext):
             # Only store path and inform user; do not restore yet
         ctx.last_uploaded_db_path.set(src_path)
         ui.notification_show(
-            _("Database file uploaded. Click 'Restore Database' to apply."),
+            _("Database backup uploaded. Select Restore database to apply it."),
             duration=8,
             type="message",
         )
@@ -1400,7 +1439,9 @@ def register_info(input, output, session, ctx: SessionContext):
         src_path = ctx.last_uploaded_db_path.get()
         if not src_path or not os.path.exists(src_path):
             ui.notification_show(
-                _("No uploaded database ready to restore."), duration=8, type="error"
+                _("Choose and upload a database backup before restoring."),
+                duration=8,
+                type="error",
             )
             return
         try:
@@ -1421,25 +1462,29 @@ def register_info(input, output, session, ctx: SessionContext):
                 # Overwrite DB with uploaded file
             shutil.copy2(src_path, CONFIG["KITTYHACK_DATABASE_PATH"])
             ui.notification_show(
-                _("Database restored successfully."), duration=6, type="message"
+                _("Database restored."), duration=6, type="message"
             )
             # Prompt reboot to apply
             logging.info("Database restore performed --> Restart pending.")
             m = ui.modal(
                 ui.markdown(
-                    _("Please click the 'Reboot' button to restart the Kittyflap.")
+                    _("Restart the Kittyflap now to apply the restored database.")
                 ),
-                title=_("Reboot required"),
+                title=_("Restart required"),
                 easy_close=False,
                 footer=ui.div(
-                    ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
+                    ui.input_action_button("btn_modal_reboot_ok", _("Restart")),
                 ),
             )
             ui.modal_show(m)
         except Exception as e:
             logging.error(f"[RESTORE_DB] Failed to restore database: {e}")
             ui.notification_show(
-                _("Failed to restore database: {}").format(e), duration=12, type="error"
+                _(
+                    "The database could not be restored. Check the logs, then try again: {}"
+                ).format(e),
+                duration=12,
+                type="error",
             )
 
     @reactive.Effect
@@ -1447,7 +1492,11 @@ def register_info(input, output, session, ctx: SessionContext):
     def on_upload_config():
         files = input.upload_config()
         if not files:
-            ui.notification_show(_("No file selected."), duration=8, type="error")
+            ui.notification_show(
+                _("Choose a configuration backup to upload."),
+                duration=8,
+                type="error",
+            )
             ctx.last_uploaded_cfg_path.set(None)
             return
         f = files[0]
@@ -1455,13 +1504,15 @@ def register_info(input, output, session, ctx: SessionContext):
         src_path = f.get("datapath", "")
         if not src_path or not os.path.exists(src_path):
             ui.notification_show(
-                _("Uploaded file not found."), duration=8, type="error"
+                _("The uploaded file was not found. Choose it again, then retry."),
+                duration=8,
+                type="error",
             )
             ctx.last_uploaded_cfg_path.set(None)
             return
         if not name.lower().endswith(".ini"):
             ui.notification_show(
-                _("Invalid file type. Please upload a config.ini file."),
+                _("This file is not an .ini file. Choose a config.ini backup."),
                 duration=10,
                 type="error",
             )
@@ -1473,7 +1524,9 @@ def register_info(input, output, session, ctx: SessionContext):
                 content = fcfg.read()
             if "[Settings]" not in content:
                 ui.notification_show(
-                    _("Invalid configuration file: missing [Settings] section."),
+                _(
+                    "This configuration file has no [Settings] section. Choose a valid config.ini backup."
+                ),
                     duration=12,
                     type="error",
                 )
@@ -1481,7 +1534,9 @@ def register_info(input, output, session, ctx: SessionContext):
                 return
         except Exception as e:
             ui.notification_show(
-                _("Failed to validate configuration: {}").format(e),
+                _(
+                    "The configuration file could not be checked. Choose another file or check the logs: {}"
+                ).format(e),
                 duration=10,
                 type="error",
             )
@@ -1490,7 +1545,7 @@ def register_info(input, output, session, ctx: SessionContext):
             # Only store path and inform user; do not restore yet
         ctx.last_uploaded_cfg_path.set(src_path)
         ui.notification_show(
-            _("Configuration file uploaded. Click 'Restore Configuration' to apply."),
+            _("Configuration backup uploaded. Select Restore configuration to apply it."),
             duration=8,
             type="message",
         )
@@ -1501,7 +1556,7 @@ def register_info(input, output, session, ctx: SessionContext):
         src_path = ctx.last_uploaded_cfg_path.get()
         if not src_path or not os.path.exists(src_path):
             ui.notification_show(
-                _("No uploaded configuration ready to restore."),
+                _("Choose and upload a configuration backup before restoring."),
                 duration=8,
                 type="error",
             )
@@ -1510,24 +1565,26 @@ def register_info(input, output, session, ctx: SessionContext):
             config_path = os.path.join(os.getcwd(), "config.ini")
             shutil.copy2(src_path, config_path)
             ui.notification_show(
-                _("Configuration restored successfully."), duration=6, type="message"
+                _("Configuration restored."), duration=6, type="message"
             )
             logging.info("Configuration restore performed --> Restart pending.")
             m = ui.modal(
                 ui.markdown(
-                    _("Please click the 'Reboot' button to restart the Kittyflap.")
+                    _("Restart the Kittyflap now to apply the restored configuration.")
                 ),
-                title=_("Reboot required"),
+                title=_("Restart required"),
                 easy_close=False,
                 footer=ui.div(
-                    ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
+                    ui.input_action_button("btn_modal_reboot_ok", _("Restart")),
                 ),
             )
             ui.modal_show(m)
         except Exception as e:
             logging.error(f"[RESTORE_CFG] Failed to restore configuration: {e}")
             ui.notification_show(
-                _("Failed to restore configuration: {}").format(e),
+                _(
+                    "The configuration could not be restored. Check the logs, then try again: {}"
+                ).format(e),
                 duration=12,
                 type="error",
             )
@@ -1539,7 +1596,7 @@ def register_info(input, output, session, ctx: SessionContext):
         if not startup.git_repo_available:
             ui.notification_show(
                 _(
-                    "Automatic update requires a git repository. Please reinstall via git clone or the setup script."
+                    "Automatic updates require a Git repository. Reinstall Kittyhack with Git clone or the setup script, then try again."
                 ),
                 duration=12,
                 type="error",
@@ -1552,7 +1609,7 @@ def register_info(input, output, session, ctx: SessionContext):
 
         if (not is_remote_mode()) and update_target:
             ui.notification_show(
-                _("Target-only update is only available in remote-mode."),
+                _("Updating only the Kittyflap is available only in remote mode."),
                 duration=8,
                 type="error",
             )
@@ -1580,7 +1637,7 @@ def register_info(input, output, session, ctx: SessionContext):
             in_progress=True,
             step=1,
             max_steps=initial_max_steps,
-            message=_("Starting update..."),
+            message=_("Starting update"),
             detail="",
             result=None,
             error_msg="",
@@ -1605,8 +1662,8 @@ def register_info(input, output, session, ctx: SessionContext):
                         in_progress=True,
                         step=1,
                         max_steps=(9 if update_local else 1),
-                        message=_("Updating connected target device..."),
-                        detail=_("Preparing remote update..."),
+                        message=_("Updating the connected Kittyflap"),
+                        detail=_("Preparing the remote update"),
                         result=None,
                         error_msg="",
                     )
@@ -1614,7 +1671,11 @@ def register_info(input, output, session, ctx: SessionContext):
                     client = RemoteControlClient.instance()
                     client.ensure_started()
                     if not client.wait_until_ready(timeout=20.0):
-                        _set_error_and_stop(_("Remote target is not connected."))
+                        _set_error_and_stop(
+                            _(
+                                "The Kittyflap is not connected. Check the remote connection, then try again."
+                            )
+                        )
                         return
 
                     client.start_target_update(
@@ -1631,7 +1692,9 @@ def register_info(input, output, session, ctx: SessionContext):
                             monotonic_time() - float(target_update_started_at or 0.0)
                         ) > 3600.0:
                             _set_error_and_stop(
-                                _("Timed out while waiting for target device update.")
+                                _(
+                                    "The Kittyflap update took too long. Check the connection and logs before trying again."
+                                )
                             )
                             return
 
@@ -1642,10 +1705,12 @@ def register_info(input, output, session, ctx: SessionContext):
                         if status.get("ok") is False:
                             reason = str(
                                 status.get("reason")
-                                or _("Unknown target update error.")
+                                or _("Unknown Kittyflap update error")
                             )
                             _set_error_and_stop(
-                                _("Target device update failed: {}.").format(reason)
+                                _(
+                                    "The Kittyflap update failed. Check the logs before trying again: {}."
+                                ).format(reason)
                             )
                             return
                         if status.get("ok") is True:
@@ -1653,11 +1718,11 @@ def register_info(input, output, session, ctx: SessionContext):
                                 in_progress=True,
                                 step=1,
                                 max_steps=(9 if update_local else 1),
-                                message=_("Connected target device updated."),
+                                message=_("Kittyflap updated"),
                                 detail=(
-                                    _("Starting update on this device...")
+                                    _("Starting the update on this device")
                                     if update_local
-                                    else _("Update finished.")
+                                    else _("Update finished")
                                 ),
                                 result=None,
                                 error_msg="",
@@ -1678,9 +1743,9 @@ def register_info(input, output, session, ctx: SessionContext):
                                 in_progress=True,
                                 step=1,
                                 max_steps=(9 if update_local else 1),
-                                message=_("Updating connected target device..."),
+                                message=_("Updating the connected Kittyflap"),
                                 detail=_(
-                                    "Connection lost while target is restarting/reconnecting. Waiting..."
+                                    "The connection was lost while the Kittyflap restarted. Waiting for it to reconnect."
                                 ),
                                 result=None,
                                 error_msg="",
@@ -1688,7 +1753,7 @@ def register_info(input, output, session, ctx: SessionContext):
                             if elapsed >= reconnect_grace_s:
                                 _set_error_and_stop(
                                     _(
-                                        "Connection to target device did not recover in time after update restart."
+                                        "The Kittyflap did not reconnect after the update. Check its power and network connection."
                                     )
                                 )
                                 return
@@ -1725,12 +1790,12 @@ def register_info(input, output, session, ctx: SessionContext):
                                             step=1,
                                             max_steps=(9 if update_local else 1),
                                             message=_(
-                                                "Connected target device updated."
+                                                "Kittyflap updated"
                                             ),
                                             detail=(
-                                                _("Starting update on this device...")
+                                                _("Starting the update on this device")
                                                 if update_local
-                                                else _("Update finished.")
+                                                else _("Update finished")
                                             ),
                                             result=None,
                                             error_msg="",
@@ -1738,17 +1803,17 @@ def register_info(input, output, session, ctx: SessionContext):
                                         break
 
                         if status.get("in_progress"):
-                            detail = _("Target update is running...")
+                            detail = _("The Kittyflap update is running")
                         elif status.get("requested"):
-                            detail = _("Waiting for target update to start...")
+                            detail = _("Waiting for the Kittyflap update to start")
                         else:
-                            detail = _("Waiting for remote target response...")
+                            detail = _("Waiting for the Kittyflap to respond")
 
                         set_update_progress(
                             in_progress=True,
                             step=1,
                             max_steps=(9 if update_local else 1),
-                            message=_("Updating connected target device..."),
+                            message=_("Updating the connected Kittyflap"),
                             detail=detail,
                             result=None,
                             error_msg="",
@@ -1781,7 +1846,7 @@ def register_info(input, output, session, ctx: SessionContext):
                                 ):
                                     _set_error_and_stop(
                                         _(
-                                            "Target device reconnected, but version is still {} instead of {}."
+                                            "The Kittyflap reconnected, but its version is still {} instead of {}. Check the update logs before trying again."
                                         ).format(
                                             target_git_version,
                                             latest_version,
@@ -1800,7 +1865,11 @@ def register_info(input, output, session, ctx: SessionContext):
                                 f"[UPDATE] Post-update target version verification failed: {e}"
                             )
                 except Exception as e:
-                    _set_error_and_stop(_("Failed to run target update: {}.").format(e))
+                    _set_error_and_stop(
+                        _(
+                            "The Kittyflap update could not run. Check the connection and logs, then try again: {}."
+                        ).format(e)
+                    )
                     return
 
             if not update_local:
@@ -1888,7 +1957,7 @@ def register_info(input, output, session, ctx: SessionContext):
             return
 
         timing_note = ui.markdown(
-            _("*This step may take several minutes. Please be patient.*")
+            _("*This step may take several minutes.*")
         )
         if state.get("is_venv_update"):
             timing_note = ui.div(
@@ -1941,11 +2010,11 @@ def register_info(input, output, session, ctx: SessionContext):
                         <br>
                     """),
                     ui.markdown(
-                        _("Do not close this page until the update is finished!")
+                        _("Keep this page open until the update is complete.")
                     ),
                     timing_note,
                 ),
-                title=_("Updating Kittyhack..."),
+                title=_("Updating Kittyhack"),
                 easy_close=False,
                 footer=None,
                 id="update_progress_modal",
@@ -2005,7 +2074,7 @@ def register_info(input, output, session, ctx: SessionContext):
             reboot_body = [
                 ui.markdown(
                     _(
-                        "A restart is required to apply the update. Please click the 'Reboot' button to restart the Kittyflap."
+                        "The update is ready. Restart the Kittyflap now to apply it."
                     )
                 )
             ]
@@ -2027,7 +2096,7 @@ def register_info(input, output, session, ctx: SessionContext):
                     title=_("Restart required"),
                     easy_close=False,
                     footer=ui.div(
-                        ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
+                        ui.input_action_button("btn_modal_reboot_ok", _("Restart")),
                     ),
                 )
             )
@@ -2045,7 +2114,11 @@ def register_info(input, output, session, ctx: SessionContext):
             ui.modal_show(
                 ui.modal(
                     ui.div(
-                        ui.markdown(_("An error occurred during the update process:")),
+                        ui.markdown(
+                            _(
+                                "The update could not be completed. Review the error below, then restart the Kittyflap to recover."
+                            )
+                        ),
                         ui.div(
                             error_text,
                             style_=(
@@ -2062,14 +2135,14 @@ def register_info(input, output, session, ctx: SessionContext):
                         ui.br(),
                         ui.markdown(
                             _(
-                                "A restart is required to recover. Please click the 'Reboot' button to restart the Kittyflap."
+                                "After the restart, check the version and logs before trying the update again."
                             )
                         ),
                     ),
                     title=_("Restart required"),
                     easy_close=False,
                     footer=ui.div(
-                        ui.input_action_button("btn_modal_reboot_ok", _("Reboot")),
+                        ui.input_action_button("btn_modal_reboot_ok", _("Restart")),
                     ),
                 )
             )

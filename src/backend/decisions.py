@@ -159,7 +159,7 @@ def sync_pir_second_factor_suggestion() -> bool:
                 "will lock the inside. A real cat without RFID can then only enter when the "
                 "outside PIR also triggers.")
             + "\n\n"
-            + _("Consider enabling **Require outside PIR for camera-based entry** in Configuration. "
+            + _("Consider enabling **Require outside PIR for camera-based entry** in Settings. "
                 "This is useful if the camera sometimes falsely detects a cat due to sun glare "
                 "or reflections.")
         ),

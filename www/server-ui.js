@@ -182,7 +182,7 @@
 
             var msgEl = q('#kh_config_leave_i18n');
             var msg = (msgEl && msgEl.getAttribute('data-msg')) ||
-                'You have unsaved configuration changes. Leave this page without saving?';
+                'Your settings have unsaved changes. Leave without saving?';
             if (!window.confirm(msg)) return;
 
             allowingTabChange = true;

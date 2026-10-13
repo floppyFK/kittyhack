@@ -52,7 +52,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                     f'src="data:image/jpeg;base64,{decoded_picture}" /></div>'
                     if decoded_picture
                     else '<div class="placeholder-image"><strong>'
-                    + _("No picture found!")
+                    + _("No picture yet")
                     + "</strong></div>"
                 )
 
@@ -104,7 +104,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                             ui.div(
                                 ui.input_switch(
                                     id=f"mng_cat_prey_{data_row['id']}",
-                                    label=_("Enable Prey detection"),
+                                    label=_("Enable prey detection"),
                                     value=bool(
                                         int(data_row.get("enable_prey_detection", 1))
                                     ),
@@ -121,7 +121,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "**Disabled:** Global prey detection is turned off in the `CONFIGURATION` section. Enable `Detect prey` to use per-cat settings."
+                                        "Prey detection is turned off in Settings. Turn on `Detect prey` to set it for each cat."
                                     )
                                 ),
                                 style_="color: grey;",
@@ -153,7 +153,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "**Disabled:** This feature is only available in `Individual configuration per cat` mode for entry."
+                                        "To set entry for each cat, choose `Set rules for each cat` in the entry settings."
                                     )
                                 ),
                                 style_="color: grey;",
@@ -187,7 +187,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                 ui.markdown(
                                     f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
                                     + _(
-                                        "This cat has no RFID configured. The individual exit per cat works only for cats with a RFID chip!"
+                                        "This cat has no microchip ID. Exit rules for each cat need a microchip ID."
                                     )
                                 ),
                                 style_="color:#b94a48;",
@@ -202,7 +202,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "**Disabled:** This feature is only available in `Individual configuration per cat` mode for exit."
+                                        "To set exit for each cat, choose `Set rules for each cat` in the exit settings."
                                     )
                                 ),
                                 style_="color: grey;",
@@ -238,7 +238,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.input_text(
                                         id=f"mng_cat_rfid_{data_row['id']}",
-                                        label=_("RFID"),
+                                        label=_("Microchip ID"),
                                         value=data_row["rfid"],
                                         width="100%",
                                     ),
@@ -254,7 +254,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.help_text(
                                         _(
-                                            "NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."
+                                            "Use the 16-character ID read by the Kittyflap, not the number in your vet booklet. It contains numbers 0–9 and letters A–F."
                                         )
                                     ),
                                 ),
@@ -262,7 +262,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.help_text(
                                         _(
-                                            "If you have entered the RFID correctly here, the name of the cat will be displayed in the [PICTURES] section."
+                                            "When the microchip ID matches, the cat's name appears with its pictures."
                                         )
                                     ),
                                 ),
@@ -273,7 +273,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                     12,
                                     uix.input_file(
                                         id=f"mng_cat_pic_{data_row['id']}",
-                                        label=_("Change Picture"),
+                                        label=_("Change picture"),
                                         accept=[".jpg", ".png"],
                                         width="100%",
                                     ),
@@ -302,11 +302,11 @@ def register_cats(input, output, session, ctx: SessionContext):
                         "id": "kh_manage_cats_i18n",
                         "style": "display:none;",
                         "data-msg-empty": _(
-                            "No RFID entered. Cat identification only via camera (if enabled). See CONFIGURATION section for details."
+                            "No microchip ID entered. Kittyhack will use the camera to identify this cat when camera identification is enabled."
                         ),
-                        "data-msg-valid": _("Valid RFID"),
+                        "data-msg-valid": _("Microchip ID is valid"),
                         "data-msg-invalid": _(
-                            "Invalid RFID. Must be exactly 16 hex characters (0-9, A-F)."
+                            "Enter a 16-character microchip ID using numbers 0–9 and letters A–F."
                         ),
                     }
                 ),
@@ -339,7 +339,7 @@ def register_cats(input, output, session, ctx: SessionContext):
             return ui.div(
                 ui.div(
                     ui.help_text(
-                        _("No cats in the database yet. Add one below.")
+                        _("No cats yet. Add one below.")
                     ),
                     style_="text-align: center; margin-bottom: 1rem;",
                 ),
@@ -421,15 +421,13 @@ def register_cats(input, output, session, ctx: SessionContext):
                     )
                     if result.success:
                         ui.notification_show(
-                            _("Data for {} updated successfully.").format(
-                                card_name
-                            ),
+                            _("Changes for {} saved.").format(card_name),
                             duration=5,
                             type="message",
                         )
                     else:
                         ui.notification_show(
-                            _("Failed to update cat details: {}").format(
+                            _("Changes for this cat could not be saved: {} Try again.").format(
                                 result.message
                             ),
                             duration=10,
@@ -438,7 +436,7 @@ def register_cats(input, output, session, ctx: SessionContext):
 
             if not updated_cats:
                 ui.notification_show(
-                    _("No changes detected. Nothing to save."),
+                    _("No changes to save."),
                     duration=5,
                     type="message",
                 )
@@ -487,7 +485,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                     12,
                     ui.div(
                         ui.input_switch(
-                            "add_new_cat_prey", _("Enable Prey detection"), True
+                            "add_new_cat_prey", _("Enable prey detection"), True
                         ),
                         style_=prey_style,
                     ),
@@ -501,7 +499,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                         12,
                         ui.markdown(
                             _(
-                                "**Disabled:** Global prey detection is turned off in the `CONFIGURATION` section. Enable `Detect prey` to use per-cat settings."
+                                "Prey detection is turned off in Settings. Turn on `Detect prey` to set it for each cat."
                             )
                         ),
                         style_="color: grey;",
@@ -529,7 +527,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                         12,
                         ui.markdown(
                             _(
-                                "**Disabled:** This feature is only available in `Individual configuration per cat` mode for entry."
+                                "To set entry for each cat, choose `Set rules for each cat` in the entry settings."
                             )
                         ),
                         style_="color: grey;",
@@ -557,7 +555,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                         12,
                         ui.markdown(
                             _(
-                                "**Disabled:** This feature is only available in `Individual configuration per cat` mode for exit."
+                                "To set exit for each cat, choose `Set rules for each cat` in the exit settings."
                             )
                         ),
                         style_="color: grey;",
@@ -575,8 +573,8 @@ def register_cats(input, output, session, ctx: SessionContext):
                         ui.div(
                             ui.markdown(
                                 _(
-                                    "**Important:** Individual entry/exit switches only apply when "
-                                    "the matching door mode is set to `Individual configuration per cat`."
+                                    "Entry and exit switches apply only when the matching flap "
+                                    "setting is `Set rules for each cat`."
                                 )
                             ),
                             style_="text-align: center;",
@@ -613,7 +611,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                             12,
                             ui.input_text(
                                 "add_new_cat_rfid",
-                                label=_("RFID"),
+                                label=_("Microchip ID"),
                                 value="",
                                 width="100%",
                             ),
@@ -624,7 +622,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                             12,
                             ui.help_text(
                                 _(
-                                    "You can find the RFID in the [PICTURES] section, if the chip of your cat was recognized by the Kittyflap. To read the RFID, just set the entrance mode to 'All Cats' and let pass your cat through the Kittyflap."
+                                    "To find the microchip ID, set entry to `All cats` and let your cat pass through the Kittyflap. The ID will appear with the picture."
                                 )
                             ),
                         ),
@@ -632,7 +630,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                             12,
                             ui.help_text(
                                 _(
-                                    "NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."
+                                    "Use the 16-character ID read by the Kittyflap, not the number in your vet booklet. It contains numbers 0–9 and letters A–F."
                                 )
                             ),
                         ),
@@ -643,7 +641,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                             12,
                             uix.input_file(
                                 "add_new_cat_pic",
-                                label=_("Upload Picture"),
+                                label=_("Upload picture"),
                                 accept=".jpg",
                                 width="100%",
                             ),
@@ -653,7 +651,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                             12,
                             ui.input_action_button(
                                 "add_new_cat_save",
-                                label=_("Save"),
+                                label=_("Add cat"),
                                 icon=icon_svg("floppy-disk"),
                             ),
                         ),
@@ -672,14 +670,16 @@ def register_cats(input, output, session, ctx: SessionContext):
         if val == "":
             return ui.div(
                 _(
-                    "No RFID entered. Cat identification only via camera (if enabled). See CONFIGURATION section for details."
+                    "No microchip ID entered. Kittyhack will use the camera to identify this cat when camera identification is enabled."
                 ),
                 class_="rfid-status rfid-empty",
             )
         if re.fullmatch(r"[0-9A-Fa-f]{16}", val):
-            return ui.div(_("Valid RFID"), class_="rfid-status rfid-valid")
+            return ui.div(
+                _("Microchip ID is valid"), class_="rfid-status rfid-valid"
+            )
         return ui.div(
-            _("Invalid RFID. Must be exactly 16 hex characters (0-9, A-F)."),
+            _("Enter a 16-character microchip ID using numbers 0–9 and letters A–F."),
             class_="rfid-status rfid-invalid",
         )
 
@@ -716,7 +716,7 @@ def register_cats(input, output, session, ctx: SessionContext):
         )
         if result.success:
             ui.notification_show(
-                _("New cat {} added successfully.").format(cat_name),
+                _("{} added.").format(cat_name),
                 duration=5,
                 type="message",
             )
@@ -728,7 +728,7 @@ def register_cats(input, output, session, ctx: SessionContext):
             ctx.reload_trigger_cats.set(ctx.reload_trigger_cats.get() + 1)
         else:
             ui.notification_show(
-                _("An error occurred while adding the new cat: {}").format(
+                _("This cat could not be added: {} Check the details and try again.").format(
                     result.message
                 ),
                 duration=10,
@@ -749,9 +749,7 @@ def register_cats(input, output, session, ctx: SessionContext):
             pending_cat_delete.set({"id": int(db_id), "name": name})
             ui.modal_show(
                 ui.modal(
-                    _("Do you really want to delete {} from the database?").format(
-                        name
-                    ),
+                    _("Delete {}?").format(name),
                     title=_("Delete cat"),
                     easy_close=False,
                     footer=ui.div(
@@ -795,14 +793,14 @@ def register_cats(input, output, session, ctx: SessionContext):
         )
         if result.success:
             ui.notification_show(
-                _("{} deleted successfully from the database.").format(db_name),
+                _("{} deleted.").format(db_name),
                 duration=5,
                 type="message",
             )
             ctx.reload_trigger_cats.set(ctx.reload_trigger_cats.get() + 1)
         else:
             ui.notification_show(
-                _("Failed to delete {} from the database: {}").format(
+                _("{} could not be deleted: {} Try again.").format(
                     db_name, result.message
                 ),
                 duration=10,

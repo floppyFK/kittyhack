@@ -85,11 +85,13 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                         class_="d-flex gap-2 justify-content-center flex-wrap",
                     ),
                     ui.help_text(
-                        _("Label Studio Version: {}").format(
+                        _("Label Studio version: {}").format(
                             CONFIG["LABELSTUDIO_VERSION"]
                         )
                         + " · "
-                        + _("Latest: {}").format(labelstudio_latest_version_display)
+                        + _("Latest version: {}").format(
+                            labelstudio_latest_version_display
+                        )
                     ),
                     style_="text-align:center;",
                 )
@@ -105,9 +107,13 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                         _("Label Studio is not running."), style_="margin-top:0.5rem;"
                     ),
                     ui.help_text(
-                        _("Version: {}").format(CONFIG["LABELSTUDIO_VERSION"])
+                        _("Installed version: {}").format(
+                            CONFIG["LABELSTUDIO_VERSION"]
+                        )
                         + " · "
-                        + _("Latest: {}").format(labelstudio_latest_version_display)
+                        + _("Latest version: {}").format(
+                            labelstudio_latest_version_display
+                        )
                     ),
                     style_="text-align:center;",
                 )
@@ -140,7 +146,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 ui_labelstudio,
                 ui.hr(),
                 ui.div(
-                    ui.markdown(_("#### API Token")),
+                    ui.markdown(_("#### API token")),
                     ui.help_text(
                         _("Required to access Label Studio projects from this page.")
                     ),
@@ -153,7 +159,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                                 style_="display:inline-block; transition:transform .2s;",
                             ),
                             " ",
-                            _("How to create an API token"),
+                            _("Create an API token"),
                             type="button",
                             class_="btn btn-link p-0 info-toggle-btn",
                             style_="text-decoration:none;",
@@ -167,52 +173,52 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                         ui.div(
                             ui.br(),
                             ui.markdown(
-                                _("**Option 1: Legacy Token (preferred)**")
+                                _("**Option 1: Legacy Token (recommended)**")
                                 + "  \n"
                                 + _(
-                                    "1. Open Label Studio in your browser (button above)"
+                                    "1. Open Label Studio in your browser with the button above."
                                 )
                                 + "  \n"
                                 + _(
-                                    "2. In Label Studio, go to 'burger menu' → Organization"
+                                    "2. In Label Studio, open the menu and select 'Organization'."
                                 )
                                 + "  \n"
                                 + _(
-                                    "3. Click on 'API Tokens Settings' and enable 'Legacy Tokens'"
+                                    "3. Select 'API Tokens Settings' and enable 'Legacy Tokens'."
                                 )
                                 + "  \n"
-                                + _("4. Click your user icon → Account & Settings")
+                                + _("4. Select your user icon → Account & Settings.")
                                 + "  \n"
                                 + _(
-                                    "5. Find 'Legacy Token' section and copy the 'Access Token'"
+                                    "5. Find the 'Legacy Token' section and copy the 'Access Token'."
                                 )
                                 + "  \n"
                                 + _(
-                                    "6. Important: the 'Copy token' button in Label Studio does NOT work. Please copy the token manually."
+                                    "6. The 'Copy token' button in Label Studio does not work. Copy the token manually."
                                 )
                                 + "  \n"
-                                + _("7. Paste it below and click Save")
+                                + _("7. Paste the token below and select 'Save token'.")
                                 + "  \n"
                                 + "  \n"
                                 + _("**Option 2: Personal Access Token**")
                                 + "  \n"
                                 + _(
-                                    "1. Open Label Studio in your browser (button above)"
+                                    "1. Open Label Studio in your browser with the button above."
                                 )
                                 + "  \n"
                                 + _(
-                                    "2. Click on your user icon (top right) → Account & Settings"
+                                    "2. Select your user icon in the top-right corner → Account & Settings."
                                 )
                                 + "  \n"
-                                + _("3. Scroll to 'Personal Access Tokens' section")
+                                + _("3. Go to the 'Personal Access Tokens' section.")
                                 + "  \n"
-                                + _("4. Click 'Create new token'")
+                                + _("4. Select 'Create new token'.")
                                 + "  \n"
                                 + _(
-                                    "5. Important: the 'Copy token' button in Label Studio does NOT work. Please copy the token manually."
+                                    "5. The 'Copy token' button in Label Studio does not work. Copy the token manually."
                                 )
                                 + "  \n"
-                                + _("6. Paste it below and click Save")
+                                + _("6. Paste the token below and select 'Save token'.")
                             ),
                             id="labelstudio_token_help_body",
                             class_="collapse",
@@ -223,17 +229,17 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                     ui.div(
                         ui.input_password(
                             "labelstudio_api_token",
-                            _("Label Studio API Token"),
+                            _("Label Studio API token"),
                             value=CONFIG.get("LABELSTUDIO_API_TOKEN", ""),
                             placeholder=_(
-                                "Paste Personal Access Token or Legacy Token here"
+                                "Paste a Personal Access Token or Legacy Token here"
                             ),
                             width="100%",
                         ),
                         ui.br(),
                         ui.input_action_button(
                             "btn_save_labelstudio_token",
-                            _("Save Token"),
+                            _("Save token"),
                             class_="btn-primary",
                         ),
                         style_="max-width:600px; margin:0 auto;",
@@ -268,7 +274,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             ui_labelstudio = ui.div(
                 ui.markdown(
                     _(
-                        "**Option 1** – Install on the Kittyflap (easy, limited resources)"
+                        "**Option 1** – Install on the Kittyflap (simple, but resources are limited)"
                     )
                     + "  \n"
                     + _(
@@ -276,7 +282,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                     )
                     + "  \n\n"
                     + _(
-                        "> Some Kittyflaps have only 1 GB RAM. Stop Label Studio when not in use."
+                        "> Some Kittyflaps have only 1 GB of RAM. Stop Label Studio when you are not using it."
                     )
                 ),
                 ui.hr(),
@@ -287,7 +293,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                     ),
                     ui.help_text(
                         _(
-                            "This will take 5–10 minutes. The Kittyflap may not be reachable during installation."
+                            "Installation takes 5–10 minutes. The Kittyflap may be unavailable during this time."
                         ),
                         style_="margin-top:0.5rem;",
                     ),
@@ -324,11 +330,10 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             # Already in progress: show existing status UI only
             training_content = ui.div(
                 ui.markdown(
-                    _("A model training is currently in progress.")
+                    _("Model training is in progress.")
                     + (
-                        _(
-                            "You will be notified by email when the training is finished."
-                        )
+                        " "
+                        + _("You will receive an email when training is complete.")
                         if CONFIG["EMAIL"]
                         else ""
                     )
@@ -338,21 +343,21 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 ui.br(),
                 ui.input_task_button(
                     "btn_reload_model_training_status",
-                    _("Reload Model Training Status"),
+                    _("Refresh training status"),
                     class_="btn-primary",
                 ),
                 ui.hr(),
                 ui.markdown(
-                    _("Your individual Training ID:")
+                    _("Your training ID:")
                     + "\n\n"
                     + f"`{CONFIG['MODEL_TRAINING']}`"
                 ),
-                ui.help_text(_("(use this ID for support requests)")),
+                ui.help_text(_("Use this ID for support requests.")),
                 ui.br(),
                 ui.br(),
                 ui.input_task_button(
                     "btn_cancel_model_training",
-                    _("Cancel Model Training"),
+                    _("Cancel training"),
                     class_="btn-danger",
                 ),
                 id="model_training_status",
@@ -370,13 +375,13 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                     ui.markdown(
                         f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
                         + _(
-                            "Unable to reach the model training server right now. Please check your network or try again later."
+                            "Could not reach the model training server. Check your network connection and try again."
                         )
                     ),
                     ui.br(),
                     ui.markdown(
                         _(
-                            "If the issue persists, the server may be temporarily unavailable."
+                            "If it still does not work, the server may be temporarily unavailable."
                         )
                     ),
                     style_="text-align: center;",
@@ -384,7 +389,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             elif is_maintenance:
                 # Show maintenance notice and do not render upload inputs
                 msg = _(
-                    "The model training server is currently in maintenance. Please try again later."
+                    "The model training server is under maintenance. Try again later."
                 )
                 if maintenance_msg:
                     msg += "\n\n" + maintenance_msg
@@ -435,7 +440,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
 
                 ls_training_source_options = {
                     "__labelstudio__": labelstudio_source_label,
-                    "__manual__": _("Upload project zip manually"),
+                    "__manual__": _("Upload project ZIP manually"),
                 }
                 default_training_source = (
                     "__labelstudio__"
@@ -450,7 +455,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 training_content = ui.div(
                     ui.div(
                         ui.div(
-                            ui.markdown(_("### Training Data")),
+                            ui.markdown(_("### Training data")),
                             ui.input_select(
                                 "model_training_labelstudio_project",
                                 _("Training data source"),
@@ -462,27 +467,27 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                             ui.output_ui("ui_model_training_data_upload"),
                             ui.input_text(
                                 "model_name",
-                                _("Model Name (optional)"),
+                                _("Model name (optional)"),
                                 placeholder=_("Enter a name for your model"),
                                 width="90%",
                             ),
                             ui.input_text(
                                 "user_name",
-                                _("Username (optional)"),
+                                _("Your name (optional)"),
                                 value=CONFIG["USER_NAME"],
                                 placeholder=_("Enter your name"),
                                 width="90%",
                             ),
                             ui.input_text(
                                 "email_notification",
-                                _("Email for Notification (optional)"),
+                                _("Email for notification (optional)"),
                                 value=CONFIG["EMAIL"],
                                 placeholder=_("Enter your email address"),
                                 width="90%",
                             ),
                             ui.help_text(
                                 _(
-                                    "If you provide an email address, you will be notified when the model training is finished."
+                                    "Add an email address to receive a message when training is complete."
                                 )
                             ),
                             (
@@ -494,7 +499,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                                             style_="display:inline-block; transition:transform .2s;",
                                         ),
                                         " ",
-                                        _("Advanced options"),
+                                        _("Show advanced options"),
                                         type="button",
                                         class_="btn btn-link p-0 info-toggle-btn",
                                         style_="text-decoration:none;",
@@ -511,14 +516,14 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                                             model_training_base_model_input,
                                             ui.help_text(
                                                 _(
-                                                    "Base model (YOLOv8n/s/m/l/x): larger variants are usually more accurate, but they run slower and need more CPU/RAM. "
-                                                    "Choose smaller variants (e.g. 'n') if your device struggles to keep up in real-time."
+                                                    "Base model (YOLOv8n/s/m/l/x): larger variants are usually more accurate, but run more slowly and need more CPU and RAM. "
+                                                    "Choose a smaller variant, such as 'n', if your computer cannot keep up in real time."
                                                 )
                                             ),
                                             model_training_image_size_input,
                                             ui.help_text(
                                                 _(
-                                                    "Image size (imgsz): higher values can improve detection of small objects, but increase computation and can reduce FPS."
+                                                    "Image size (imgsz): higher values may improve detection of small objects, but need more processing power and may reduce FPS."
                                                 )
                                             ),
                                             ui.help_text(
@@ -541,7 +546,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                                     ui.hr(),
                                     ui.help_text(
                                         _(
-                                            "Advanced model options are only available if you run Kittyhack on a separate server (remote mode)."
+                                            "Advanced model options are available when Kittyhack runs on a separate server in remote mode."
                                         )
                                     ),
                                     style_="text-align: center;",
@@ -552,7 +557,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                             ui.br(),
                             ui.input_task_button(
                                 "submit_model_training",
-                                _("Submit Model for Training"),
+                                _("Start model training"),
                                 class_="btn-primary",
                             ),
                             ui.tags.script(
@@ -595,15 +600,15 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 ui.div(
                     ui.markdown(
                         _(
-                            "Train your own AI model: label images with Label Studio, then submit them for training."
+                            "Train your own AI model by labeling images in Label Studio and sending them for training."
                         )
                         + " "
-                        + _("Read the instructions before starting:")
+                        + _("Read the instructions before you start:")
                     ),
                     ui.HTML(
                         f'<a href="{wiki_url}" target="_blank" class="btn btn-sm btn-outline-secondary" style="margin-top:0.25rem; white-space: normal; max-width: 100%; display: inline-flex; align-items: center; justify-content: center; flex-wrap: wrap; text-align: center;">'
                         f'<i class="fa fa-clipboard-list" style="margin-right:5px;"></i>'
-                        + _("Instructions for training your own model")
+                        + _("View model training instructions")
                         + "</a>"
                     ),
                     style_="text-align:center; margin-bottom:1.5rem;",
@@ -626,11 +631,11 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 ),
                 collapsible_section(
                     "ai_model_training",
-                    _("Model Training"),
+                    _("Model training"),
                     (
-                        _("A model training is in progress.")
+                        _("Model training is in progress.")
                         if training_in_progress
-                        else _("Upload labeled data and submit for model training.")
+                        else _("Upload labeled data and start model training.")
                     ),
                     ui.div(
                         training_content,
@@ -640,7 +645,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 ),
                 collapsible_section(
                     "ai_model_management",
-                    _("Model Management"),
+                    _("Model management"),
                     _("Rename, activate, or remove your trained models."),
                     ui.div(
                         ui.output_ui("manage_yolo_models_table"),
@@ -669,7 +674,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             available_models = YoloModel.get_model_list() or []
             if not available_models:
                 return ui.div(
-                    _("Nothing here yet. Please train a model first."),
+                    _("No trained models yet. Train a model to see it here."),
                     class_="text-muted small",
                 )
 
@@ -763,7 +768,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                     ),
                     ui.tooltip(
                         btn_yolo_modify(f"btn_yolo_modify_{unique_btn_id}"),
-                        _("Modify or delete this model"),
+                        _("Edit or delete this model"),
                         id=f"tooltip_yolo_modify_{unique_btn_id}",
                         options={"trigger": "hover"},
                     ),
@@ -816,7 +821,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         except Exception as e:
             logging.error(f"Failed to build YOLO model management table: {e}")
             return ui.div(
-                _("Nothing here yet. Please train a model first."),
+                _("No trained models yet. Train a model to see it here."),
                 class_="text-muted small",
             )
 
@@ -832,7 +837,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         # Check if a model training is in progress
         if not is_valid_uuid4(CONFIG["MODEL_TRAINING"]):
             ui.notification_show(
-                _("No model training in progress."), duration=15, type="error"
+                _("No model training is in progress."), duration=15, type="error"
             )
             RemoteModelTrainer._clear_training_job()
             reload_trigger_ai.set(reload_trigger_ai.get() + 1)
@@ -840,12 +845,14 @@ def register_ai_training(input, output, session, ctx: SessionContext):
 
             # Show confirmation dialog
         m = ui.modal(
-            _("Do you really want to cancel the model training?"),
-            title=_("Cancel Model Training"),
+            _("Cancel this model training?"),
+            title=_("Cancel training"),
             easy_close=True,
             footer=ui.div(
-                ui.input_action_button("btn_modal_cancel_training_ok", _("OK")),
-                ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                ui.input_action_button(
+                    "btn_modal_cancel_training_ok", _("Cancel training")
+                ),
+                ui.input_action_button("btn_modal_cancel", _("Keep training")),
             ),
         )
         ui.modal_show(m)
@@ -858,7 +865,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         RemoteModelTrainer.cancel_model_training(CONFIG["MODEL_TRAINING"])
         RemoteModelTrainer._clear_training_job()
         ui.notification_show(
-            _("Model training cancelled."), duration=15, type="message"
+            _("Model training canceled."), duration=15, type="message"
         )
         reload_trigger_ai.set(reload_trigger_ai.get() + 1)
 
@@ -872,7 +879,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 return ui.div(
                     uix.input_file(
                         "model_training_data",
-                        _("Upload Label-Studio Training Data (ZIP file)"),
+                        _("Upload Label Studio training data (ZIP file)"),
                         accept=".zip",
                         multiple=False,
                         width="90%",
@@ -886,7 +893,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             return ui.div(
                 uix.input_file(
                     "model_training_data",
-                    _("Upload Label-Studio Training Data (ZIP file)"),
+                    _("Upload Label Studio training data (ZIP file)"),
                     accept=".zip",
                     multiple=False,
                     width="90%",
@@ -919,7 +926,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                         icon_svg("circle-info", margin_left="-0.1em"),
                         " ",
                         _(
-                            "No Label Studio API token configured. If you want to train a model directly from a Label Studio project, please add your API token in the Label Studio card above."
+                            "Add a Label Studio API token above to train directly from a Label Studio project."
                         ),
                         style_="margin-bottom: 0;",
                     ),
@@ -937,7 +944,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                         icon_svg("triangle-exclamation", margin_left="-0.1em"),
                         " ",
                         _(
-                            "No Label Studio project selected. Please select a project in the Label Studio card above."
+                            "Select a Label Studio project above before starting training."
                         ),
                         style_="margin-bottom: 0;",
                     ),
@@ -954,7 +961,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                         icon_svg("triangle-exclamation", margin_left="-0.1em"),
                         " ",
                         _(
-                            "Label Studio is not running. Please start it in the Label Studio card above."
+                            "Start Label Studio above before training from a project."
                         ),
                         style_="margin-bottom: 0;",
                     ),
@@ -977,7 +984,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                         icon_svg("triangle-exclamation", margin_left="-0.1em"),
                         " ",
                         _(
-                            "Could not retrieve picture information for the selected project."
+                            "Could not load images from the selected project. Check Label Studio and try again."
                         ),
                         style_="margin-bottom: 0;",
                     ),
@@ -994,7 +1001,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                         icon_svg("triangle-exclamation", margin_left="-0.1em"),
                         " ",
                         _(
-                            "The selected project has no pictures. Please add and label images in Label Studio first."
+                            "The selected project has no images. Add and label images in Label Studio first."
                         ),
                         style_="margin-bottom: 0;",
                     ),
@@ -1011,7 +1018,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                         icon_svg("triangle-exclamation", margin_left="-0.1em"),
                         " ",
                         _(
-                            "The selected project has {unlabeled} of {total} pictures without labels. Please complete all labels before training."
+                            "The selected project has {unlabeled} of {total} images without labels. Label every image before training."
                         ).format(
                             unlabeled=summary["unannotated_tasks"],
                             total=summary["total_tasks"],
@@ -1030,7 +1037,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 ui.div(
                     icon_svg("circle-check", margin_left="-0.1em"),
                     " ",
-                    _("Project ready: {labeled} labeled pictures.").format(
+                    _("Project ready: {labeled} labeled images.").format(
                         labeled=summary["annotated_tasks"],
                     ),
                     style_="margin-bottom: 0;",
@@ -1068,7 +1075,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             # Export the project as YOLO format
             try:
                 with ui.Progress(min=1, max=3) as p:
-                    p.set(message=_("Exporting Label Studio project..."), value=1)
+                    p.set(message=_("Exporting Label Studio project…"), value=1)
 
                     # Create a temporary file for the export
                     temp_dir = tempfile.gettempdir()
@@ -1077,13 +1084,13 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                         f"labelstudio_project_{labelstudio_project_id}_{int(tm.time())}.zip",
                     )
 
-                    p.set(message=_("Downloading project data..."), value=2)
+                    p.set(message=_("Downloading project data…"), value=2)
                     if not export_labelstudio_project_as_zip(
                         labelstudio_project_id, zip_file_path
                     ):
                         ui.notification_show(
                             _(
-                                "Failed to export Label Studio project. Please ensure the project is properly configured and exported as 'YOLO with Images'."
+                                "Could not export the Label Studio project. Check that it is configured for 'YOLO with Images' and try again."
                             ),
                             duration=15,
                             type="error",
@@ -1096,7 +1103,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                             pass
                         return
 
-                    p.set(message=_("Project exported successfully"), value=3)
+                    p.set(message=_("Project exported"), value=3)
                     logging.info(
                         f"[MODEL_TRAINING] Successfully exported Label Studio project to {zip_file_path}"
                     )
@@ -1105,7 +1112,9 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                     f"[MODEL_TRAINING] Error exporting Label Studio project: {e}"
                 )
                 ui.notification_show(
-                    _("Error exporting Label Studio project: {}").format(str(e)),
+                    _(
+                        "Could not export the Label Studio project: {}"
+                    ).format(str(e)),
                     duration=15,
                     type="error",
                 )
@@ -1115,7 +1124,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             if input.model_training_data() is None:
                 ui.notification_show(
                     _(
-                        "Please either select a Label Studio project or upload a ZIP file with the training data."
+                        "Select a Label Studio project or upload a ZIP file with training data."
                     ),
                     duration=10,
                     type="error",
@@ -1126,7 +1135,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             if not input.model_training_data()[0]["name"].endswith(".zip"):
                 ui.notification_show(
                     _(
-                        "The uploaded file is not a ZIP file. Please upload a valid ZIP file."
+                        "This file is not a ZIP file. Choose a valid ZIP file and try again."
                     ),
                     duration=10,
                     type="error",
@@ -1155,7 +1164,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
 
         if model_variant not in {"n", "s", "m", "l", "x"}:
             ui.notification_show(
-                _("Invalid YOLOv8 model selection."), duration=10, type="error"
+                _("Choose a valid YOLOv8 model."), duration=10, type="error"
             )
             return
 
@@ -1163,14 +1172,14 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             image_size_candidate = int(image_size_raw)
         except Exception:
             ui.notification_show(
-                _("Invalid image size selection."), duration=10, type="error"
+                _("Choose a valid image size."), duration=10, type="error"
             )
             return
 
         supported_sizes = set(YoloModel.get_supported_image_sizes())
         if image_size_candidate not in supported_sizes:
             ui.notification_show(
-                _("Invalid image size selection."), duration=10, type="error"
+                _("Choose a supported image size."), duration=10, type="error"
             )
             return
 
@@ -1180,7 +1189,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             # Validate the email address
             if not re.match(r"[^@]+@[^@]+\.[^@]+", email_notification):
                 ui.notification_show(
-                    _("Please enter a valid email address."), duration=10, type="error"
+                    _("Enter a valid email address."), duration=10, type="error"
                 )
                 return
             if email_notification != CONFIG["EMAIL"]:
@@ -1213,7 +1222,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         elif result == "client_outdated":
             ui.notification_show(
                 _(
-                    "This Kittyhack version can no longer submit training jobs. Please update Kittyhack."
+                    "This version of Kittyhack cannot start model training. Update Kittyhack and try again."
                 ),
                 duration=15,
                 type="error",
@@ -1222,7 +1231,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         elif result == "invalid_file":
             ui.notification_show(
                 _(
-                    "The uploaded file is not a valid Label Studio training data ZIP file."
+                    "This is not a valid Label Studio training data ZIP file. Export the project as 'YOLO with Images' and try again."
                 ),
                 duration=15,
                 type="error",
@@ -1231,7 +1240,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         elif result in ["destination_unreachable", "destination_not_found"]:
             ui.notification_show(
                 _(
-                    "The destination for the model training is unreachable. Please check your network connection or try again later."
+                    "Could not reach the model training server. Check your network connection and try again."
                 ),
                 duration=15,
                 type="error",
@@ -1239,9 +1248,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             return
         else:
             ui.notification_show(
-                _("An error occurred while starting the model training: {}").format(
-                    result
-                ),
+                _("Could not start model training: {}").format(result),
                 duration=15,
                 type="error",
             )
@@ -1259,7 +1266,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             if SystemInfo.get_free_disk_space() < 1500:
                 ui.notification_show(
                     _(
-                        "Insufficient disk space. At least 1.5GB of free space is required to install Label Studio. Please free up some space and try again."
+                        "Label Studio needs at least 1.5 GB of free space. Free some space and try again."
                     ),
                     duration=15,
                     type="error",
@@ -1277,7 +1284,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
 
             if success:
                 ui.notification_show(
-                    _("Label Studio installed successfully! You can start it now."),
+                    _("Label Studio installed. You can start it now."),
                     duration=15,
                     type="message",
                 )
@@ -1287,7 +1294,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             else:
                 ui.notification_show(
                     _(
-                        "Label Studio installation failed. Please check the logs for details."
+                        "Could not install Label Studio. Check the logs for details."
                     ),
                     duration=None,
                     type="error",
@@ -1311,7 +1318,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
 
             if success:
                 ui.notification_show(
-                    _("Label Studio updated successfully! You can start it now."),
+                    _("Label Studio updated. You can start it now."),
                     duration=15,
                     type="message",
                 )
@@ -1320,7 +1327,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 )
             else:
                 ui.notification_show(
-                    _("Label Studio update failed. Please check the logs for details."),
+                    _("Could not update Label Studio. Check the logs for details."),
                     duration=None,
                     type="error",
                 )
@@ -1331,11 +1338,14 @@ def register_ai_training(input, output, session, ctx: SessionContext):
     @reactive.event(input.btn_labelstudio_remove)
     def btn_labelstudio_remove():
         m = ui.modal(
+            _("Remove Label Studio? Your project data will not be deleted."),
             title=_("Remove Label Studio"),
             easy_close=True,
             footer=ui.div(
                 ui.input_task_button(
-                    "btn_labelstudio_remove_ok", _("OK"), class_="btn-default"
+                    "btn_labelstudio_remove_ok",
+                    _("Remove Label Studio"),
+                    class_="btn-danger",
                 ),
                 ui.input_action_button("btn_modal_cancel", _("Cancel")),
             ),
@@ -1346,19 +1356,19 @@ def register_ai_training(input, output, session, ctx: SessionContext):
     @reactive.event(input.btn_labelstudio_remove_ok)
     def btn_labelstudio_remove_ok():
         with ui.Progress(min=1, max=2) as p:
-            p.set(1, message=_("Removing Label Studio"), detail=_("Please wait..."))
+            p.set(1, message=_("Removing Label Studio"), detail=_("Please wait…"))
             success = LabelStudioInstall.remove_labelstudio()
             p.set(2)
 
             if success:
                 ui.notification_show(
-                    _("Label Studio removed successfully."), duration=5, type="message"
+                    _("Label Studio removed."), duration=5, type="message"
                 )
                 CONFIG["LABELSTUDIO_VERSION"] = None
             else:
                 ui.notification_show(
                     _(
-                        "Label Studio removal failed. Please check the logs for details."
+                        "Could not remove Label Studio. Check the logs for details."
                     ),
                     duration=None,
                     type="error",
@@ -1378,12 +1388,12 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         start_time = monotonic_time()
 
         with ui.Progress(min=0, max=100) as p:
-            p.set(message=_("Stopping Label Studio..."), detail=_("Please wait..."))
+            p.set(message=_("Stopping Label Studio…"), detail=_("Please wait…"))
 
             while monotonic_time() - start_time < max_wait_time:
                 if not LabelStudioInstall.get_labelstudio_status():
                     ui.notification_show(
-                        _("Label Studio stopped successfully."),
+                        _("Label Studio stopped."),
                         duration=5,
                         type="message",
                     )
@@ -1399,7 +1409,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
 
                 # If we get here, the process didn't stop within the timeout period
         ui.notification_show(
-            _("Label Studio may not have stopped completely. Please check the logs."),
+            _("Label Studio may still be running. Check the logs for details."),
             duration=5,
             type="warning",
         )
@@ -1418,10 +1428,10 @@ def register_ai_training(input, output, session, ctx: SessionContext):
 
         with ui.Progress(min=0, max=100) as p:
             p.set(
-                message=_("Starting Label Studio..."),
-                detail=_("Please wait...")
+                message=_("Starting Label Studio…"),
+                detail=_("Please wait…")
                 + " "
-                + _("(The first start of Label Studio may take several minutes!)"),
+                + _("The first start may take several minutes."),
             )
 
             while monotonic_time() - start_time < max_wait_time:
@@ -1429,7 +1439,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 if LabelStudioInstall.get_labelstudio_status():
                     if SystemInfo.is_port_open(8080):
                         ui.notification_show(
-                            _("Label Studio started successfully."),
+                            _("Label Studio started."),
                             duration=5,
                             type="message",
                         )
@@ -1445,7 +1455,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
 
                 # If we get here, the process didn't start within the timeout period
         ui.notification_show(
-            _("Label Studio may not have started completely. Please check the logs."),
+            _("Label Studio may not have started. Check the logs for details."),
             duration=5,
             type="warning",
         )
@@ -1462,13 +1472,13 @@ def register_ai_training(input, output, session, ctx: SessionContext):
 
             if token:
                 ui.notification_show(
-                    _("Label Studio API token saved successfully. Reloading…"),
+                    _("Label Studio API token saved."),
                     duration=3,
                     type="message",
                 )
             else:
                 ui.notification_show(
-                    _("Label Studio API token cleared. Reloading…"),
+                    _("Label Studio API token cleared."),
                     duration=3,
                     type="message",
                 )
@@ -1479,7 +1489,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         except Exception as e:
             logging.error(f"[SERVER] Failed to save Label Studio API token: {e}")
             ui.notification_show(
-                _("Failed to save token. Please check the logs."),
+                _("Could not save the token. Check the logs for details."),
                 duration=None,
                 type="error",
             )
@@ -1493,7 +1503,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         if not token:
             return ui.div(
                 ui.help_text(
-                    _("Please configure an API token above to select a project.")
+                    _("Add an API token above to select a project.")
                 ),
                 style_="margin-top: 0.5rem;",
             )
@@ -1502,7 +1512,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             return ui.div(
                 ui.help_text(
                     _(
-                        "Label Studio is not running. Please start it to select a project."
+                        "Start Label Studio to select a project."
                     )
                 ),
                 style_="margin-top: 0.5rem;",
@@ -1516,7 +1526,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 ui.div(
                     ui.markdown(
                         f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
-                        + _("Could not fetch projects. Please check your API token.")
+                        + _("Could not load projects. Check your API token and try again.")
                     ),
                     class_="alert alert-warning",
                     style_="text-align: left; margin-top: 0.5rem;",
@@ -1577,7 +1587,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         except Exception as e:
             logging.error(f"[SERVER] Failed to save Label Studio project: {e}")
             ui.notification_show(
-                _("Failed to save project selection. Please check the logs."),
+                _("Could not save the project selection. Check the logs for details."),
                 duration=None,
                 type="error",
             )

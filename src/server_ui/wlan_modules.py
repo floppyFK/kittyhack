@@ -53,12 +53,12 @@ def wlan_connect_server(input, output, session, ssid: str):
         _set_wlan_action_in_progress(True)
         ui.modal_show(
             ui.modal(
-                _("The WLAN connection will be interrupted now!"),
+                _("The WLAN connection will be interrupted briefly."),
                 ui.br(),
                 _(
-                    "Please wait a few seconds. If the page does not reload automatically within 30 seconds, please reload it manually."
+                    "Please wait a moment. If this page does not reload within 30 seconds, reload it manually."
                 ),
-                title=_("Updating WLAN configuration..."),
+                title=_("Updating WLAN configuration…"),
                 footer=None,
             )
         )
@@ -87,7 +87,7 @@ def wlan_modify_server(input, output, session, ssid: str):
         if connected:
             additional_note = ui.div(
                 _(
-                    "This WLAN is currently connected. You can not delete it or change the password."
+                    "This WLAN is connected. Disconnect from it before deleting it or changing its password."
                 ),
                 class_="alert alert-info",
                 style_="margin-bottom: 0px; margin-top: 10px; padding: 10px",
@@ -119,16 +119,16 @@ def wlan_modify_server(input, output, session, ssid: str):
             ),
             ui.help_text(
                 _(
-                    "The priority determines the order in which the WLANs are tried to connect. Higher numbers are tried first."
+                    "Kittyhack tries WLAN connections in priority order. Higher numbers are tried first."
                 )
             ),
             additional_note,
-            title=_("Change WLAN configuration"),
+            title=_("Edit WLAN configuration"),
             easy_close=False,
             footer=ui.div(
                 ui.input_action_button(
                     id="btn_wlan_save",
-                    label=_("Save"),
+                    label=_("Save changes"),
                     class_="btn-vertical-margin btn-narrow",
                 ),
                 ui.input_action_button(
@@ -160,12 +160,12 @@ def wlan_modify_server(input, output, session, ssid: str):
         ui.modal_remove()
         ui.modal_show(
             ui.modal(
-                _("The WLAN connection will be interrupted now!"),
+                _("The WLAN connection will be interrupted briefly."),
                 ui.br(),
                 _(
-                    "Please wait a few seconds. If the page does not reload automatically within 30 seconds, please reload it manually."
+                    "Please wait a moment. If this page does not reload within 30 seconds, reload it manually."
                 ),
-                title=_("Updating WLAN configuration..."),
+                title=_("Updating WLAN configuration…"),
                 footer=None,
             )
         )
@@ -175,14 +175,16 @@ def wlan_modify_server(input, output, session, ssid: str):
             )
             if success:
                 ui.notification_show(
-                    _("WLAN configuration for {} updated successfully.").format(ssid),
+                    _("WLAN configuration for {} updated.").format(ssid),
                     duration=5,
                     type="message",
                 )
                 reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
             else:
                 ui.notification_show(
-                    _("Failed to update WLAN configuration for {}").format(ssid),
+                    _(
+                        "Could not update WLAN configuration for {}. Check the password and try again."
+                    ).format(ssid),
                     duration=10,
                     type="error",
                 )
@@ -202,10 +204,8 @@ def wlan_modify_server(input, output, session, ssid: str):
         ui.modal_remove()
         ui.modal_show(
             ui.modal(
-                _("Do you really want to delete the WLAN connection {}?").format(
-                    ssid
-                ),
-                title=_("Delete WLAN"),
+                _("Delete the WLAN connection {}?").format(ssid),
+                title=_("Delete WLAN connection"),
                 easy_close=False,
                 footer=ui.div(
                     ui.input_action_button(
@@ -229,7 +229,7 @@ def wlan_modify_server(input, output, session, ssid: str):
         success = WlanManager.delete_wlan_connection(ssid)
         if success:
             ui.notification_show(
-                _("WLAN connection {} deleted successfully.").format(ssid),
+                _("WLAN connection {} deleted.").format(ssid),
                 duration=5,
                 type="message",
             )
@@ -237,7 +237,9 @@ def wlan_modify_server(input, output, session, ssid: str):
             reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
         else:
             ui.notification_show(
-                _("Failed to delete WLAN connection {}").format(ssid),
+                _(
+                    "Could not delete WLAN connection {}. Try again."
+                ).format(ssid),
                 duration=10,
                 type="error",
             )

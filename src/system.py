@@ -1446,7 +1446,11 @@ class KittyhackUpdater:
 
             # Fetch first so we can compare REQUIRED_PYTHON / requirements before
             # stopping the backend or wiping the working tree.
-            _run_step(3, f"Fetching latest version {latest_version}", ["/bin/git", "fetch", "--all", "--tags"])
+            _run_step(
+                3,
+                _("Fetching Kittyhack version {}…").format(latest_version),
+                ["/bin/git", "fetch", "--all", "--tags"],
+            )
 
             # 2 GB hard gate only when those runtime files change on the target ref.
             needs_heavy_disk = False
@@ -1472,8 +1476,8 @@ class KittyhackUpdater:
                     free_mb = 0.0
                 if free_mb < MIN_HEAVY_UPDATE_FREE_DISK_MB:
                     msg = _(
-                        "Update is disabled because less than 2 GB of free disk space is available ({:.1f} MB free). "
-                        "Free up space first (e.g. reduce the max amount of pictures in the database), then reload this page."
+                        "The update needs at least 2 GB of free space ({:.1f} MB available). "
+                        "Free some space, for example by reducing the maximum number of pictures, then reload this page."
                     ).format(free_mb)
                     logging.error(f"[UPDATE] {msg}")
                     return False, msg
@@ -1481,7 +1485,7 @@ class KittyhackUpdater:
             # Step 0: Stop backend process (only for local kittyhack.service updates).
             if halt_backend_first:
                 if progress_callback:
-                    progress_callback(0, "Stopping backend process", "")
+                    progress_callback(0, _("Stopping Kittyhack…"), "")
                 try:
                     from src.helper import sigterm_monitor
                     import time as tm
@@ -1491,9 +1495,9 @@ class KittyhackUpdater:
                     logging.error(f"Failed to stop backend process: {e}")
 
             # 1
-            _run_step(1, "Reverting local changes", ["/bin/git", "restore", "."])
+            _run_step(1, _("Reverting local changes…"), ["/bin/git", "restore", "."])
             # 2
-            _run_step(2, "Cleaning untracked files", ["/bin/git", "clean", "-fd"])
+            _run_step(2, _("Cleaning untracked files…"), ["/bin/git", "clean", "-fd"])
 
             # Hash current requirements after a clean tree, so the comparison is meaningful.
             req_hash_before = _sha256_file(requirements_path)
@@ -1513,11 +1517,11 @@ class KittyhackUpdater:
             else:
                 checkout_cmd = ["/bin/git", "checkout", str(latest_version or "")]
             if update_ref:
-                checkout_msg = f"Checking out branch {update_ref}"
+                checkout_msg = _("Switching to branch {}…").format(update_ref)
             elif display_branch:
-                checkout_msg = f"Checking out branch {display_branch}"
+                checkout_msg = _("Switching to branch {}…").format(display_branch)
             else:
-                checkout_msg = f"Checking out {latest_version}"
+                checkout_msg = _("Switching to Kittyhack version {}…").format(latest_version)
             _run_step(4, checkout_msg, checkout_cmd)
 
             req_hash_after = _sha256_file(requirements_path)
@@ -1529,7 +1533,7 @@ class KittyhackUpdater:
             # beside it (never swap while this process may still be using .venv).
             # ExecStartPre --apply performs the atomic swap on the next service start/reboot.
             if os.path.isfile(ensure_venv_script):
-                _run_step(5, "Ensuring required Python runtime", ensure_prepare_cmd)
+                _run_step(5, _("Preparing the required Python runtime…"), ensure_prepare_cmd)
                 # After a successful mismatch prepare, .venv.new remains for --apply.
                 # After a match, ensure_venv removes any stale .venv.new.
                 did_prepare_new_venv = os.path.isdir(venv_new_dir)
@@ -1541,27 +1545,26 @@ class KittyhackUpdater:
             # 5b — pip into the live .venv only when we are NOT migrating via .venv.new.
             # A prepared .venv.new already contains a full requirements install.
             if did_prepare_new_venv:
-                msg = (
-                    "Python runtime migration prepared (.venv.new); "
-                    "dependency install skipped for live .venv (swap on next start/reboot)"
+                msg = _(
+                    "Python runtime ready. It will be activated when Kittyhack next starts."
                 )
                 if progress_callback:
                     progress_callback(5, msg, "")
                 logging.info(msg)
             elif requirements_unchanged:
-                msg = f"Python dependencies unchanged ({_req_name}); skipping reinstall"
+                msg = _("Python dependencies are up to date ({}).").format(_req_name)
                 if progress_callback:
                     progress_callback(5, msg, "")
                 logging.info(msg)
             else:
-                _run_step(5, "Updating python dependencies", pip_install_cmd)
+                _run_step(5, _("Updating Python dependencies…"), pip_install_cmd)
                 did_update_deps = True
 
             # 6-8 — Always refresh unit files on disk so ExecStartPre (ensure_venv --apply)
             # is present after reboot. When defer_service_updates is set (update run from
             # kittyhack_control), skip enable/start churn that could restart us mid-update.
             if progress_callback:
-                progress_callback(6, "Updating systemd service file", "")
+                progress_callback(6, _("Updating service configuration…"), "")
             logging.info("Updating systemd service file")
             _install_kittyhack_service_file()
             try:
@@ -1573,16 +1576,16 @@ class KittyhackUpdater:
             else:
                 _install_kittyhack_control_service_file()
             # 7
-            _run_step(7, "Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"])
+            _run_step(7, _("Reloading services…"), ["/bin/systemctl", "daemon-reload"])
 
             # 8
             if defer_service_updates:
                 if progress_callback:
-                    progress_callback(8, "Deferring systemd enable/start until reboot", "")
+                    progress_callback(8, _("Service changes will apply after reboot."), "")
                 logging.info("Deferring systemd enable/start state until reboot (unit files already updated)")
             else:
                 if progress_callback:
-                    progress_callback(8, "Updating systemd enable/disable state", "")
+                    progress_callback(8, _("Updating service startup settings…"), "")
                 logging.info("Updating systemd enable/disable state")
                 _apply_target_boot_service_semantics()
         except Exception as e:
@@ -1617,9 +1620,9 @@ class KittyhackUpdater:
                         pass
                 except Exception as rollback_e:
                     logging.error(f"Rollback failed: {rollback_e}")
-            return False, str(e)
+            return False, _("Update failed. Check the logs, then try again: {}").format(e)
         KittyhackUpdater.purge_pip_cache()
-        return True, "Update completed"
+        return True, _("Update complete")
 
     @staticmethod
     def ensure_target_boot_service_semantics() -> None:
@@ -2041,7 +2044,7 @@ class LabelStudioInstall:
                 if ServiceOps.is_service_running("labelstudio"):
                     logging.info("[SYSTEM] Stopping existing Label Studio service...")
                     if progress_callback:
-                        progress_callback(0, _("Stopping existing Label Studio service..."), "")
+                        progress_callback(0, _("Stopping Label Studio…"), "")
                     ServiceOps.systemctl("stop", "labelstudio")
                 subprocess.run(["rm", "-f", service_file_path], check=True)
                 logging.info("[SYSTEM] Label Studio systemd service file removed.")
@@ -2052,14 +2055,14 @@ class LabelStudioInstall:
         if os.path.exists(LABELSTUDIO_PATH):
             logging.info("[SYSTEM] Removing existing Label Studio installation...")
             if progress_callback:
-                progress_callback(0, _("Removing existing Label Studio installation..."), "")
+                progress_callback(0, _("Removing the existing Label Studio installation…"), "")
             try:
                 subprocess.run(["rm", "-rf", LABELSTUDIO_PATH], check=True)
             except Exception as e:
                 logging.error(f"[SYSTEM] Error removing existing Label Studio installation: {e}")
 
         if progress_callback:
-            progress_callback(0, _("Starting Label Studio installation..."), _("This may take a few minutes..."))
+            progress_callback(0, _("Preparing the Label Studio installation…"), _("This may take a few minutes…"))
             logging.info("[SYSTEM] Starting Label Studio installation...")
 
         try:
@@ -2069,8 +2072,8 @@ class LabelStudioInstall:
                     ["python3", "-m", "venv", venv_path],
                     progress_callback,
                     1,
-                    _("Creating virtual environment..."),
-                    _("This may take a moment...")
+                    _("Creating the virtual environment…"),
+                    _("This may take a moment…")
                 )
                 if not ok:
                     logging.error("[SYSTEM] Virtual environment creation failed:\n" + output)
@@ -2079,15 +2082,15 @@ class LabelStudioInstall:
             else:
                 logging.info("[SYSTEM] Virtual environment already exists, skipping creation.")
                 if progress_callback:
-                    progress_callback(1, _("Virtual environment already exists"), _("Skipping creation..."))
+                    progress_callback(1, _("Virtual environment ready"), _("Using the existing environment."))
 
             # Step 2: Install pip and dependencies
             ok, pip_upgrade_output = ServiceOps.run_with_progress(
                 [venv_python, "-m", "pip", "install", "--no-cache-dir", "--upgrade", "pip"],
                 progress_callback,
                 2,
-                _("Upgrading pip..."),
-                _("This may take a few minutes...")
+                _("Updating pip…"),
+                _("This may take a few minutes…")
             )
             if not ok:
                 logging.error("[SYSTEM] Pip upgrade failed:\n" + pip_upgrade_output)
@@ -2099,8 +2102,8 @@ class LabelStudioInstall:
                 [venv_python, "-m", "pip", "install", "--no-cache-dir", "label-studio"],
                 progress_callback,
                 3,
-                _("Installing Label Studio..."),
-                _("This takes several minutes... Do not turn off the power or reload the page!")
+                _("Installing Label Studio…"),
+                _("This may take several minutes. Keep the device powered on and this page open.")
             )
             if not ok:
                 logging.error("[SYSTEM] Label Studio installation failed:\n" + pip_output)
@@ -2109,7 +2112,7 @@ class LabelStudioInstall:
 
             # Step 4: Create a systemd service file        
             if progress_callback:
-                progress_callback(4, _("Creating systemd service..."), _("Almost done..."))
+                progress_callback(4, _("Creating the Label Studio service…"), _("Almost done…"))
 
             if os.path.exists(service_template_path):
                 try:
@@ -2119,16 +2122,24 @@ class LabelStudioInstall:
                         service_file.write(service_content)
                     logging.info("[SYSTEM] Label Studio systemd service file created.")
                     if progress_callback:
-                        progress_callback(4, _("Creating systemd service..."), _("Service file created successfully."))
+                        progress_callback(4, _("Label Studio service ready"), _("Service file created."))
                 except Exception as e:
                     logging.error(f"[SYSTEM] Error creating systemd service file: {e}")
                     if progress_callback:
-                        progress_callback(4, _("Creating systemd service..."), f"Error: {str(e)}")
+                        progress_callback(
+                            4,
+                            _("Could not create the Label Studio service"),
+                            _("Check the logs, then try again: {}").format(e),
+                        )
                     return False
             else:
                 logging.error("[SYSTEM] Service template file not found.")
                 if progress_callback:
-                    progress_callback(4, _("Creating systemd service..."), _("Error: Template file not found."))
+                    progress_callback(
+                        4,
+                        _("Could not create the Label Studio service"),
+                        _("The service template is missing. Reinstall Kittyhack, then try again."),
+                    )
                 return False
 
             # Step 5: Reload systemd daemon
@@ -2136,8 +2147,8 @@ class LabelStudioInstall:
                 ["/usr/bin/systemctl", "daemon-reload"],
                 progress_callback,
                 5,
-                _("Reloading systemd services..."),
-                _("Almost done...")
+                _("Reloading services…"),
+                _("Almost done…")
             )
             if not ok:
                 logging.error("[SYSTEM] Systemd daemon reload failed:\n" + systemd_output)
@@ -2154,7 +2165,7 @@ class LabelStudioInstall:
     def update_labelstudio(progress_callback=None):
         """Stop Label Studio and pip-upgrade it in its venv."""
         if progress_callback:
-            progress_callback(0, _("Starting Label Studio update..."), _("This may take a few minutes..."))
+            progress_callback(0, _("Preparing the Label Studio update…"), _("This may take a few minutes…"))
 
         try:
             ServiceOps.systemctl("stop", "labelstudio")
@@ -2169,8 +2180,8 @@ class LabelStudioInstall:
                 [venv_python, "-m", "pip", "install", "--no-cache-dir", "--upgrade", "label-studio"],
                 progress_callback,
                 1,
-                _("Upgrading Label Studio..."),
-                _("This takes several minutes... Do not turn off the power or reload the page!")
+                _("Updating Label Studio…"),
+                _("This may take several minutes. Keep the device powered on and this page open.")
             )
             if not ok:
                 logging.error("[SYSTEM] Label Studio upgrade failed:\n" + pip_output)

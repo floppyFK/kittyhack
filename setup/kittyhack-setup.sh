@@ -213,6 +213,7 @@ EOF
 
 # Full installation process
 install_full() {
+    INSTALL_CAMERA_DRIVERS=true
     echo -e "${CYAN}--- BASE INSTALL: Check internet connection ---${NC}"
     if ! ping -c 1 google.com &>/dev/null; then
         echo -e "${RED}No internet connection detected. Please check your connection and try again.${NC}"
@@ -391,11 +392,13 @@ install_full() {
         fi
     done
 
+    # The libcamera GStreamer plugin is installed later from the pinned debs in
+    # camera_dependencies.txt. The archive build depends on libcamera 0.5, which
+    # the Kittyflap apt pin on libcamera-ipa 0.2.0 will not allow.
     GSTREAMER_PACKAGES=(
         gstreamer1.0-tools
         gstreamer1.0-plugins-base
         gstreamer1.0-plugins-good
-        gstreamer1.0-libcamera
     )
     echo -e "${GREY}Installing all GStreamer packages...${NC}"
     # Wait for any existing package operations to complete
@@ -415,7 +418,7 @@ install_full() {
     done
 
     for pkg in "${GSTREAMER_PACKAGES[@]}"; do
-        if dpkg -l | grep -q "$pkg"; then
+        if dpkg-query -W -f '${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
             echo -e "${GREEN}$pkg installed successfully.${NC}"
         else
             ((FAIL_COUNT++))
@@ -889,6 +892,12 @@ install_kittyhack() {
     # Set configured UI language in config.ini based on setup language.
     set_config_language "${KITTYHACK_INSTALL_DIR}/config.ini"
 
+    # First-time install only. camera_dependencies.txt exists only after checkout,
+    # and the driver debs must be in place before kittyhack_control starts the camera.
+    if [[ "${INSTALL_CAMERA_DRIVERS:-false}" == true ]]; then
+        reinstall_camera_drivers || ((FAIL_COUNT++))
+    fi
+
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 2: Set up Python virtual environment ---${NC}"
     if ! bash "${KITTYHACK_INSTALL_DIR}/setup/ensure_venv.sh" --bootstrap --root "${KITTYHACK_INSTALL_DIR}"; then
         ((FAIL_COUNT++))
@@ -1094,40 +1103,82 @@ uninstall_kittyhack() {
     echo -e "${GREEN}Uninstall complete.${NC}"
 }
 
+# Same sequence as the System-tab "Reinstall camera driver" action:
+# drop libcamera SONAMEs newer than 0.3, then dpkg -i the pinned debs.
+# dpkg does not consult the Kittyflap apt pin, so this works on a first install
+# that already has libcamera-ipa 0.2.0 held, and on one that has no libcamera yet.
+remove_libcamera_packages_above_0_3() {
+    echo -e "${GREY}Uninstalling libcamera packages above version 0.3...${NC}"
+    local status pkg name major minor
+    local found=false
+    while read -r status pkg; do
+        [[ "$status" == ii* ]] || continue
+        name="${pkg%%:*}"
+        if [[ "$name" =~ ^libcamera([0-9]+)\.([0-9]+)$ ]]; then
+            major="${BASH_REMATCH[1]}"
+            minor="${BASH_REMATCH[2]}"
+            if (( major > 0 || minor > 3 )); then
+                found=true
+                echo -e "${GREY}Uninstalling ${name}...${NC}"
+                if ! apt-get remove -y "$name"; then
+                    echo -e "${YELLOW}Failed to remove ${name}. Continuing with the pinned driver install.${NC}"
+                fi
+            fi
+        fi
+    done < <(dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' 2>/dev/null || true)
+    if [[ "$found" == false ]]; then
+        echo -e "${GREY}No libcamera packages above version 0.3 installed.${NC}"
+    fi
+}
+
 reinstall_camera_drivers() {
     echo -e "${CYAN}--- CAMERA DRIVER REINSTALL ---${NC}"
-    # Download and install camera drivers
     local base_url="https://github.com/floppyFK/kittyhack-dependencies/raw/refs/heads/main/camera"
     local dependencies_file="${KITTYHACK_INSTALL_DIR}/camera_dependencies.txt"
     local download_dir="/tmp/camera_drivers"
+    local package
+    local -a deb_paths=()
 
-    mkdir -p "$download_dir"
-
-    if [[ -f "$dependencies_file" ]]; then
-        while IFS= read -r package; do
-            echo -e "${GREY}Downloading $package...${NC}"
-            curl -L -o "${download_dir}/${package}" "${base_url}/${package}"
-            if [[ $? -ne 0 ]]; then
-                ((FAIL_COUNT++))
-                echo -e "${RED}Failed to download $package.${NC}"
-                continue
-            fi
-        done < "$dependencies_file"
-    else
+    if [[ ! -f "$dependencies_file" ]]; then
         echo -e "${RED}Dependencies file $dependencies_file not found. Please report this in the GitHub repository.${NC}"
         return 1
     fi
 
-    echo -e "${GREY}Installing downloaded packages...${NC}"
-    dpkg -i ${download_dir}/*.deb
-    if [[ $? -ne 0 ]]; then
-        ((FAIL_COUNT++))
-        echo -e "${RED}Failed to install some packages.${NC}"
-    else
-        echo -e "${GREEN}All packages installed successfully.${NC}"
+    mkdir -p "$download_dir"
+    rm -f "${download_dir}"/*.deb
+
+    while IFS= read -r package || [[ -n "$package" ]]; do
+        package="${package%%$'\r'}"
+        package="${package#"${package%%[![:space:]]*}"}"
+        package="${package%"${package##*[![:space:]]}"}"
+        [[ -z "$package" || "$package" == \#* ]] && continue
+        echo -e "${GREY}Downloading $package...${NC}"
+        if ! curl -fsSL -o "${download_dir}/${package}" "${base_url}/${package}"; then
+            echo -e "${RED}Failed to download $package.${NC}"
+            rm -rf "$download_dir"
+            return 1
+        fi
+        deb_paths+=("${download_dir}/${package}")
+    done < "$dependencies_file"
+
+    if [[ ${#deb_paths[@]} -eq 0 ]]; then
+        echo -e "${RED}No camera packages listed in ${dependencies_file}.${NC}"
+        rm -rf "$download_dir"
+        return 1
     fi
 
+    remove_libcamera_packages_above_0_3
+
+    echo -e "${GREY}Installing downloaded packages...${NC}"
+    if ! dpkg -i "${deb_paths[@]}"; then
+        echo -e "${RED}Failed to install some packages.${NC}"
+        rm -rf "$download_dir"
+        return 1
+    fi
+
+    echo -e "${GREEN}All packages installed successfully.${NC}"
     rm -rf "$download_dir"
+    return 0
 }
 
 # Main script logic

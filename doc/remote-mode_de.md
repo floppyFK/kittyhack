@@ -10,23 +10,6 @@ Das Remote-Gerät kann komplexere Modelle verwenden, die auf dem Raspberry Pi 4 
 
 ---
 
-
-#### Diagramme
-
-##### Architektur: wer spricht mit wem?
-
-![Architektur im Remote-Modus](diagrams/remote-mode-architecture.svg)
-
-##### Steuerungsübernahme: Was passiert beim Verbinden?
-
-![Steuerungsübernahme im Remote-Modus](diagrams/remote-mode-control-takeover.svg)
-
-##### Wiederherstellung nach einem Verbindungsverlust
-
-![Wiederherstellung nach Verbindungsverlust im Remote-Modus](diagrams/remote-mode-connection-loss.svg)
-
----
-
 #### Was läuft wo?
 
 ##### Auf der Kittyflap
@@ -99,9 +82,25 @@ Du kannst die Remote-Verbindung in der Kittyhack-Weboberfläche auf dem Remote-G
 ##### Remote-Gerät
 - Debian oder Ubuntu, idealerweise auf einem eigenen System für Kittyhack
 - AMD64- (x86_64) CPU mit mindestens 4 Kernen
-- Mindestens 2 GB RAM
+- Mindestens 4 GB RAM
 
 ##### Netzwerk
 - Das Remote-Gerät muss die Kittyflap im lokalen Netz erreichen können.
 - Die Kittyflap muss über die Ports `80` und `8888` erreichbar sein.
 - Die Verbindung ist ausschließlich für ein **vertrauenswürdiges LAN** gedacht (nicht ins öffentliche Internet freigeben).
+
+---
+
+#### Diagramme
+
+##### Architektur: wer spricht mit wem?
+
+![Architektur im Remote-Modus](diagrams/remote-mode-architecture.svg)
+
+##### Steuerungsübernahme: Was passiert beim Verbinden?
+
+![Steuerungsübernahme im Remote-Modus](diagrams/remote-mode-control-takeover.svg)
+
+##### Wiederherstellung nach einem Verbindungsverlust
+
+![Wiederherstellung nach Verbindungsverlust im Remote-Modus](diagrams/remote-mode-connection-loss.svg)

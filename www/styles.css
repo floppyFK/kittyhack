@@ -1007,6 +1007,104 @@ html[data-bs-theme="dark"] .kh-info-box {
     transform: rotate(90deg);
 }
 
+/* Config cards clip overflow. Popovers are portaled to body; keep the icon itself visible at the edge. */
+#config_tab_container .generic-container.align-left {
+    overflow: visible;
+}
+
+/* (i) next to a setting: opens the explanation on click */
+.kh-field {
+    position: relative;
+}
+
+.kh-field-info {
+    position: absolute;
+    top: -0.2rem;
+    right: 0;
+    z-index: 3;
+    line-height: 1;
+}
+
+.kh-field-info bslib-popover {
+    display: inline-flex;
+}
+
+.kh-field > .shiny-input-container > label.control-label,
+.kh-field > .shiny-input-container .form-check-label {
+    padding-right: 2.6rem;
+}
+
+.kh-info-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--bs-secondary-color, #6c757d);
+    line-height: 1;
+    cursor: pointer;
+}
+
+.kh-info-btn svg {
+    width: 1.15rem !important;
+    height: 1.15rem !important;
+    fill: currentColor;
+}
+
+.kh-info-btn:hover,
+.kh-info-btn:focus-visible {
+    color: var(--bs-body-color, #212529);
+    background: var(--bs-tertiary-bg, rgba(0, 0, 0, 0.06));
+    outline: none;
+}
+
+.kh-info-btn:focus-visible {
+    box-shadow: 0 0 0 0.2rem rgba(90, 159, 212, 0.35);
+}
+
+.popover.kh-info-popover {
+    --bs-popover-max-width: min(26rem, calc(100vw - 1.5rem));
+    max-width: min(26rem, calc(100vw - 1.5rem));
+    z-index: 1080;
+}
+
+.popover.kh-info-popover .popover-body {
+    max-height: min(70vh, 28rem);
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.kh-info-popover-body {
+    font-size: 0.9rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.kh-info-popover-body > :first-child {
+    margin-top: 0;
+}
+
+.kh-info-popover-body > :last-child {
+    margin-bottom: 0;
+}
+
+.btn.kh-logic-btn {
+    white-space: normal;
+    max-width: 100%;
+    height: auto;
+    margin-top: 8px;
+}
+
+.kh-logic-hint {
+    font-size: 0.75rem;
+    margin-top: 4px;
+    color: var(--bs-secondary-color, #6c757d);
+}
+
 .event-modal-picture-spinner {
     position: absolute;
     inset: 0;

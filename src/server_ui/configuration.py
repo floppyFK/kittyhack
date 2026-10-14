@@ -60,29 +60,50 @@ def register_configuration(input, output, session, ctx: SessionContext):
     @render.ui
     @reactive.event(reload_trigger_config, ignore_none=True)
     def ui_configuration():
-        # Helper for collapsible info blocks (local to this tab)
-        def info_toggle(id_suffix: str, button_label: str, body_md: str):
-            # body_md should already be translated before passing in
-            return ui.HTML(f"""
-            <div class="kh-info-toggle" id="toggle_{id_suffix}">
-            <button type="button"
-                    class="btn btn-link p-0 info-toggle-btn"
-                    data-bs-toggle="collapse"
-                    data-bs-target="#toggle_{id_suffix}_body"
-                    aria-expanded="false"
-                    style="text-decoration:none;">
-                <span class="toggle-chevron" style="display:inline-block; transition:transform .2s;">&#9654;</span>
-                {button_label}
-            </button>
-            <div id="toggle_{id_suffix}_body" class="collapse info-toggle-body" style="margin-top:6px;">
-                <div class="kh-info-box">
-                {ui.markdown(body_md)}
-                </div>
-            </div>
-            </div>
-            """)
+        def info_hint(id_suffix: str, aria_label: str, body_md: str):
+            """Click-to-open (i) for a setting. Click, not hover, so it works on touch screens."""
+            return ui.popover(
+                ui.tags.button(
+                    icon_svg("circle-info", margin_left="0", margin_right="0"),
+                    type="button",
+                    class_="kh-info-btn",
+                    **{"aria-label": aria_label},
+                ),
+                ui.div(ui.markdown(body_md), class_="kh-info-popover-body"),
+                id=f"info_{id_suffix}",
+                placement="bottom",
+                options={
+                    "customClass": "kh-info-popover",
+                    "container": "body",
+                    "trigger": "click",
+                    "fallbackPlacements": ["top", "bottom", "left", "right"],
+                },
+            )
 
-            # Build a dictionary with TFLite model versions from the tflite folder
+        def field_with_info(control, id_suffix: str, aria_label: str, body_md: str):
+            return ui.div(
+                control,
+                ui.div(
+                    info_hint(id_suffix, aria_label, body_md),
+                    class_="kh-field-info",
+                ),
+                class_="kh-field",
+            )
+
+        def _split_remote_mode_doc(markdown: str, doc_lang: str) -> tuple[str, str]:
+            marker = "#### Diagramme" if doc_lang == "de" else "#### Diagrams"
+            idx = markdown.find(marker)
+            if idx < 0:
+                return markdown, ""
+            main = markdown[:idx].rstrip()
+            if main.endswith("---"):
+                main = main[:-3].rstrip()
+            lines = markdown[idx:].splitlines()
+            if lines and lines[0].startswith("#### "):
+                lines = lines[1:]
+            while lines and not lines[0].strip():
+                lines = lines[1:]
+            return main, "\n".join(lines).strip()
 
         tflite_models = {}
         try:
@@ -130,6 +151,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 f"[CONFIG] Failed to load remote-mode documentation '{remote_mode_doc_path}': {e}"
             )
             remote_mode_doc_markdown = _("The remote mode guide could not be loaded.")
+        remote_mode_doc_main, remote_mode_doc_diagrams = _split_remote_mode_doc(
+            remote_mode_doc_markdown, lang
+        )
 
         ui_config = ui.div(
             ui.div(
@@ -403,67 +427,60 @@ def register_configuration(input, output, session, ctx: SessionContext):
                     _("Camera"),
                     _("Choose and configure the camera Kittyhack uses."),
                     ui.div(
-                        ui.column(
-                            12,
-                            info_toggle(
-                                "camera_intro",
-                                _("Show IP camera tips"),
-                                _(
-                                    "You can use an **external IP camera** instead of the Kittyflap camera for a better viewing angle or clearer night vision.\n\n"
-                                    "- The Kittyflap and IP camera both need a stable network connection. Ethernet is recommended for the camera.\n"
-                                    "- Use a **static IP** for the camera.\n"
-                                    "- Ensure a compatible stream (RTSP / HTTP MJPEG / RTMP / UDP / TCP).\n"
-                                    "- A maximum of 1280x720 at 15 FPS is recommended. Higher settings may reduce performance.\n"
-                                    "- Set the resolution in the camera settings or use another stream URL.\n\n"
-                                    "If the stream is interrupted, check the WLAN signal and network settings."
-                                ),
-                            ),
-                        ),
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_select(
-                                    "camera_source",
-                                    _("Camera source"),
-                                    {
-                                        "internal": _("Kittyflap camera"),
-                                        "ip_camera": _("External IP camera"),
-                                    },
-                                    selected=CONFIG["CAMERA_SOURCE"],
+                                field_with_info(
+                                    ui.input_select(
+                                        "camera_source",
+                                        _("Camera source"),
+                                        {
+                                            "internal": _("Kittyflap camera"),
+                                            "ip_camera": _("External IP camera"),
+                                        },
+                                        selected=CONFIG["CAMERA_SOURCE"],
+                                    ),
+                                    "camera_intro",
+                                    _("Show IP camera tips"),
+                                    _(
+                                        "You can use an **external IP camera** instead of the Kittyflap camera for a better viewing angle or clearer night vision.\n\n"
+                                        "- The Kittyflap and IP camera both need a stable network connection. Ethernet is recommended for the camera.\n"
+                                        "- Use a **static IP** for the camera.\n"
+                                        "- Ensure a compatible stream (RTSP / HTTP MJPEG / RTMP / UDP / TCP).\n"
+                                        "- A maximum of 1280x720 at 15 FPS is recommended. Higher settings may reduce performance.\n"
+                                        "- Set the resolution in the camera settings or use another stream URL.\n\n"
+                                        "If the stream is interrupted, check the WLAN signal and network settings."
+                                    ),
                                 ),
                             ),
                             ui.column(
                                 12,
-                                ui.input_text(
-                                    "ip_camera_url",
-                                    _("External IP camera URL"),
-                                    value=CONFIG["IP_CAMERA_URL"],
-                                    placeholder=_(
-                                        "e.g. rtsp://user:pass@192.168.1.100:554/stream"
+                                field_with_info(
+                                    ui.input_text(
+                                        "ip_camera_url",
+                                        _("External IP camera URL"),
+                                        value=CONFIG["IP_CAMERA_URL"],
+                                        placeholder=_(
+                                            "e.g. rtsp://user:pass@192.168.1.100:554/stream"
+                                        ),
+                                        width="100%",
                                     ),
-                                    width="100%",
+                                    "ip_camera_examples",
+                                    _("Show stream URL examples"),
+                                    _("**Examples of supported stream URLs:**")
+                                    + "\n"
+                                    + "- `rtsp://user:pass@192.168.1.100:554/stream1`  _(RTSP)_"
+                                    + "\n"
+                                    + "- `http://192.168.1.101:8080/video`  _(HTTP MJPEG)_"
+                                    + "\n"
+                                    + "- `rtmp://192.168.1.102/live/stream`  _(RTMP)_"
+                                    + "\n"
+                                    + "- `udp://@239.0.0.1:1234`  _(UDP multicast)_"
+                                    + "\n"
+                                    + "- `tcp://192.168.1.103:8554`  _(TCP stream)_",
                                 ),
                                 id="ip_camera_url_container",
                             ),
-                        ),
-                        ui.column(
-                            12,
-                            info_toggle(
-                                "ip_camera_examples",
-                                _("Show stream URL examples"),
-                                _("**Examples of supported stream URLs:**")
-                                + "\n"
-                                + "- `rtsp://user:pass@192.168.1.100:554/stream1`  _(RTSP)_"
-                                + "\n"
-                                + "- `http://192.168.1.101:8080/video`  _(HTTP MJPEG)_"
-                                + "\n"
-                                + "- `rtmp://192.168.1.102/live/stream`  _(RTMP)_"
-                                + "\n"
-                                + "- `udp://@239.0.0.1:1234`  _(UDP multicast)_"
-                                + "\n"
-                                + "- `tcp://192.168.1.103:8554`  _(TCP stream)_",
-                            ),
-                            id="ip_camera_warning",
                         ),
                         ui.hr(),
                         ui.div(
@@ -644,20 +661,17 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_slider(
-                                    "sldMinThreshold",
-                                    _("Minimum detection confidence"),
-                                    min=0,
-                                    max=80,
-                                    width="90%",
-                                    value=CONFIG["MIN_THRESHOLD"],
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
+                                field_with_info(
+                                    ui.input_slider(
+                                        "sldMinThreshold",
+                                        _("Minimum detection threshold"),
+                                        min=0,
+                                        max=80,
+                                        width="90%",
+                                        value=CONFIG["MIN_THRESHOLD"],
+                                    ),
                                     "min_threshold_info",
-                                    _("Explain minimum detection confidence"),
+                                    _("Explain the minimum detection threshold"),
                                     _(
                                         "Used to decide if an outside motion event is logged. "
                                         "At least one picture must exceed this probability or the "
@@ -672,25 +686,22 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_slider(
-                                    "sldMouseThreshold",
-                                    _("Prey detection confidence"),
-                                    min=0,
-                                    max=100,
-                                    width="90%",
-                                    value=CONFIG["MOUSE_THRESHOLD"],
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
+                                field_with_info(
+                                    ui.input_slider(
+                                        "sldMouseThreshold",
+                                        _("Threshold for prey detection"),
+                                        min=0,
+                                        max=100,
+                                        width="90%",
+                                        value=CONFIG["MOUSE_THRESHOLD"],
+                                    ),
                                     "mouse_threshold_info",
-                                    _("Explain prey detection confidence"),
+                                    _("Explain the prey detection threshold"),
                                     _(
                                         "Kittyhack uses this value to decide whether a picture contains prey. "
-                                        "If the confidence is higher, the flap stays locked.\n"
+                                        "If the detected probability is above this threshold, the flap stays locked.\n"
                                         "*(Default value: {})*\n\n"
-                                        "The minimum follows the **Minimum detection confidence** setting."
+                                        "The minimum follows the **Minimum detection threshold**."
                                     ).format(
                                         DEFAULT_CONFIG["Settings"]["mouse_threshold"]
                                     ),
@@ -701,26 +712,23 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_slider(
-                                    "sldCatThreshold",
-                                    _("Cat detection confidence"),
-                                    min=0,
-                                    max=100,
-                                    width="90%",
-                                    value=CONFIG["CAT_THRESHOLD"],
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
+                                field_with_info(
+                                    ui.input_slider(
+                                        "sldCatThreshold",
+                                        _("Threshold for cat detection"),
+                                        min=0,
+                                        max=100,
+                                        width="90%",
+                                        value=CONFIG["CAT_THRESHOLD"],
+                                    ),
                                     "cat_threshold_info",
-                                    _("Explain cat detection confidence"),
+                                    _("Explain the cat detection threshold"),
                                     _(
                                         "Kittyhack uses this value to decide whether a picture contains your cat."
                                     )
                                     + "  \n"
                                     + _(
-                                        "When the confidence is higher than this value and **Use camera for cat detection** is enabled, the flap unlocks."
+                                        "When the detected probability is above this threshold and **Use camera for cat detection** is enabled, the flap unlocks."
                                     )
                                     + "  \n"
                                     + "*("
@@ -731,7 +739,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     + "  \n\n"
                                     + "**"
                                     + _(
-                                        "The minimum follows the **Minimum detection confidence** setting above."
+                                        "The minimum follows the **Minimum detection threshold** above."
                                     )
                                     + "**",
                                 ),
@@ -741,19 +749,16 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_numeric(
-                                    "numMinSecondsToAnalyze",
-                                    _("Wait before deciding to unlock (seconds)"),
-                                    float(
-                                        CONFIG.get("MIN_SECONDS_TO_ANALYZE", 1.5) or 1.5
+                                field_with_info(
+                                    ui.input_numeric(
+                                        "numMinSecondsToAnalyze",
+                                        _("Wait before deciding to unlock (seconds)"),
+                                        float(
+                                            CONFIG.get("MIN_SECONDS_TO_ANALYZE", 1.5) or 1.5
+                                        ),
+                                        min=0.1,
+                                        step=0.1,
                                     ),
-                                    min=0.1,
-                                    step=0.1,
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
                                     "min_seconds_info",
                                     _("Explain the unlock delay"),
                                     _(
@@ -765,7 +770,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     )
                                     + "  \n\n"
                                     + _(
-                                        "After unlocking, the flap locks again if a later picture reaches the prey detection confidence."
+                                        "After unlocking, the flap locks again if a later picture reaches the prey detection threshold."
                                     )
                                     + "  \n\n"
                                     + "*("
@@ -782,19 +787,16 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_slider(
-                                    "sldLockAfterPreyDetect",
-                                    _("Keep locked after detecting prey (seconds)"),
-                                    min=30,
-                                    max=1800,
-                                    step=5,
-                                    width="90%",
-                                    value=CONFIG["LOCK_DURATION_AFTER_PREY_DETECTION"],
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
+                                field_with_info(
+                                    ui.input_slider(
+                                        "sldLockAfterPreyDetect",
+                                        _("Keep locked after detecting prey (seconds)"),
+                                        min=30,
+                                        max=1800,
+                                        step=5,
+                                        width="90%",
+                                        value=CONFIG["LOCK_DURATION_AFTER_PREY_DETECTION"],
+                                    ),
                                     "lock_after_prey_info",
                                     _("Explain the lock duration"),
                                     _(
@@ -807,20 +809,17 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_switch(
-                                    "btnDetectPrey",
-                                    _("Detect prey"),
-                                    CONFIG["MOUSE_CHECK_ENABLED"],
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
+                                field_with_info(
+                                    ui.input_switch(
+                                        "btnDetectPrey",
+                                        _("Detect prey"),
+                                        CONFIG["MOUSE_CHECK_ENABLED"],
+                                    ),
                                     "detect_prey_info",
                                     _("Explain prey detection"),
                                     _(
-                                        "When prey detection is enabled and a picture exceeds the prey detection confidence, the flap stays locked.\n\n"
-                                            "This setting applies to all cats. You can also choose it for each cat under **Cats**."
+                                        "When prey detection is enabled and a picture exceeds the prey detection threshold, the flap stays locked.\n\n"
+                                        "This setting applies to all cats. You can also choose it for each cat under **Cats**."
                                     ),
                                 ),
                             ),
@@ -829,27 +828,24 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_select(
-                                    "selectedModel",
-                                    _("Detection model"),
-                                    combined_models,
-                                    selected=(
-                                        f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}"
-                                        if f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}"
-                                        in combined_models
-                                        else (
-                                            f"yolo::{CONFIG['YOLO_MODEL']}"
-                                            if f"yolo::{CONFIG['YOLO_MODEL']}"
+                                field_with_info(
+                                    ui.input_select(
+                                        "selectedModel",
+                                        _("Detection model"),
+                                        combined_models,
+                                        selected=(
+                                            f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}"
+                                            if f"tflite::{CONFIG['TFLITE_MODEL_VERSION']}"
                                             in combined_models
-                                            else next(iter(combined_models), "")
-                                        )
+                                            else (
+                                                f"yolo::{CONFIG['YOLO_MODEL']}"
+                                                if f"yolo::{CONFIG['YOLO_MODEL']}"
+                                                in combined_models
+                                                else next(iter(combined_models), "")
+                                            )
+                                        ),
+                                        width="90%",
                                     ),
-                                    width="90%",
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
                                     "model_versions_info",
                                     _("Show model details"),
                                     "- **"
@@ -884,16 +880,13 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_switch(
-                                    "btnUseCameraForCatDetection",
-                                    _("Use camera for cat detection"),
-                                    CONFIG["USE_CAMERA_FOR_CAT_DETECTION"],
-                                    width="90%",
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
+                                field_with_info(
+                                    ui.input_switch(
+                                        "btnUseCameraForCatDetection",
+                                        _("Use camera for cat detection"),
+                                        CONFIG["USE_CAMERA_FOR_CAT_DETECTION"],
+                                        width="90%",
+                                    ),
                                     "camera_cat_detection_info",
                                     _("Explain camera cat detection"),
                                     _(
@@ -901,7 +894,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     )
                                     + "  \n\n"
                                     + _(
-                                        "Set the required confidence with **Cat detection confidence**."
+                                        "Set the threshold with **Threshold for cat detection**."
                                     )
                                     + " "
                                     + _(
@@ -926,16 +919,13 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_switch(
-                                    "btnUseCameraForMotionDetection",
-                                    _("Use camera for motion detection"),
-                                    CONFIG["USE_CAMERA_FOR_MOTION_DETECTION"],
-                                    width="90%",
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
+                                field_with_info(
+                                    ui.input_switch(
+                                        "btnUseCameraForMotionDetection",
+                                        _("Use camera for motion detection"),
+                                        CONFIG["USE_CAMERA_FOR_MOTION_DETECTION"],
+                                        width="90%",
+                                    ),
                                     "camera_motion_detection_info",
                                     _("Explain camera motion detection"),
                                     _(
@@ -957,7 +947,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     )
                                     + "  \n\n"
                                     + _(
-                                        "Set the required confidence with **Cat detection confidence**."
+                                        "Set the threshold with **Threshold for cat detection**."
                                     )
                                     + "  \n\n"
                                     + _(
@@ -993,19 +983,16 @@ def register_configuration(input, output, session, ctx: SessionContext):
                             ui.row(
                                 ui.column(
                                     12,
-                                    ui.input_switch(
-                                        "btnRequireOutsidePirForCameraEntry",
-                                        _("Require outside motion for camera entry"),
-                                        CONFIG.get(
-                                            "REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY",
-                                            False,
+                                    field_with_info(
+                                        ui.input_switch(
+                                            "btnRequireOutsidePirForCameraEntry",
+                                            _("Require outside motion for camera entry"),
+                                            CONFIG.get(
+                                                "REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY",
+                                                False,
+                                            ),
+                                            width="90%",
                                         ),
-                                        width="90%",
-                                    ),
-                                ),
-                                ui.column(
-                                    12,
-                                    info_toggle(
                                         "require_pir_for_camera_entry_info",
                                         _("Explain outside motion confirmation"),
                                         _(
@@ -1032,31 +1019,28 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_select(
-                                    "txtAllowedToEnter",
-                                    _("Unlock inside for"),
-                                    {
-                                        AllowedToEnter.ALL.value: _(
-                                            "All cats (unlock for any detected motion)"
-                                        ),
-                                        AllowedToEnter.ALL_RFIDS.value: _(
-                                            "All cats with an RFID chip"
-                                        ),
-                                        AllowedToEnter.KNOWN.value: _(
-                                            "Only registered cats"
-                                        ),
-                                        AllowedToEnter.NONE.value: _("No cats"),
-                                        AllowedToEnter.CONFIGURE_PER_CAT.value: _(
-                                            "Individual configuration per cat"
-                                        ),
-                                    },
-                                    selected=str(CONFIG["ALLOWED_TO_ENTER"].value),
-                                    width="90%",
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
+                                field_with_info(
+                                    ui.input_select(
+                                        "txtAllowedToEnter",
+                                        _("Unlock inside for"),
+                                        {
+                                            AllowedToEnter.ALL.value: _(
+                                                "All cats (unlock for any detected motion)"
+                                            ),
+                                            AllowedToEnter.ALL_RFIDS.value: _(
+                                                "All cats with an RFID chip"
+                                            ),
+                                            AllowedToEnter.KNOWN.value: _(
+                                                "Only registered cats"
+                                            ),
+                                            AllowedToEnter.NONE.value: _("No cats"),
+                                            AllowedToEnter.CONFIGURE_PER_CAT.value: _(
+                                                "Individual configuration per cat"
+                                            ),
+                                        },
+                                        selected=str(CONFIG["ALLOWED_TO_ENTER"].value),
+                                        width="90%",
+                                    ),
                                     "allowed_to_enter_info",
                                     _("Explain entry options"),
                                     _(
@@ -1090,14 +1074,13 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         (
                                             """
                                         <button id="btn_toggle_entry_logic"
-                                                class="btn-default"
-                                                style="margin-top:8px;"
+                                                type="button"
+                                                class="btn btn-default kh-logic-btn"
                                                 data-show-label="{show}"
                                                 data-hide-label="{hide}">
                                             <span>{show}</span>
                                         </button>
-                                        <div id="entry_logic_hint"
-                                             style="display:none; font-size:0.75rem; margin-top:4px; color:#555;">
+                                        <div id="entry_logic_hint" class="kh-logic-hint" style="display:none;">
                                              {hint}
                                         </div>
                                     """
@@ -1161,23 +1144,20 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_select(
-                                    "btnAllowedToExit",
-                                    _("Outside"),
-                                    {
-                                        "allow": _("Allow exit"),
-                                        "deny": _("Do not allow exit"),
-                                        "configure_per_cat": _(
-                                            "Individual configuration per cat"
-                                        ),
-                                    },
-                                    selected=str(CONFIG["ALLOWED_TO_EXIT"].value),
-                                    width="90%",
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
+                                field_with_info(
+                                    ui.input_select(
+                                        "btnAllowedToExit",
+                                        _("Outside"),
+                                        {
+                                            "allow": _("Allow exit"),
+                                            "deny": _("Do not allow exit"),
+                                            "configure_per_cat": _(
+                                                "Individual configuration per cat"
+                                            ),
+                                        },
+                                        selected=str(CONFIG["ALLOWED_TO_EXIT"].value),
+                                        width="90%",
+                                    ),
                                     "allowed_to_exit_info",
                                     _("Explain exit options"),
                                     _(
@@ -1207,14 +1187,13 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         (
                                             """
                                         <button id="btn_toggle_exit_logic"
-                                                class="btn-default"
-                                                style="margin-top:8px;"
+                                                type="button"
+                                                class="btn btn-default kh-logic-btn"
                                                 data-show-label="{show}"
                                                 data-hide-label="{hide}">
                                             <span>{show}</span>
                                         </button>
-                                        <div id="exit_logic_hint"
-                                             style="display:none; font-size:0.75rem; margin-top:4px; color:#555;">
+                                        <div id="exit_logic_hint" class="kh-logic-hint" style="display:none;">
                                              {hint}
                                         </div>
                                     """
@@ -1262,53 +1241,50 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.br(),
                         ui.br(),
                         ui.div(
-                            ui.row(
-                                ui.column(
-                                    12,
-                                    info_toggle(
-                                        "exit_time_ranges",
-                                        _("Show exit time rules"),
-                                        _(
-                                            "You can set up to three time ranges when your cats may leave."
-                                        )
-                                        + "  \n\n"
-                                        + _("Rules:")
-                                        + "  \n"
-                                        + "- "
-                                        + _(
-                                            "The time ranges are global and apply to all cats."
-                                        )
-                                        + "  \n"
-                                        + "- "
-                                        + _(
-                                            "If no range is enabled, cats may exit at any time (subject to other settings)."
-                                        )
-                                        + "  \n"
-                                        + "- "
-                                        + _(
-                                            "If any range is enabled, cats may exit only during the configured time windows."
-                                        )
-                                        + "  \n"
-                                        + "- "
-                                        + _(
-                                            "Outside these windows, no cat may exit, even if the per‑cat setting under 'Cats' allows exit."
-                                        )
-                                        + "  \n"
-                                        + _(
-                                            "See the decision logic flowchart above for details."
-                                        )
-                                        + "  \n\n"
-                                        + _(
-                                            "Enter times in 24-hour format, such as 13:00."
-                                        )
-                                        + "  \n"
-                                        + _(
-                                            "Example: If ranges are 10:00–18:00 and it is 20:00, no cat may exit, even if that cat is allowed under 'Cats'."
-                                        ),
+                            ui.div(
+                                info_hint(
+                                    "exit_time_ranges",
+                                    _("Show exit time rules"),
+                                    _(
+                                        "You can set up to three time ranges when your cats may leave."
+                                    )
+                                    + "  \n\n"
+                                    + _("Rules:")
+                                    + "  \n"
+                                    + "- "
+                                    + _(
+                                        "The time ranges are global and apply to all cats."
+                                    )
+                                    + "  \n"
+                                    + "- "
+                                    + _(
+                                        "If no range is enabled, cats may exit at any time (subject to other settings)."
+                                    )
+                                    + "  \n"
+                                    + "- "
+                                    + _(
+                                        "If any range is enabled, cats may exit only during the configured time windows."
+                                    )
+                                    + "  \n"
+                                    + "- "
+                                    + _(
+                                        "Outside these windows, no cat may exit, even if the per‑cat setting under 'Cats' allows exit."
+                                    )
+                                    + "  \n"
+                                    + _(
+                                        "See the decision logic flowchart above for details."
+                                    )
+                                    + "  \n\n"
+                                    + _(
+                                        "Enter times in 24-hour format, such as 13:00."
+                                    )
+                                    + "  \n"
+                                    + _(
+                                        "Example: If ranges are 10:00–18:00 and it is 20:00, no cat may exit, even if that cat is allowed under 'Cats'."
                                     ),
-                                )
+                                ),
+                                class_="kh-field-info",
                             ),
-                            ui.br(),
                             ui.row(
                                 ui.column(
                                     12,
@@ -1396,6 +1372,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 ),
                             ),
                             id_="allowed_to_exit_ranges",
+                            class_="kh-field",
                         ),
                         ui.hr(),
                         # TODO: Outside PIR shall not yet be configurable. Need to redesign the camera control, otherwise we will have no cat pictures at high PIR thresholds.
@@ -1403,19 +1380,16 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_slider(
-                                    "sldPirInsideThreshold",
-                                    _("Inside motion sensor delay (seconds)"),
-                                    min=0.1,
-                                    max=6,
-                                    step=0.1,
-                                    value=CONFIG["PIR_INSIDE_THRESHOLD"],
-                                    width="90%",
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
+                                field_with_info(
+                                    ui.input_slider(
+                                        "sldPirInsideThreshold",
+                                        _("Inside motion sensor delay (seconds)"),
+                                        min=0.1,
+                                        max=6,
+                                        step=0.1,
+                                        value=CONFIG["PIR_INSIDE_THRESHOLD"],
+                                        width="90%",
+                                    ),
                                     "pir_inside_threshold_info",
                                     _("Explain the inside motion sensor delay"),
                                     _(
@@ -1441,16 +1415,13 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.input_switch(
-                                    "btnImmediateLockAfterPassage",
-                                    _("Lock immediately after passage"),
-                                    CONFIG["IMMEDIATE_LOCK_AFTER_PASSAGE"],
-                                    width="90%",
-                                ),
-                            ),
-                            ui.column(
-                                12,
-                                info_toggle(
+                                field_with_info(
+                                    ui.input_switch(
+                                        "btnImmediateLockAfterPassage",
+                                        _("Lock immediately after passage"),
+                                        CONFIG["IMMEDIATE_LOCK_AFTER_PASSAGE"],
+                                        width="90%",
+                                    ),
                                     "immediate_lock_after_passage_info",
                                     _("Explain immediate locking"),
                                     _(
@@ -2047,30 +2018,27 @@ def register_configuration(input, output, session, ctx: SessionContext):
                             ui.row(
                                 ui.column(
                                     12,
-                                    ui.input_select(
-                                        "inference_device",
-                                        _("Detection device (experimental)"),
-                                        {
-                                            "cpu": _("CPU (default)"),
-                                            "cuda:0": _("NVIDIA GPU (CUDA)"),
-                                            "intel:gpu": _("Intel GPU (OpenVINO)"),
-                                        },
-                                        selected=(
-                                            "intel:gpu"
-                                            if str(
-                                                CONFIG.get("INFERENCE_DEVICE", "cpu")
-                                                or "cpu"
-                                            )
-                                            .strip()
-                                            .lower()
-                                            == "gpu"
-                                            else CONFIG.get("INFERENCE_DEVICE", "cpu")
+                                    field_with_info(
+                                        ui.input_select(
+                                            "inference_device",
+                                            _("Detection device (experimental)"),
+                                            {
+                                                "cpu": _("CPU (default)"),
+                                                "cuda:0": _("NVIDIA GPU (CUDA)"),
+                                                "intel:gpu": _("Intel GPU (OpenVINO)"),
+                                            },
+                                            selected=(
+                                                "intel:gpu"
+                                                if str(
+                                                    CONFIG.get("INFERENCE_DEVICE", "cpu")
+                                                    or "cpu"
+                                                )
+                                                .strip()
+                                                .lower()
+                                                == "gpu"
+                                                else CONFIG.get("INFERENCE_DEVICE", "cpu")
+                                            ),
                                         ),
-                                    ),
-                                ),
-                                ui.column(
-                                    12,
-                                    info_toggle(
                                         "inference_device_info",
                                         _("Show detection device details"),
                                         "- **"
@@ -2182,9 +2150,30 @@ def register_configuration(input, output, session, ctx: SessionContext):
                             ui.column(
                                 12,
                                 ui.div(
-                                    ui.markdown(remote_mode_doc_markdown),
+                                    ui.markdown(remote_mode_doc_main),
                                     class_="kh-remote-doc",
                                 ),
+                                ui.div(
+                                    ui.tags.button(
+                                        ui.tags.span(_("Show diagrams")),
+                                        id="btn_toggle_remote_diagrams",
+                                        type="button",
+                                        class_="btn btn-default kh-logic-btn",
+                                        **{
+                                            "data-show-label": _("Show diagrams"),
+                                            "data-hide-label": _("Hide diagrams"),
+                                        },
+                                    ),
+                                    ui.div(
+                                        ui.markdown(remote_mode_doc_diagrams),
+                                        id="remote_diagrams_expand",
+                                        class_="kh-remote-doc",
+                                        style_="display:none; margin-top:0.75rem;",
+                                    ),
+                                    style_="margin-top:1.25rem;",
+                                )
+                                if remote_mode_doc_diagrams
+                                else ui.div(),
                             ),
                         ),
                         class_="generic-container align-left",

@@ -126,17 +126,22 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                     ui_labelstudio,
                     ui.div(
                         ui.hr(),
-                        ui.input_task_button(
-                            "btn_labelstudio_update",
-                            _("Update Label Studio"),
-                            icon=icon_svg("circle-up"),
-                            class_="btn-primary",
-                        ),
-                        ui.help_text(
-                            CONFIG["LABELSTUDIO_VERSION"]
-                            + " → "
-                            + labelstudio_latest_version_display,
-                            style_="margin-top:0.5rem;",
+                        ui.div(
+                            ui.input_task_button(
+                                "btn_labelstudio_update",
+                                _("Update Label Studio"),
+                                icon=icon_svg("circle-up"),
+                                class_="btn-primary",
+                            ),
+                            ui.div(
+                                ui.help_text(
+                                    CONFIG["LABELSTUDIO_VERSION"]
+                                    + " → "
+                                    + labelstudio_latest_version_display
+                                ),
+                                style_="margin-top:0.5rem;",
+                            ),
+                            class_="d-flex flex-column align-items-center",
                         ),
                         style_="text-align:center;",
                     ),

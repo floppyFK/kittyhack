@@ -297,7 +297,7 @@
         function toggleSection(btnId, sectionId, hintId) {
             var btn = document.getElementById(btnId);
             var section = document.getElementById(sectionId);
-            var hint = document.getElementById(hintId);
+            var hint = hintId ? document.getElementById(hintId) : null;
             if (!btn || !section) return;
             var span = btn.querySelector('span');
             var showLbl = btn.getAttribute('data-show-label') || '';
@@ -332,6 +332,10 @@
                 toggleSection('btn_toggle_exit_logic', 'exit_logic_expand', 'exit_logic_hint');
                 var sel2 = document.getElementById('btnAllowedToExit');
                 if (sel2) showLogic('exit_logic_images', sel2.value);
+            }
+
+            if (t.id === 'btn_toggle_remote_diagrams' || closest(t, '#btn_toggle_remote_diagrams')) {
+                toggleSection('btn_toggle_remote_diagrams', 'remote_diagrams_expand', '');
             }
         }, true);
 
@@ -441,9 +445,55 @@
         }, 700);
     }
 
+    function initInfoPopovers() {
+        // Close an open setting explanation when tapping elsewhere, including on phones.
+        if (!onceFlag(window, '__khInfoPopoverGlobal')) return;
+
+        function hidePopover(pop) {
+            try {
+                var id = pop.getAttribute('id');
+                var trigger = id ? document.querySelector('[aria-describedby="' + id + '"]') : null;
+                if (trigger && window.bootstrap && window.bootstrap.Popover) {
+                    var inst = window.bootstrap.Popover.getInstance(trigger);
+                    if (inst) {
+                        inst.hide();
+                        return;
+                    }
+                }
+            } catch (e) {}
+            try { pop.classList.remove('show'); } catch (e2) {}
+        }
+
+        document.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            if (t.closest('.popover.kh-info-popover')) return;
+            var btn = t.closest('.kh-info-btn');
+            if (btn) {
+                // Let the icon toggle its own popover. Close any other one afterwards.
+                setTimeout(function () {
+                    qa('.popover.kh-info-popover.show').forEach(function (pop) {
+                        var id = pop.getAttribute('id');
+                        var trigger = id ? document.querySelector('[aria-describedby="' + id + '"]') : null;
+                        if (trigger && (trigger === btn || trigger.contains(btn) || btn.contains(trigger))) return;
+                        hidePopover(pop);
+                    });
+                }, 0);
+                return;
+            }
+            qa('.popover.kh-info-popover.show').forEach(hidePopover);
+        }, true);
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key !== 'Escape') return;
+            qa('.popover.kh-info-popover.show').forEach(hidePopover);
+        });
+    }
+
     function initAll(scope) {
         initCollapseAriaExpanded();
         initTooltipWrappers(scope);
+        initInfoPopovers();
         // These run opportunistically when the corresponding UI is present.
         initIpCameraUrlToggle();
         initUpdateRepoToggle();

@@ -10,22 +10,6 @@ The remote device can use more complex models that do not run well on the Raspbe
 
 ---
 
-#### Diagrams
-
-##### Architecture: who talks to whom?
-
-![Remote mode architecture](diagrams/remote-mode-architecture.svg)
-
-##### Control takeover: what happens when the remote device connects
-
-![Remote mode control takeover flow](diagrams/remote-mode-control-takeover.svg)
-
-##### Recovery after a lost connection
-
-![Remote mode connection loss recovery](diagrams/remote-mode-connection-loss.svg)
-
----
-
 #### What runs where?
 
 ##### On the Kittyflap
@@ -98,9 +82,25 @@ You can end the remote connection from the Kittyhack web interface on the remote
 ##### Remote device
 - Debian or Ubuntu, ideally on a system dedicated to Kittyhack
 - AMD64 (x86_64) CPU with at least 4 cores
-- At least 2 GB RAM
+- At least 4 GB RAM
 
 ##### Network
 - The remote device must be able to reach the Kittyflap in your local network.
 - The Kittyflap must be reachable on ports `80` and `8888`.
 - This feature is designed only for a **trusted LAN** (do not expose it to the public internet).
+
+---
+
+#### Diagrams
+
+##### Architecture: who talks to whom?
+
+![Remote mode architecture](diagrams/remote-mode-architecture.svg)
+
+##### Control takeover: what happens when the remote device connects
+
+![Remote mode control takeover flow](diagrams/remote-mode-control-takeover.svg)
+
+##### Recovery after a lost connection
+
+![Remote mode connection loss recovery](diagrams/remote-mode-connection-loss.svg)

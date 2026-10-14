@@ -1606,8 +1606,8 @@ msgstr "Entscheidungslogik anzeigen"
 msgid "Hide decision logic"
 msgstr "Entscheidungslogik ausblenden"
 
-msgid "The diagram shows the currently selected option."
-msgstr "Das Diagramm zeigt die aktuell ausgewählte Option."
+msgid "The steps follow the option selected above."
+msgstr "Die Schritte folgen der oben gewählten Option."
 
 msgid "Entry logic for all cats"
 msgstr "Eingangslogik für alle Katzen"
@@ -1702,8 +1702,8 @@ msgstr ""
 "Außerhalb dieser Zeitfenster darf keine Katze nach außen gehen, auch wenn "
 "die Einstellung für diese Katze unter 'Katzen' den Ausgang erlaubt."
 
-msgid "See the decision logic flowchart above for details."
-msgstr "Siehe das Flussdiagramm der Entscheidungslogik oben für Details."
+msgid "See the decision steps above for details."
+msgstr "Die Schritte oben zeigen die Einzelheiten."
 
 msgid "Enter times in 24-hour format, such as 13:00."
 msgstr "Gib die Zeiten im 24-Stunden-Format HH:MM ein (z.B. 13:00)."
@@ -4505,3 +4505,128 @@ msgstr "Hell"
 
 msgid "Appearance: Auto"
 msgstr "Darstellung: Automatisch"
+
+msgid "Motion outside?"
+msgstr "Bewegung außen?"
+
+msgid "From the motion sensor or the camera, depending on your settings."
+msgstr "Je nach Einstellung durch den Bewegungssensor oder die Kamera."
+
+msgid "Cat recognized?"
+msgstr "Katze erkannt?"
+
+msgid "By RFID, or by the camera when camera identification is turned on."
+msgstr "Per RFID oder per Kamera, wenn die Kameraerkennung eingeschaltet ist."
+
+msgid "Registered in Kittyhack?"
+msgstr "In Kittyhack registriert?"
+
+msgid "Prey detection enabled for every cat?"
+msgstr "Beuteerkennung für alle Katzen aktiv?"
+
+msgid "Prey detection enabled for this cat?"
+msgstr "Beuteerkennung für diese Katze aktiv?"
+
+msgid "You can turn this off for a single cat under Cats."
+msgstr "Für eine einzelne Katze kannst du das unter Katzen ausschalten."
+
+msgid "Prey detection enabled?"
+msgstr "Beuteerkennung aktiv?"
+
+msgid "Prey detected?"
+msgstr "Beute erkannt?"
+
+msgid "The flap stays locked while a picture shows prey."
+msgstr "Solange ein Bild Beute zeigt, bleibt die Klappe verriegelt."
+
+msgid "No action"
+msgstr "Keine Aktion"
+
+msgid "Stay locked"
+msgstr "Verriegelt lassen"
+
+msgid "You set this separately for each cat under Cats."
+msgstr "Das stellst du für jede Katze einzeln unter Katzen ein."
+
+msgid ""
+"Motion outside unlocks the inside, unless prey detection keeps the flap "
+"locked."
+msgstr ""
+"Bewegung außen entriegelt innen. Die Beuteerkennung kann die Klappe "
+"trotzdem verriegelt lassen."
+
+msgid "An RFID chip has to be detected. The cat does not need to be registered."
+msgstr "Ein RFID-Chip muss erkannt werden. Die Katze muss nicht registriert sein."
+
+msgid "RFID chip detected?"
+msgstr "RFID-Chip erkannt?"
+
+msgid "Any chip is enough. The cat does not have to be registered."
+msgstr "Jeder Chip genügt. Die Katze muss nicht registriert sein."
+
+msgid "Only a registered cat can unlock the inside, by RFID or by the camera."
+msgstr "Nur eine registrierte Katze kann innen entriegeln, per RFID oder per Kamera."
+
+msgid "The inside stays locked."
+msgstr "Innen bleibt verriegelt."
+
+msgid "Only cats you allow under Cats can enter, after Kittyhack recognizes them."
+msgstr ""
+"Nur Katzen, die du unter Katzen erlaubst, dürfen hinein, nachdem Kittyhack "
+"sie erkannt hat."
+
+msgid "May this cat enter?"
+msgstr "Darf diese Katze hinein?"
+
+msgid "Unlock outside"
+msgstr "Außen entriegeln"
+
+msgid "Exit not allowed"
+msgstr "Ausgang nicht erlaubt"
+
+msgid "Motion inside?"
+msgstr "Bewegung innen?"
+
+msgid "The sensor on the house side of the flap."
+msgstr "Der Sensor auf der Hausseite der Klappe."
+
+msgid "Inside an allowed exit time window?"
+msgstr "Im erlaubten Ausgangszeitfenster?"
+
+msgid "If every time range below is off, cats may leave at any time."
+msgstr ""
+"Wenn unten kein Zeitbereich eingeschaltet ist, dürfen Katzen jederzeit "
+"hinaus."
+
+msgid "Motion inside unlocks the outside, within the time windows you set below."
+msgstr ""
+"Bewegung innen entriegelt außen, innerhalb der Zeitfenster, die du unten "
+"einstellst."
+
+msgid "The outside stays locked."
+msgstr "Außen bleibt verriegelt."
+
+msgid ""
+"The cat has to be identified by RFID and allowed to leave. The time "
+"windows below apply to every cat."
+msgstr ""
+"Die Katze muss per RFID erkannt und für den Ausgang erlaubt sein. Die "
+"Zeitfenster unten gelten für jede Katze."
+
+msgid "Cat identified by RFID?"
+msgstr "Katze per RFID erkannt?"
+
+msgid "Camera identification does not count here."
+msgstr "Die Kameraerkennung zählt hier nicht."
+
+msgid "May this cat leave?"
+msgstr "Darf diese Katze hinaus?"
+
+msgid "No"
+msgstr "Nein"
+
+msgid "Yes"
+msgstr "Ja"
+
+msgid "Continue"
+msgstr "Weiter"

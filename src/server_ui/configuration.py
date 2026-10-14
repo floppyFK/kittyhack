@@ -41,6 +41,7 @@ from src.server_ui.state import (
     live_view_aspect,
 )
 from src.server_ui.helpers import _disable_numeric_input, collapsible_section
+from src.server_ui.unlock_logic import entry_logic_ui, exit_logic_ui
 from src.server_ui.context import SessionContext
 import src.startup as startup
 
@@ -136,8 +137,33 @@ def register_configuration(input, output, session, ctx: SessionContext):
         if lang not in ("en", "de"):
             lang = "en"
 
-        def logic_svg(name: str) -> str:
-            return f"logic/{name}_{lang}.svg"
+        def config_mode(value) -> str:
+            return str(getattr(value, "value", value))
+
+        def logic_block(button_id, hint_id, section_id, container_id, panels):
+            return ui.div(
+                ui.tags.button(
+                    ui.tags.span(_("Show decision logic")),
+                    id=button_id,
+                    type="button",
+                    class_="btn btn-default kh-logic-btn",
+                    data_show_label=_("Show decision logic"),
+                    data_hide_label=_("Hide decision logic"),
+                ),
+                ui.div(
+                    _("The steps follow the option selected above."),
+                    id=hint_id,
+                    class_="kh-logic-hint",
+                    style_="display:none;",
+                ),
+                ui.div(
+                    ui.div(*panels, id=container_id, class_="kh-flow-list"),
+                    id=section_id,
+                    class_="logic-section",
+                    style_="display:none;",
+                ),
+                class_="d-flex flex-column align-items-center w-100",
+            )
 
         remote_mode_doc_name = "remote-mode_de.md" if lang == "de" else "remote-mode.md"
         remote_mode_doc_path = os.path.join(
@@ -1068,75 +1094,15 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.div(
-                                    # Precompute translations to avoid _() inside f-strings
-                                    ui.HTML(
-                                        (
-                                            """
-                                        <button id="btn_toggle_entry_logic"
-                                                type="button"
-                                                class="btn btn-default kh-logic-btn"
-                                                data-show-label="{show}"
-                                                data-hide-label="{hide}">
-                                            <span>{show}</span>
-                                        </button>
-                                        <div id="entry_logic_hint" class="kh-logic-hint" style="display:none;">
-                                             {hint}
-                                        </div>
-                                    """
-                                        ).format(
-                                            show=_("Show decision logic"),
-                                            hide=_("Hide decision logic"),
-                                            hint=_(
-                                                "The diagram shows the currently selected option."
-                                            ),
-                                        )
+                                logic_block(
+                                    "btn_toggle_entry_logic",
+                                    "entry_logic_hint",
+                                    "entry_logic_expand",
+                                    "entry_logic_flows",
+                                    entry_logic_ui(
+                                        _,
+                                        active=config_mode(CONFIG["ALLOWED_TO_ENTER"]),
                                     ),
-                                    ui.HTML(
-                                        (
-                                            """
-                                        <div id="entry_logic_expand" class="logic-section" style="display:none; margin-top:10px;">
-                                          <div id="entry_logic_images">
-                                            <div class="logic-img-wrapper" data-mode="all">
-                                              <img src="{src_all}" alt="{alt_all}"/>
-                                            </div>
-                                            <div class="logic-img-wrapper" data-mode="all_rfids">
-                                              <img src="{src_all_rfids}" alt="{alt_all_rfids}"/>
-                                            </div>
-                                            <div class="logic-img-wrapper" data-mode="known">
-                                              <img src="{src_known}" alt="{alt_known}"/>
-                                            </div>
-                                            <div class="logic-img-wrapper" data-mode="none">
-                                              <img src="{src_none}" alt="{alt_none}"/>
-                                            </div>
-                                            <div class="logic-img-wrapper" data-mode="configure_per_cat">
-                                              <img src="{src_cfg}" alt="{alt_cfg}"/>
-                                            </div>
-                                          </div>
-                                        </div>
-                                    """
-                                        ).format(
-                                            src_all=logic_svg("entry_all"),
-                                            src_all_rfids=logic_svg("entry_all_rfids"),
-                                            src_known=logic_svg("entry_known"),
-                                            src_none=logic_svg("entry_none"),
-                                            src_cfg=logic_svg(
-                                                "entry_configure_per_cat"
-                                            ),
-                                            alt_all=_("Entry logic for all cats"),
-                                            alt_all_rfids=_(
-                                                "Entry logic for cats with an RFID chip"
-                                            ),
-                                            alt_known=_(
-                                                "Entry logic for registered cats"
-                                            ),
-                                            alt_none=_("Entry logic when entry is closed"),
-                                            alt_cfg=_(
-                                                "Entry logic for individual cat settings"
-                                            ),
-                                        )
-                                    ),
-                                    class_="d-flex flex-column align-items-center w-100",
                                 ),
                             )
                         ),
@@ -1181,60 +1147,15 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         ui.row(
                             ui.column(
                                 12,
-                                ui.div(
-                                    # Precompute translations to avoid _() inside f-strings
-                                    ui.HTML(
-                                        (
-                                            """
-                                        <button id="btn_toggle_exit_logic"
-                                                type="button"
-                                                class="btn btn-default kh-logic-btn"
-                                                data-show-label="{show}"
-                                                data-hide-label="{hide}">
-                                            <span>{show}</span>
-                                        </button>
-                                        <div id="exit_logic_hint" class="kh-logic-hint" style="display:none;">
-                                             {hint}
-                                        </div>
-                                    """
-                                        ).format(
-                                            show=_("Show decision logic"),
-                                            hide=_("Hide decision logic"),
-                                            hint=_(
-                                                "The diagram shows the currently selected option."
-                                            ),
-                                        )
+                                logic_block(
+                                    "btn_toggle_exit_logic",
+                                    "exit_logic_hint",
+                                    "exit_logic_expand",
+                                    "exit_logic_flows",
+                                    exit_logic_ui(
+                                        _,
+                                        active=config_mode(CONFIG["ALLOWED_TO_EXIT"]),
                                     ),
-                                    ui.HTML(
-                                        (
-                                            """
-                                        <div id="exit_logic_expand" class="logic-section" style="display:none; margin-top:10px;">
-                                          <div id="exit_logic_images">
-                                            <div class="logic-img-wrapper" data-mode="allow">
-                                              <img src="{src_allow}" alt="{alt_allow}"/>
-                                            </div>
-                                            <div class="logic-img-wrapper" data-mode="deny">
-                                              <img src="{src_deny}" alt="{alt_deny}"/>
-                                            </div>
-                                            <div class="logic-img-wrapper" data-mode="configure_per_cat">
-                                              <img src="{src_cfg}" alt="{alt_cfg}"/>
-                                            </div>
-                                          </div>
-                                        </div>
-                                    """
-                                        ).format(
-                                            src_allow=logic_svg("exit_allow"),
-                                            src_deny=logic_svg("exit_deny"),
-                                            src_cfg=logic_svg("exit_configure_per_cat"),
-                                            alt_allow=_("Exit logic when exit is allowed"),
-                                            alt_deny=_("Exit logic when exit is closed"),
-                                            alt_cfg=_(
-                                                "Exit logic for individual cat settings"
-                                            ),
-                                        )
-                                    ),
-                                    class_="d-flex flex-column align-items-center w-100",
-                                    style_="color: grey;",
                                 ),
                             ),
                         ),
@@ -1272,7 +1193,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     )
                                     + "  \n"
                                     + _(
-                                        "See the decision logic flowchart above for details."
+                                        "See the decision steps above for details."
                                     )
                                     + "  \n\n"
                                     + _(

@@ -311,7 +311,7 @@
         function showLogic(containerId, mode) {
             var container = document.getElementById(containerId);
             if (!container) return;
-            qa('.logic-img-wrapper', container).forEach(function (el) {
+            qa('.kh-flow', container).forEach(function (el) {
                 try {
                     el.style.display = (el.getAttribute('data-mode') === mode) ? 'block' : 'none';
                 } catch (e) {}
@@ -325,13 +325,13 @@
             if (t.id === 'btn_toggle_entry_logic' || closest(t, '#btn_toggle_entry_logic')) {
                 toggleSection('btn_toggle_entry_logic', 'entry_logic_expand', 'entry_logic_hint');
                 var sel = document.getElementById('txtAllowedToEnter');
-                if (sel) showLogic('entry_logic_images', sel.value);
+                if (sel) showLogic('entry_logic_flows', sel.value);
             }
 
             if (t.id === 'btn_toggle_exit_logic' || closest(t, '#btn_toggle_exit_logic')) {
                 toggleSection('btn_toggle_exit_logic', 'exit_logic_expand', 'exit_logic_hint');
                 var sel2 = document.getElementById('btnAllowedToExit');
-                if (sel2) showLogic('exit_logic_images', sel2.value);
+                if (sel2) showLogic('exit_logic_flows', sel2.value);
             }
 
             if (t.id === 'btn_toggle_remote_diagrams' || closest(t, '#btn_toggle_remote_diagrams')) {
@@ -343,10 +343,10 @@
             var t = e.target;
             if (!t) return;
             if (t.id === 'txtAllowedToEnter') {
-                showLogic('entry_logic_images', t.value);
+                showLogic('entry_logic_flows', t.value);
             }
             if (t.id === 'btnAllowedToExit') {
-                showLogic('exit_logic_images', t.value);
+                showLogic('exit_logic_flows', t.value);
             }
         }, true);
     }

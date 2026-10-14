@@ -316,15 +316,34 @@ uninstall_unlisted_torch_stack() {
 }
 
 uninstall_other_opencv() {
-    # opencv-python and opencv-python-headless both provide cv2. Keep only the
-    # build named in the requirements file.
+    # opencv-python and opencv-python-headless both own the cv2 directory.
+    # ncnn depends on opencv-python, so a requirements file that pins only the
+    # headless build still ends up with both. Uninstalling one deletes the
+    # shared files while the other's pip record remains, and `import cv2` still
+    # succeeds as an empty namespace. Reinstall the build we keep afterwards.
     local pip_bin="${venv_dir}/bin/pip"
     [[ -x "$pip_bin" ]] || pip_bin="pip"
+    local keep="" drop=""
     if requirements_lists_pkg opencv-python-headless && ! requirements_lists_pkg opencv-python; then
-        "$pip_bin" uninstall -y opencv-python >/dev/null 2>&1 || true
+        keep="opencv-python-headless"
+        drop="opencv-python"
     elif requirements_lists_pkg opencv-python && ! requirements_lists_pkg opencv-python-headless; then
-        "$pip_bin" uninstall -y opencv-python-headless >/dev/null 2>&1 || true
+        keep="opencv-python"
+        drop="opencv-python-headless"
+    else
+        return 0
     fi
+    if ! "$pip_bin" show "$drop" >/dev/null 2>&1; then
+        return 0
+    fi
+    log "Removing ${drop}; it shares the cv2 directory with ${keep}"
+    "$pip_bin" uninstall -y "$drop" >/dev/null 2>&1 || true
+    local spec
+    spec="$(grep -E "^${keep}(==|>=|<=|~=|===|>|<|!=)" "$REQUIREMENTS_FILE" | head -1 || true)"
+    [[ -n "$spec" ]] || spec="$keep"
+    log "Restoring ${spec}"
+    "$pip_bin" install --index-url https://pypi.org/simple --timeout 120 --retries 10 \
+        --no-cache-dir --force-reinstall --no-deps "$spec"
 }
 
 purge_pip_cache() {
@@ -350,7 +369,8 @@ smoke_test_venv() {
     [[ -x "$py" ]] || return 1
 
     # Always require the app entry stack.
-    if ! "$py" -c 'import shiny, starlette, uvicorn, cv2, numpy' >/dev/null 2>&1; then
+    # Attribute check: a gutted cv2 directory still imports as a namespace package.
+    if ! "$py" -c 'import shiny, starlette, uvicorn, numpy, cv2; cv2.imdecode' >/dev/null 2>&1; then
         warn "Smoke test failed: core imports (shiny/starlette/uvicorn/cv2/numpy)"
         return 1
     fi

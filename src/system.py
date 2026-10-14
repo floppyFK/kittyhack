@@ -1350,6 +1350,16 @@ class KittyhackUpdater:
             "extras=$(pip freeze | awk -F'==' 'tolower($1) ~ /^(nvidia-|triton$)/ {print $1}'); "
             "if [ -n \"$extras\" ]; then pip uninstall -y $extras || true; fi; "
             "fi"
+            # ncnn depends on opencv-python. Removing that build deletes the cv2
+            # files owned by opencv-python-headless, so put the pinned build back.
+            f" && if grep -qE '^opencv-python-headless(==|>=|<=|~=|>|<|!=)' {requirements_path}"
+            f" && ! grep -qE '^opencv-python(==|>=|<=|~=|>|<|!=)' {requirements_path}"
+            " && pip show opencv-python >/dev/null 2>&1; then "
+            "pip uninstall -y opencv-python || true; "
+            f"spec=$(grep -E '^opencv-python-headless(==|>=|<=|~=|>|<|!=)' {requirements_path} | head -1); "
+            "pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 "
+            "--no-cache-dir --force-reinstall --no-deps \"$spec\"; "
+            "fi"
         )
         pip_install_cmd = [
             "/bin/bash",

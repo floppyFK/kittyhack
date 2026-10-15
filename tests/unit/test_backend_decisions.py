@@ -166,6 +166,9 @@ def test_sync_original_model_notice_for_new_install(tmp_path, monkeypatch):
     assert note.get("muteable") is True
     assert "do not need to change anything right now" in note["message"]
     assert "AI Training" in note["message"]
+    assert "pictures of your cats first" in note["message"]
+    assert "Train-own-AI" in note["message"]
+    assert "You already have a trained model" not in note["message"]
     assert sync_original_model_notice() is False
 
     baseconfig.CONFIG["TFLITE_MODEL_VERSION"] = ""
@@ -185,8 +188,10 @@ def test_sync_original_model_notice_points_at_existing_model(tmp_path, monkeypat
     baseconfig.CONFIG["TFLITE_MODEL_VERSION"] = "original_kittyflap_model_v1"
     assert sync_original_model_notice() is True
     note = UserNotifications.get_by_id(UserNotifications.ID_ORIGINAL_MODEL_ACCURACY)
+    assert "You already have a trained model" in note["message"]
     assert "Detection model" in note["message"]
     assert "do not need to change anything right now" not in note["message"]
+    assert "Train-own-AI" not in note["message"]
 
 
 def test_sync_original_model_notice_respects_mute(tmp_path, monkeypatch):

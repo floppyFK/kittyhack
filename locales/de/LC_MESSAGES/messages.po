@@ -80,6 +80,40 @@ msgstr ""
 msgid "Original detection model"
 msgstr "Originales Erkennungsmodell"
 
+msgid "Kittyhack is using the model that came with the Kittyflap (v1 or v2)."
+msgstr ""
+"Kittyhack verwendet das Modell, das mit der Kittyflap mitgeliefert wurde (v1 "
+"oder v2)."
+
+msgid ""
+"This model is extremely inaccurate, because it was not trained for your "
+"cats. Not all Kittyhack features work with it. The camera cannot identify "
+"your cat with this model, for example."
+msgstr ""
+"Dieses Modell ist extrem ungenau, weil es nicht für deine Katzen trainiert "
+"wurde. Nicht alle Funktionen von Kittyhack funktionieren damit. Die Kamera "
+"kann deine Katze mit diesem Modell zum Beispiel nicht erkennen."
+
+msgid ""
+"You already have a trained model. It is much more accurate. Select it under "
+"**Settings**, in the **Flap** section, as the **Detection model**."
+msgstr ""
+"Du hast bereits ein trainiertes Modell. Das ist deutlich genauer. Wähle es "
+"unter **Einstellungen** im Abschnitt **Klappe** als **Erkennungsmodell** aus."
+
+msgid "model training guide"
+msgstr "Anleitung zum Modelltraining"
+
+#, python-brace-format
+msgid ""
+"A model you train yourself is much more accurate. Kittyhack needs pictures "
+"of your cats first. You can create that model later under **AI Training**. "
+"The steps are explained in the [{guide}]({url})."
+msgstr ""
+"Ein selbst trainiertes Modell ist deutlich genauer. Dafür braucht Kittyhack "
+"zuerst Bilder deiner Katzen. Du kannst es später unter **KI Training** "
+"erstellen. Die Schritte stehen in der [{guide}]({url})."
+
 msgid "Unknown RFID"
 msgstr "Unbekannte RFID"
 

@@ -923,7 +923,15 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 _(
                                     "The original models (v1 and v2) are strongly discouraged: they are extremely inaccurate, and not all Kittyhack features work with them. A model you train yourself is much more accurate."
                                 ),
+                                id="original_model_warning",
                                 class_="kh-setting-warning",
+                                style_=(
+                                    None
+                                    if uses_original_detection_model(
+                                        CONFIG.get("TFLITE_MODEL_VERSION")
+                                    )
+                                    else "display: none;"
+                                ),
                             ),
                         ),
                         ui.hr(),

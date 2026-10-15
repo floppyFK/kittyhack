@@ -162,7 +162,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                     ui.input_action_button(
                         "btn_mute_user_notifications",
                         _("Mute these notifications"),
-                        class_="btn-outline-secondary",
+                        class_="btn-outline-secondary kh-wrap-btn",
                     ),
                 )
 
@@ -174,7 +174,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                     title=_("Notifications"),
                     easy_close=False,
                     size="lg",
-                    footer=ui.div(*footer_items),
+                    footer=ui.div(*footer_items, class_="kh-notification-footer"),
                 )
             )
 

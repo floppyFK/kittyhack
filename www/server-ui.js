@@ -254,6 +254,24 @@
         sel.addEventListener('change', apply, true);
     }
 
+    function initOriginalModelWarning() {
+        // Show the v1/v2 warning only while an original Kittyflap model is selected.
+        var sel = q('#selectedModel');
+        var warn = q('#original_model_warning');
+        if (!sel || !warn) return;
+        if (sel.getAttribute('data-kh-modelwarn-bound') === '1') return;
+        sel.setAttribute('data-kh-modelwarn-bound', '1');
+
+        function apply() {
+            var value = '';
+            try { value = String(sel.value || ''); } catch (e) {}
+            warn.style.display = value.indexOf('tflite::') === 0 ? '' : 'none';
+        }
+
+        apply();
+        sel.addEventListener('change', apply, true);
+    }
+
     function initRequirePirForCameraEntryToggle() {
         // The outside-PIR switch only applies when camera cat detection or
         // camera motion detection is on. Keep it visible, but disabled otherwise.
@@ -502,6 +520,7 @@
         // These run opportunistically when the corresponding UI is present.
         initIpCameraUrlToggle();
         initUpdateRepoToggle();
+        initOriginalModelWarning();
         initRequirePirForCameraEntryToggle();
         initLogicToggles();
         initManageCatsRFIDValidation();

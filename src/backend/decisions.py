@@ -191,28 +191,44 @@ def _has_custom_yolo_model() -> bool:
         return False
 
 
+def _model_training_guide_url(language: str | None) -> str:
+    if str(language or "").strip().lower().startswith("de"):
+        return (
+            "https://github.com/floppyFK/kittyhack/wiki/"
+            "%5BDE%5D-Kittyhack-v2.0-%E2%80%90-Eigene-KI%E2%80%90Modelle-trainieren"
+        )
+    return (
+        "https://github.com/floppyFK/kittyhack/wiki/"
+        "%5BEN%5D-Kittyhack-v2.0-%E2%80%90-Train-own-AI%E2%80%90Models"
+    )
+
+
 def _original_model_notice_message(has_custom_model: bool) -> str:
     from src.baseconfig import CONFIG, set_language
 
-    _ = set_language(CONFIG.get("LANGUAGE", "en"))
-    intro = _("Kittyhack is using an original Kittyflap model.")
+    language = CONFIG.get("LANGUAGE", "en")
+    _ = set_language(language)
+    intro = _("Kittyhack is using the model that came with the Kittyflap (v1 or v2).")
     problem = _(
-        "The included models (v1 and v2) are extremely inaccurate, and not all "
-        "Kittyhack features work with them. Camera-based cat detection is one example."
+        "This model is extremely inaccurate, because it was not trained for your cats. "
+        "Not all Kittyhack features work with it. The camera cannot identify your cat "
+        "with this model, for example."
     )
     if has_custom_model:
         action = _(
-            "A model you trained yourself is much more accurate. Select it under "
+            "You already have a trained model. It is much more accurate. Select it under "
             "**Settings**, in the **Flap** section, as the **Detection model**."
         )
         return f"{intro}\n\n{problem}\n\n{action}"
     later = _(
         "The flap still works with the microchip reader. You do not need to change anything right now."
     )
+    guide = _("model training guide")
     train = _(
-        "Later, under **AI Training**, you can train a model for your own cats and camera. "
-        "That model is much more accurate."
-    )
+        "A model you train yourself is much more accurate. Kittyhack needs pictures of your cats first. "
+        "You can create that model later under **AI Training**. "
+        "The steps are explained in the [{guide}]({url})."
+    ).format(guide=guide, url=_model_training_guide_url(language))
     return f"{intro}\n\n{problem}\n\n{later}\n\n{train}"
 
 

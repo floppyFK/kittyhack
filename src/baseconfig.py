@@ -2,26 +2,21 @@ import os
 import gettext
 import configparser
 import logging
+import shutil
+import sqlite3
 import sys
-import tempfile
 import threading
-from contextlib import contextmanager
+from datetime import datetime, timezone
 # If the systemd journal Python bindings are available, use them.
 try:
     from systemd.journal import JournalHandler  # type: ignore
 except Exception:
     JournalHandler = None
 
-try:
-    import fcntl
-except Exception:
-    fcntl = None
-
 from enum import Enum
 import uuid
 import json
-from configupdater import ConfigUpdater
-from typing import Any, Callable, Iterator, List, Tuple
+from typing import Any, List, Tuple
 from dataclasses import dataclass
 
 from src.mode import is_remote_mode
@@ -47,85 +42,28 @@ class AllowedToExit(Enum):
 
 ###### CONSTANT DEFINITIONS ######
 
-# Files
+# Legacy files. Read once at startup, then deleted after a successful import.
 CONFIGFILE = 'config.ini'
 REMOTE_CONFIGFILE = 'config.remote.ini'
-
-###### CONFIG FILE I/O ######
-# kittyhack.service and kittyhack_control.service both write config.ini
-# (notably STARTUP_SHUTDOWN_FLAG on reboot). In-place open(..., "w") truncates
-# first, so a concurrent reader can persist a near-empty file that silently
-# loads as all defaults. Always lock + write via temp file + os.replace.
-
-
-@contextmanager
-def _config_file_lock() -> Iterator[None]:
-    """Cross-process exclusive lock for config.ini read-modify-write (fcntl/Linux)."""
-    lock_path = f"{CONFIGFILE}.lock"
-    lock_dir = os.path.dirname(os.path.abspath(lock_path))
-    if lock_dir:
-        os.makedirs(lock_dir, exist_ok=True)
-    lock_file = open(lock_path, "a+", encoding="utf-8")
-    try:
-        if fcntl is not None:
-            try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            except Exception as e:
-                logging.warning(f"[CONFIG] Failed to acquire config.ini lock: {e}")
-        yield
-    finally:
-        if fcntl is not None:
-            try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-            except Exception:
-                pass
-        try:
-            lock_file.close()
-        except Exception:
-            pass
-
-
-def _atomic_write_text(path: str, write_fn: Callable[[Any], None]) -> None:
-    """Write ``path`` atomically (sibling temp file + ``os.replace``)."""
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    os.makedirs(directory, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(prefix=".config_", suffix=".tmp", dir=directory)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            write_fn(f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
-        raise
-
-
-def _atomic_write_config_updater(updater: ConfigUpdater) -> None:
-    """Atomically persist a ConfigUpdater to CONFIGFILE (caller must hold lock)."""
-    _atomic_write_text(CONFIGFILE, updater.write)
-
 
 ###### SETTINGS SCHEMA ######
 # Single source of truth for defaults, load typing, and save persistence.
 # Add a new setting here only — load_config / save_config / update_single pick it up.
+# Values live in the ``settings`` table of kittyhack.db (JSON), not in an ini file.
 
 
 @dataclass(frozen=True)
 class Setting:
     """One persisted (or runtime) config key: defaults, load kind, and save behavior."""
 
-    key: str  # CONFIG key, e.g. "MOUSE_THRESHOLD" (ini option = key.lower())
+    key: str  # CONFIG key, e.g. "MOUSE_THRESHOLD" (legacy ini option = key.lower())
     default: Any
     kind: str  # str | int | float | bool | enum | allowed_to_exit
     enum_cls: Any = None
-    save_fmt: str | None = None  # e.g. "{:.1f}"
+    save_fmt: str | None = None  # legacy ini formatting; unused by the database store
     persist: bool = True  # False: load into CONFIG but never write on save_config
-    remote_only: bool = False  # persist only in config.remote.ini (stripped from config.ini)
-    save_as_str: bool = False  # force str(...) on save (MOUSE_CHECK_ENABLED)
+    remote_only: bool = False  # kept across a remote sync that replaces kittyhack.db
+    save_as_str: bool = False  # legacy ini flag; unused by the database store
 
 
 def _S(key, default, kind="str", **kwargs) -> Setting:
@@ -138,7 +76,6 @@ SETTINGS_SCHEMA: list[Setting] = [
     _S("LANGUAGE", "en"),
     _S("DATE_FORMAT", "yyyy-mm-dd"),
     _S("DATABASE_PATH", "../kittyflap.db"),
-    _S("KITTYHACK_DATABASE_PATH", "./kittyhack.db"),
     _S("MAX_PHOTOS_COUNT", 6000, "int"),
     _S("MOUSE_THRESHOLD", 70.0, "float"),
     _S("NO_MOUSE_THRESHOLD", 70.0, "float"),
@@ -214,7 +151,7 @@ SETTINGS_SCHEMA: list[Setting] = [
     _S("WLAN_WATCHDOG_ENABLED", True, "bool"),
     _S("DISABLE_RFID_READER", False, "bool"),
     _S("EVENT_IMAGES_FS_MIGRATED", False, "bool", persist=False),
-    # Remote control / remote-mode (subset lives only in config.remote.ini)
+    # Remote control / remote-mode. Restored locally after a database sync.
     _S("REMOTE_TARGET_HOST", "", remote_only=True),
     _S("REMOTE_CONTROL_PORT", 8888, "int", remote_only=True),
     _S("REMOTE_CONTROL_TIMEOUT", 30.0, "float", remote_only=True),
@@ -230,13 +167,6 @@ SETTINGS_SCHEMA: list[Setting] = [
 
 _SETTINGS_BY_KEY: dict[str, Setting] = {s.key: s for s in SETTINGS_SCHEMA}
 
-# Remote-mode overlay map: CONFIG_KEY -> (ini_option, type_name)
-_REMOTE_ONLY_SETTINGS = {
-    s.key: (s.key.lower(), s.kind if s.kind in {"str", "int", "float", "bool"} else "str")
-    for s in SETTINGS_SCHEMA
-    if s.remote_only
-}
-
 # Default configuration values (generated from schema; UI reads DEFAULT_CONFIG["Settings"][...])
 DEFAULT_CONFIG = {
     "Settings": {s.key.lower(): s.default for s in SETTINGS_SCHEMA}
@@ -244,7 +174,7 @@ DEFAULT_CONFIG = {
 
 
 def _load_default_for_setting(setting: Setting) -> Any:
-    """Typed default used when reading from ini."""
+    """Typed default used when a stored value is missing or invalid."""
     if setting.kind == "enum" and isinstance(setting.default, str) and setting.enum_cls is not None:
         return setting.enum_cls(setting.default)
     if setting.kind == "allowed_to_exit" and isinstance(setting.default, str) and setting.enum_cls is not None:
@@ -259,149 +189,438 @@ def _load_default_for_setting(setting: Setting) -> Any:
     return setting.default
 
 
-def _value_for_ini(setting: Setting, value: Any) -> Any:
-    """Convert a CONFIG value into something ConfigUpdater can write."""
+_SETTINGS_DDL = """
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
+
+
+def kittyhack_db_path() -> str:
+    """Absolute path of the kittyhack SQLite database.
+
+    ``KITTYHACK_DATABASE_PATH`` in the environment overrides the canonical
+    ``<repo>/kittyhack.db`` location (used by tests).
+    """
+    override = os.environ.get("KITTYHACK_DATABASE_PATH", "").strip()
+    if override:
+        return os.path.abspath(override)
+    return os.path.join(kittyhack_root(), "kittyhack.db")
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _connect_settings(db_path: str | None = None) -> sqlite3.Connection:
+    """Open the settings database in autocommit mode (caller starts transactions)."""
+    path = db_path or kittyhack_db_path()
+    directory = os.path.dirname(os.path.abspath(path))
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    conn = sqlite3.connect(path, timeout=30, isolation_level=None)
+    conn.execute("PRAGMA busy_timeout = 30000")
+    return conn
+
+
+def _ensure_settings_table(conn: sqlite3.Connection) -> None:
+    conn.execute(_SETTINGS_DDL)
+
+
+def _read_setting_rows(db_path: str | None = None) -> dict[str, str]:
+    """Return raw JSON values keyed by settings-table key. Empty if unreadable."""
+    path = db_path or kittyhack_db_path()
+    try:
+        conn = _connect_settings(path)
+    except Exception as e:
+        logging.error(f"[CONFIG] Failed to open settings database '{path}': {e}")
+        return {}
+    try:
+        _ensure_settings_table(conn)
+        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+        return {str(key): str(value) for key, value in rows}
+    except Exception as e:
+        logging.error(f"[CONFIG] Failed to read settings from '{path}': {e}")
+        return {}
+    finally:
+        conn.close()
+
+
+def _settings_count(db_path: str | None = None) -> int:
+    path = db_path or kittyhack_db_path()
+    if not os.path.isfile(path):
+        return 0
+    try:
+        conn = _connect_settings(path)
+    except Exception:
+        return 0
+    try:
+        _ensure_settings_table(conn)
+        row = conn.execute("SELECT COUNT(*) FROM settings").fetchone()
+        return int(row[0] or 0) if row else 0
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
+def settings_revision(db_path: str | None = None) -> str:
+    """Latest ``updated_at`` in the settings table (empty when there are no rows)."""
+    path = db_path or kittyhack_db_path()
+    if not os.path.isfile(path):
+        return ""
+    try:
+        conn = _connect_settings(path)
+    except Exception:
+        return ""
+    try:
+        _ensure_settings_table(conn)
+        row = conn.execute("SELECT MAX(updated_at) FROM settings").fetchone()
+        return str(row[0] or "") if row else ""
+    except Exception:
+        return ""
+    finally:
+        conn.close()
+
+
+def _json_for_setting(setting: Setting, value: Any) -> str:
+    """Encode a CONFIG value as JSON for the settings table."""
     if setting.kind in {"enum", "allowed_to_exit"} and hasattr(value, "value"):
         value = value.value
-    if setting.save_fmt:
-        try:
-            return setting.save_fmt.format(float(value))
-        except Exception:
-            return str(value)
-    if setting.save_as_str:
-        return str(value)
     if setting.kind == "int":
         try:
-            return int(value or 0)
+            value = int(value or 0)
         except Exception:
-            return int(setting.default or 0)
+            value = int(setting.default or 0)
+    elif setting.kind == "float":
+        try:
+            value = float(value)
+        except Exception:
+            value = float(setting.default or 0.0)
+    elif setting.kind == "bool":
+        if isinstance(value, str):
+            value = value.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            value = bool(value)
+    elif value is None and setting.key in {"MQTT_USERNAME", "MQTT_PASSWORD"}:
+        value = ""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _parse_allowed_to_exit(raw: Any, default_member: AllowedToExit) -> AllowedToExit:
+    low = str(raw).strip().lower()
+    if low.startswith("allowedtoexit."):
+        low = low.split(".", 1)[1]
+    if low in {"true", "on", "1", "yes"}:
+        return AllowedToExit.ALLOW
+    if low in {"false", "off", "0", "no"}:
+        return AllowedToExit.DENY
+    return AllowedToExit(low)
+
+
+def _coerce_stored_value(setting: Setting, raw_json: str) -> Any:
+    """Decode one JSON settings value into the typed CONFIG form. Raises on failure."""
+    value = json.loads(raw_json)
+    if setting.kind == "int":
+        return int(value)
+    if setting.kind == "float":
+        return float(value)
+    if setting.kind == "bool":
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+    if setting.kind == "enum" and setting.enum_cls is not None:
+        return setting.enum_cls(value)
+    if setting.kind == "allowed_to_exit":
+        return _parse_allowed_to_exit(value, _load_default_for_setting(setting))
+    if setting.key in {"MQTT_USERNAME", "MQTT_PASSWORD"} and value is None:
+        return ""
     return value
+
+
+def _default_config_map() -> dict[str, Any]:
+    return {setting.key: _load_default_for_setting(setting) for setting in SETTINGS_SCHEMA}
+
+
+def _config_from_stored_rows(
+    rows: dict[str, str],
+) -> tuple[dict[str, Any], List[Tuple[str, Any]]]:
+    """Build a full CONFIG map from stored JSON. Invalid rows become defaults."""
+    loaded: dict[str, Any] = {}
+    invalid: List[Tuple[str, Any]] = []
+    for setting in SETTINGS_SCHEMA:
+        default = _load_default_for_setting(setting)
+        raw = rows.get(setting.key)
+        if raw is None:
+            loaded[setting.key] = default
+            continue
+        try:
+            loaded[setting.key] = _coerce_stored_value(setting, raw)
+        except Exception:
+            invalid.append((setting.key, raw))
+            loaded[setting.key] = default
+    return loaded, invalid
+
+
+def _upsert_settings(values: dict[str, Any], *, only_persist: bool = False) -> bool:
+    """Insert or update schema keys. ``only_persist`` skips ``persist=False`` keys."""
+    rows: list[tuple[str, str]] = []
+    for setting in SETTINGS_SCHEMA:
+        if setting.key not in values:
+            continue
+        if only_persist and not setting.persist:
+            continue
+        try:
+            encoded = _json_for_setting(setting, values[setting.key])
+        except Exception as e:
+            logging.error(f"[CONFIG] Failed to encode {setting.key}: {e}")
+            return False
+        rows.append((setting.key, encoded))
+    if not rows:
+        return True
+    now = _utc_now()
+    conn = _connect_settings()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _ensure_settings_table(conn)
+        conn.executemany(
+            "INSERT INTO settings(key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            [(key, encoded, now) for key, encoded in rows],
+        )
+        conn.execute("COMMIT")
+        return True
+    except Exception as e:
+        logging.error(f"[CONFIG] Failed to write settings: {e}")
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def _unlink_quiet(path: str) -> None:
+    try:
+        if path and os.path.isfile(path):
+            os.remove(path)
+    except Exception as e:
+        logging.warning(f"[CONFIG] Failed to remove '{path}': {e}")
+
+
+def _read_ini_parser(path: str) -> configparser.ConfigParser | None:
+    if not os.path.isfile(path):
+        return None
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(path)
+    except Exception as e:
+        logging.warning(f"[CONFIG] Failed to parse '{path}': {e}")
+        return None
+    return parser
+
+
+def _ini_has_settings(path: str) -> bool:
+    parser = _read_ini_parser(path)
+    return bool(parser and parser.has_section("Settings"))
 
 
 def _remote_configfile_path() -> str:
     """Absolute path to ``config.remote.ini`` (or ``KITTYHACK_REMOTE_CONFIGFILE`` override)."""
-    # Allow override primarily for testing.
     override = os.environ.get("KITTYHACK_REMOTE_CONFIGFILE")
     if override:
         return override
     return os.path.join(kittyhack_root(), REMOTE_CONFIGFILE)
 
 
-def _write_remote_overrides_from_config(path: str) -> None:
-    """Write remote-only CONFIG keys into the overlay ini at ``path``."""
-    parser = configparser.ConfigParser()
-    parser["Settings"] = {}
-    for cfg_key, (opt, _t) in _REMOTE_ONLY_SETTINGS.items():
-        # Values in configparser need to be strings
-        parser["Settings"][opt] = str(CONFIG.get(cfg_key, ""))
-    with open(path, "w", encoding="utf-8") as f:
-        parser.write(f)
-
-
-def _apply_remote_overrides() -> None:
-    """Apply remote-only settings from config.remote.ini.
-
-    In remote-mode we want REMOTE_* parameters to survive sync operations,
-    therefore they are loaded from a local-only overlay file.
-    """
-    path = _remote_configfile_path()
-    if not os.path.exists(path):
-        try:
-            _write_remote_overrides_from_config(path)
-            logging.info(f"[CONFIG] Created remote override file: {path}")
-        except Exception as e:
-            logging.warning(f"[CONFIG] Failed to create remote override file '{path}': {e}")
+def _maybe_relocate_database(ini_path: str) -> None:
+    """Move a legacy database onto the canonical path when that file does not exist yet."""
+    parser = _read_ini_parser(ini_path)
+    if parser is None or not parser.has_option("Settings", "kittyhack_database_path"):
         return
-
-    parser = configparser.ConfigParser()
+    raw = (parser.get("Settings", "kittyhack_database_path") or "").strip()
+    if not raw:
+        return
+    source = raw if os.path.isabs(raw) else os.path.abspath(raw)
+    canonical = kittyhack_db_path()
     try:
-        parser.read(path)
-    except Exception as e:
-        logging.warning(f"[CONFIG] Failed to read remote override file '{path}': {e}")
+        if os.path.realpath(source) == os.path.realpath(canonical):
+            return
+    except Exception:
+        if os.path.abspath(source) == os.path.abspath(canonical):
+            return
+    if not os.path.isfile(source) or os.path.exists(canonical):
+        if os.path.isfile(source) and os.path.exists(canonical):
+            logging.info(
+                f"[CONFIG] Keeping database '{canonical}'; "
+                f"ignoring legacy path '{source}'."
+            )
         return
+    os.makedirs(os.path.dirname(os.path.abspath(canonical)) or ".", exist_ok=True)
+    try:
+        os.replace(source, canonical)
+    except OSError:
+        shutil.copy2(source, canonical)
+        try:
+            os.remove(source)
+        except Exception:
+            pass
+    logging.info(f"[CONFIG] Moved database from '{source}' to '{canonical}'.")
 
-    if not parser.has_section("Settings"):
-        return
 
-    for cfg_key, (opt, t) in _REMOTE_ONLY_SETTINGS.items():
-        if not parser.has_option("Settings", opt):
+def _parse_ini_settings(path: str) -> tuple[dict[str, Any], List[Tuple[str, Any]]]:
+    """Load a legacy config.ini into a typed map. Invalid values become defaults."""
+    parser = _read_ini_parser(path)
+    invalid: List[Tuple[str, Any]] = []
+    loaded = _default_config_map()
+    if parser is None or not parser.has_section("Settings"):
+        return loaded, invalid
+
+    if parser.has_option("Settings", "simulate_kittyflap"):
+        logging.warning(
+            "[CONFIG] simulate_kittyflap in config.ini is ignored; "
+            "use env KITTYHACK_SIMULATE=1 or kittyhack_control --simulate"
+        )
+
+    has_legacy_pictures = parser.has_option("Settings", "min_pictures_to_analyze")
+    has_seconds = parser.has_option("Settings", "min_seconds_to_analyze")
+    migrated_seconds: float | None = None
+    if has_legacy_pictures and not has_seconds:
+        try:
+            legacy_pics = float(parser.get("Settings", "min_pictures_to_analyze"))
+        except Exception:
+            legacy_pics = float(_LEGACY_MIN_PICTURES_TO_ANALYZE_DEFAULT)
+        migrated_seconds = round(float(legacy_pics) / float(_LEGACY_INFERENCE_FPS_FOR_MIGRATION), 1)
+        migrated_seconds = max(0.1, migrated_seconds)
+        logging.info(
+            f"[CONFIG] Migrated min_pictures_to_analyze={legacy_pics} "
+            f"-> min_seconds_to_analyze={migrated_seconds:.1f}"
+        )
+    elif has_legacy_pictures and has_seconds:
+        logging.info("[CONFIG] Ignoring legacy key min_pictures_to_analyze")
+
+    def has_option(key: str) -> bool:
+        return parser.has_option("Settings", key.lower())
+
+    def record_invalid(key: str, raw: Any) -> None:
+        invalid.append((key, raw))
+
+    for setting in SETTINGS_SCHEMA:
+        option = setting.key.lower()
+        default = loaded[setting.key]
+        if setting.key == "MIN_SECONDS_TO_ANALYZE" and migrated_seconds is not None:
+            loaded[setting.key] = migrated_seconds
+            continue
+        if not has_option(setting.key):
             continue
         try:
-            if t == "int":
-                CONFIG[cfg_key] = parser.getint("Settings", opt)
-            elif t == "float":
-                CONFIG[cfg_key] = parser.getfloat("Settings", opt)
-            elif t == "bool":
-                CONFIG[cfg_key] = parser.getboolean("Settings", opt)
-            else:
-                CONFIG[cfg_key] = parser.get("Settings", opt)
+            raw = parser.get("Settings", option)
         except Exception:
-            # Keep the value from config.ini/defaults if override parsing fails.
-            logging.warning(f"[CONFIG] Invalid remote override '{opt}' in {path}; keeping current value")
+            raw = ""
+        try:
+            if setting.kind == "int":
+                loaded[setting.key] = parser.getint("Settings", option)
+            elif setting.kind == "float":
+                loaded[setting.key] = parser.getfloat("Settings", option)
+            elif setting.kind == "bool":
+                loaded[setting.key] = parser.getboolean("Settings", option)
+            elif setting.kind == "enum" and setting.enum_cls is not None:
+                loaded[setting.key] = setting.enum_cls(raw)
+            elif setting.kind == "allowed_to_exit":
+                loaded[setting.key] = _parse_allowed_to_exit(raw, default)
+            else:
+                loaded[setting.key] = raw
+        except Exception:
+            record_invalid(setting.key, raw)
+            loaded[setting.key] = default
+    return loaded, invalid
 
 
-def read_remote_config_values() -> dict:
-    """Read remote-setup fields from the overlay file (with CONFIG-based fallbacks)."""
-    defaults = {
-        "remote_target_host": (CONFIG.get("REMOTE_TARGET_HOST") or "").strip(),
-        "remote_control_port": int(CONFIG.get("REMOTE_CONTROL_PORT", 8888) or 8888),
-        "remote_control_timeout": float(CONFIG.get("REMOTE_CONTROL_TIMEOUT", 30.0) or 30.0),
-        "remote_sync_on_first_connect": bool(CONFIG.get("REMOTE_SYNC_ON_FIRST_CONNECT", True)),
-        "remote_sync_labelstudio": bool(CONFIG.get("REMOTE_SYNC_LABELSTUDIO", True)),
-    }
-    remote_cfg_path = _remote_configfile_path()
-    if not os.path.exists(remote_cfg_path):
-        return defaults
-
-    parser = configparser.ConfigParser()
-    try:
-        parser.read(remote_cfg_path)
-        if "Settings" not in parser:
-            return defaults
-        section = parser["Settings"]
-        return {
-            "remote_target_host": (section.get("remote_target_host", defaults["remote_target_host"]) or "").strip(),
-            "remote_control_port": section.getint("remote_control_port", fallback=defaults["remote_control_port"]),
-            "remote_control_timeout": section.getfloat("remote_control_timeout", fallback=defaults["remote_control_timeout"]),
-            "remote_sync_on_first_connect": section.getboolean(
-                "remote_sync_on_first_connect", fallback=defaults["remote_sync_on_first_connect"]
-            ),
-            "remote_sync_labelstudio": section.getboolean(
-                "remote_sync_labelstudio", fallback=defaults["remote_sync_labelstudio"]
-            ),
-        }
-    except Exception as e:
-        logging.warning(f"Failed to read config.remote.ini: {e}")
-        return defaults
+def _read_remote_ini_overrides() -> dict[str, Any]:
+    """Typed remote-only values present in config.remote.ini."""
+    path = _remote_configfile_path()
+    parser = _read_ini_parser(path)
+    if parser is None or not parser.has_section("Settings"):
+        return {}
+    found: dict[str, Any] = {}
+    for setting in SETTINGS_SCHEMA:
+        if not setting.remote_only:
+            continue
+        option = setting.key.lower()
+        if not parser.has_option("Settings", option):
+            continue
+        default = _load_default_for_setting(setting)
+        try:
+            if setting.kind == "int":
+                found[setting.key] = parser.getint("Settings", option)
+            elif setting.kind == "float":
+                found[setting.key] = parser.getfloat("Settings", option)
+            elif setting.kind == "bool":
+                found[setting.key] = parser.getboolean("Settings", option)
+            else:
+                found[setting.key] = parser.get("Settings", option)
+        except Exception:
+            logging.warning(f"[CONFIG] Invalid remote override '{option}' in {path}; keeping current value")
+            found[setting.key] = default
+    return found
 
 
-def remote_setup_required() -> bool:
-    """True in remote mode when host/port/timeout/sync keys are missing or host is empty."""
+def _keep_existing_remote_only(
+    pending: dict[str, Any],
+    existing: dict[str, str],
+    overlay_keys: set[str],
+) -> None:
+    """In remote mode, do not let a synced ini replace local connection settings."""
     if not is_remote_mode():
-        return False
-    remote_cfg_path = _remote_configfile_path()
-    if not os.path.exists(remote_cfg_path):
-        return True
-    parser = configparser.ConfigParser()
+        return
+    for setting in SETTINGS_SCHEMA:
+        if not setting.remote_only or setting.key in overlay_keys:
+            continue
+        raw = existing.get(setting.key)
+        if raw is None:
+            continue
+        try:
+            pending[setting.key] = _coerce_stored_value(setting, raw)
+        except Exception:
+            continue
+
+
+def _notify_invalid_settings(invalid_values: List[Tuple[str, Any]]) -> None:
+    if not invalid_values:
+        return
+    lines = []
+    for key, raw in invalid_values:
+        masked = "********" if key in SENSITIVE_CONFIG_KEYS else raw
+        lines.append(f"- {key}: '{masked}'")
+        logging.warning(f"[CONFIG] Invalid value for {key} -> '{raw}'. Using default.")
+    if CONFIG.get("LANGUAGE") == "de":
+        msg = (
+            "Die folgenden Konfigurationsschlüssel hatten ungültige Werte und wurden auf ihre Standardwerte zurückgesetzt:\n"
+            + "\n".join(lines)
+            + "\n\nPrüfe deine Einstellungen im Abschnitt Einstellungen."
+        )
+        header = "Ungültige Konfiguration erkannt"
+    else:
+        msg = (
+            "The following configuration keys contained invalid values and have been reset to their default values:\n"
+            + "\n".join(lines)
+            + "\n\nCheck your settings in the Settings section."
+        )
+        header = "Invalid configuration detected"
     try:
-        parser.read(remote_cfg_path)
+        UserNotifications.add(
+            header=header,
+            message=msg,
+            type="warning",
+            id="config_invalid_values",
+            skip_if_id_exists=True,
+        )
     except Exception:
-        return True
-    if "Settings" not in parser:
-        return True
-    section = parser["Settings"]
-    required_keys = [
-        "remote_target_host",
-        "remote_control_port",
-        "remote_control_timeout",
-        "remote_sync_on_first_connect",
-    ]
-    for key in required_keys:
-        if key not in section:
-            return True
-    if not (section.get("remote_target_host", "") or "").strip():
-        return True
-    return False
+        logging.warning("[CONFIG] Could not add user notification for invalid values.")
+
 
 # Gettext constants
 LOCALE_DIR = "locales"
@@ -410,7 +629,7 @@ DOMAIN = "messages"
 # Global dictionary to store configuration settings
 CONFIG = {}
 
-# True if config.ini had to be created or recreated during this process startup.
+# True when this process had to seed a brand-new settings table.
 CONFIG_CREATED_AT_STARTUP = False
 
 # Keys that contain sensitive information (passwords, credentials, etc.) which should not be logged
@@ -426,394 +645,214 @@ SENSITIVE_CONFIG_KEYS = {
 _LEGACY_MIN_PICTURES_TO_ANALYZE_DEFAULT = 5
 _LEGACY_INFERENCE_FPS_FOR_MIGRATION = 3.33
 
+
 def load_config():
     """
-    Loads the configuration file and populates the CONFIG dictionary.
-    Invalid / corrupt values are replaced by their defaults and a user notification is added.
-    Missing keys are silently defaulted (not treated as invalid).
-    Invalid keys are removed from config.ini.
+    Load settings from kittyhack.db into CONFIG.
+
+    A leftover config.ini (and config.remote.ini) is imported once and then
+    deleted. Invalid values are replaced by their defaults. Missing keys are
+    silently defaulted.
     """
     global CONFIG, CONFIG_CREATED_AT_STARTUP
-    if not os.path.exists(CONFIGFILE):
-        print(f"Configuration file '{CONFIGFILE}' not found. Creating with default values...")
-        create_default_config()
-        CONFIG_CREATED_AT_STARTUP = True
-    
-    parser = configparser.ConfigParser()
-    parser.read(CONFIGFILE)
-
-    # Detect empty or corrupt config and recreate it
-    try:
-        is_empty = os.path.exists(CONFIGFILE) and os.path.getsize(CONFIGFILE) == 0
-    except Exception:
-        is_empty = False
-    if is_empty or not parser.has_section('Settings'):
-        logging.warning("[CONFIG] Config file exists but is empty/corrupt (no [Settings]). Recreating fresh config.ini")
-        try:
-            os.remove(CONFIGFILE)
-        except Exception as e:
-            logging.warning(f"[CONFIG] Failed to remove corrupt config.ini: {e}")
-        create_default_config()
-        CONFIG_CREATED_AT_STARTUP = True
-        parser = configparser.ConfigParser()
-        parser.read(CONFIGFILE)
-
+    ini_path = CONFIGFILE
+    remote_path = _remote_configfile_path()
+    created = False
     invalid_values: List[Tuple[str, Any]] = []
 
-    # Legacy: simulate_kittyflap was a persisted config key; simulation is now a process flag.
-    if parser.has_option('Settings', 'simulate_kittyflap'):
-        logging.warning(
-            "[CONFIG] simulate_kittyflap in config.ini is ignored; "
-            "use env KITTYHACK_SIMULATE=1 or kittyhack_control --simulate"
-        )
-        try:
-            with _config_file_lock():
-                updater = ConfigUpdater()
-                updater.read(CONFIGFILE)
-                if 'Settings' in updater and 'simulate_kittyflap' in updater['Settings']:
-                    del updater['Settings']['simulate_kittyflap']
-                    _atomic_write_config_updater(updater)
-                    logging.info("[CONFIG] Removed obsolete simulate_kittyflap from config.ini")
-        except Exception as e:
-            logging.warning(f"[CONFIG] Failed to remove simulate_kittyflap from config.ini: {e}")
+    usable_ini = _ini_has_settings(ini_path)
+    if usable_ini:
+        _maybe_relocate_database(ini_path)
 
-    def get_raw(section: str, option: str, default: Any) -> Any:
-        if not parser.has_option(section, option):
-            return default
-        return parser.get(section, option)
+    existing = _read_setting_rows()
+    remote_overlay = _read_remote_ini_overrides() if os.path.isfile(remote_path) else {}
+    corrupt_ini = os.path.isfile(ini_path) and not usable_ini
 
-    def record_invalid(key: str, raw: Any):
-        invalid_values.append((key, raw))
-
-    def safe_get(getter: Callable[[], Any], key: str, default: Any) -> Any:
-        try:
-            return getter()
-        except Exception:
-            # Only mark invalid if the key exists (conversion/parsing failed). Missing key => use default silently.
-            if parser.has_option('Settings', key.lower()):
-                try:
-                    raw = parser.get('Settings', key.lower())
-                except Exception:
-                    raw = ""
-                record_invalid(key, raw)
-            return default
-
-    def safe_int(key: str, default: int) -> int:
-        return safe_get(lambda: parser.getint('Settings', key.lower()), key, default)
-
-    def safe_float(key: str, default: float) -> float:
-        return safe_get(lambda: parser.getfloat('Settings', key.lower()), key, default)
-
-    def safe_bool(key: str, default: bool) -> bool:
-        return safe_get(lambda: parser.getboolean('Settings', key.lower()), key, default)
-
-    def safe_str(key: str, default: str) -> str:
-        return safe_get(lambda: parser.get('Settings', key.lower()), key, default)
-
-    def safe_enum(key: str, enum_cls, default_member):
-        raw = get_raw('Settings', key.lower(), default_member.value)
-        try:
-            return enum_cls(raw)
-        except Exception:
-            if parser.has_option('Settings', key.lower()):
-                record_invalid(key, raw)
-            return default_member
-
-    def safe_allowed_to_exit(default_member):
-        raw = get_raw('Settings', 'allowed_to_exit', default_member.value)
-        low = str(raw).strip().lower()
-
-        # Accept legacy Python-like enum strings: "AllowedToExit.ALLOW"
-        if low.startswith("allowedtoexit."):
-            # keep only the part after the dot
-            low = low.split(".", 1)[1]
-
-        try:
-            # Accept boolean-like values
-            if low in {"true", "on", "1", "yes"}:
-                return AllowedToExit.ALLOW
-            if low in {"false", "off", "0", "no"}:
-                return AllowedToExit.DENY
-            # Accept direct enum value tokens
-            return AllowedToExit(low)
-        except Exception:
-            if parser.has_option('Settings', 'allowed_to_exit'):
-                record_invalid('ALLOWED_TO_EXIT', raw)
-            return default_member
-
-    # --- Migration: MIN_PICTURES_TO_ANALYZE -> MIN_SECONDS_TO_ANALYZE ---
-    # Old configs may contain `min_pictures_to_analyze`. New configs use `min_seconds_to_analyze`.
-    # If the new key is missing, derive it via: seconds = pictures / 3.33 (avg legacy inference FPS).
-    # Also remove the legacy key to avoid user confusion.
-    try:
-        has_legacy = parser.has_option('Settings', 'min_pictures_to_analyze')
-        has_new = parser.has_option('Settings', 'min_seconds_to_analyze')
-
-        if has_legacy and not has_new:
-            try:
-                legacy_pics = float(parser.get('Settings', 'min_pictures_to_analyze'))
-            except Exception:
-                legacy_pics = float(_LEGACY_MIN_PICTURES_TO_ANALYZE_DEFAULT)
-            migrated_seconds = round(float(legacy_pics) / float(_LEGACY_INFERENCE_FPS_FOR_MIGRATION), 1)
-            # Keep it sane; avoid 0.0 which would effectively skip analysis.
-            migrated_seconds = max(0.1, migrated_seconds)
-
-            try:
-                with _config_file_lock():
-                    updater = ConfigUpdater()
-                    updater.read(CONFIGFILE)
-                    if 'Settings' not in updater:
-                        updater.add_section('Settings')
-                    settings_section = updater['Settings']
-                    settings_section['min_seconds_to_analyze'] = f"{migrated_seconds:.1f}"
-                    if 'min_pictures_to_analyze' in settings_section:
-                        del settings_section['min_pictures_to_analyze']
-                    _atomic_write_config_updater(updater)
-                    logging.info(
-                        f"[CONFIG] Migrated min_pictures_to_analyze={legacy_pics} -> min_seconds_to_analyze={migrated_seconds:.1f}"
-                    )
-            except Exception as e:
-                logging.warning(f"[CONFIG] Failed to migrate min_seconds_to_analyze: {e}")
-
-            # Reload parser so safe_* picks up the migrated value.
-            parser = configparser.ConfigParser()
-            parser.read(CONFIGFILE)
-
-        elif has_legacy and has_new:
-            # Best-effort cleanup: remove legacy key once new key exists.
-            try:
-                with _config_file_lock():
-                    updater = ConfigUpdater()
-                    updater.read(CONFIGFILE)
-                    if 'Settings' in updater and 'min_pictures_to_analyze' in updater['Settings']:
-                        del updater['Settings']['min_pictures_to_analyze']
-                        _atomic_write_config_updater(updater)
-                        logging.info("[CONFIG] Removed legacy key min_pictures_to_analyze from config.ini")
-            except Exception:
-                pass
-    except Exception:
-        # Migration must never break startup.
-        pass
-
-    new_config: dict[str, Any] = {}
-    for setting in SETTINGS_SCHEMA:
-        default = _load_default_for_setting(setting)
-        if setting.kind == "int":
-            new_config[setting.key] = safe_int(setting.key, default)
-        elif setting.kind == "float":
-            new_config[setting.key] = safe_float(setting.key, default)
-        elif setting.kind == "bool":
-            new_config[setting.key] = safe_bool(setting.key, default)
-        elif setting.kind == "enum":
-            new_config[setting.key] = safe_enum(setting.key, setting.enum_cls, default)
-        elif setting.kind == "allowed_to_exit":
-            new_config[setting.key] = safe_allowed_to_exit(default)
+    pending: dict[str, Any] | None = None
+    if usable_ini:
+        pending, invalid_values = _parse_ini_settings(ini_path)
+        for key, value in remote_overlay.items():
+            pending[key] = value
+        _keep_existing_remote_only(pending, existing, set(remote_overlay))
+        logging.info(f"[CONFIG] Importing settings from '{ini_path}'.")
+    elif remote_overlay:
+        if existing:
+            pending, _ignored = _config_from_stored_rows(existing)
         else:
-            new_config[setting.key] = safe_str(setting.key, default)
+            pending = _default_config_map()
+            created = True
+        for key, value in remote_overlay.items():
+            pending[key] = value
+        logging.info(f"[CONFIG] Importing remote settings from '{remote_path}'.")
+    elif not existing:
+        if corrupt_ini:
+            logging.warning("[CONFIG] config.ini is empty or has no [Settings] section. Ignoring it.")
+        else:
+            logging.info("[CONFIG] No settings found. Creating defaults.")
+        pending = _default_config_map()
+        created = True
+    elif corrupt_ini:
+        logging.warning("[CONFIG] config.ini is empty or has no [Settings] section. Ignoring it.")
 
-    # Runtime-only (not persisted)
-    new_config["LATEST_VERSION"] = "unknown"
+    wrote = True
+    if pending is not None:
+        wrote = _upsert_settings(pending)
+        if not wrote:
+            logging.error("[CONFIG] Failed to persist settings; legacy config files were kept.")
+
+    if wrote:
+        if usable_ini or corrupt_ini:
+            _unlink_quiet(ini_path)
+            _unlink_quiet(f"{ini_path}.lock")
+            if usable_ini:
+                logging.info("[CONFIG] Migrated config.ini into the database and removed the file.")
+            else:
+                logging.info("[CONFIG] Removed unusable config.ini.")
+        if remote_overlay:
+            _unlink_quiet(remote_path)
+            logging.info("[CONFIG] Removed config.remote.ini after migrating remote settings.")
+
+    if created and wrote:
+        CONFIG_CREATED_AT_STARTUP = True
+
+    stored = _read_setting_rows()
+    loaded, db_invalid = _config_from_stored_rows(stored)
+    if db_invalid:
+        _upsert_settings({key: loaded[key] for key, _raw in db_invalid})
+        invalid_values.extend(db_invalid)
+
+    previous_latest = CONFIG.get("LATEST_VERSION", "unknown") if CONFIG else "unknown"
+    loaded["LATEST_VERSION"] = previous_latest or "unknown"
+    loaded["KITTYHACK_DATABASE_PATH"] = kittyhack_db_path()
 
     # Update in-place so imported CONFIG references in other modules stay valid.
     CONFIG.clear()
-    CONFIG.update(new_config)
+    CONFIG.update(loaded)
+    _notify_invalid_settings(invalid_values)
 
-    if invalid_values:
-        # Remove invalid keys from config.ini before notifying user
-        try:
-            with _config_file_lock():
-                updater = ConfigUpdater()
-                updater.read(CONFIGFILE)
-                settings_section = updater['Settings']
-                for k, _ in invalid_values:
-                    opt = k.lower()
-                    if opt in settings_section:
-                        del settings_section[opt]
-                _atomic_write_config_updater(updater)
-            logging.info("[CONFIG] Removed invalid keys from config.ini")
-        except Exception as e:
-            logging.warning(f"[CONFIG] Failed to remove invalid keys from config.ini: {e}")
 
-        lines = []
-        for k, raw in invalid_values:
-            masked = "********" if k in SENSITIVE_CONFIG_KEYS else raw
-            lines.append(f"- {k}: '{masked}'")
-            logging.warning(f"[CONFIG] Invalid value for {k} -> '{raw}'. Using default.")
-        if CONFIG.get('LANGUAGE') == 'de':
-            msg = (
-                "Die folgenden Konfigurationsschlüssel hatten ungültige Werte und wurden auf ihre Standardwerte zurückgesetzt:\n"
-                + "\n".join(lines)
-                + "\n\nPrüfe deine Einstellungen im Abschnitt Einstellungen."
-            )
-            header = "Ungültige Konfiguration erkannt"
-        else:
-            msg = (
-                "The following configuration keys contained invalid values and have been reset to their default values:\n"
-                + "\n".join(lines)
-                + "\n\nCheck your settings in the Settings section."
-            )
-            header = "Invalid configuration detected"
-        try:
-            UserNotifications.add(
-                header=header,
-                message=msg,
-                type="warning",
-                id="config_invalid_values",
-                skip_if_id_exists=True
-            )
-        except Exception:
-            logging.warning("[CONFIG] Could not add user notification for invalid values.")
-
-    # Remote-mode: load remote-only overrides from a local overlay file.
-    # This ensures sync operations (which overwrite config.ini) cannot wipe these settings.
-    if is_remote_mode():
-        _apply_remote_overrides()
-
-def save_config():
-    """
-    Saves the configuration file.
-    Requires the CONFIG
-    """
-    with _config_file_lock():
-        # prepare the updated values for the configfile
-        updater = ConfigUpdater()
-        updater.read(CONFIGFILE)
-
-        # Ensure [Settings] section exists
-        if 'Settings' not in updater:
-            updater.add_section('Settings')
-
-        settings = updater['Settings']
-        for setting in SETTINGS_SCHEMA:
-            if not setting.persist or setting.remote_only:
-                continue
-            value = CONFIG.get(setting.key, setting.default)
-            settings[setting.key.lower()] = _value_for_ini(setting, value)
-
-        # Never persist remote-only settings in config.ini.
-        # They are stored in config.remote.ini so they survive sync operations.
-        try:
-            for _cfg_key, (opt, _t) in _REMOTE_ONLY_SETTINGS.items():
-                if opt in settings:
-                    del settings[opt]
-        except Exception:
-            pass
-
-        # Write updated configuration back to the file
-        try:
-            _atomic_write_config_updater(updater)
-        except Exception:
-            logging.error("Failed to update the values in the configfile.")
-            return False
-
-    logging.info("Updated the values in the configfile")
-
-    # Remote-mode: persist remote-only settings to the local overlay file too.
-    # This ensures sync operations (which overwrite config.ini) cannot wipe these settings.
-    if is_remote_mode():
-        try:
-            _write_remote_overrides_from_config(_remote_configfile_path())
-        except Exception as e:
-            logging.warning(f"[CONFIG] Failed to write remote override file '{_remote_configfile_path()}': {e}")
-
+def save_config() -> bool:
+    """Persist every ``persist=True`` CONFIG value into the settings table."""
+    if not _upsert_settings(CONFIG, only_persist=True):
+        logging.error("[CONFIG] Failed to update settings in the database.")
+        return False
+    logging.info("[CONFIG] Updated settings in the database.")
     return True
 
+
 def update_config_images_overlay():
+    """Persist SHOW_IMAGES_WITH_OVERLAY."""
+    update_single_config_parameter("SHOW_IMAGES_WITH_OVERLAY")
+
+
+def update_single_config_parameter(parameter: str) -> bool:
     """
-    Updates only the SHOW_IMAGES_WITH_OVERLAY setting in the configuration file.
-    """
-    try:
-        with _config_file_lock():
-            updater = ConfigUpdater()
-            updater.read(CONFIGFILE)
+    Persist one CONFIG key into the settings table.
 
-            # Ensure [Settings] section exists
-            if 'Settings' not in updater:
-                updater.add_section('Settings')
-
-            setting = _SETTINGS_BY_KEY["SHOW_IMAGES_WITH_OVERLAY"]
-            updater['Settings']['show_images_with_overlay'] = _value_for_ini(
-                setting, CONFIG['SHOW_IMAGES_WITH_OVERLAY']
-            )
-
-            _atomic_write_config_updater(updater)
-        logging.info("Updated SHOW_IMAGES_WITH_OVERLAY in the configfile")
-    except Exception as e:
-        logging.error(f"Failed to update SHOW_IMAGES_WITH_OVERLAY in the configfile: {e}")
-
-def update_single_config_parameter(parameter: str):
-    """
-    Updates only a single config parameter in the configuration file.
-
-    Args:
-        parameter (str): The parameter name, which shall be updated.
+    ``persist=False`` still applies only to ``save_config()``. A single-key
+    update may store keys such as LABELSTUDIO_API_TOKEN.
+    Returns False when the key is unknown or the write fails.
     """
     key = parameter.upper()
     setting = _SETTINGS_BY_KEY.get(key)
-
-    # Remote-mode: never persist remote-only settings in config.ini.
-    if is_remote_mode() and (key in _REMOTE_ONLY_SETTINGS or (setting and setting.remote_only)):
-        try:
-            _write_remote_overrides_from_config(_remote_configfile_path())
-        except Exception:
-            pass
-        try:
-            # Best-effort cleanup: remove the option from config.ini if present.
-            with _config_file_lock():
-                updater = ConfigUpdater()
-                updater.read(CONFIGFILE)
-                if 'Settings' in updater and parameter.lower() in updater['Settings']:
-                    del updater['Settings'][parameter.lower()]
-                    _atomic_write_config_updater(updater)
-        except Exception:
-            pass
-        return
-
     if setting is None:
         logging.error(f"[CONFIG] Unknown config parameter '{key}' — not written")
-        return
+        return False
+    if key not in CONFIG:
+        logging.error(f"[CONFIG] '{key}' is not loaded — not written")
+        return False
+    if not _upsert_settings({key: CONFIG[key]}):
+        logging.error(f"[CONFIG] Failed to update {key} in the database.")
+        return False
+    loggable_value = get_loggable_config_value(key, CONFIG[key])
+    logging.info(f"[CONFIG] Updated {key} in the database to: {loggable_value}")
+    return True
 
-    # Note: persist=False only affects save_config() (bulk write). update_single may still
-    # persist keys like LABELSTUDIO_API_TOKEN that are omitted from full saves.
-
-    value = _value_for_ini(setting, CONFIG[key])
-    try:
-        with _config_file_lock():
-            updater = ConfigUpdater()
-            updater.read(CONFIGFILE)
-
-            # Ensure [Settings] section exists
-            if 'Settings' not in updater:
-                updater.add_section('Settings')
-
-            updater['Settings'][setting.key.lower()] = value
-            _atomic_write_config_updater(updater)
-        loggable_value = get_loggable_config_value(key, value)
-        logging.info(f"Updated {key} in the configfile to: {loggable_value}")
-    except Exception as e:
-        logging.error(f"Failed to update {key} in the configfile: {e}")
-
-    # Keep remote override file in sync in remote-mode.
-    if is_remote_mode() and key in _REMOTE_ONLY_SETTINGS:
-        try:
-            _write_remote_overrides_from_config(_remote_configfile_path())
-        except Exception:
-            pass
 
 def create_default_config():
-    """
-    Creates the configuration file with default values.
-    """
-    def stringify_dict(d):
-        return {k: str(v) if v is not None else "" for k, v in d.items()}
+    """Seed the settings table with schema defaults."""
+    if not _upsert_settings(_default_config_map()):
+        logging.error("[CONFIG] Failed to write default settings.")
+        return
+    logging.info(f"[CONFIG] Default settings written to {kittyhack_db_path()}")
 
-    parser = configparser.ConfigParser()
-    # Convert all values in DEFAULT_CONFIG to strings
-    config_str = {section: stringify_dict(values) for section, values in DEFAULT_CONFIG.items()}
-    parser.read_dict(config_str)
-    with _config_file_lock():
-        _atomic_write_text(CONFIGFILE, parser.write)
-    logging.info(f"Default configuration written to {CONFIGFILE}")
+
+def read_remote_config_values() -> dict:
+    """Remote-setup fields from the in-memory configuration."""
+    try:
+        port = int(CONFIG.get("REMOTE_CONTROL_PORT", 8888) or 8888)
+    except Exception:
+        port = 8888
+    try:
+        timeout = float(CONFIG.get("REMOTE_CONTROL_TIMEOUT", 30.0) or 30.0)
+    except Exception:
+        timeout = 30.0
+    return {
+        "remote_target_host": str(CONFIG.get("REMOTE_TARGET_HOST") or "").strip(),
+        "remote_control_port": port,
+        "remote_control_timeout": timeout,
+        "remote_sync_on_first_connect": bool(CONFIG.get("REMOTE_SYNC_ON_FIRST_CONNECT", True)),
+        "remote_sync_labelstudio": bool(CONFIG.get("REMOTE_SYNC_LABELSTUDIO", True)),
+    }
+
+
+def remote_setup_required() -> bool:
+    """True in remote mode when the target host has not been set."""
+    if not is_remote_mode():
+        return False
+    return not str(CONFIG.get("REMOTE_TARGET_HOST") or "").strip()
+
+
+def snapshot_remote_only_settings() -> dict[str, Any]:
+    """Local connection settings to re-apply after a remote database sync.
+
+    Prefers the settings table. Falls back to a not-yet-migrated config.remote.ini.
+    """
+    existing = _read_setting_rows()
+    snapshot: dict[str, Any] = {}
+    for setting in SETTINGS_SCHEMA:
+        if not setting.remote_only or setting.key not in existing:
+            continue
+        try:
+            snapshot[setting.key] = _coerce_stored_value(setting, existing[setting.key])
+        except Exception:
+            continue
+    if snapshot:
+        return snapshot
+    return _read_remote_ini_overrides()
+
+
+def restore_remote_only_settings(snapshot: dict[str, Any] | None) -> bool:
+    """Write previously snapshotted remote-only keys back into the database and CONFIG."""
+    if not snapshot:
+        return True
+    to_write: dict[str, Any] = {}
+    for setting in SETTINGS_SCHEMA:
+        if setting.remote_only and setting.key in snapshot:
+            to_write[setting.key] = snapshot[setting.key]
+            CONFIG[setting.key] = snapshot[setting.key]
+    if not to_write:
+        return True
+    ok = _upsert_settings(to_write)
+    if ok:
+        logging.info("[CONFIG] Restored remote-only settings after database sync.")
+    return ok
+
+
+def ensure_settings_persisted() -> None:
+    """Write in-memory CONFIG when the live database has no settings rows.
+
+    A backup restore or a freshly created database can replace the file that
+    already held migrated settings. The values are still in CONFIG.
+    """
+    path = kittyhack_db_path()
+    if not os.path.isfile(path):
+        return
+    if _settings_count(path) > 0:
+        return
+    logging.info("[CONFIG] Settings table is empty; persisting in-memory configuration.")
+    save_config()
+
 
 _locale_bootstrap_lock = threading.Lock()
 _locale_bootstrap_done = False
@@ -1050,6 +1089,10 @@ class UserNotifications:
         return None
 
 # -------------------------------------------------------------------------------------------------
+
+# Attach a handler before the import-time load so a one-time config.ini migration
+# is visible in the journal. The level is applied again once LOGLEVEL is known.
+configure_logging("INFO")
 
 # Initial load of the configuration
 load_config()

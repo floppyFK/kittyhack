@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-13 22:11+0200\n"
+"POT-Creation-Date: 2026-10-15 00:46+0200\n"
 "PO-Revision-Date: 2024-11-14 20:14+0000\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -41,10 +41,44 @@ msgid ""
 "entry** in Settings. This is useful if the camera sometimes falsely detects "
 "a cat due to sun glare or reflections."
 msgstr ""
-"Aktiviere unter Einstellungen bei Bedarf **Äußeren PIR zusätzlich bei "
-"kamera-basiertem Eingang verlangen**. Das ist hilfreich, wenn die Kamera "
-"manchmal durch Sonnenblendung oder Reflexionen fälschlicherweise eine Katze "
-"erkennt."
+"Aktiviere unter Einstellungen bei Bedarf **Äußeren PIR zusätzlich bei kamera-"
+"basiertem Eingang verlangen**. Das ist hilfreich, wenn die Kamera manchmal "
+"durch Sonnenblendung oder Reflexionen fälschlicherweise eine Katze erkennt."
+
+msgid "Kittyhack is using an original Kittyflap model."
+msgstr "Kittyhack verwendet ein originales Kittyflap-Modell."
+
+msgid ""
+"The included models (v1 and v2) are extremely inaccurate, and not all "
+"Kittyhack features work with them. Camera-based cat detection is one example."
+msgstr ""
+"Die mitgelieferten Modelle (v1 und v2) sind extrem ungenau, und nicht alle "
+"Funktionen von Kittyhack sind damit nutzbar. Die kamerabasierte "
+"Katzenerkennung ist ein Beispiel."
+
+msgid ""
+"A model you trained yourself is much more accurate. Select it under "
+"**Settings**, in the **Flap** section, as the **Detection model**."
+msgstr ""
+"Ein selbst trainiertes Modell ist deutlich genauer. Wähle es unter "
+"**Einstellungen** im Abschnitt **Klappe** als **Erkennungsmodell** aus."
+
+msgid ""
+"The flap still works with the microchip reader. You do not need to change "
+"anything right now."
+msgstr ""
+"Die Klappe funktioniert weiter mit dem Mikrochip-Leser. Du musst jetzt "
+"nichts ändern."
+
+msgid ""
+"Later, under **AI Training**, you can train a model for your own cats and "
+"camera. That model is much more accurate."
+msgstr ""
+"Später kannst du unter **KI Training** ein Modell für deine eigenen Katzen "
+"und deine Kamera trainieren. Dieses Modell ist deutlich genauer."
+
+msgid "Original detection model"
+msgstr "Originales Erkennungsmodell"
 
 msgid "Unknown RFID"
 msgstr "Unbekannte RFID"
@@ -989,8 +1023,20 @@ msgstr "{} gelöscht."
 msgid "{} could not be deleted: {} Try again."
 msgstr "{} konnte nicht gelöscht werden: {} Versuche es erneut."
 
+msgid "Show decision logic"
+msgstr "Entscheidungslogik anzeigen"
+
+msgid "Hide decision logic"
+msgstr "Entscheidungslogik ausblenden"
+
+msgid "The steps follow the option selected above."
+msgstr "Die Schritte folgen der oben gewählten Option."
+
 msgid "The remote mode guide could not be loaded."
 msgstr "Die Remote-Modus-Dokumentation konnte nicht geladen werden."
+
+msgid "Additionally require the outside PIR for camera-based entry"
+msgstr "Äußeren PIR zusätzlich bei kamera-basiertem Eingang verlangen"
 
 msgid "General"
 msgstr "Allgemein"
@@ -1047,14 +1093,14 @@ msgid "For example: owner/repo@branch or owner:branch"
 msgstr "z. B. owner/repo@branch oder owner:branch"
 
 msgid ""
-"Beta builds may be unstable. Back up your settings (`config.ini`) and "
-"database before switching between **Standard** and **Beta**. Switching from "
-"beta back to the latest release may work, but it is not recommended."
+"Beta builds may be unstable. Back up your database before switching between "
+"**Standard** and **Beta**. Switching from beta back to the latest release "
+"may work, but it is not recommended."
 msgstr ""
-"**Warnung:** Beta-Builds können instabil sein. Erstelle Sicherungen deiner "
-"Konfiguration (`config.ini`) und der Datenbank, bevor du zwischen "
-"**Standard** und **Beta** wechselst. Ein Wechsel von Beta zurück zum "
-"aktuellen Release kann funktionieren, wird aber nicht empfohlen."
+"**Warnung:** Beta-Builds können instabil sein. Erstelle eine Sicherung der "
+"Datenbank, bevor du zwischen **Standard** und **Beta** wechselst. Ein "
+"Wechsel von Beta zurück zum aktuellen Release kann funktionieren, wird aber "
+"nicht empfohlen."
 
 msgid ""
 "Use **Standard** for official stable releases from `floppyFK/kittyhack` "
@@ -1125,6 +1171,15 @@ msgstr "Kamera"
 msgid "Choose and configure the camera Kittyhack uses."
 msgstr "Wähle und konfiguriere die Kamera, die Kittyhack verwendet."
 
+msgid "Camera source"
+msgstr "Kameraquelle"
+
+msgid "Kittyflap camera"
+msgstr "Kittyflap"
+
+msgid "External IP camera"
+msgstr "Externe IP-Kamera"
+
 msgid "Show IP camera tips"
 msgstr "Tipps zur Verwendung von IP-Kameras anzeigen"
 
@@ -1157,15 +1212,6 @@ msgstr ""
 "\n"
 "Prüfe bei Unterbrechungen des Streams das WLAN-Signal und die "
 "Netzwerkeinstellungen."
-
-msgid "Camera source"
-msgstr "Kameraquelle"
-
-msgid "Kittyflap camera"
-msgstr "Kittyflap"
-
-msgid "External IP camera"
-msgstr "Externe IP-Kamera"
 
 msgid "External IP camera URL"
 msgstr "URL der externen IP Kamera"
@@ -1413,6 +1459,15 @@ msgstr ""
 msgid "Restart the Kittyflap after changing the model."
 msgstr "Starte die Kittyflap nach einem Modellwechsel neu."
 
+msgid ""
+"The original models (v1 and v2) are strongly discouraged: they are extremely "
+"inaccurate, and not all Kittyhack features work with them. A model you train "
+"yourself is much more accurate."
+msgstr ""
+"Von den originalen Modellen (v1 und v2) wird stark abgeraten: Sie arbeiten "
+"extrem ungenau, und nicht alle Funktionen von Kittyhack sind damit nutzbar. "
+"Ein selbst trainiertes Modell ist deutlich genauer."
+
 msgid "Use camera for cat detection"
 msgstr "Kamera für die Katzenerkennung verwenden"
 
@@ -1423,8 +1478,7 @@ msgid "The camera can identify your cat alongside the RFID reader."
 msgstr "Die Kamera kann deine Katze zusätzlich zum RFID-Leser identifizieren."
 
 msgid "Set the threshold with **Threshold for cat detection**."
-msgstr ""
-"Lege den Schwellwert mit **Schwellwert für die Katzenerkennung** fest."
+msgstr "Lege den Schwellwert mit **Schwellwert für die Katzenerkennung** fest."
 
 msgid "When Kittyhack identifies your cat, it unlocks the flap for entry."
 msgstr ""
@@ -1515,9 +1569,6 @@ msgstr ""
 "offen, gilt eine 60-Sekunden-Sperrzeit (RFID und manuelles Öffnen "
 "funktionieren während der Sperrzeit weiter)."
 
-msgid "Additionally require the outside PIR for camera-based entry"
-msgstr "Äußeren PIR zusätzlich bei kamera-basiertem Eingang verlangen"
-
 msgid "Explain outside motion confirmation"
 msgstr "Bestätigung durch äußere Bewegung erklären"
 
@@ -1550,6 +1601,13 @@ msgstr ""
 "Sekunden offener Innenseite ohne Durchgang immer eine neue Bestätigung und "
 "wendet eine 60-Sekunden-Sperrzeit an, wenn das zweimal hintereinander "
 "passiert."
+
+msgid ""
+"This switch is available only when camera cat detection or camera motion "
+"detection is turned on."
+msgstr ""
+"Dieser Schalter ist nur verfügbar, wenn die Kamera für die Katzenerkennung "
+"oder die Bewegungserkennung eingeschaltet ist."
 
 msgid "Unlock inside for"
 msgstr "Innen entriegeln für"
@@ -1601,30 +1659,6 @@ msgstr ""
 msgid "- **No cats:** The inside stays locked."
 msgstr "- **Keine Katzen:** Innen bleibt verriegelt."
 
-msgid "Show decision logic"
-msgstr "Entscheidungslogik anzeigen"
-
-msgid "Hide decision logic"
-msgstr "Entscheidungslogik ausblenden"
-
-msgid "The steps follow the option selected above."
-msgstr "Die Schritte folgen der oben gewählten Option."
-
-msgid "Entry logic for all cats"
-msgstr "Eingangslogik für alle Katzen"
-
-msgid "Entry logic for cats with an RFID chip"
-msgstr "Eingangslogik für Katzen mit RFID-Chip"
-
-msgid "Entry logic for registered cats"
-msgstr "Eingangslogik für registrierte Katzen"
-
-msgid "Entry logic when entry is closed"
-msgstr "Eingangslogik bei geschlossenem Eingang"
-
-msgid "Entry logic for individual cat settings"
-msgstr "Eingangslogik bei individuellen Katzenregeln"
-
 msgid "Outside"
 msgstr "Außen"
 
@@ -1658,15 +1692,6 @@ msgid ""
 msgstr ""
 "Registriere für diese Option jede Katze mit einem **RFID-Chip**. Katzen ohne "
 "RFID können nicht nach außen."
-
-msgid "Exit logic when exit is allowed"
-msgstr "Ausgangslogik bei erlaubtem Ausgang"
-
-msgid "Exit logic when exit is closed"
-msgstr "Ausgangslogik bei geschlossenem Ausgang"
-
-msgid "Exit logic for individual cat settings"
-msgstr "Ausgangslogik bei individuellen Katzenregeln"
 
 msgid "Show exit time rules"
 msgstr "Regeln für Ausgangszeitbereiche anzeigen"
@@ -1714,8 +1739,8 @@ msgid ""
 "that cat is allowed under 'Cats'."
 msgstr ""
 "Beispiel: Wenn ein Zeitraum von 10:00–18:00 eingestellt ist und es 20:00 Uhr "
-"ist, darf keine Katze nach außen gehen, auch wenn der Ausgang für diese Katze "
-"unter 'Katzen' erlaubt ist."
+"ist, darf keine Katze nach außen gehen, auch wenn der Ausgang für diese "
+"Katze unter 'Katzen' erlaubt ist."
 
 msgid "Time range 1"
 msgstr "Zeitbereich 1"
@@ -2331,12 +2356,10 @@ msgstr ""
 "Die neueste Version für die neue Quelle konnte noch nicht ermittelt werden. "
 "Du kannst die Prüfung unter **Info** erneut versuchen."
 
-msgid ""
-"Back up your settings (`config.ini`) and database before switching between "
-"Standard and Beta."
+msgid "Back up your database before switching between Standard and Beta."
 msgstr ""
-"**Wichtig:** Erstelle Sicherungen deiner Konfiguration (`config.ini`) und "
-"der Datenbank, bevor du zwischen Standard und Beta wechselst."
+"**Wichtig:** Erstelle eine Sicherung der Datenbank, bevor du zwischen "
+"Standard und Beta wechselst."
 
 msgid ""
 "Switching from beta back to the latest release may work, but it is not "
@@ -2778,27 +2801,10 @@ msgstr "Kittyhack-Datenbanksicherung auswählen (.db)"
 msgid "Restore database"
 msgstr "Datenbank wiederherstellen"
 
-msgid "Configuration file"
-msgstr "Konfigurationsdatei"
-
-msgid "Back up or restore the Kittyhack configuration"
-msgstr "Kittyhack Konfiguration sichern und wiederherstellen"
-
-msgid "Download configuration"
-msgstr "Konfigurationsdatei herunterladen"
-
-msgid "Choose configuration backup (config.ini)"
-msgstr "Konfigurationssicherung auswählen (config.ini)"
-
-msgid "Restore configuration"
-msgstr "Konfiguration wiederherstellen"
-
-msgid ""
-"After you restore the database or configuration, the Kittyflap must restart "
-"to apply it."
+msgid "After you restore the database, the Kittyflap must restart to apply it."
 msgstr ""
-"Nach der Wiederherstellung der Datenbank oder Konfiguration muss die "
-"Kittyflap neu gestartet werden, um sie anzuwenden."
+"Nach der Wiederherstellung der Datenbank muss die Kittyflap neu gestartet "
+"werden, um sie anzuwenden."
 
 msgid "Progressive Web App (PWA)"
 msgstr "Progressive Web App (PWA)"
@@ -2917,103 +2923,6 @@ msgstr ""
 msgid "The original Kittyflap database file was already removed."
 msgstr "Die originale Kittyflap Datenbank-Datei existiert nicht mehr."
 
-msgid "config.ini was not found. Check the installation, then try again."
-msgstr ""
-"config.ini wurde nicht gefunden. Prüfe die Installation und versuche es "
-"erneut."
-
-#, python-brace-format
-msgid "config.ini could not be downloaded. Check the logs, then try again: {}"
-msgstr ""
-"config.ini konnte nicht heruntergeladen werden. Prüfe die Protokolle und "
-"versuche es erneut: {}"
-
-msgid "Choose a database backup to upload."
-msgstr "Wähle eine Datenbanksicherung zum Hochladen aus."
-
-msgid "The uploaded file was not found. Choose it again, then retry."
-msgstr ""
-"Die hochgeladene Datei wurde nicht gefunden. Wähle sie erneut aus und "
-"versuche es noch einmal."
-
-msgid "This file is not a .db file. Choose a database backup."
-msgstr "Diese Datei ist keine .db-Datei. Wähle eine Datenbanksicherung aus."
-
-msgid "Database backup uploaded. Select Restore database to apply it."
-msgstr ""
-"Datenbank-Datei hochgeladen. Klicke auf 'Datenbank wiederherstellen', um sie "
-"anzuwenden."
-
-msgid "Choose and upload a database backup before restoring."
-msgstr ""
-"Wähle eine Datenbanksicherung aus und lade sie hoch, bevor du sie "
-"wiederherstellst."
-
-msgid "Database restored."
-msgstr "Datenbank wiederhergestellt"
-
-msgid "Restart the Kittyflap now to apply the restored database."
-msgstr ""
-"Starte die Kittyflap jetzt neu, um die wiederhergestellte Datenbank "
-"anzuwenden."
-
-msgid "Restart"
-msgstr "Neu starten"
-
-#, python-brace-format
-msgid "The database could not be restored. Check the logs, then try again: {}"
-msgstr ""
-"Die Datenbank konnte nicht wiederhergestellt werden. Prüfe die Protokolle "
-"und versuche es erneut: {}"
-
-msgid "Choose a configuration backup to upload."
-msgstr "Wähle eine Konfigurationssicherung zum Hochladen aus."
-
-msgid "This file is not an .ini file. Choose a config.ini backup."
-msgstr ""
-"Diese Datei ist keine .ini-Datei. Wähle eine Sicherung von config.ini aus."
-
-msgid ""
-"This configuration file has no [Settings] section. Choose a valid config.ini "
-"backup."
-msgstr ""
-"Diese Konfigurationsdatei enthält keinen Abschnitt [Settings]. Wähle eine "
-"gültige Sicherung von config.ini aus."
-
-#, python-brace-format
-msgid ""
-"The configuration file could not be checked. Choose another file or check "
-"the logs: {}"
-msgstr ""
-"Die Konfigurationsdatei konnte nicht geprüft werden. Wähle eine andere Datei "
-"aus oder prüfe die Protokolle: {}"
-
-msgid ""
-"Configuration backup uploaded. Select Restore configuration to apply it."
-msgstr ""
-"Konfigurationsdatei hochgeladen. Klicke auf 'Konfiguration "
-"wiederherstellen', um sie anzuwenden."
-
-msgid "Choose and upload a configuration backup before restoring."
-msgstr ""
-"Wähle eine Konfigurationssicherung aus und lade sie hoch, bevor du sie "
-"wiederherstellst."
-
-msgid "Configuration restored."
-msgstr "Konfiguration erfolgreich wiederhergestellt."
-
-msgid "Restart the Kittyflap now to apply the restored configuration."
-msgstr ""
-"Starte die Kittyflap jetzt neu, um die wiederhergestellte Konfiguration "
-"anzuwenden."
-
-#, python-brace-format
-msgid ""
-"The configuration could not be restored. Check the logs, then try again: {}"
-msgstr ""
-"Die Konfiguration konnte nicht wiederhergestellt werden. Prüfe die "
-"Protokolle und versuche es erneut: {}"
-
 msgid ""
 "Automatic updates require a Git repository. Reinstall Kittyhack with Git "
 "clone or the setup script, then try again."
@@ -3126,6 +3035,9 @@ msgstr ""
 "Nach dem Neustart kann der Abschluss des Updates **weitere 10–20 Minuten** "
 "dauern. **Nicht** die Stromversorgung unterbrechen und die Kittyflap in "
 "dieser Zeit **nicht** neu starten."
+
+msgid "Restart"
+msgstr "Neu starten"
 
 msgid ""
 "The update could not be completed. Review the error below, then restart the "
@@ -3463,10 +3375,10 @@ msgstr ""
 
 #, python-brace-format
 msgid ""
-"The synced config.ini could not be loaded. Check the logs, then try the sync "
+"The synced settings could not be loaded. Check the logs, then try the sync "
 "again: {}."
 msgstr ""
-"Die synchronisierte config.ini konnte nicht geladen werden. Prüfe die "
+"Die synchronisierten Einstellungen konnten nicht geladen werden. Prüfe die "
 "Protokolle und starte die Synchronisierung erneut: {}."
 
 msgid "Unknown error"
@@ -3477,11 +3389,11 @@ msgstr "Gib die IP-Adresse der Kittyflap ein."
 
 #, python-brace-format
 msgid ""
-"The remote settings could not be saved to config.remote.ini. Check file "
-"permissions, then try again: {}"
+"The remote settings could not be saved. Check file permissions, then try "
+"again: {}"
 msgstr ""
-"Die Remote-Einstellungen konnten nicht in config.remote.ini gespeichert "
-"werden. Prüfe die Dateiberechtigungen und versuche es erneut: {}"
+"Die Remote-Einstellungen konnten nicht gespeichert werden. Prüfe die "
+"Dateiberechtigungen und versuche es erneut: {}"
 
 #, python-brace-format
 msgid ""
@@ -3749,36 +3661,6 @@ msgstr ""
 "Neue Klappenaktivitäten erscheinen hier. Aktivitäten, die vor der Erfassung "
 "für die Statistik gelöscht wurden, können nicht wiederhergestellt werden."
 
-msgid "Uncertain entries"
-msgstr "Unsichere Eingänge"
-
-msgid "Prey detections"
-msgstr "Beuteerkennungen"
-
-msgid "Attempts without passing"
-msgstr "Versuche ohne Durchgang"
-
-msgid "Denied entry"
-msgstr "Verweigerter Eingang"
-
-msgid "Denied exit"
-msgstr "Verweigerter Ausgang"
-
-msgid "Came in another way"
-msgstr "Auf anderem Weg nach innen gekommen (vermutet)"
-
-msgid "Left another way"
-msgstr "Auf anderem Weg nach außen gegangen (vermutet)"
-
-msgid "Average time outside"
-msgstr "Durchschnittliche Zeit außen"
-
-msgid "Average time inside"
-msgstr "Durchschnittliche Zeit innen"
-
-msgid "Show numbers"
-msgstr "Zahlen anzeigen"
-
 msgid "Time range"
 msgstr "Zeitraum"
 
@@ -3824,6 +3706,9 @@ msgstr "Katze"
 msgid "Date range"
 msgstr "Zeitraum"
 
+msgid "Prey detections"
+msgstr "Beuteerkennungen"
+
 #, python-brace-format
 msgid "Entered: {n}"
 msgstr "Nach innen gegangen: {n}"
@@ -3832,11 +3717,8 @@ msgstr "Nach innen gegangen: {n}"
 msgid "Blocked: {n}"
 msgstr "Blockiert: {n}"
 
-msgid "Average / median outside"
-msgstr "Durchschnitt / Median außen"
-
-msgid "Average / median inside"
-msgstr "Durchschnitt / Median innen"
+msgid "Attempts without passing"
+msgstr "Versuche ohne Durchgang"
 
 msgid ""
 "Times inside and outside, and the location shown, are based only on "
@@ -4147,6 +4029,160 @@ msgstr "Dieses Gerät jetzt herunterfahren?"
 
 msgid "This device is shutting down."
 msgstr "Dieses Gerät wird heruntergefahren."
+
+msgid "Motion outside?"
+msgstr "Bewegung außen?"
+
+msgid "From the motion sensor or the camera, depending on your settings."
+msgstr "Je nach Einstellung durch den Bewegungssensor oder die Kamera."
+
+msgid "Cat recognized?"
+msgstr "Katze erkannt?"
+
+msgid "By RFID, or by the camera when camera identification is turned on."
+msgstr "Per RFID oder per Kamera, wenn die Kameraerkennung eingeschaltet ist."
+
+msgid "Registered in Kittyhack?"
+msgstr "In Kittyhack registriert?"
+
+msgid "Prey detection enabled for every cat?"
+msgstr "Beuteerkennung für alle Katzen aktiv?"
+
+msgid "Prey detection enabled for this cat?"
+msgstr "Beuteerkennung für diese Katze aktiv?"
+
+msgid "You can turn this off for a single cat under Cats."
+msgstr "Für eine einzelne Katze kannst du das unter Katzen ausschalten."
+
+msgid "Prey detection enabled?"
+msgstr "Beuteerkennung aktiv?"
+
+msgid "Prey detected?"
+msgstr "Beute erkannt?"
+
+msgid "The flap stays locked while a picture shows prey."
+msgstr "Solange ein Bild Beute zeigt, bleibt die Klappe verriegelt."
+
+msgid "No action"
+msgstr "Keine Aktion"
+
+msgid "Stay locked"
+msgstr "Verriegelt lassen"
+
+msgid "You set this separately for each cat under Cats."
+msgstr "Das stellst du für jede Katze einzeln unter Katzen ein."
+
+msgid "Entry logic for all cats"
+msgstr "Eingangslogik für alle Katzen"
+
+msgid ""
+"Motion outside unlocks the inside, unless prey detection keeps the flap "
+"locked."
+msgstr ""
+"Bewegung außen entriegelt innen. Die Beuteerkennung kann die Klappe trotzdem "
+"verriegelt lassen."
+
+msgid "Entry logic for cats with an RFID chip"
+msgstr "Eingangslogik für Katzen mit RFID-Chip"
+
+msgid ""
+"An RFID chip has to be detected. The cat does not need to be registered."
+msgstr ""
+"Ein RFID-Chip muss erkannt werden. Die Katze muss nicht registriert sein."
+
+msgid "RFID chip detected?"
+msgstr "RFID-Chip erkannt?"
+
+msgid "Any chip is enough. The cat does not have to be registered."
+msgstr "Jeder Chip genügt. Die Katze muss nicht registriert sein."
+
+msgid "Entry logic for registered cats"
+msgstr "Eingangslogik für registrierte Katzen"
+
+msgid "Only a registered cat can unlock the inside, by RFID or by the camera."
+msgstr ""
+"Nur eine registrierte Katze kann innen entriegeln, per RFID oder per Kamera."
+
+msgid "Entry logic when entry is closed"
+msgstr "Eingangslogik bei geschlossenem Eingang"
+
+msgid "The inside stays locked."
+msgstr "Innen bleibt verriegelt."
+
+msgid "Entry logic for individual cat settings"
+msgstr "Eingangslogik bei individuellen Katzenregeln"
+
+msgid ""
+"Only cats you allow under Cats can enter, after Kittyhack recognizes them."
+msgstr ""
+"Nur Katzen, die du unter Katzen erlaubst, dürfen hinein, nachdem Kittyhack "
+"sie erkannt hat."
+
+msgid "May this cat enter?"
+msgstr "Darf diese Katze hinein?"
+
+msgid "Unlock outside"
+msgstr "Außen entriegeln"
+
+msgid "Exit not allowed"
+msgstr "Ausgang nicht erlaubt"
+
+msgid "Motion inside?"
+msgstr "Bewegung innen?"
+
+msgid "The sensor on the house side of the flap."
+msgstr "Der Sensor auf der Hausseite der Klappe."
+
+msgid "Inside an allowed exit time window?"
+msgstr "Im erlaubten Ausgangszeitfenster?"
+
+msgid "If every time range below is off, cats may leave at any time."
+msgstr ""
+"Wenn unten kein Zeitbereich eingeschaltet ist, dürfen Katzen jederzeit "
+"hinaus."
+
+msgid "Exit logic when exit is allowed"
+msgstr "Ausgangslogik bei erlaubtem Ausgang"
+
+msgid ""
+"Motion inside unlocks the outside, within the time windows you set below."
+msgstr ""
+"Bewegung innen entriegelt außen, innerhalb der Zeitfenster, die du unten "
+"einstellst."
+
+msgid "Exit logic when exit is closed"
+msgstr "Ausgangslogik bei geschlossenem Ausgang"
+
+msgid "The outside stays locked."
+msgstr "Außen bleibt verriegelt."
+
+msgid "Exit logic for individual cat settings"
+msgstr "Ausgangslogik bei individuellen Katzenregeln"
+
+msgid ""
+"The cat has to be identified by RFID and allowed to leave. The time windows "
+"below apply to every cat."
+msgstr ""
+"Die Katze muss per RFID erkannt und für den Ausgang erlaubt sein. Die "
+"Zeitfenster unten gelten für jede Katze."
+
+msgid "Cat identified by RFID?"
+msgstr "Katze per RFID erkannt?"
+
+msgid "Camera identification does not count here."
+msgstr "Die Kameraerkennung zählt hier nicht."
+
+msgid "May this cat leave?"
+msgstr "Darf diese Katze hinaus?"
+
+msgid "No"
+msgstr "Nein"
+
+msgid "Yes"
+msgstr "Ja"
+
+msgid "Continue"
+msgstr "Weiter"
 
 msgid "The WLAN connection will be interrupted briefly."
 msgstr "Die WLAN-Verbindung wird kurz unterbrochen."
@@ -4507,179 +4543,144 @@ msgstr "Hell"
 msgid "Appearance: Auto"
 msgstr "Darstellung: Automatisch"
 
-msgid "Motion outside?"
-msgstr "Bewegung außen?"
+#~ msgid "Configuration file"
+#~ msgstr "Konfigurationsdatei"
 
-msgid "From the motion sensor or the camera, depending on your settings."
-msgstr "Je nach Einstellung durch den Bewegungssensor oder die Kamera."
+#~ msgid "Back up or restore the Kittyhack configuration"
+#~ msgstr "Kittyhack Konfiguration sichern und wiederherstellen"
 
-msgid "Cat recognized?"
-msgstr "Katze erkannt?"
+#~ msgid "Download configuration"
+#~ msgstr "Konfigurationsdatei herunterladen"
 
-msgid "By RFID, or by the camera when camera identification is turned on."
-msgstr "Per RFID oder per Kamera, wenn die Kameraerkennung eingeschaltet ist."
+#~ msgid "Choose configuration backup (config.ini)"
+#~ msgstr "Konfigurationssicherung auswählen (config.ini)"
 
-msgid "Registered in Kittyhack?"
-msgstr "In Kittyhack registriert?"
+#~ msgid "Restore configuration"
+#~ msgstr "Konfiguration wiederherstellen"
 
-msgid "Prey detection enabled for every cat?"
-msgstr "Beuteerkennung für alle Katzen aktiv?"
+#~ msgid "config.ini was not found. Check the installation, then try again."
+#~ msgstr ""
+#~ "config.ini wurde nicht gefunden. Prüfe die Installation und versuche es "
+#~ "erneut."
 
-msgid "Prey detection enabled for this cat?"
-msgstr "Beuteerkennung für diese Katze aktiv?"
+#, python-brace-format
+#~ msgid ""
+#~ "config.ini could not be downloaded. Check the logs, then try again: {}"
+#~ msgstr ""
+#~ "config.ini konnte nicht heruntergeladen werden. Prüfe die Protokolle und "
+#~ "versuche es erneut: {}"
 
-msgid "You can turn this off for a single cat under Cats."
-msgstr "Für eine einzelne Katze kannst du das unter Katzen ausschalten."
+#~ msgid "Choose a database backup to upload."
+#~ msgstr "Wähle eine Datenbanksicherung zum Hochladen aus."
 
-msgid "Prey detection enabled?"
-msgstr "Beuteerkennung aktiv?"
+#~ msgid "The uploaded file was not found. Choose it again, then retry."
+#~ msgstr ""
+#~ "Die hochgeladene Datei wurde nicht gefunden. Wähle sie erneut aus und "
+#~ "versuche es noch einmal."
 
-msgid "Prey detected?"
-msgstr "Beute erkannt?"
+#~ msgid "This file is not a .db file. Choose a database backup."
+#~ msgstr "Diese Datei ist keine .db-Datei. Wähle eine Datenbanksicherung aus."
 
-msgid "The flap stays locked while a picture shows prey."
-msgstr "Solange ein Bild Beute zeigt, bleibt die Klappe verriegelt."
+#~ msgid "Database backup uploaded. Select Restore database to apply it."
+#~ msgstr ""
+#~ "Datenbank-Datei hochgeladen. Klicke auf 'Datenbank wiederherstellen', um "
+#~ "sie anzuwenden."
 
-msgid "No action"
-msgstr "Keine Aktion"
+#~ msgid "Choose and upload a database backup before restoring."
+#~ msgstr ""
+#~ "Wähle eine Datenbanksicherung aus und lade sie hoch, bevor du sie "
+#~ "wiederherstellst."
 
-msgid "Stay locked"
-msgstr "Verriegelt lassen"
+#~ msgid "Database restored."
+#~ msgstr "Datenbank wiederhergestellt"
 
-msgid "You set this separately for each cat under Cats."
-msgstr "Das stellst du für jede Katze einzeln unter Katzen ein."
+#~ msgid "Restart the Kittyflap now to apply the restored database."
+#~ msgstr ""
+#~ "Starte die Kittyflap jetzt neu, um die wiederhergestellte Datenbank "
+#~ "anzuwenden."
 
-msgid ""
-"Motion outside unlocks the inside, unless prey detection keeps the flap "
-"locked."
-msgstr ""
-"Bewegung außen entriegelt innen. Die Beuteerkennung kann die Klappe "
-"trotzdem verriegelt lassen."
+#, python-brace-format
+#~ msgid ""
+#~ "The database could not be restored. Check the logs, then try again: {}"
+#~ msgstr ""
+#~ "Die Datenbank konnte nicht wiederhergestellt werden. Prüfe die Protokolle "
+#~ "und versuche es erneut: {}"
 
-msgid "An RFID chip has to be detected. The cat does not need to be registered."
-msgstr "Ein RFID-Chip muss erkannt werden. Die Katze muss nicht registriert sein."
+#~ msgid "Choose a configuration backup to upload."
+#~ msgstr "Wähle eine Konfigurationssicherung zum Hochladen aus."
 
-msgid "RFID chip detected?"
-msgstr "RFID-Chip erkannt?"
+#~ msgid "This file is not an .ini file. Choose a config.ini backup."
+#~ msgstr ""
+#~ "Diese Datei ist keine .ini-Datei. Wähle eine Sicherung von config.ini aus."
 
-msgid "Any chip is enough. The cat does not have to be registered."
-msgstr "Jeder Chip genügt. Die Katze muss nicht registriert sein."
+#~ msgid ""
+#~ "This configuration file has no [Settings] section. Choose a valid "
+#~ "config.ini backup."
+#~ msgstr ""
+#~ "Diese Konfigurationsdatei enthält keinen Abschnitt [Settings]. Wähle eine "
+#~ "gültige Sicherung von config.ini aus."
 
-msgid "Only a registered cat can unlock the inside, by RFID or by the camera."
-msgstr "Nur eine registrierte Katze kann innen entriegeln, per RFID oder per Kamera."
+#, python-brace-format
+#~ msgid ""
+#~ "The configuration file could not be checked. Choose another file or check "
+#~ "the logs: {}"
+#~ msgstr ""
+#~ "Die Konfigurationsdatei konnte nicht geprüft werden. Wähle eine andere "
+#~ "Datei aus oder prüfe die Protokolle: {}"
 
-msgid "The inside stays locked."
-msgstr "Innen bleibt verriegelt."
+#~ msgid ""
+#~ "Configuration backup uploaded. Select Restore configuration to apply it."
+#~ msgstr ""
+#~ "Konfigurationsdatei hochgeladen. Klicke auf 'Konfiguration "
+#~ "wiederherstellen', um sie anzuwenden."
 
-msgid "Only cats you allow under Cats can enter, after Kittyhack recognizes them."
-msgstr ""
-"Nur Katzen, die du unter Katzen erlaubst, dürfen hinein, nachdem Kittyhack "
-"sie erkannt hat."
+#~ msgid "Choose and upload a configuration backup before restoring."
+#~ msgstr ""
+#~ "Wähle eine Konfigurationssicherung aus und lade sie hoch, bevor du sie "
+#~ "wiederherstellst."
 
-msgid "May this cat enter?"
-msgstr "Darf diese Katze hinein?"
+#~ msgid "Configuration restored."
+#~ msgstr "Konfiguration erfolgreich wiederhergestellt."
 
-msgid "Unlock outside"
-msgstr "Außen entriegeln"
+#~ msgid "Restart the Kittyflap now to apply the restored configuration."
+#~ msgstr ""
+#~ "Starte die Kittyflap jetzt neu, um die wiederhergestellte Konfiguration "
+#~ "anzuwenden."
 
-msgid "Exit not allowed"
-msgstr "Ausgang nicht erlaubt"
+#, python-brace-format
+#~ msgid ""
+#~ "The configuration could not be restored. Check the logs, then try again: "
+#~ "{}"
+#~ msgstr ""
+#~ "Die Konfiguration konnte nicht wiederhergestellt werden. Prüfe die "
+#~ "Protokolle und versuche es erneut: {}"
 
-msgid "Motion inside?"
-msgstr "Bewegung innen?"
+#~ msgid "Uncertain entries"
+#~ msgstr "Unsichere Eingänge"
 
-msgid "The sensor on the house side of the flap."
-msgstr "Der Sensor auf der Hausseite der Klappe."
+#~ msgid "Denied entry"
+#~ msgstr "Verweigerter Eingang"
 
-msgid "Inside an allowed exit time window?"
-msgstr "Im erlaubten Ausgangszeitfenster?"
+#~ msgid "Denied exit"
+#~ msgstr "Verweigerter Ausgang"
 
-msgid "If every time range below is off, cats may leave at any time."
-msgstr ""
-"Wenn unten kein Zeitbereich eingeschaltet ist, dürfen Katzen jederzeit "
-"hinaus."
+#~ msgid "Came in another way"
+#~ msgstr "Auf anderem Weg nach innen gekommen (vermutet)"
 
-msgid "Motion inside unlocks the outside, within the time windows you set below."
-msgstr ""
-"Bewegung innen entriegelt außen, innerhalb der Zeitfenster, die du unten "
-"einstellst."
+#~ msgid "Left another way"
+#~ msgstr "Auf anderem Weg nach außen gegangen (vermutet)"
 
-msgid "The outside stays locked."
-msgstr "Außen bleibt verriegelt."
+#~ msgid "Average time outside"
+#~ msgstr "Durchschnittliche Zeit außen"
 
-msgid ""
-"The cat has to be identified by RFID and allowed to leave. The time "
-"windows below apply to every cat."
-msgstr ""
-"Die Katze muss per RFID erkannt und für den Ausgang erlaubt sein. Die "
-"Zeitfenster unten gelten für jede Katze."
+#~ msgid "Average time inside"
+#~ msgstr "Durchschnittliche Zeit innen"
 
-msgid "Cat identified by RFID?"
-msgstr "Katze per RFID erkannt?"
+#~ msgid "Show numbers"
+#~ msgstr "Zahlen anzeigen"
 
-msgid "Camera identification does not count here."
-msgstr "Die Kameraerkennung zählt hier nicht."
+#~ msgid "Average / median outside"
+#~ msgstr "Durchschnitt / Median außen"
 
-msgid "May this cat leave?"
-msgstr "Darf diese Katze hinaus?"
-
-msgid "No"
-msgstr "Nein"
-
-msgid "Yes"
-msgstr "Ja"
-
-msgid "Continue"
-msgstr "Weiter"
-
-msgid "Kittyhack is using an original Kittyflap model."
-msgstr "Kittyhack verwendet ein originales Kittyflap-Modell."
-
-msgid ""
-"The included models (v1 and v2) are extremely inaccurate, and not all "
-"Kittyhack features work with them. Camera-based cat detection is one "
-"example."
-msgstr ""
-"Die mitgelieferten Modelle (v1 und v2) sind extrem ungenau, und nicht alle "
-"Funktionen von Kittyhack sind damit nutzbar. Die kamerabasierte "
-"Katzenerkennung ist ein Beispiel."
-
-msgid ""
-"A model you trained yourself is much more accurate. Select it under "
-"**Settings**, in the **Flap** section, as the **Detection model**."
-msgstr ""
-"Ein selbst trainiertes Modell ist deutlich genauer. Wähle es unter "
-"**Einstellungen** im Abschnitt **Klappe** als **Erkennungsmodell** aus."
-
-msgid ""
-"The flap still works with the microchip reader. You do not need to change "
-"anything right now."
-msgstr ""
-"Die Klappe funktioniert weiter mit dem Mikrochip-Leser. Du musst jetzt "
-"nichts ändern."
-
-msgid ""
-"Later, under **AI Training**, you can train a model for your own cats and "
-"camera. That model is much more accurate."
-msgstr ""
-"Später kannst du unter **KI Training** ein Modell für deine eigenen Katzen "
-"und deine Kamera trainieren. Dieses Modell ist deutlich genauer."
-
-msgid "Original detection model"
-msgstr "Originales Erkennungsmodell"
-
-msgid ""
-"The original models (v1 and v2) are strongly discouraged: they are "
-"extremely inaccurate, and not all Kittyhack features work with them. A "
-"model you train yourself is much more accurate."
-msgstr ""
-"Von den originalen Modellen (v1 und v2) wird stark abgeraten: Sie arbeiten "
-"extrem ungenau, und nicht alle Funktionen von Kittyhack sind damit nutzbar. "
-"Ein selbst trainiertes Modell ist deutlich genauer."
-
-msgid ""
-"This switch is available only when camera cat detection or camera motion "
-"detection is turned on."
-msgstr ""
-"Dieser Schalter ist nur verfügbar, wenn die Kamera für die Katzenerkennung "
-"oder die Bewegungserkennung eingeschaltet ist."
+#~ msgid "Average / median inside"
+#~ msgstr "Durchschnitt / Median innen"

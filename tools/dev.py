@@ -512,22 +512,40 @@ def cmd_delete_backup(args: argparse.Namespace) -> int:
     return 0
 
 
+def _copy_aside(path: Path) -> None:
+    if not path.is_file():
+        return
+    bak = ROOT / f"{path.name}.bak-{now_stamp()}"
+    shutil.copy2(path, bak)
+    path.unlink()
+    log(f"current {path.name} saved as {bak.name}")
+
+
 def cmd_reset_default(args: argparse.Namespace) -> int:
-    config = ROOT / "config.ini"
-    if not confirm("Reset config.ini to factory defaults? (current file is copied aside first)", args.yes):
+    if not confirm(
+        "Reset settings to factory defaults? Current settings are copied aside first.",
+        args.yes,
+    ):
         log("aborted")
         return 1
 
     stop_services()
     try:
-        if config.exists():
-            bak = ROOT / f"config.ini.bak-{now_stamp()}"
-            shutil.copy2(config, bak)
-            log(f"current config saved as {bak.name}")
-            config.unlink()
-            log("removed config.ini — kittyhack will recreate defaults on start")
+        _copy_aside(ROOT / "config.ini")
+        _copy_aside(ROOT / "config.remote.ini")
+        db = ROOT / DB_NAME
+        if db.is_file():
+            conn = sqlite3.connect(db, timeout=30)
+            try:
+                conn.execute("DELETE FROM settings")
+                conn.commit()
+                log("cleared settings — kittyhack will recreate defaults on start")
+            except sqlite3.OperationalError:
+                log("settings table not present; next start will create defaults")
+            finally:
+                conn.close()
         else:
-            log("config.ini already absent; next start will create defaults")
+            log(f"{DB_NAME} already absent; next start will create defaults")
     except Exception:
         warn("reset failed; services are still stopped")
         raise
@@ -574,18 +592,39 @@ def is_remote_host() -> bool:
     return (ROOT / ".remote-mode").is_file()
 
 
-def requirements_file() -> Path:
-    if not is_remote_host():
-        return ROOT / "requirements.txt"
+def _inference_device() -> str:
+    db = ROOT / DB_NAME
+    if db.is_file():
+        try:
+            conn = sqlite3.connect(db, timeout=5)
+            try:
+                row = conn.execute(
+                    "SELECT value FROM settings WHERE key = 'INFERENCE_DEVICE'"
+                ).fetchone()
+            finally:
+                conn.close()
+            if row and row[0] is not None:
+                try:
+                    value = json.loads(row[0])
+                except json.JSONDecodeError:
+                    value = row[0]
+                return str(value).strip().lower()
+        except sqlite3.Error:
+            pass
     config = ROOT / "config.ini"
     if config.is_file():
         for line in config.read_text(encoding="utf-8", errors="replace").splitlines():
             stripped = line.strip().lower()
             if stripped.startswith("inference_device") and "=" in stripped:
-                value = stripped.split("=", 1)[1].strip()
-                if value.startswith("cuda"):
-                    return ROOT / "requirements_remote_cuda.txt"
-                break
+                return stripped.split("=", 1)[1].strip().lower()
+    return ""
+
+
+def requirements_file() -> Path:
+    if not is_remote_host():
+        return ROOT / "requirements.txt"
+    if _inference_device().startswith("cuda"):
+        return ROOT / "requirements_remote_cuda.txt"
     return ROOT / "requirements_remote.txt"
 
 
@@ -951,13 +990,27 @@ def cmd_reboot(args: argparse.Namespace) -> int:
 
 
 def cmd_show_config(_args: argparse.Namespace) -> int:
-    config = ROOT / "config.ini"
-    if not config.exists():
-        raise DevError("config.ini not found")
-    text = config.read_text(encoding="utf-8")
-    sys.stdout.write(text)
-    if not text.endswith("\n"):
-        print()
+    db = ROOT / DB_NAME
+    if not db.is_file():
+        raise DevError(f"{DB_NAME} not found")
+    conn = sqlite3.connect(db, timeout=30)
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT key, value FROM settings ORDER BY key"
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            raise DevError("settings table not found") from exc
+    finally:
+        conn.close()
+    if not rows:
+        raise DevError("no settings stored")
+    for key, raw in rows:
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            value = raw
+        print(f"{key} = {value}")
     return 0
 
 
@@ -968,7 +1021,7 @@ COMMANDS: dict[str, str] = {
     "restore": "Restore a snapshot (NAME, path, or omit for latest)",
     "list_backups": "List snapshots in the backup directory",
     "delete_backup": "Delete a snapshot by name",
-    "reset_default": "Reset config.ini to factory defaults (current file is copied aside)",
+    "reset_default": "Reset settings to factory defaults (current values are copied aside)",
     "reset_db": "Wipe kittyhack.db (copied aside first)",
     "checkout": "git fetch + checkout a tag/branch/commit, set up matching venv, restart",
     "status": "Show git HEAD, services, disk, venv, and persistent files",
@@ -983,7 +1036,7 @@ COMMANDS: dict[str, str] = {
     "db_check": "PRAGMA integrity_check on kittyhack.db",
     "ensure_venv": "Align .venv with this tree (required Python + pip install)",
     "reboot": "Reboot the device",
-    "show_config": "Print config.ini",
+    "show_config": "Print settings stored in kittyhack.db",
 }
 
 

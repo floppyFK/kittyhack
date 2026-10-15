@@ -47,7 +47,7 @@ pytest tests/unit/test_backend_loop_scenarios.py -v
 
 ## Simulate mode (process flag)
 
-Simulation is **not** controlled via `config.ini` (the old `simulate_kittyflap` key is ignored and removed on load). Use a process-level flag:
+Simulation is **not** a stored setting (the old `simulate_kittyflap` key is ignored during a legacy import). Use a process-level flag:
 
 ```bash
 # Web UI / backend (e.g. under systemd or uvicorn)

@@ -125,25 +125,56 @@ enable_service() {
     fi
 }
 
+upsert_db_setting() {
+    local db="$1"
+    local key="$2"
+    local json_value="$3"
+    python3 - "$db" "$key" "$json_value" << 'PY'
+import sqlite3
+import sys
+from datetime import datetime, timezone
+
+db, key, value = sys.argv[1], sys.argv[2], sys.argv[3]
+conn = sqlite3.connect(db, timeout=30, isolation_level=None)
+conn.execute("PRAGMA busy_timeout = 30000")
+conn.execute(
+    """CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )"""
+)
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+conn.execute("BEGIN IMMEDIATE")
+conn.execute(
+    "INSERT INTO settings(key, value, updated_at) VALUES (?, ?, ?) "
+    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+    (key, value, now),
+)
+conn.execute("COMMIT")
+conn.close()
+PY
+}
+
 set_config_language() {
-    local config_file="$1"
+    local install_dir="$1"
+    local config_file="${install_dir}/config.ini"
     local lang="en"
 
     if [[ "$LANGUAGE" == "de" ]]; then
         lang="de"
     fi
 
+    if upsert_db_setting "${install_dir}/kittyhack.db" "LANGUAGE" "\"${lang}\""; then
+        echo -e "${GREEN}Stored setup language in kittyhack.db: language = ${lang}${NC}"
+    else
+        ((FAIL_COUNT++))
+        echo -e "${RED}Failed to store language in kittyhack.db.${NC}"
+    fi
+
+    # A leftover config.ini is imported on the next start and would overwrite the
+    # database row. Keep the language in that file until the import deletes it.
     if [[ ! -f "$config_file" ]]; then
-        cat > "$config_file" << EOF
-[Settings]
-language = ${lang}
-EOF
-        if [[ $? -eq 0 ]]; then
-            echo -e "${GREEN}Created config.ini and set setup language: language = ${lang}${NC}"
-        else
-            ((FAIL_COUNT++))
-            echo -e "${RED}Failed to create ${config_file}.${NC}"
-        fi
         return 0
     fi
 
@@ -706,11 +737,12 @@ install_remote_mode() {
     # Create remote-mode marker file
     touch "${KITTYHACK_INSTALL_DIR}/.remote-mode"
 
-    # Configure config.ini (best-effort): camera source on remote nodes
+    # Camera source on remote nodes. A leftover config.ini is imported on first start.
     if [ -f "${KITTYHACK_INSTALL_DIR}/config.ini" ]; then
         sed -i "s/^camera_source\s*=\s*.*/camera_source = ip_camera/" "${KITTYHACK_INSTALL_DIR}/config.ini" || true
     fi
-    set_config_language "${KITTYHACK_INSTALL_DIR}/config.ini"
+    upsert_db_setting "${KITTYHACK_INSTALL_DIR}/kittyhack.db" "CAMERA_SOURCE" "\"ip_camera\"" || true
+    set_config_language "${KITTYHACK_INSTALL_DIR}"
 
     echo -e "${CYAN}--- REMOTE MODE INSTALL Step 4: Install/enable kittyhack.service ---${NC}"
     cat << EOF > /etc/systemd/system/kittyhack.service
@@ -889,8 +921,8 @@ install_kittyhack() {
         cp /tmp/kittyhack.db.bak "${KITTYHACK_INSTALL_DIR}/kittyhack.db" && rm -f /tmp/kittyhack.db.bak
     fi
 
-    # Set configured UI language in config.ini based on setup language.
-    set_config_language "${KITTYHACK_INSTALL_DIR}/config.ini"
+    # Set configured UI language based on the setup language.
+    set_config_language "${KITTYHACK_INSTALL_DIR}"
 
     # First-time install only. camera_dependencies.txt exists only after checkout,
     # and the driver debs must be in place before kittyhack_control starts the camera.
@@ -1194,7 +1226,7 @@ fi
 # When true: do not clone from GitHub, use this repo folder as install source.
 USE_LOCAL_SOURCES=false
 
-# The directory where kittyhack will run from (venv, config.ini, kittyhack.db).
+# The directory where kittyhack will run from (venv, kittyhack.db).
 # Default is /root/kittyhack for backward compatibility.
 KITTYHACK_INSTALL_DIR="/root/kittyhack"
 

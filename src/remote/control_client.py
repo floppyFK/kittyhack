@@ -11,7 +11,7 @@ from typing import Any
 
 import websockets
 
-from src.baseconfig import CONFIG
+from src.baseconfig import CONFIG, restore_remote_only_settings, snapshot_remote_only_settings
 from src.clock import monotonic_time
 from src.helper import sigterm_monitor
 
@@ -285,7 +285,7 @@ class RemoteControlClient:
             "current_version": str(current_version or ""),
         }
         # The flap updater must follow this device's repository, not its own
-        # config.ini. A branch-channel latest_version is ``ref@sha`` and is not
+        # stored settings. A branch-channel latest_version is ``ref@sha`` and is not
         # a git ref the flap can check out on its own.
         try:
             from src.helper import Versioning
@@ -678,6 +678,9 @@ class RemoteControlClient:
                 tmp_path = self._sync_tmp_path
                 self._sync_tmp_path = None
 
+                # The archive replaces kittyhack.db, including settings. Keep this
+                # controller's connection settings and write them back afterwards.
+                remote_settings = snapshot_remote_only_settings()
                 with tarfile.open(tmp_path, "r:gz") as tf:
                     base = install_base()
                     # Some synced paths must land outside install_base (absolute target paths).
@@ -692,6 +695,7 @@ class RemoteControlClient:
                             tf.extract(member, path="/")
                         else:
                             tf.extract(member, path=base)
+                restore_remote_only_settings(remote_settings)
 
                 os.makedirs(models_yolo_root(), exist_ok=True)
                 os.makedirs(pictures_root(), exist_ok=True)

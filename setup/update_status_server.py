@@ -7,7 +7,9 @@ User-facing text is intentionally non-technical.
 from __future__ import annotations
 
 import argparse
+import json
 import re
+import sqlite3
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -47,7 +49,38 @@ TEXTS = {
 }
 
 
+def _language_from_db(root: Path) -> str:
+    db = root / "kittyhack.db"
+    if not db.is_file():
+        return ""
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+        try:
+            row = conn.execute(
+                "SELECT value FROM settings WHERE key = 'LANGUAGE'"
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return ""
+    if not row or row[0] is None:
+        return ""
+    try:
+        value = json.loads(row[0])
+    except json.JSONDecodeError:
+        value = row[0]
+    lang = str(value).strip().lower()
+    if lang.startswith("de"):
+        return "de"
+    if lang.startswith("en"):
+        return "en"
+    return ""
+
+
 def _read_language(root: Path) -> str:
+    from_db = _language_from_db(root)
+    if from_db:
+        return from_db
     for name in ("config.ini", "config.remote.ini"):
         path = root / name
         if not path.is_file():
@@ -171,7 +204,7 @@ def main() -> int:
     parser.add_argument("--root", required=True, help="Kittyhack install root")
     parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=80)
-    parser.add_argument("--lang", default="", help="en|de (optional; otherwise read from config.ini)")
+    parser.add_argument("--lang", default="", help="en|de (optional; otherwise read from settings)")
     args = parser.parse_args()
 
     root = Path(args.root)

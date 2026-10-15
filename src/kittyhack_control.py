@@ -20,7 +20,7 @@ from typing import Any
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-from src.baseconfig import CONFIG, CONFIGFILE, configure_logging, load_config, set_language
+from src.baseconfig import CONFIG, configure_logging, load_config, set_language, settings_revision
 from src.helper import (
     Versioning,
     sigterm_monitor,
@@ -96,38 +96,38 @@ _internal_cam_last_error: str = ""
 _internal_cam_stream_source: str = ""
 _internal_cam_stream_url: str = ""
 
-# Track config.ini mtime so runtime setting changes can be applied without
+# Track the settings-table revision so runtime changes apply without
 # restarting kittyhack_control.service.
-_configfile_last_mtime: float | None = None
+_config_revision: str | None = None
 
 def _reload_runtime_config_if_changed() -> None:
-    """Reload config.ini only when the file changed on disk.
+    """Reload settings when the database revision changes.
 
-    The WLAN watchdog reads CONFIG values every loop tick. Without a config
-    reload, changes saved by server.py stay invisible in this process until a
-    service restart. This lightweight mtime gate keeps overhead low.
+    The WLAN watchdog reads CONFIG values every loop tick. Without a reload,
+    changes saved by the web UI stay invisible in this process until a service
+    restart.
     """
-    global _configfile_last_mtime
+    global _config_revision
 
     try:
-        mtime = os.path.getmtime(CONFIGFILE)
+        revision = settings_revision()
     except Exception:
         return
 
     # First observation initializes the cache without forcing a reload.
-    if _configfile_last_mtime is None:
-        _configfile_last_mtime = mtime
+    if _config_revision is None:
+        _config_revision = revision
         return
 
-    if mtime == _configfile_last_mtime:
+    if revision == _config_revision:
         return
 
     try:
         load_config()
-        _configfile_last_mtime = mtime
-        logging.info("[CONTROL] Reloaded config.ini after on-disk changes.")
+        _config_revision = settings_revision()
+        logging.info("[CONTROL] Reloaded settings after database changes.")
     except Exception as e:
-        logging.warning(f"[CONTROL] Failed to reload changed config.ini: {e}")
+        logging.warning(f"[CONTROL] Failed to reload changed settings: {e}")
 
 def _ensure_internal_camera_stream() -> tuple[bool, str]:
     """Start (if needed) the target camera stream for MJPEG relay.
@@ -301,7 +301,7 @@ def _remote_ui_url() -> str | None:
 def _ui_language() -> str:
     """Return UI language for the standalone info pages.
 
-    Driven by config.ini [Settings] language via CONFIG['LANGUAGE'].
+    Driven by the stored language via CONFIG['LANGUAGE'].
     Supported: de/en. Fallback: en.
     """
     lang = str(CONFIG.get("LANGUAGE") or "en").strip().lower()
@@ -1076,8 +1076,8 @@ async def _handle_sync_request(ws: WebSocketServerProtocol, include_labelstudio:
 
     items: list[tuple[str, str]] = []
 
-    # kittyhack.db + config.ini from repo root
-    for name in ("kittyhack.db", "config.ini"):
+    # kittyhack.db (settings live in this file) from repo root
+    for name in ("kittyhack.db",):
         src = os.path.join(kittyhack_root(), name)
         if os.path.exists(src):
             arc = os.path.relpath(src, base)

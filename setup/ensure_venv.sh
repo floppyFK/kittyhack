@@ -34,7 +34,7 @@ Usage: ensure_venv.sh [--bootstrap|--prepare|--apply] [--root DIR] [--requiremen
   --requirements F  requirements file (default: requirements.txt, or
                     requirements_remote.txt when this host is in remote mode).
   --cuda            Remote only: install requirements_remote_cuda.txt (PyPI CUDA
-                    torch). Also selected when config.ini inference_device is cuda:*.
+                    torch). Also selected when the stored inference_device is cuda:*.
                     Ignored when --requirements is set.
   --skip-pip        Skip pip install -r <requirements> (bootstrap/testing only).
   --smoke-strict    Fail smoke test if listed ML packages cannot be imported.
@@ -74,6 +74,40 @@ is_remote_host() {
 }
 
 config_wants_cuda() {
+    local db="${ROOT}/kittyhack.db"
+    local device=""
+    if [[ -f "$db" ]]; then
+        device="$(python3 - "$db" << 'PY'
+import json
+import sqlite3
+import sys
+
+db = sys.argv[1]
+try:
+    conn = sqlite3.connect(db, timeout=5)
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'INFERENCE_DEVICE'"
+    ).fetchone()
+    conn.close()
+except Exception:
+    sys.exit(0)
+if not row or row[0] is None:
+    sys.exit(0)
+try:
+    value = json.loads(row[0])
+except Exception:
+    value = row[0]
+print(str(value).strip().lower())
+PY
+)"
+        if [[ "$device" == cuda* ]]; then
+            return 0
+        fi
+        if [[ -n "$device" ]]; then
+            return 1
+        fi
+    fi
+    # Before the first start migrates config.ini into the database.
     local cfg="${ROOT}/config.ini"
     [[ -f "$cfg" ]] || return 1
     grep -Eiq '^[[:space:]]*inference_device[[:space:]]*=[[:space:]]*cuda' "$cfg"

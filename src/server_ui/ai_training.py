@@ -1469,7 +1469,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
     @reactive.Effect
     @reactive.event(input.btn_save_labelstudio_token)
     def save_labelstudio_token():
-        """Save the Label Studio API token to config.ini and reload the AI Training tab."""
+        """Save the Label Studio API token and reload the AI Training tab."""
         try:
             token = (input.labelstudio_api_token() or "").strip()
             CONFIG["LABELSTUDIO_API_TOKEN"] = token
@@ -1568,7 +1568,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
     @reactive.Effect
     @reactive.event(input.labelstudio_project_select)
     def save_labelstudio_project():
-        """Persist the selected Label Studio project to config.ini whenever the dropdown changes."""
+        """Persist the selected Label Studio project whenever the dropdown changes."""
         try:
             selected = (input.labelstudio_project_select() or "").strip()
             if selected == CONFIG.get("LABELSTUDIO_PROJECT", ""):

@@ -1,4 +1,4 @@
-"""Process-level runtime flags (not persisted in config.ini)."""
+"""Process-level runtime flags (not persisted in the settings table)."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def is_simulate_mode() -> bool:
     """True when hardware/system actions should be simulated (no real GPIO/reboot).
 
     Priority: explicit ``set_simulate_mode`` / ``--simulate`` → env ``KITTYHACK_SIMULATE`` → False.
-    Never reads config.ini.
+    Never reads the settings table.
     """
     if _FORCE_SIMULATE is not None:
         return bool(_FORCE_SIMULATE)

@@ -20,6 +20,7 @@ from src.baseconfig import (
     UserNotifications,
     get_loggable_config_value,
     remote_setup_required as check_remote_setup_required,
+    ensure_settings_persisted,
     save_config,
     set_language,
     update_single_config_parameter,
@@ -583,6 +584,13 @@ def run() -> None:
         logging.info(f"Database '{CONFIG['KITTYHACK_DATABASE_PATH']}' not found. Creating it...")
         DbMigrations.create_kittyhack_events_table(CONFIG['KITTYHACK_DATABASE_PATH'])
 
+    # A restore can replace kittyhack.db with a backup that has no settings table.
+    # The migrated values are still in CONFIG; write them back into the live file.
+    try:
+        ensure_settings_persisted()
+    except Exception as e:
+        logging.error(f"[CONFIG] Failed to persist settings after database startup checks: {e}")
+
     if not DatabaseCore.check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events"):
         logging.warning(f"Table 'events' not found in the kittyhack database. Creating it...")
         DbMigrations.create_kittyhack_events_table(CONFIG['KITTYHACK_DATABASE_PATH'])
@@ -653,9 +661,9 @@ def run() -> None:
         logging.info("Table 'photo' found in the kittyhack database. Migrating it to 'events'...")
         DbMigrations.migrate_photos_to_events(CONFIG['KITTYHACK_DATABASE_PATH'])
 
-    # Migrate the kittyflap config database table into the config.ini:
+    # Migrate the legacy kittyflap config table into kittyhack settings.
     if DatabaseCore.check_if_table_exists(CONFIG['DATABASE_PATH'], "config") and CONFIG['KITTYFLAP_CONFIG_MIGRATED'] == False:
-        logging.info("Table 'config' found in the kittyflap database. Migrating it to the config.ini...")
+        logging.info("Table 'config' found in the kittyflap database. Migrating it into kittyhack settings...")
         df_config = DatabaseCore.db_get_config(CONFIG['DATABASE_PATH'], ReturnDataConfigDB.all)
         if not df_config.empty:
             CONFIG['MOUSE_CHECK_ENABLED'] = bool(df_config.iloc[0]["detect_prey"])

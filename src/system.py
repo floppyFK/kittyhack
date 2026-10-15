@@ -1389,7 +1389,7 @@ class KittyhackUpdater:
         did_prepare_new_venv = False
 
         # Resolve the configured update source (standard vs custom repo / branch).
-        # A remote controller passes its own source: the flap's config.ini often
+        # A remote controller passes its own source: the flap's stored settings often
         # still says "standard" and must not decide the checkout.
         versioning_cls = None
         update_git_url = None

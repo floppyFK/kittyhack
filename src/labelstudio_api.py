@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 import requests
 
-# Import CONFIG to read token from config.ini
+# Import CONFIG to read the Label Studio token from stored settings
 from src.baseconfig import CONFIG
 
 class LabelStudioAPI:
@@ -66,14 +66,14 @@ class LabelStudioAPI:
     def _resolve_token(cls, explicit_token: Optional[str] = None) -> Optional[str]:
         """Resolve API token from multiple sources in priority order:
         1. Explicit token parameter
-        2. CONFIG["LABELSTUDIO_API_TOKEN"] (from config.ini)
+        2. CONFIG["LABELSTUDIO_API_TOKEN"] (stored settings)
         3. Environment variables (KITTYHACK_LABELSTUDIO_API_TOKEN, LABEL_STUDIO_API_KEY)
         4. Environment files (/etc/default/labelstudio, /etc/default/kittyhack)
         """
         if explicit_token and explicit_token.strip():
             return explicit_token.strip()
 
-        # Check config.ini
+        # Check stored settings
         try:
             config_token = CONFIG.get("LABELSTUDIO_API_TOKEN", "").strip()
             if config_token:

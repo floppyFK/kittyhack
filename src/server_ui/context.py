@@ -20,7 +20,6 @@ class SessionContext:
     reload_trigger_info: Any
     version_mismatch_warning_shown: bool
     last_uploaded_db_path: Any
-    last_uploaded_cfg_path: Any
     remote_setup_active: Any
     remote_sync_status: Any
     remote_sync_modal_open: Any
@@ -82,7 +81,6 @@ def create_session_context() -> SessionContext:
         reload_trigger_info=reactive.Value(0),
         version_mismatch_warning_shown=False,
         last_uploaded_db_path=reactive.Value(None),
-        last_uploaded_cfg_path=reactive.Value(None),
         remote_setup_active=reactive.Value(
             bool(is_remote_mode() and startup.remote_setup_required)
         ),

@@ -7,7 +7,7 @@ Usage:
     python tools/api_token.py revoke <token_id>
 
 Run from the kittyhack project root so the token file (`api_tokens.json`)
-lands next to `config.ini`.
+lands next to `kittyhack.db`.
 """
 
 from __future__ import annotations

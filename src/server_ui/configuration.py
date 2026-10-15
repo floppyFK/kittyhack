@@ -322,8 +322,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 ui.markdown(
                                     _(
                                         "Beta builds may be unstable. "
-                                        "Back up your settings (`config.ini`) and "
-                                        "database before switching between **Standard** and **Beta**. "
+                                        "Back up your database before switching between **Standard** and **Beta**. "
                                         "Switching from beta back to the latest release may work, "
                                         "but it is not recommended."
                                     )
@@ -2927,8 +2926,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                             [
                                 "\n\n",
                                 _(
-                                    "Back up your settings (`config.ini`) and "
-                                    "database before switching between Standard and Beta."
+                                    "Back up your database before switching between Standard and Beta."
                                 ),
                             ]
                         )

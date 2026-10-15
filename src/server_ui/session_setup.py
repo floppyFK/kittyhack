@@ -1,7 +1,6 @@
 """Session preamble: remote sync, live view stream, shared effects."""
 
 import os
-import configparser
 from datetime import datetime
 import time as tm
 from src.clock import monotonic_time
@@ -30,7 +29,6 @@ from src.system import (
     ServiceOps,
 )
 from src.database import last_imgblock_ts
-from src.paths import kittyhack_root
 from src.mode import is_remote_mode
 from src.model import RemoteModelTrainer
 from src.backend import backend_main, model_handler
@@ -734,13 +732,13 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         ):
             ctx.remote_sync_finalized.set(True)
 
-            # Sync may have replaced config.ini: reload it now so next startup uses the synced values.
+            # Sync replaced kittyhack.db. Reload so the UI uses the flap's settings.
             try:
                 load_config()
             except Exception as e:
                 ui.notification_show(
                     _(
-                        "The synced config.ini could not be loaded. Check the logs, then try the sync again: {}."
+                        "The synced settings could not be loaded. Check the logs, then try the sync again: {}."
                     ).format(e),
                     duration=12,
                     type="error",
@@ -804,33 +802,32 @@ def register_session_setup(input, output, session, ctx: SessionContext):
 
         sync_first = bool(input.remote_sync_on_first_connect())
         sync_labelstudio = bool(input.remote_sync_labelstudio())
-        remote_cfg_path = os.path.join(kittyhack_root(), "config.remote.ini")
-        parser = configparser.ConfigParser()
-        parser["Settings"] = {
-            "remote_target_host": host,
-            "remote_control_port": str(port),
-            "remote_control_timeout": str(timeout),
-            "remote_sync_on_first_connect": str(sync_first),
-            "remote_sync_labelstudio": str(sync_labelstudio),
-        }
-        try:
-            with open(remote_cfg_path, "w", encoding="utf-8") as f:
-                parser.write(f)
-        except Exception as e:
-            ui.notification_show(
-                _(
-                    "The remote settings could not be saved to config.remote.ini. Check file permissions, then try again: {}"
-                ).format(e),
-                duration=10,
-                type="error",
-            )
-            return
-
         CONFIG["REMOTE_TARGET_HOST"] = host
         CONFIG["REMOTE_CONTROL_PORT"] = port
         CONFIG["REMOTE_CONTROL_TIMEOUT"] = timeout
         CONFIG["REMOTE_SYNC_ON_FIRST_CONNECT"] = sync_first
         CONFIG["REMOTE_SYNC_LABELSTUDIO"] = sync_labelstudio
+        try:
+            saved = True
+            for key in (
+                "REMOTE_TARGET_HOST",
+                "REMOTE_CONTROL_PORT",
+                "REMOTE_CONTROL_TIMEOUT",
+                "REMOTE_SYNC_ON_FIRST_CONNECT",
+                "REMOTE_SYNC_LABELSTUDIO",
+            ):
+                saved = update_single_config_parameter(key) and saved
+            if not saved:
+                raise RuntimeError("settings write failed")
+        except Exception as e:
+            ui.notification_show(
+                _(
+                    "The remote settings could not be saved. Check file permissions, then try again: {}"
+                ).format(e),
+                duration=10,
+                type="error",
+            )
+            return
 
         if sync_first:
             # Start sync (non-blocking). Progress is shown in a non-closable modal and
@@ -893,7 +890,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         except Exception:
             pass
 
-            # Clear target host and persist cleanup in config.remote.ini/config.ini.
+            # Clear the target host and persist that in the settings table.
         CONFIG["REMOTE_TARGET_HOST"] = ""
         try:
             update_single_config_parameter("REMOTE_TARGET_HOST")

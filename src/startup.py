@@ -47,7 +47,10 @@ from src.clock import monotonic_time
 from src.mode import is_remote_mode
 from src.paths import kittyhack_root
 from src.model import RemoteModelTrainer
-from src.backend.decisions import sync_pir_second_factor_suggestion
+from src.backend.decisions import (
+    sync_original_model_notice,
+    sync_pir_second_factor_suggestion,
+)
 _ = set_language(CONFIG["LANGUAGE"])
 
 git_version = "unknown"
@@ -702,6 +705,11 @@ def run() -> None:
         sync_pir_second_factor_suggestion()
     except Exception as e:
         logging.warning(f"[USR_NOTIFICATIONS] Failed to sync PIR-second-factor suggestion: {e}")
+
+    try:
+        sync_original_model_notice()
+    except Exception as e:
+        logging.warning(f"[USR_NOTIFICATIONS] Failed to sync original-model notice: {e}")
 
     logging.info("Starting frontend...")
 

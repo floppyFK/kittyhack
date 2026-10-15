@@ -286,35 +286,6 @@ def _empty_state(has_history: bool):
     )
 
 
-def _numbers_table(payload: dict) -> str:
-    kpis = payload.get("kpis") or {}
-    rows = [
-        (_("Entries"), kpis.get("entries", 0)),
-        (_("Exits"), kpis.get("exits", 0)),
-        (_("Uncertain entries"), kpis.get("uncertain_entries", 0)),
-        (_("Prey detections"), kpis.get("prey", 0)),
-        (_("Entered with prey"), kpis.get("prey_entered", 0)),
-        (_("Prey blocked"), kpis.get("prey_blocked", 0)),
-        (_("Attempts without passing"), kpis.get("attempts", 0)),
-        (_("Denied entry"), kpis.get("denied_entry", 0)),
-        (_("Denied exit"), kpis.get("denied_exit", 0)),
-        (_("Came in another way"), kpis.get("other_entry", 0)),
-        (_("Left another way"), kpis.get("other_exit", 0)),
-        (_("Average time outside"), kpis.get("avg_outside", "—")),
-        (_("Median time outside"), kpis.get("median_outside", "—")),
-        (_("Average time inside"), kpis.get("avg_inside", "—")),
-        (_("Median time inside"), kpis.get("median_inside", "—")),
-    ]
-    body = "".join(
-        f"<tr><th>{html.escape(str(k))}</th><td>{html.escape(str(v))}</td></tr>"
-        for k, v in rows
-    )
-    return (
-        f'<details class="stats-numbers"><summary>{html.escape(_("Show numbers"))}</summary>'
-        f'<table class="stats-numbers-table"><tbody>{body}</tbody></table></details>'
-    )
-
-
 def register_statistics(input, output, session, ctx: SessionContext):
     """Register Statistics tab handlers."""
 
@@ -443,12 +414,12 @@ def register_statistics(input, output, session, ctx: SessionContext):
                 ),
                 _kpi_card(_("Attempts without passing"), str(kpis.get("attempts") or 0)),
                 _kpi_card(
-                    _("Average / median outside"),
-                    f"{kpis.get('avg_outside') or '—'} / {kpis.get('median_outside') or '—'}",
+                    _("Median time outside"),
+                    str(kpis.get("median_outside") or "—"),
                 ),
                 _kpi_card(
-                    _("Average / median inside"),
-                    f"{kpis.get('avg_inside') or '—'} / {kpis.get('median_inside') or '—'}",
+                    _("Median time inside"),
+                    str(kpis.get("median_inside") or "—"),
                 ),
                 class_="stats-kpis",
             ),
@@ -504,7 +475,6 @@ def register_statistics(input, output, session, ctx: SessionContext):
             ),
             ui.h3(_("Per cat"), class_="stats-section-title"),
             _cat_cards_ui(payload, labels),
-            ui.HTML(_numbers_table(payload)),
             ui.HTML(
                 f'<script type="application/json" id="stats-payload">{payload_json}</script>'
             ),

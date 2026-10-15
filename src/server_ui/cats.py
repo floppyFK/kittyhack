@@ -24,6 +24,17 @@ else:
     from src.pir import Pir
 
 
+def _has_saved_cats() -> bool:
+    """True when at least one cat is stored."""
+    try:
+        df = CatsRepo.db_get_cats(
+            CONFIG["KITTYHACK_DATABASE_PATH"], ReturnDataCatDB.all_except_photos
+        )
+        return df is not None and not df.empty
+    except Exception:
+        return False
+
+
 def register_cats(input, output, session, ctx: SessionContext):
     """Register Manage Cats / Add Cat tab handlers."""
 
@@ -661,7 +672,36 @@ def register_cats(input, output, session, ctx: SessionContext):
                 class_="image-container",
             )
         )
-        return (ui.layout_column_wrap(*ui_cards, width="400px"),)
+        form = ui.layout_column_wrap(*ui_cards, width="400px")
+        if not _has_saved_cats():
+            return (form,)
+        return (
+            ui.div(
+                ui.tags.button(
+                    ui.tags.span(
+                        "\u25b6",
+                        class_="kh-add-cat-chevron",
+                        aria_hidden="true",
+                    ),
+                    ui.tags.span(_("Add new cat")),
+                    id="btn_expand_add_cat",
+                    type="button",
+                    class_="btn btn-outline-secondary kh-add-cat-btn",
+                    **{
+                        "data-bs-toggle": "collapse",
+                        "data-bs-target": "#add_new_cat_body",
+                        "aria-expanded": "false",
+                        "aria-controls": "add_new_cat_body",
+                    },
+                ),
+                ui.div(
+                    form,
+                    id="add_new_cat_body",
+                    class_="collapse",
+                ),
+                class_="kh-add-cat",
+            ),
+        )
 
     @output
     @render.ui

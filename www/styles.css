@@ -1003,6 +1003,80 @@ html[data-bs-theme="dark"] .kh-info-box {
     text-align: left;
 }
 
+/* Long action labels (for example silenced-notification reset) stay readable on phones */
+.btn.kh-wrap-btn {
+    white-space: normal !important;
+    height: auto !important;
+    max-width: 100%;
+    line-height: 1.3;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 767.98px) {
+    .btn.kh-wrap-btn {
+        width: 100%;
+    }
+}
+
+.kh-setting-warning {
+    color: var(--bs-danger-text-emphasis, #b02a37);
+    font-size: 0.9rem;
+    line-height: 1.35;
+    margin: 0.35rem 0 0;
+    overflow-wrap: anywhere;
+}
+
+html[data-bs-theme="dark"] .kh-setting-warning {
+    color: var(--bs-danger-text-emphasis, #f1aeb5);
+}
+
+.kh-inline-hint {
+    color: var(--bs-secondary-color, #6c757d);
+    font-size: 0.9rem;
+    line-height: 1.35;
+    margin: 0.35rem 0 0;
+    overflow-wrap: anywhere;
+}
+
+#require_pir_for_camera_entry_container.kh-control-disabled .form-check {
+    opacity: 0.55;
+}
+
+.kh-add-cat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    gap: 1rem;
+}
+
+.kh-add-cat-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    white-space: normal !important;
+    height: auto !important;
+    max-width: 100%;
+    line-height: 1.25;
+}
+
+.kh-add-cat-chevron {
+    flex: 0 0 auto;
+    transition: transform 0.2s ease;
+}
+
+.kh-add-cat-btn[aria-expanded="true"] .kh-add-cat-chevron {
+    transform: rotate(90deg);
+}
+
+#add_new_cat_body,
+.kh-add-cat .collapse,
+.kh-add-cat .collapsing {
+    width: 100%;
+}
+
 .info-toggle-btn[aria-expanded="true"] .toggle-chevron {
     transform: rotate(90deg);
 }

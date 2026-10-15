@@ -33,14 +33,20 @@ from src.backend import (
 )
 from src.backend.decisions import (
     should_suggest_pir_second_factor,
+    sync_original_model_notice,
     sync_pir_second_factor_suggestion,
+    uses_original_detection_model,
 )
 from src.server_ui.state import (
     reload_trigger_config,
     live_view_refresh_nonce,
     live_view_aspect,
 )
-from src.server_ui.helpers import _disable_numeric_input, collapsible_section
+from src.server_ui.helpers import (
+    _disable_numeric_input,
+    _disable_switch,
+    collapsible_section,
+)
 from src.server_ui.unlock_logic import entry_logic_ui, exit_logic_ui
 from src.server_ui.context import SessionContext
 import src.startup as startup
@@ -180,6 +186,19 @@ def register_configuration(input, output, session, ctx: SessionContext):
         remote_mode_doc_main, remote_mode_doc_diagrams = _split_remote_mode_doc(
             remote_mode_doc_markdown, lang
         )
+
+        camera_based_entry = bool(
+            CONFIG.get("USE_CAMERA_FOR_CAT_DETECTION")
+            or CONFIG.get("USE_CAMERA_FOR_MOTION_DETECTION")
+        )
+        pir_for_camera_entry_switch = ui.input_switch(
+            "btnRequireOutsidePirForCameraEntry",
+            _("Additionally require the outside PIR for camera-based entry"),
+            CONFIG.get("REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY", False),
+            width="90%",
+        )
+        if not camera_based_entry:
+            pir_for_camera_entry_switch = _disable_switch(pir_for_camera_entry_switch)
 
         ui_config = ui.div(
             ui.div(
@@ -425,7 +444,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 ui.input_action_button(
                                     "btn_reset_muted_notifications",
                                     _("Show silenced notifications again"),
-                                    class_="btn-outline-secondary",
+                                    class_="btn-outline-secondary kh-wrap-btn",
                                 ),
                             ),
                             ui.column(
@@ -892,7 +911,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                     + _("Custom models:")
                                     + "** "
                                     + _(
-                                        "These are your own trained models, which you have created in the `AI TRAINING` section."
+                                        "These are your own trained models, which you have created in the **AI Training** section."
                                     )
                                     + "\n\n"
                                     + "> "
@@ -900,6 +919,12 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                         "Restart the Kittyflap after changing the model."
                                     ),
                                 ),
+                            ),
+                            ui.p(
+                                _(
+                                    "The original models (v1 and v2) are strongly discouraged: they are extremely inaccurate, and not all Kittyhack features work with them. A model you train yourself is much more accurate."
+                                ),
+                                class_="kh-setting-warning",
                             ),
                         ),
                         ui.hr(),
@@ -1010,15 +1035,7 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 ui.column(
                                     12,
                                     field_with_info(
-                                        ui.input_switch(
-                                            "btnRequireOutsidePirForCameraEntry",
-                                            _("Require outside motion for camera entry"),
-                                            CONFIG.get(
-                                                "REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY",
-                                                False,
-                                            ),
-                                            width="90%",
-                                        ),
+                                        pir_for_camera_entry_switch,
                                         "require_pir_for_camera_entry_info",
                                         _("Explain outside motion confirmation"),
                                         _(
@@ -1037,9 +1054,18 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                             "Kittyhack always asks for a new confirmation after the inside has been unlocked for 60 seconds without a cat passing through. If this happens twice in a row, camera unlocking pauses for 60 seconds."
                                         ),
                                     ),
+                                    ui.p(
+                                        _(
+                                            "This switch is available only when camera cat detection or camera motion detection is turned on."
+                                        ),
+                                        id="require_pir_for_camera_entry_disabled_hint",
+                                        class_="kh-inline-hint",
+                                        style_=None if not camera_based_entry else "display: none;",
+                                    ),
                                 ),
                             ),
                             id="require_pir_for_camera_entry_container",
+                            class_="" if camera_based_entry else "kh-control-disabled",
                         ),
                         ui.hr(),
                         ui.row(
@@ -2190,6 +2216,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
             bool(CONFIG.get("USE_CAMERA_FOR_MOTION_DETECTION", False)),
             bool(CONFIG.get("USE_CAMERA_FOR_CAT_DETECTION", False)),
         )
+        prev_original_model = uses_original_detection_model(
+            CONFIG.get("TFLITE_MODEL_VERSION")
+        )
 
         camera_settings_changed = (
             CONFIG.get("CAMERA_SOURCE") != input.camera_source()
@@ -2961,13 +2990,18 @@ def register_configuration(input, output, session, ctx: SessionContext):
             )
             try:
                 queued_pir_tip = sync_pir_second_factor_suggestion()
-                if queued_pir_tip and not prev_suggest_pir:
+                queued_model_tip = (
+                    sync_original_model_notice() if selected_model_changed else False
+                )
+                if (queued_pir_tip and not prev_suggest_pir) or (
+                    queued_model_tip and not prev_original_model
+                ):
                     show_notes = getattr(ctx, "show_user_notifications", None)
                     if callable(show_notes):
                         show_notes()
             except Exception as e:
                 logging.warning(
-                    f"[CONFIG] Failed to sync PIR-second-factor suggestion: {e}"
+                    f"[CONFIG] Failed to sync settings hints: {e}"
                 )
             # Trigger UI components that depend on these settings to re-render
             reload_trigger_config.set(reload_trigger_config.get() + 1)

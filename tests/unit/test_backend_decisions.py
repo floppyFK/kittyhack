@@ -8,7 +8,9 @@ from src.backend.decisions import (
     no_prey_within_timeout,
     pir_ok_for_camera_entry,
     should_suggest_pir_second_factor,
+    sync_original_model_notice,
     sync_pir_second_factor_suggestion,
+    uses_original_detection_model,
     resolve_per_cat_exit,
     resolve_prey_detection_enabled,
     time_in_exit_ranges,
@@ -137,6 +139,68 @@ def test_sync_pir_second_factor_suggestion_queues_and_clears(tmp_path, monkeypat
 
     baseconfig.CONFIG["REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY"] = True
     assert sync_pir_second_factor_suggestion() is False
+    assert UserNotifications.get_by_id(nid) is None
+
+
+def test_uses_original_detection_model():
+    assert uses_original_detection_model("original_kittyflap_model_v2") is True
+    assert uses_original_detection_model("original_kittyflap_model_v1") is True
+    assert uses_original_detection_model("") is False
+    assert uses_original_detection_model(None) is False
+
+
+def test_sync_original_model_notice_for_new_install(tmp_path, monkeypatch):
+    import src.baseconfig as baseconfig
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("src.backend.decisions._has_custom_yolo_model", lambda: False)
+    UserNotifications.notifications = []
+    UserNotifications.muted_ids = []
+    baseconfig.CONFIG["LANGUAGE"] = "en"
+    baseconfig.CONFIG["TFLITE_MODEL_VERSION"] = "original_kittyflap_model_v2"
+    baseconfig.CONFIG["YOLO_MODEL"] = ""
+    assert sync_original_model_notice() is True
+    nid = UserNotifications.ID_ORIGINAL_MODEL_ACCURACY
+    note = UserNotifications.get_by_id(nid)
+    assert note is not None
+    assert note.get("muteable") is True
+    assert "do not need to change anything right now" in note["message"]
+    assert "AI Training" in note["message"]
+    assert sync_original_model_notice() is False
+
+    baseconfig.CONFIG["TFLITE_MODEL_VERSION"] = ""
+    baseconfig.CONFIG["YOLO_MODEL"] = "custom-model"
+    assert sync_original_model_notice() is False
+    assert UserNotifications.get_by_id(nid) is None
+
+
+def test_sync_original_model_notice_points_at_existing_model(tmp_path, monkeypatch):
+    import src.baseconfig as baseconfig
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("src.backend.decisions._has_custom_yolo_model", lambda: True)
+    UserNotifications.notifications = []
+    UserNotifications.muted_ids = []
+    baseconfig.CONFIG["LANGUAGE"] = "en"
+    baseconfig.CONFIG["TFLITE_MODEL_VERSION"] = "original_kittyflap_model_v1"
+    assert sync_original_model_notice() is True
+    note = UserNotifications.get_by_id(UserNotifications.ID_ORIGINAL_MODEL_ACCURACY)
+    assert "Detection model" in note["message"]
+    assert "do not need to change anything right now" not in note["message"]
+
+
+def test_sync_original_model_notice_respects_mute(tmp_path, monkeypatch):
+    import src.baseconfig as baseconfig
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("src.backend.decisions._has_custom_yolo_model", lambda: False)
+    UserNotifications.notifications = []
+    UserNotifications.muted_ids = []
+    nid = UserNotifications.ID_ORIGINAL_MODEL_ACCURACY
+    UserNotifications.mute(nid)
+    baseconfig.CONFIG["LANGUAGE"] = "en"
+    baseconfig.CONFIG["TFLITE_MODEL_VERSION"] = "original_kittyflap_model_v2"
+    assert sync_original_model_notice() is False
     assert UserNotifications.get_by_id(nid) is None
 
 

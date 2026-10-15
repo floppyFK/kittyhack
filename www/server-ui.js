@@ -255,7 +255,8 @@
     }
 
     function initRequirePirForCameraEntryToggle() {
-        // Show PIR second-factor switch when camera cat detection or camera motion is enabled.
+        // The outside-PIR switch only applies when camera cat detection or
+        // camera motion detection is on. Keep it visible, but disabled otherwise.
         var catSw = q('#btnUseCameraForCatDetection');
         var motionSw = q('#btnUseCameraForMotionDetection');
         var wrap = q('#require_pir_for_camera_entry_container');
@@ -275,8 +276,12 @@
         }
 
         function apply() {
-            var show = isOn(catSw) || isOn(motionSw);
-            wrap.style.display = show ? '' : 'none';
+            var cameraOn = isOn(catSw) || isOn(motionSw);
+            var sw = q('#btnRequireOutsidePirForCameraEntry');
+            var hint = q('#require_pir_for_camera_entry_disabled_hint');
+            if (sw) sw.disabled = !cameraOn;
+            wrap.classList.toggle('kh-control-disabled', !cameraOn);
+            if (hint) hint.style.display = cameraOn ? 'none' : '';
         }
 
         apply();

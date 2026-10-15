@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from src.baseconfig import AllowedToExit
 from src.helper import EventType
 
@@ -159,10 +161,80 @@ def sync_pir_second_factor_suggestion() -> bool:
                 "will lock the inside. A real cat without RFID can then only enter when the "
                 "outside PIR also triggers.")
             + "\n\n"
-            + _("Consider enabling **Require outside PIR for camera-based entry** in Settings. "
+            + _("Consider enabling **Additionally require the outside PIR for camera-based entry** in Settings. "
                 "This is useful if the camera sometimes falsely detects a cat due to sun glare "
                 "or reflections.")
         ),
+        type="warning",
+        id=nid,
+        skip_if_id_exists=True,
+        muteable=True,
+    )
+    return added == nid
+
+
+def uses_original_detection_model(tflite_version) -> bool:
+    """True when a bundled Kittyflap TFLite model is the active detector."""
+    return bool(str(tflite_version or "").strip())
+
+
+def _has_custom_yolo_model() -> bool:
+    try:
+        from src.model import YoloModel
+
+        return any(
+            (model.get("unique_id") or "").strip()
+            for model in YoloModel.get_model_list()
+        )
+    except Exception as e:
+        logging.debug(f"[USR_NOTIFICATIONS] Could not list custom models: {e}")
+        return False
+
+
+def _original_model_notice_message(has_custom_model: bool) -> str:
+    from src.baseconfig import CONFIG, set_language
+
+    _ = set_language(CONFIG.get("LANGUAGE", "en"))
+    intro = _("Kittyhack is using an original Kittyflap model.")
+    problem = _(
+        "The included models (v1 and v2) are extremely inaccurate, and not all "
+        "Kittyhack features work with them. Camera-based cat detection is one example."
+    )
+    if has_custom_model:
+        action = _(
+            "A model you trained yourself is much more accurate. Select it under "
+            "**Settings**, in the **Flap** section, as the **Detection model**."
+        )
+        return f"{intro}\n\n{problem}\n\n{action}"
+    later = _(
+        "The flap still works with the microchip reader. You do not need to change anything right now."
+    )
+    train = _(
+        "Later, under **AI Training**, you can train a model for your own cats and camera. "
+        "That model is much more accurate."
+    )
+    return f"{intro}\n\n{problem}\n\n{later}\n\n{train}"
+
+
+def sync_original_model_notice() -> bool:
+    """Queue or drop the muteable original-model hint from the current CONFIG.
+
+    New installations ship without a trained model, so the text explains that
+    the flap still works and training can wait.
+
+    Returns True if a new notification was added.
+    """
+    from src.baseconfig import CONFIG, UserNotifications, set_language
+
+    _ = set_language(CONFIG.get("LANGUAGE", "en"))
+    nid = UserNotifications.ID_ORIGINAL_MODEL_ACCURACY
+    if not uses_original_detection_model(CONFIG.get("TFLITE_MODEL_VERSION")):
+        if UserNotifications.get_by_id(nid):
+            UserNotifications.remove(nid)
+        return False
+    added = UserNotifications.add(
+        header=_("Original detection model"),
+        message=_original_model_notice_message(_has_custom_yolo_model()),
         type="warning",
         id=nid,
         skip_if_id_exists=True,

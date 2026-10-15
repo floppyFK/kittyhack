@@ -885,6 +885,7 @@ class UserNotifications:
     """
     ID_INSIDE_UNLOCK_HELD_AFTER_MAX_TIME = "inside_unlock_held_after_max_time"
     ID_SUGGEST_PIR_SECOND_FACTOR = "suggest_pir_second_factor_for_camera_entry"
+    ID_ORIGINAL_MODEL_ACCURACY = "original_kittyflap_model_accuracy"
 
     notifications = []
     muted_ids = []

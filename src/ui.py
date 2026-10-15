@@ -76,7 +76,7 @@ _nav_items = [
         value="manage-cats",
     ),
     ui.nav_panel(
-        _("Training"),
+        _("AI Training"),
         ui.output_ui("ui_ai_training"),
         ui.br(),
         value="ai-training",

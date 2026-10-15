@@ -27,6 +27,35 @@ def _disable_input(tag):
     return tag
 
 
+def _disable_switch(tag):
+    """Disable a ui.input_switch by setting disabled on its checkbox."""
+
+    def walk(node) -> bool:
+        if node is None or isinstance(node, (str, bytes, int, float)):
+            return False
+        attrs = getattr(node, "attrs", None)
+        if isinstance(attrs, dict) and attrs.get("type") == "checkbox":
+            attrs["disabled"] = "disabled"
+            return True
+        children = getattr(node, "children", None)
+        if not children:
+            return False
+        try:
+            seq = list(children)
+        except TypeError:
+            return False
+        for child in seq:
+            if walk(child):
+                return True
+        return False
+
+    try:
+        walk(tag)
+    except Exception:
+        pass
+    return tag
+
+
 def collapsible_section(section_id, title, intro, content):
     """Bootstrap-collapse section with chevron header, intro text, and body content."""
     return ui.div(

@@ -2420,6 +2420,9 @@ msgstr ""
 msgid "Kittyhack could not save the settings."
 msgstr "Kittyhack konnte die Einstellungen nicht speichern."
 
+msgid "No picture stored"
+msgstr "Kein Bild gespeichert"
+
 msgid "Show previous frame"
 msgstr "Vorheriges Bild"
 

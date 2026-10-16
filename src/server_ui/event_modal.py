@@ -23,6 +23,11 @@ from src.database import (
     THUMBNAIL_DIR,
 )
 from src.camera import DetectedObject
+from src.event_timeline import (
+    timeline_door_action_kind,
+    timeline_door_markers,
+    timeline_parse_timestamp,
+)
 from src.paths import pictures_original_dir
 from src.labelstudio_api import upload_image_to_labelstudio_project
 from src.server_ui.state import reload_trigger_photos
@@ -414,9 +419,140 @@ def show_event_server(input, output, session, block_id: int):
                     )
             frames_json.append(frame_obj)
 
+        timeline_entries = EventsRepo.db_get_motion_timelines(
+            CONFIG["KITTYHACK_DATABASE_PATH"], [block_id]
+        ).get(int(block_id), [])
+        captured_frames = EventsRepo.db_get_motion_frames(
+            CONFIG["KITTYHACK_DATABASE_PATH"], block_id
+        )
+
+        def _local_frame_timestamp(at_value):
+            try:
+                timestamp = pd.to_datetime(at_value, utc=True)
+                return timestamp.tz_convert(CONFIG["TIMEZONE"]).strftime(
+                    "%Y-%m-%d %H:%M:%S.%f"
+                )[:-3]
+            except Exception:
+                return ""
+
+        def _frame_epoch(frame):
+            return timeline_parse_timestamp(frame.get("_at") or frame.get("ts"))
+
+        # New events have an entry for every captured frame, including frames whose
+        # image was discarded by the configured per-event picture limit.
+        if captured_frames:
+            saved_frames = {
+                int(frame["pid"]): frame
+                for frame in frames_json
+                if frame.get("pid") is not None
+            }
+            complete_frames = []
+            complete_photo_ids = []
+            for captured in captured_frames:
+                if not isinstance(captured, dict):
+                    continue
+                at_value = captured.get("at", "")
+                try:
+                    pid = int(captured["pid"]) if captured.get("pid") is not None else None
+                except Exception:
+                    pid = None
+                if pid is not None and pid in saved_frames:
+                    frame_obj = dict(saved_frames[pid])
+                else:
+                    frame_obj = {
+                        "pid": None,
+                        "missing": True,
+                        "objects": captured.get("objects", []),
+                    }
+                frame_obj["ts"] = _format_event_modal_ts(_local_frame_timestamp(at_value))
+                frame_obj["_at"] = at_value
+                complete_frames.append(frame_obj)
+                complete_photo_ids.append(pid if pid in saved_frames else None)
+            if complete_frames:
+                frames_json = complete_frames
+                photo_ids[:] = complete_photo_ids
+        else:
+            # Legacy events only know saved frames. Extend their ends to door actions
+            # outside that range, using placeholder frames at the recorded interval.
+            for idx, frame in enumerate(frames_json):
+                try:
+                    local_ts = pd.Timestamp(timestamps[idx])
+                    if local_ts.tzinfo is None:
+                        local_ts = local_ts.tz_localize(CONFIG["TIMEZONE"])
+                    frame["_at"] = local_ts.timestamp()
+                except Exception:
+                    frame["_at"] = frame.get("ts")
+            frame_epochs = [value for value in (_frame_epoch(f) for f in frames_json) if value is not None]
+            action_epochs = [
+                value
+                for value in (
+                    timeline_parse_timestamp(entry.get("at"))
+                    for entry in timeline_entries
+                    if isinstance(entry, dict)
+                    and timeline_door_action_kind(entry.get("action"))
+                )
+                if value is not None
+            ]
+            if frame_epochs and action_epochs:
+                interval = 1.0 / max(0.1, float(event_effective_fps[0] or 4.0))
+                max_placeholders = 1000
+                prepend = min(
+                    max_placeholders,
+                    max(0, int((min(frame_epochs) - min(action_epochs)) / interval + 0.999)),
+                )
+                append = min(
+                    max_placeholders - prepend,
+                    max(0, int((max(action_epochs) - max(frame_epochs)) / interval + 0.999)),
+                )
+                first = min(frame_epochs)
+                last = max(frame_epochs)
+                prefix = [
+                    {
+                        "pid": None,
+                        "missing": True,
+                        "objects": [],
+                        "_at": first - interval * step,
+                    }
+                    for step in range(prepend, 0, -1)
+                ]
+                suffix = [
+                    {
+                        "pid": None,
+                        "missing": True,
+                        "objects": [],
+                        "_at": last + interval * step,
+                    }
+                    for step in range(1, append + 1)
+                ]
+                frames_json = prefix + frames_json + suffix
+                photo_ids[:] = [None] * prepend + list(photo_ids) + [None] * append
+                for frame in prefix + suffix:
+                    local_ts = pd.Timestamp(frame["_at"], unit="s", tz="UTC").tz_convert(
+                        CONFIG["TIMEZONE"]
+                    ).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                    frame["ts"] = _format_event_modal_ts(local_ts)
+
+        frame_times = [frame.get("_at") or frame.get("ts") for frame in frames_json]
+        door_markers = timeline_door_markers(timeline_entries, frame_times)
+        for frame in frames_json:
+            frame.pop("_at", None)
+
+        # Full captured timestamps give the actual playback cadence.
+        parsed_frame_times = [
+            value for value in (timeline_parse_timestamp(v) for v in frame_times) if value is not None
+        ]
+        if len(parsed_frame_times) >= 2:
+            span = max(parsed_frame_times) - min(parsed_frame_times)
+            if span > 0:
+                event_effective_fps[0] = max(
+                    0.1, min(30.0, (len(parsed_frame_times) - 1) / span)
+                )
+
         player_data = json.dumps(
             {
                 "frames": frames_json,
+                "doorMarkers": door_markers,
+                "missingPictureText": _("No picture stored"),
                 "mouseThreshold": float(CONFIG.get("MOUSE_THRESHOLD", 50)),
                 "overlayInitial": bool(
                     int(CONFIG.get("SHOW_IMAGES_WITH_OVERLAY", True))
@@ -457,8 +593,8 @@ def show_event_server(input, output, session, block_id: int):
             </button>
             <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
                     data-action="play-pause" title="{_("Play or pause")}">
-                <span class="kh-icon-play" {"" if len(pictures) <= 1 else 'style="display:none"'}>{play_icon_html}</span>
-                <span class="kh-icon-pause" {'style="display:none"' if len(pictures) <= 1 else ""}>{pause_icon_html}</span>
+                <span class="kh-icon-play" {"" if len(frames_json) <= 1 else 'style="display:none"'}>{play_icon_html}</span>
+                <span class="kh-icon-pause" {'style="display:none"' if len(frames_json) <= 1 else ""}>{pause_icon_html}</span>
             </button>
             <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
                     data-action="next" title="{_("Show next frame")}">

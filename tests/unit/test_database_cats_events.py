@@ -1,6 +1,9 @@
 """Cats / settings map against a temp SQLite DB."""
 
-from src.database import CatsRepo, DbMigrations
+import json
+import sqlite3
+
+from src.database import CatsRepo, EventsRepo
 
 
 def test_add_cat_and_settings_map(tmp_kittyhack_db):
@@ -30,3 +33,26 @@ def test_add_cat_and_settings_map(tmp_kittyhack_db):
 def test_empty_db_settings_map(tmp_kittyhack_db):
     assert CatsRepo.get_cat_settings_map(tmp_kittyhack_db) == {}
     assert CatsRepo.get_cat_names_list(tmp_kittyhack_db) == []
+
+
+def test_motion_frame_timeline_round_trip_and_action_update(tmp_kittyhack_db):
+    frames = [
+        {"at": "2024-06-01 12:00:00+00:00", "pid": 10},
+        {"at": "2024-06-01 12:00:01+00:00", "objects": []},
+    ]
+    with sqlite3.connect(tmp_kittyhack_db) as conn:
+        conn.execute(
+            "INSERT INTO motion_timeline (block_id, timeline_json, frames_json) "
+            "VALUES (?, ?, ?)",
+            (7, "[]", json.dumps(frames)),
+        )
+
+    assert EventsRepo.db_get_motion_frames(tmp_kittyhack_db, 7) == frames
+
+    result = EventsRepo.write_motion_timeline(
+        tmp_kittyhack_db,
+        7,
+        [{"action": "inside_opened", "at": "2024-06-01 12:00:00+00:00"}],
+    )
+    assert result.success
+    assert EventsRepo.db_get_motion_frames(tmp_kittyhack_db, 7) == frames

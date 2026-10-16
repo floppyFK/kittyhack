@@ -965,6 +965,32 @@ html[data-bs-theme="dark"] .kh-photo-modal-close:hover {
     background-color: #000;
 }
 
+.event-modal-picture-wrap.has-missing-image {
+    background: var(--bs-tertiary-bg, #e9ecef);
+}
+
+.event-modal-missing-picture {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: .5rem;
+    color: var(--bs-secondary-color, #6c757d);
+    font-size: 1rem;
+}
+
+.event-modal-picture-wrap.has-missing-image .event-modal-missing-picture {
+    display: flex;
+}
+
+.event-modal-missing-icon {
+    font-size: 2.5rem;
+    line-height: 1;
+}
+
 /* JS-managed image layer that persists across Shiny re-renders */
 .event-modal-picture-wrap .event-modal-js-layer {
     position: absolute;
@@ -1716,6 +1742,54 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
     z-index: 4;
     overflow: hidden;
     border-radius: 9999px;
+}
+
+#event_scrubber_wrap .event-scrubber-door-markers {
+    position: absolute;
+    left: var(--kh-scrubber-inset);
+    right: var(--kh-scrubber-inset);
+    top: 0;
+    bottom: 0;
+    z-index: 5;
+    pointer-events: none;
+}
+
+#event_scrubber_wrap .event-scrubber-door-mark {
+    position: absolute;
+    width: 4px;
+    height: 11px;
+    padding: 0;
+    border: 0;
+    border-radius: 2px;
+    transform: translateX(-50%);
+    pointer-events: auto;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px var(--bs-body-bg, #fff);
+}
+
+#event_scrubber_wrap .event-scrubber-door-mark.is-inside-open,
+#event_scrubber_wrap .event-scrubber-door-mark.is-outside-open {
+    top: 2px;
+}
+
+#event_scrubber_wrap .event-scrubber-door-mark.is-inside-close,
+#event_scrubber_wrap .event-scrubber-door-mark.is-outside-close {
+    top: 17px;
+}
+
+#event_scrubber_wrap .event-scrubber-door-mark.is-inside-open,
+#event_scrubber_wrap .event-scrubber-door-mark.is-inside-close {
+    background: var(--bs-primary, #0d6efd);
+}
+
+#event_scrubber_wrap .event-scrubber-door-mark.is-outside-open,
+#event_scrubber_wrap .event-scrubber-door-mark.is-outside-close {
+    background: var(--bs-warning, #ffc107);
+}
+
+#event_scrubber_wrap .event-scrubber-door-mark:focus-visible {
+    outline: 2px solid var(--bs-body-color, #212529);
+    outline-offset: 2px;
 }
 
 /* Align marker segments with the track */

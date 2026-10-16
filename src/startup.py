@@ -621,6 +621,14 @@ def run() -> None:
     if not DatabaseCore.check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "motion_timeline"):
         logging.warning("Table 'motion_timeline' not found in the kittyhack database. Creating it...")
         DbMigrations.create_motion_timeline_table(CONFIG['KITTYHACK_DATABASE_PATH'])
+    elif not DatabaseCore.check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "motion_timeline", "frames_json"):
+        logging.warning("Column 'frames_json' not found in 'motion_timeline'. Adding it...")
+        DatabaseCore.add_column_to_table(
+            CONFIG['KITTYHACK_DATABASE_PATH'],
+            "motion_timeline",
+            "frames_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )
 
     DbMigrations.create_visit_stats_tables(CONFIG['KITTYHACK_DATABASE_PATH'])
 

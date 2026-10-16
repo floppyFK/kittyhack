@@ -300,6 +300,8 @@
         try { data = JSON.parse((dataScript && dataScript.textContent) || '{}'); } catch (e) { data = {}; }
 
         this.frames = data.frames || [];
+        this.doorMarkers = data.doorMarkers || [];
+        this.missingPictureText = data.missingPictureText || 'No picture stored';
         this.mouseThreshold = parseFloat(data.mouseThreshold) || 50.0;
         this.overlayOn = (data.overlayInitial !== false);
         this.fps = parseFloat(data.fps) || 4.0;
@@ -370,6 +372,13 @@
         this.currentIdx = idx;
 
         var frame = this.frames[idx];
+        if (frame.missing || frame.pid === null || typeof frame.pid === 'undefined') {
+            this._showMissingFrame(frame, idx);
+            this._updateScrubber(idx);
+            this._signalFrameIdx(idx);
+            this._updateDownloadSingleState();
+            return;
+        }
         var src = this._resolveFrameSrc(frame.pid);
 
         if (!src) {
@@ -384,6 +393,33 @@
         this._updateScrubber(idx);
         this._signalFrameIdx(idx);
         this._prefetchAdjacent(idx);
+        this._updateDownloadSingleState();
+    };
+
+    Player.prototype._showMissingFrame = function (frame, idx) {
+        if (!this.wrap) return;
+        this._swapToken = '';
+        this.wrap.classList.remove('has-image');
+        this.wrap.classList.add('has-missing-image');
+        this.wrap.style.removeProperty('--kh-event-bg');
+        if (this._layerInfo) {
+            var images = [this._layerInfo.a, this._layerInfo.b];
+            for (var i = 0; i < images.length; i++) {
+                images[i].removeAttribute('src');
+                images[i].setAttribute('aria-hidden', 'true');
+            }
+            var bg = this._layerInfo.layer.querySelector('img[data-role="bg"]');
+            if (bg) bg.removeAttribute('src');
+        }
+        var placeholder = this.wrap.querySelector('.event-modal-missing-picture');
+        if (!placeholder) {
+            placeholder = document.createElement('div');
+            placeholder.className = 'event-modal-missing-picture';
+            placeholder.innerHTML = '<span class="event-modal-missing-icon" aria-hidden="true">▧</span>'
+                + '<span>' + _escHtml(this.missingPictureText) + '</span>';
+            this.wrap.appendChild(placeholder);
+        }
+        this._renderOverlay(frame, idx);
     };
 
     Player.prototype._resolveFrameSrc = function (pid) {
@@ -416,6 +452,7 @@
 
     Player.prototype._swapImage = function (src) {
         if (!src || !this.wrap || !this._layerInfo) return;
+        this.wrap.classList.remove('has-missing-image');
         var layer = this._layerInfo;
         var active = layer.getActive();
         var inactive = layer.getInactive();
@@ -476,7 +513,7 @@
 
         var html = '<div id="event_modal_overlay" style="position:absolute;inset:0;pointer-events:none;">';
 
-        if (this.overlayOn && !this.fallbackMode && frame.objects && frame.objects.length > 0) {
+        if (!frame.missing && this.overlayOn && !this.fallbackMode && frame.objects && frame.objects.length > 0) {
             for (var i = 0; i < frame.objects.length; i++) {
                 var obj = frame.objects[i];
                 var nameL = (obj.name || '').toLowerCase();
@@ -549,6 +586,9 @@
         html += '<div class="event-scrubber-markers" aria-hidden="true">';
         html += this._buildMarkerSegments(n);
         html += '</div>';
+        html += '<div class="event-scrubber-door-markers">';
+        html += this._buildDoorMarkers();
+        html += '</div>';
         html += '</div>';
 
         container.innerHTML = html;
@@ -572,6 +612,35 @@
                 self._updateScrubberFill(rangeInput);
             });
         }
+
+        var doorMarks = container.querySelectorAll('.event-scrubber-door-mark');
+        for (var i = 0; i < doorMarks.length; i++) {
+            doorMarks[i].addEventListener('click', function () {
+                if (self.playing) {
+                    self._stopPlayback();
+                    self.playing = false;
+                    self._updatePlayPauseUI();
+                    self._updateNavButtonsState();
+                    self._updateScrubberPlayingState();
+                }
+                self.showFrame(parseIntSafe(this.getAttribute('data-frame'), 0));
+            });
+        }
+    };
+
+    Player.prototype._buildDoorMarkers = function () {
+        var html = '';
+        for (var i = 0; i < this.doorMarkers.length; i++) {
+            var marker = this.doorMarkers[i] || {};
+            var pct = Math.max(0, Math.min(100, (parseFloat(marker.position) || 0) * 100));
+            var kind = String(marker.kind || '').replace(/[^a-z-]/g, '');
+            html += '<button type="button" class="event-scrubber-door-mark is-' + kind + '"'
+                + ' data-frame="' + parseIntSafe(marker.frame, 0) + '"'
+                + ' style="left:' + pct.toFixed(4) + '%"'
+                + ' title="' + _escHtml(marker.label || '') + '"'
+                + ' aria-label="' + _escHtml(marker.label || '') + '"></button>';
+        }
+        return html;
     };
 
     Player.prototype._buildMarkerSegments = function (nFrames) {
@@ -738,14 +807,18 @@
         try {
             var scope = this.root.closest('.modal-content') || document;
             var btns = scope.querySelectorAll('.event-modal-toolbar-bottom-left a, .event-modal-toolbar-bottom-left button');
+            var frame = (this.currentIdx >= 0 && this.currentIdx < this.frames.length) ? this.frames[this.currentIdx] : null;
+            var unavailable = this.playing || !frame || frame.missing || frame.pid === null || typeof frame.pid === 'undefined';
             for (var i = 0; i < btns.length; i++) {
                 var btn = btns[i];
-                if (this.playing) {
+                if (unavailable) {
                     btn.classList.add('disabled');
+                    btn.setAttribute('aria-disabled', 'true');
                     btn.style.opacity = '0.5';
                     btn.style.pointerEvents = 'none';
                 } else {
                     btn.classList.remove('disabled');
+                    btn.removeAttribute('aria-disabled');
                     btn.style.opacity = '';
                     btn.style.pointerEvents = '';
                 }
@@ -860,8 +933,8 @@
             if (this.frames.length <= 1) return;
             var prevIdx = (idx - 1 + this.frames.length) % this.frames.length;
             var nextIdx = (idx + 1) % this.frames.length;
-            var prevSrc = this._resolveFrameSrc(this.frames[prevIdx].pid);
-            var nextSrc = this._resolveFrameSrc(this.frames[nextIdx].pid);
+            var prevSrc = this.frames[prevIdx].missing ? '' : this._resolveFrameSrc(this.frames[prevIdx].pid);
+            var nextSrc = this.frames[nextIdx].missing ? '' : this._resolveFrameSrc(this.frames[nextIdx].pid);
             if (prevSrc) prefetchSrc(prevSrc);
             if (nextSrc) prefetchSrc(nextSrc);
         } catch (e) {}

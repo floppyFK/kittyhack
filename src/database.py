@@ -868,7 +868,8 @@ class EventsRepo:
             conn = sqlite3.connect(database, timeout=30)
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT OR REPLACE INTO motion_timeline (block_id, timeline_json) VALUES (?, ?)",
+                "INSERT INTO motion_timeline (block_id, timeline_json) VALUES (?, ?) "
+                "ON CONFLICT(block_id) DO UPDATE SET timeline_json=excluded.timeline_json",
                 (int(block_id), json.dumps(timeline_entries, ensure_ascii=False)),
             )
             conn.commit()
@@ -907,6 +908,26 @@ class EventsRepo:
             except Exception:
                 result[int(row["block_id"])] = []
         return result
+
+    @staticmethod
+    def db_get_motion_frames(database: str, block_id: int) -> list:
+        """Return the complete captured-frame timeline for a motion block."""
+        if not DatabaseCore.check_if_table_exists(database, "motion_timeline"):
+            return []
+        if not DatabaseCore.check_if_column_exists(database, "motion_timeline", "frames_json"):
+            return []
+        stmt = (
+            "SELECT frames_json FROM motion_timeline "
+            f"WHERE block_id = {int(block_id)}"
+        )
+        df = DatabaseCore.read_df_from_database(database, stmt)
+        if df is None or df.empty:
+            return []
+        try:
+            frames = json.loads(df.iloc[0]["frames_json"] or "[]")
+            return frames if isinstance(frames, list) else []
+        except Exception:
+            return []
 
     @staticmethod
     def read_photo_by_id(database: str, photo_id: int) -> pd.DataFrame:
@@ -1101,7 +1122,11 @@ class EventsRepo:
                 effective_fps_block = 60.0
 
             index = 0
+            frame_timeline = []
             for element in elements:
+                frame_entry = {
+                    "at": DateTimeUtil.get_utc_date_string(element.timestamp),
+                }
                 # Write the image to the database, if the index is less than the maximum number of images
                 if index < max_images:
                     try:
@@ -1145,6 +1170,7 @@ class EventsRepo:
                         values_list.append(float(effective_fps_block))
                     cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
                     new_row_id = cursor.lastrowid
+                    frame_entry["pid"] = int(new_row_id)
                     # Persist original image to filesystem (if available)
                     if element.original_image is not None:
                         orig_path = EventsRepo._original_image_path(new_row_id)
@@ -1154,6 +1180,20 @@ class EventsRepo:
                         except Exception as e:
                             logging.warning(f"[DATABASE] Failed to write original image file '{orig_path}': {e}")
                     index += 1
+                else:
+                    frame_entry["objects"] = [
+                        {
+                            "x": round(obj.x, 2),
+                            "y": round(obj.y, 2),
+                            "w": round(obj.width, 2),
+                            "h": round(obj.height, 2),
+                            "name": (obj.object_name or "").strip(),
+                            "prob": round(obj.probability, 1) if obj.probability else 0,
+                        }
+                        for obj in (element.detected_objects or [])
+                        if (obj.object_name or "").strip().lower() != "false-accept"
+                    ]
+                frame_timeline.append(frame_entry)
 
                 # Delete the image from the buffer
                 if delete_from_buffer:
@@ -1172,11 +1212,17 @@ class EventsRepo:
                         cursor, max_count, has_motion_timeline=has_motion_timeline
                     )
 
-            if timeline_entries and has_motion_timeline:
+            if has_motion_timeline:
                 try:
                     cursor.execute(
-                        "INSERT OR REPLACE INTO motion_timeline (block_id, timeline_json) VALUES (?, ?)",
-                        (int(db_block_id), json.dumps(timeline_entries, ensure_ascii=False)),
+                        "INSERT INTO motion_timeline (block_id, timeline_json, frames_json) "
+                        "VALUES (?, ?, ?) ON CONFLICT(block_id) DO UPDATE SET "
+                        "timeline_json=excluded.timeline_json, frames_json=excluded.frames_json",
+                        (
+                            int(db_block_id),
+                            json.dumps(timeline_entries or [], ensure_ascii=False),
+                            json.dumps(frame_timeline, ensure_ascii=False),
+                        ),
                     )
                 except Exception as e:
                     logging.warning(f"[DATABASE] Could not store motion timeline for block {db_block_id}: {e}")
@@ -2175,7 +2221,8 @@ class DbMigrations:
         stmt = """
             CREATE TABLE IF NOT EXISTS motion_timeline (
                 block_id INTEGER PRIMARY KEY,
-                timeline_json TEXT NOT NULL DEFAULT '[]'
+                timeline_json TEXT NOT NULL DEFAULT '[]',
+                frames_json TEXT NOT NULL DEFAULT '[]'
             )
         """
         result = DatabaseCore.write_stmt_to_database(database, stmt)
@@ -2438,6 +2485,7 @@ get_thubmnail_by_id = EventsRepo.get_thubmnail_by_id
 write_motion_timeline = EventsRepo.write_motion_timeline
 delete_motion_timeline_by_block_id = EventsRepo.delete_motion_timeline_by_block_id
 db_get_motion_timelines = EventsRepo.db_get_motion_timelines
+db_get_motion_frames = EventsRepo.db_get_motion_frames
 read_photo_by_id = EventsRepo.read_photo_by_id
 delete_photo_by_id = EventsRepo.delete_photo_by_id
 delete_photos_by_block_id = EventsRepo.delete_photos_by_block_id

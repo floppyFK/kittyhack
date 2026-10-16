@@ -80,9 +80,9 @@ msgstr ""
 msgid "Original detection model"
 msgstr "Originales Erkennungsmodell"
 
-msgid "Kittyhack is using the model that came with the Kittyflap (v1 or v2)."
+msgid "Kittyhack is using currently the model that came with the Kittyflap (v1 or v2)."
 msgstr ""
-"Kittyhack verwendet das Modell, das mit der Kittyflap mitgeliefert wurde (v1 "
+"Kittyhack verwendet derzeit das Modell, das mit der Kittyflap mitgeliefert wurde (v1 "
 "oder v2)."
 
 msgid ""
@@ -106,11 +106,11 @@ msgstr "Anleitung zum Modelltraining"
 
 #, python-brace-format
 msgid ""
-"A model you train yourself is much more accurate. Kittyhack needs pictures "
+"However, a model you train yourself is much more accurate. Kittyhack needs pictures "
 "of your cats first. You can create that model later under **AI Training**. "
 "The steps are explained in the [{guide}]({url})."
 msgstr ""
-"Ein selbst trainiertes Modell ist deutlich genauer. Dafür braucht Kittyhack "
+"Allerdings ist ein selbst trainiertes Modell deutlich genauer. Dafür braucht Kittyhack "
 "zuerst Bilder deiner Katzen. Du kannst es später unter **KI Training** "
 "erstellen. Die Schritte stehen in der [{guide}]({url})."
 

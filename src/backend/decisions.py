@@ -208,7 +208,7 @@ def _original_model_notice_message(has_custom_model: bool) -> str:
 
     language = CONFIG.get("LANGUAGE", "en")
     _ = set_language(language)
-    intro = _("Kittyhack is using the model that came with the Kittyflap (v1 or v2).")
+    intro = _("Kittyhack is using currently the model that came with the Kittyflap (v1 or v2).")
     problem = _(
         "This model is extremely inaccurate, because it was not trained for your cats. "
         "Not all Kittyhack features work with it. The camera cannot identify your cat "
@@ -225,7 +225,7 @@ def _original_model_notice_message(has_custom_model: bool) -> str:
     )
     guide = _("model training guide")
     train = _(
-        "A model you train yourself is much more accurate. Kittyhack needs pictures of your cats first. "
+        "However, a model you train yourself is much more accurate. Kittyhack needs pictures of your cats first. "
         "You can create that model later under **AI Training**. "
         "The steps are explained in the [{guide}]({url})."
     ).format(guide=guide, url=_model_training_guide_url(language))

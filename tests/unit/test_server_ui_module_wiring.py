@@ -51,6 +51,21 @@ def test_shiny_input_ids_have_no_dots():
     assert not bad, "Invalid Shiny input id(s):\n" + "\n".join(bad)
 
 
+def test_restore_database_button_is_wired():
+    """Info-tab restore must keep database and legacy-config handlers."""
+    info = (SERVER_UI / "info.py").read_text(encoding="utf-8")
+    assert '"restore_kittyhack_db"' in info
+    assert "@reactive.event(input.upload_kittyhack_db)" in info
+    assert "@reactive.event(input.restore_kittyhack_db)" in info
+    assert "def on_restore_kittyhack_db" in info
+    assert "replace_database_file" in info
+    assert '"restore_legacy_config"' in info
+    assert "@reactive.event(input.upload_legacy_config)" in info
+    assert "@reactive.event(input.restore_legacy_config)" in info
+    assert "def on_restore_legacy_config" in info
+    assert "import_legacy_config_ini" in info
+
+
 def test_update_kittyhack_button_id_is_valid_shiny_id():
     """Info tab update button must use id 'update_kittyhack' (matches reactive.event)."""
     info = (SERVER_UI / "info.py").read_text(encoding="utf-8")

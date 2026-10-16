@@ -14,8 +14,16 @@ import subprocess
 from io import BytesIO
 import zipfile
 import shutil
-from src.baseconfig import CONFIG, set_language, get_loggable_config_value
+from src.baseconfig import (
+    CONFIG,
+    ensure_settings_persisted,
+    get_loggable_config_value,
+    import_legacy_config_ini,
+    set_language,
+    settings_count,
+)
 from src.helper import (
+    Result,
     SystemInfo,
     Versioning,
     heavy_update_repo_files,
@@ -1045,7 +1053,43 @@ def register_info(input, output, session, ctx: SessionContext):
                                 "border: 1px solid var(--bs-border-color, #ddd); border-radius: 6px; padding: 10px; margin-top: 8px;"
                                 "background: var(--bs-tertiary-bg, #fafafa);"
                             ),
-                        )
+                        ),
+                        ui.div(
+                            changelog_expandable_item(
+                                "legacy_config_restore",
+                                _("Restore configuration from before v3.0"),
+                                ui.div(
+                                    ui.markdown(
+                                        _(
+                                            "Kittyhack versions before v3.0 stored their configuration in `config.ini`. "
+                                            "Upload that file here after restoring a database backup from before v3.0."
+                                        )
+                                    ),
+                                    centered_form_row(
+                                        uix.input_file(
+                                            "upload_legacy_config",
+                                            _(
+                                                "Choose legacy configuration backup (config.ini)"
+                                            ),
+                                            accept=[".ini"],
+                                            multiple=False,
+                                            width="90%",
+                                        ),
+                                    ),
+                                    ui.div(
+                                        ui.input_task_button(
+                                            "restore_legacy_config",
+                                            _("Restore legacy configuration"),
+                                            icon=icon_svg("rotate"),
+                                            class_="btn-outline-danger",
+                                        ),
+                                        style_="text-align: center; margin-top: 6px;",
+                                    ),
+                                ),
+                            ),
+                            class_="changelog-accordion",
+                            style_="margin-top: 8px; max-height: none;",
+                        ),
                     ),
                     ui.br(),
                     ui.markdown(
@@ -1328,6 +1372,267 @@ def register_info(input, output, session, ctx: SessionContext):
                 )
         ctx.reload_trigger_info.set(ctx.reload_trigger_info.get() + 1)
 
+    def _selected_db_upload():
+        """Return (filename, datapath) for the Info-tab database upload, if any."""
+        try:
+            files = input.upload_kittyhack_db()
+        except Exception as e:
+            logging.warning(f"[RESTORE_DB] Could not read the uploaded database: {e}")
+            return None
+        if not files:
+            return None
+        uploaded = files[0]
+        name = str(uploaded.get("name") or "")
+        src_path = str(uploaded.get("datapath") or "")
+        return name, src_path
+
+    def _selected_legacy_config_upload():
+        """Return (filename, datapath) for the legacy config upload, if any."""
+        try:
+            files = input.upload_legacy_config()
+        except Exception as e:
+            logging.warning(
+                f"[RESTORE_CFG] Could not read the uploaded configuration: {e}"
+            )
+            return None
+        if not files:
+            return None
+        uploaded = files[0]
+        name = str(uploaded.get("name") or "")
+        src_path = str(uploaded.get("datapath") or "")
+        return name, src_path
+
+    def _restore_db_error_message(code: str) -> str:
+        if code == "invalid_database":
+            return _(
+                "This file is not a valid Kittyhack database. Choose a database backup."
+            )
+        if code in {"missing_source", "not_found"}:
+            return _("The uploaded file was not found. Choose it again, then retry.")
+        return _(
+            "The database could not be restored. Check the logs, then try again: {}"
+        ).format(code)
+
+    def _show_restore_restart_modal(message: str, *, allow_close: bool = False):
+        footer = [
+            ui.input_action_button("btn_modal_reboot_ok", _("Restart")),
+        ]
+        if allow_close:
+            footer.append(ui.input_action_button("btn_modal_cancel", _("Close")))
+        ui.modal_show(
+            ui.modal(
+                ui.markdown(message),
+                title=_("Restart required"),
+                easy_close=False,
+                footer=ui.div(*footer),
+            )
+        )
+
+    @reactive.Effect
+    @reactive.event(input.upload_kittyhack_db)
+    def on_upload_kittyhack_db():
+        selected = _selected_db_upload()
+        if not selected:
+            ctx.last_uploaded_db_path.set(None)
+            ui.notification_show(
+                _("Choose a database backup to upload."), duration=8, type="error"
+            )
+            return
+        name, src_path = selected
+        logging.info(
+            f"[RESTORE_DB] Upload received: name={name!r} path={src_path!r}"
+        )
+        if not src_path or not os.path.exists(src_path):
+            ui.notification_show(
+                _("The uploaded file was not found. Choose it again, then retry."),
+                duration=8,
+                type="error",
+            )
+            ctx.last_uploaded_db_path.set(None)
+            return
+        if not os.path.basename(name).lower().endswith(".db"):
+            ui.notification_show(
+                _("This file is not a .db file. Choose a database backup."),
+                duration=10,
+                type="error",
+            )
+            ctx.last_uploaded_db_path.set(None)
+            return
+        ctx.last_uploaded_db_path.set(src_path)
+        ui.notification_show(
+            _("Database backup uploaded. Select Restore database to apply it."),
+            duration=8,
+            type="message",
+        )
+
+    @reactive.Effect
+    @reactive.event(input.restore_kittyhack_db)
+    def on_restore_kittyhack_db():
+        logging.info("[RESTORE_DB] Restore requested")
+        selected = _selected_db_upload()
+        src_path = selected[1] if selected else ctx.last_uploaded_db_path.get()
+        name = selected[0] if selected else ""
+        if not src_path or not os.path.exists(src_path):
+            ui.notification_show(
+                _("Choose and upload a database backup before restoring."),
+                duration=8,
+                type="error",
+            )
+            return
+        if name and not os.path.basename(name).lower().endswith(".db"):
+            ui.notification_show(
+                _("This file is not a .db file. Choose a database backup."),
+                duration=10,
+                type="error",
+            )
+            return
+        precheck = DatabaseCore.validate_kittyhack_database(src_path)
+        if not precheck.success:
+            ui.notification_show(
+                _restore_db_error_message(precheck.message),
+                duration=12,
+                type="error",
+            )
+            return
+        # Stop writers before swapping the file. stop_now does not restart
+        # those loops, so a restart is required afterwards even if replace fails.
+        try:
+            sigterm_monitor.halt_backend()
+            tm.sleep(1.0)
+            result = DatabaseCore.replace_database_file(
+                src_path, CONFIG["KITTYHACK_DATABASE_PATH"]
+            )
+        except Exception as e:
+            logging.error(f"[RESTORE_DB] Failed to restore database: {e}")
+            result = Result(False, "replace_failed")
+        if not result.success:
+            ui.notification_show(
+                _restore_db_error_message(result.message),
+                duration=12,
+                type="error",
+            )
+            _show_restore_restart_modal(
+                _(
+                    "The database could not be restored. Restart the Kittyflap, then try again."
+                )
+            )
+            return
+        logging.info("Database restore performed --> Restart pending.")
+        ui.notification_show(_("Database restored."), duration=6, type="message")
+        restored_without_settings = (
+            settings_count(CONFIG["KITTYHACK_DATABASE_PATH"]) == 0
+        )
+        if restored_without_settings:
+            if not ensure_settings_persisted():
+                logging.error(
+                    "[RESTORE_DB] Failed to preserve current settings in restored database."
+                )
+                ui.notification_show(
+                    _(
+                        "The database was restored, but the current configuration could not be preserved. "
+                        "Upload the matching config.ini before restarting."
+                    ),
+                    duration=None,
+                    type="error",
+                )
+            _show_restore_restart_modal(
+                _(
+                    "This older database backup did not contain configuration settings. "
+                    "Kittyhack kept the current settings. You can close this dialog and "
+                    "upload the matching `config.ini` before restarting."
+                ),
+                allow_close=True,
+            )
+        else:
+            _show_restore_restart_modal(
+                _("Restart the Kittyflap now to apply the restored database.")
+            )
+
+    @reactive.Effect
+    @reactive.event(input.upload_legacy_config)
+    def on_upload_legacy_config():
+        selected = _selected_legacy_config_upload()
+        if not selected:
+            ctx.last_uploaded_cfg_path.set(None)
+            ui.notification_show(
+                _("Choose a config.ini backup to upload."),
+                duration=8,
+                type="error",
+            )
+            return
+        name, src_path = selected
+        logging.info(
+            f"[RESTORE_CFG] Upload received: name={name!r} path={src_path!r}"
+        )
+        if not src_path or not os.path.exists(src_path):
+            ctx.last_uploaded_cfg_path.set(None)
+            ui.notification_show(
+                _("The uploaded file was not found. Choose it again, then retry."),
+                duration=8,
+                type="error",
+            )
+            return
+        if not os.path.basename(name).lower().endswith(".ini"):
+            ctx.last_uploaded_cfg_path.set(None)
+            ui.notification_show(
+                _("This file is not an .ini file. Choose a config.ini backup."),
+                duration=10,
+                type="error",
+            )
+            return
+        ctx.last_uploaded_cfg_path.set(src_path)
+        ui.notification_show(
+            _(
+                "Configuration backup uploaded. Select Restore legacy configuration to apply it."
+            ),
+            duration=8,
+            type="message",
+        )
+
+    @reactive.Effect
+    @reactive.event(input.restore_legacy_config)
+    def on_restore_legacy_config():
+        logging.info("[RESTORE_CFG] Legacy configuration restore requested")
+        selected = _selected_legacy_config_upload()
+        src_path = selected[1] if selected else ctx.last_uploaded_cfg_path.get()
+        name = selected[0] if selected else ""
+        if not src_path or not os.path.exists(src_path):
+            ui.notification_show(
+                _("Choose and upload a config.ini backup before restoring."),
+                duration=8,
+                type="error",
+            )
+            return
+        if name and not os.path.basename(name).lower().endswith(".ini"):
+            ui.notification_show(
+                _("This file is not an .ini file. Choose a config.ini backup."),
+                duration=10,
+                type="error",
+            )
+            return
+        ok, message = import_legacy_config_ini(src_path)
+        if not ok:
+            if message in {"missing_settings_section", "no_supported_settings"}:
+                error_message = _(
+                    "This file contains no supported Kittyhack settings. Choose a valid config.ini backup."
+                )
+            elif message == "not_found":
+                error_message = _(
+                    "The uploaded file was not found. Choose it again, then retry."
+                )
+            else:
+                error_message = _(
+                    "The configuration could not be restored. Check the logs, then try again: {}"
+                ).format(message)
+            ui.notification_show(error_message, duration=12, type="error")
+            return
+        logging.info("Legacy configuration restore performed --> Restart pending.")
+        ui.notification_show(
+            _("Legacy configuration restored."), duration=6, type="message"
+        )
+        _show_restore_restart_modal(
+            _("Restart the Kittyflap now to apply the restored configuration.")
+        )
 
     def _start_update_process(update_target: bool, update_local: bool):
         latest_version = CONFIG["LATEST_VERSION"]

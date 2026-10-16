@@ -2838,6 +2838,127 @@ msgstr "Kittyhack-Datenbanksicherung auswählen (.db)"
 msgid "Restore database"
 msgstr "Datenbank wiederherstellen"
 
+msgid "Restore configuration from before v3.0"
+msgstr "Konfiguration von vor v3.0 wiederherstellen"
+
+msgid ""
+"Kittyhack versions before v3.0 stored their configuration in `config.ini`. "
+"Upload that file here after restoring a database backup from before v3.0."
+msgstr ""
+"Kittyhack-Versionen vor v3.0 speicherten ihre Konfiguration in `config.ini`. "
+"Lade diese Datei hier hoch, nachdem du eine Datenbanksicherung von vor v3.0 "
+"wiederhergestellt hast."
+
+msgid "Choose legacy configuration backup (config.ini)"
+msgstr "Alte Konfigurationssicherung auswählen (config.ini)"
+
+msgid "Restore legacy configuration"
+msgstr "Alte Konfiguration wiederherstellen"
+
+msgid "Choose a database backup to upload."
+msgstr "Wähle eine Datenbanksicherung zum Hochladen aus."
+
+msgid "The uploaded file was not found. Choose it again, then retry."
+msgstr ""
+"Die hochgeladene Datei wurde nicht gefunden. Wähle sie erneut aus und "
+"versuche es noch einmal."
+
+msgid "This file is not a .db file. Choose a database backup."
+msgstr "Diese Datei ist keine .db-Datei. Wähle eine Datenbanksicherung aus."
+
+msgid "This file is not a valid Kittyhack database. Choose a database backup."
+msgstr ""
+"Diese Datei ist keine gültige Kittyhack-Datenbank. Wähle eine "
+"Datenbanksicherung aus."
+
+msgid "Database backup uploaded. Select Restore database to apply it."
+msgstr ""
+"Datenbank-Datei hochgeladen. Klicke auf 'Datenbank wiederherstellen', um "
+"sie anzuwenden."
+
+msgid "Choose and upload a database backup before restoring."
+msgstr ""
+"Wähle eine Datenbanksicherung aus und lade sie hoch, bevor du sie "
+"wiederherstellst."
+
+msgid "Database restored."
+msgstr "Datenbank wiederhergestellt"
+
+msgid "Restart the Kittyflap now to apply the restored database."
+msgstr ""
+"Starte die Kittyflap jetzt neu, um die wiederhergestellte Datenbank "
+"anzuwenden."
+
+msgid ""
+"The database could not be restored. Restart the Kittyflap, then try again."
+msgstr ""
+"Die Datenbank konnte nicht wiederhergestellt werden. Starte die Kittyflap "
+"neu und versuche es dann erneut."
+
+#, python-brace-format
+msgid ""
+"The database could not be restored. Check the logs, then try again: {}"
+msgstr ""
+"Die Datenbank konnte nicht wiederhergestellt werden. Prüfe die Protokolle "
+"und versuche es erneut: {}"
+
+msgid ""
+"The database was restored, but the current configuration could not be "
+"preserved. Upload the matching config.ini before restarting."
+msgstr ""
+"Die Datenbank wurde wiederhergestellt, aber die aktuelle Konfiguration "
+"konnte nicht beibehalten werden. Lade vor dem Neustart die passende "
+"config.ini hoch."
+
+msgid ""
+"This older database backup did not contain configuration settings. Kittyhack "
+"kept the current settings. You can close this dialog and upload the matching "
+"`config.ini` before restarting."
+msgstr ""
+"Diese ältere Datenbanksicherung enthielt keine Konfigurationseinstellungen. "
+"Kittyhack hat die aktuellen Einstellungen beibehalten. Du kannst diesen "
+"Dialog schließen und vor dem Neustart die passende `config.ini` hochladen."
+
+msgid "Choose a config.ini backup to upload."
+msgstr "Wähle eine config.ini-Sicherung zum Hochladen aus."
+
+msgid "This file is not an .ini file. Choose a config.ini backup."
+msgstr "Diese Datei ist keine .ini-Datei. Wähle eine Sicherung von config.ini aus."
+
+msgid ""
+"Configuration backup uploaded. Select Restore legacy configuration to apply "
+"it."
+msgstr ""
+"Konfigurationssicherung hochgeladen. Klicke auf „Alte Konfiguration "
+"wiederherstellen“, um sie anzuwenden."
+
+msgid "Choose and upload a config.ini backup before restoring."
+msgstr ""
+"Wähle eine config.ini-Sicherung aus und lade sie hoch, bevor du sie "
+"wiederherstellst."
+
+msgid ""
+"This file contains no supported Kittyhack settings. Choose a valid "
+"config.ini backup."
+msgstr ""
+"Diese Datei enthält keine unterstützten Kittyhack-Einstellungen. Wähle eine "
+"gültige config.ini-Sicherung aus."
+
+#, python-brace-format
+msgid ""
+"The configuration could not be restored. Check the logs, then try again: {}"
+msgstr ""
+"Die Konfiguration konnte nicht wiederhergestellt werden. Prüfe die "
+"Protokolle und versuche es erneut: {}"
+
+msgid "Legacy configuration restored."
+msgstr "Alte Konfiguration wiederhergestellt."
+
+msgid "Restart the Kittyflap now to apply the restored configuration."
+msgstr ""
+"Starte die Kittyflap jetzt neu, um die wiederhergestellte Konfiguration "
+"anzuwenden."
+
 msgid "After you restore the database, the Kittyflap must restart to apply it."
 msgstr ""
 "Nach der Wiederherstellung der Datenbank muss die Kittyflap neu gestartet "
@@ -4613,48 +4734,8 @@ msgstr "Jetzt versuchen"
 #~ "config.ini konnte nicht heruntergeladen werden. Prüfe die Protokolle und "
 #~ "versuche es erneut: {}"
 
-#~ msgid "Choose a database backup to upload."
-#~ msgstr "Wähle eine Datenbanksicherung zum Hochladen aus."
-
-#~ msgid "The uploaded file was not found. Choose it again, then retry."
-#~ msgstr ""
-#~ "Die hochgeladene Datei wurde nicht gefunden. Wähle sie erneut aus und "
-#~ "versuche es noch einmal."
-
-#~ msgid "This file is not a .db file. Choose a database backup."
-#~ msgstr "Diese Datei ist keine .db-Datei. Wähle eine Datenbanksicherung aus."
-
-#~ msgid "Database backup uploaded. Select Restore database to apply it."
-#~ msgstr ""
-#~ "Datenbank-Datei hochgeladen. Klicke auf 'Datenbank wiederherstellen', um "
-#~ "sie anzuwenden."
-
-#~ msgid "Choose and upload a database backup before restoring."
-#~ msgstr ""
-#~ "Wähle eine Datenbanksicherung aus und lade sie hoch, bevor du sie "
-#~ "wiederherstellst."
-
-#~ msgid "Database restored."
-#~ msgstr "Datenbank wiederhergestellt"
-
-#~ msgid "Restart the Kittyflap now to apply the restored database."
-#~ msgstr ""
-#~ "Starte die Kittyflap jetzt neu, um die wiederhergestellte Datenbank "
-#~ "anzuwenden."
-
-#, python-brace-format
-#~ msgid ""
-#~ "The database could not be restored. Check the logs, then try again: {}"
-#~ msgstr ""
-#~ "Die Datenbank konnte nicht wiederhergestellt werden. Prüfe die Protokolle "
-#~ "und versuche es erneut: {}"
-
 #~ msgid "Choose a configuration backup to upload."
 #~ msgstr "Wähle eine Konfigurationssicherung zum Hochladen aus."
-
-#~ msgid "This file is not an .ini file. Choose a config.ini backup."
-#~ msgstr ""
-#~ "Diese Datei ist keine .ini-Datei. Wähle eine Sicherung von config.ini aus."
 
 #~ msgid ""
 #~ "This configuration file has no [Settings] section. Choose a valid "
@@ -4684,19 +4765,6 @@ msgstr "Jetzt versuchen"
 
 #~ msgid "Configuration restored."
 #~ msgstr "Konfiguration erfolgreich wiederhergestellt."
-
-#~ msgid "Restart the Kittyflap now to apply the restored configuration."
-#~ msgstr ""
-#~ "Starte die Kittyflap jetzt neu, um die wiederhergestellte Konfiguration "
-#~ "anzuwenden."
-
-#, python-brace-format
-#~ msgid ""
-#~ "The configuration could not be restored. Check the logs, then try again: "
-#~ "{}"
-#~ msgstr ""
-#~ "Die Konfiguration konnte nicht wiederhergestellt werden. Prüfe die "
-#~ "Protokolle und versuche es erneut: {}"
 
 #~ msgid "Uncertain entries"
 #~ msgstr "Unsichere Eingänge"

@@ -266,6 +266,11 @@ def _settings_count(db_path: str | None = None) -> int:
         conn.close()
 
 
+def settings_count(db_path: str | None = None) -> int:
+    """Return the number of persisted settings in a Kittyhack database."""
+    return _settings_count(db_path)
+
+
 def settings_revision(db_path: str | None = None) -> str:
     """Latest ``updated_at`` in the settings table (empty when there are no rows)."""
     path = db_path or kittyhack_db_path()
@@ -537,6 +542,56 @@ def _parse_ini_settings(path: str) -> tuple[dict[str, Any], List[Tuple[str, Any]
             record_invalid(setting.key, raw)
             loaded[setting.key] = default
     return loaded, invalid
+
+
+def import_legacy_config_ini(path: str) -> tuple[bool, str]:
+    """Merge settings explicitly present in a legacy ``config.ini``.
+
+    Existing values for keys absent from the file are left unchanged. In
+    remote mode, local connection settings are never imported from the file.
+    Returns ``(success, message_code)``.
+    """
+    if not path or not os.path.isfile(path):
+        return False, "not_found"
+    parser = _read_ini_parser(path)
+    if parser is None:
+        return False, "invalid_ini"
+    if not parser.has_section("Settings"):
+        return False, "missing_settings_section"
+
+    parsed, invalid = _parse_ini_settings(path)
+    imported: dict[str, Any] = {}
+    has_legacy_pictures = parser.has_option(
+        "Settings", "min_pictures_to_analyze"
+    )
+    has_seconds = parser.has_option("Settings", "min_seconds_to_analyze")
+
+    for setting in SETTINGS_SCHEMA:
+        if is_remote_mode() and setting.remote_only:
+            continue
+        if parser.has_option("Settings", setting.key.lower()):
+            imported[setting.key] = parsed[setting.key]
+        elif (
+            setting.key == "MIN_SECONDS_TO_ANALYZE"
+            and has_legacy_pictures
+            and not has_seconds
+        ):
+            imported[setting.key] = parsed[setting.key]
+
+    if not imported:
+        return False, "no_supported_settings"
+    if not _upsert_settings(imported):
+        return False, "write_failed"
+
+    CONFIG.update(imported)
+    imported_keys = set(imported)
+    _notify_invalid_settings(
+        [(key, raw) for key, raw in invalid if key in imported_keys]
+    )
+    logging.info(
+        f"[CONFIG] Imported {len(imported)} setting(s) from legacy file '{path}'."
+    )
+    return True, ""
 
 
 def _read_remote_ini_overrides() -> dict[str, Any]:
@@ -839,7 +894,7 @@ def restore_remote_only_settings(snapshot: dict[str, Any] | None) -> bool:
     return ok
 
 
-def ensure_settings_persisted() -> None:
+def ensure_settings_persisted() -> bool:
     """Write in-memory CONFIG when the live database has no settings rows.
 
     A backup restore or a freshly created database can replace the file that
@@ -847,11 +902,11 @@ def ensure_settings_persisted() -> None:
     """
     path = kittyhack_db_path()
     if not os.path.isfile(path):
-        return
+        return False
     if _settings_count(path) > 0:
-        return
+        return True
     logging.info("[CONFIG] Settings table is empty; persisting in-memory configuration.")
-    save_config()
+    return save_config()
 
 
 _locale_bootstrap_lock = threading.Lock()

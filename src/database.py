@@ -430,6 +430,156 @@ class DatabaseCore:
             logging.error(f"[DATABASE_BACKUP] Unexpected error: {e}")
             return Result(False, "backup_failed")
 
+    @staticmethod
+    def validate_kittyhack_database(database: str) -> Result:
+        """Return success when ``database`` is a readable Kittyhack SQLite file.
+
+        A Kittyhack database contains at least one of ``events``, ``photo``,
+        ``cats``, or ``settings``. ``Result.message`` is ``missing_source`` or
+        ``invalid_database`` on failure.
+        """
+        if not database or not os.path.isfile(database):
+            return Result(False, "missing_source")
+        try:
+            with open(database, "rb") as handle:
+                header = handle.read(16)
+            if header != b"SQLite format 3\x00":
+                logging.warning(f"[RESTORE_DB] Rejected '{database}': not a SQLite file")
+                return Result(False, "invalid_database")
+            conn = sqlite3.connect(database, timeout=30)
+            try:
+                conn.execute("PRAGMA query_only=ON")
+                integrity = conn.execute("PRAGMA integrity_check").fetchone()
+                if not integrity or integrity[0] != "ok":
+                    detail = integrity[0] if integrity else "empty"
+                    logging.warning(f"[RESTORE_DB] Rejected '{database}': integrity check {detail}")
+                    return Result(False, "invalid_database")
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+            finally:
+                conn.close()
+        except Exception as e:
+            logging.warning(f"[RESTORE_DB] Rejected '{database}': {e}")
+            return Result(False, "invalid_database")
+        if not tables.intersection({"events", "photo", "cats", "settings"}):
+            logging.warning(f"[RESTORE_DB] Rejected '{database}': no Kittyhack tables")
+            return Result(False, "invalid_database")
+        return Result(True, "")
+
+    @staticmethod
+    def _remove_sqlite_sidecars(database: str) -> None:
+        """Drop WAL/SHM/journal files so an old journal is not replayed."""
+        for suffix in ("-wal", "-shm", "-journal"):
+            sidecar = database + suffix
+            if not os.path.exists(sidecar):
+                continue
+            try:
+                os.remove(sidecar)
+            except OSError as e:
+                logging.warning(f"[RESTORE_DB] Failed to remove '{sidecar}': {e}")
+                raise
+
+    @staticmethod
+    def replace_database_file(source_path: str, destination_path: str) -> Result:
+        """Install ``source_path`` as the Kittyhack database at ``destination_path``.
+
+        Validates the source first and does not modify the destination when it
+        is not a Kittyhack database. An existing destination is copied to
+        ``kittyhack_backup_YYYYMMDD_HHMMSS.db`` in the same directory before
+        it is replaced. On failure after that point, the backup is copied back.
+        ``Result.message`` is the backup path on success, or an error code.
+        """
+        status = DatabaseCore.validate_kittyhack_database(source_path)
+        if not status.success:
+            return status
+        if not destination_path or not os.path.isdir(os.path.dirname(destination_path) or "."):
+            logging.error(f"[RESTORE_DB] Destination directory missing for '{destination_path}'")
+            return Result(False, "replace_failed")
+
+        lock_res = DatabaseCore.lock_database()
+        if not lock_res.success:
+            return Result(False, "database_locked")
+        incoming = destination_path + ".incoming"
+        backup_dest = ""
+        backup_ready = False
+        replaced = False
+        try:
+            if os.path.exists(destination_path):
+                backup_dir = os.path.dirname(destination_path) or "."
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_dest = os.path.join(backup_dir, f"kittyhack_backup_{stamp}.db")
+                suffix = 1
+                while os.path.exists(backup_dest):
+                    backup_dest = os.path.join(
+                        backup_dir, f"kittyhack_backup_{stamp}_{suffix}.db"
+                    )
+                    suffix += 1
+                try:
+                    src_conn = sqlite3.connect(destination_path, timeout=30)
+                    dst_conn = sqlite3.connect(backup_dest, timeout=30)
+                    try:
+                        src_conn.backup(dst_conn)
+                    finally:
+                        dst_conn.close()
+                        src_conn.close()
+                except Exception as backup_error:
+                    logging.warning(
+                        f"[RESTORE_DB] SQLite backup failed, copying the file instead: {backup_error}"
+                    )
+                    if os.path.exists(backup_dest):
+                        os.remove(backup_dest)
+                    shutil.copy2(destination_path, backup_dest)
+                logging.info(f"[RESTORE_DB] Backup created: {backup_dest}")
+                backup_ready = True
+
+            shutil.copy2(source_path, incoming)
+            os.replace(incoming, destination_path)
+            replaced = True
+            DatabaseCore._remove_sqlite_sidecars(destination_path)
+            installed = DatabaseCore.validate_kittyhack_database(destination_path)
+            if not installed.success:
+                raise RuntimeError(installed.message)
+            logging.info(
+                f"[RESTORE_DB] Replaced '{destination_path}' from '{source_path}'. "
+                f"Backup: {backup_dest or 'none'}"
+            )
+            return Result(True, backup_dest)
+        except Exception as e:
+            logging.error(f"[RESTORE_DB] Failed to replace '{destination_path}': {e}")
+            try:
+                if os.path.exists(incoming):
+                    os.remove(incoming)
+            except OSError:
+                pass
+            if replaced and backup_dest and os.path.exists(backup_dest):
+                try:
+                    shutil.copy2(backup_dest, incoming)
+                    os.replace(incoming, destination_path)
+                    DatabaseCore._remove_sqlite_sidecars(destination_path)
+                    logging.info(f"[RESTORE_DB] Rolled back to backup {backup_dest}")
+                except Exception as rollback_error:
+                    logging.error(f"[RESTORE_DB] Rollback failed: {rollback_error}")
+            elif replaced and not backup_dest:
+                try:
+                    os.remove(destination_path)
+                except OSError:
+                    pass
+            elif backup_dest and not backup_ready and os.path.exists(backup_dest):
+                # A half-written backup must not become the file startup restores.
+                try:
+                    os.remove(backup_dest)
+                except OSError:
+                    pass
+            if isinstance(e, RuntimeError) and str(e) in {"invalid_database", "missing_source"}:
+                return Result(False, str(e))
+            return Result(False, "replace_failed")
+        finally:
+            DatabaseCore.release_database()
+
 
 class EventsRepo:
     """Events/photos/motion blocks, timelines, image files, and event JSON helpers."""
@@ -2469,6 +2619,8 @@ check_if_column_exists = DatabaseCore.check_if_column_exists
 add_column_to_table = DatabaseCore.add_column_to_table
 check_database_integrity = DatabaseCore.check_database_integrity
 backup_database_sqlite = DatabaseCore.backup_database_sqlite
+validate_kittyhack_database = DatabaseCore.validate_kittyhack_database
+replace_database_file = DatabaseCore.replace_database_file
 get_jpeg_size = EventsRepo.get_jpeg_size
 update_image_dimensions_for_block = EventsRepo.update_image_dimensions_for_block
 _event_bundle_paths = EventsRepo._event_bundle_paths

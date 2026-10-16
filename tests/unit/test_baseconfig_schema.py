@@ -100,3 +100,70 @@ def test_remote_only_settings_survive_synced_ini(tmp_path, monkeypatch):
     assert baseconfig.CONFIG["LANGUAGE"] == "de"
     assert baseconfig.CONFIG["MOUSE_THRESHOLD"] == 55.0
     assert baseconfig.CONFIG["REMOTE_TARGET_HOST"] == "192.168.1.70"
+
+
+def test_import_legacy_config_merges_only_present_keys(
+    tmp_config_ini, tmp_path
+):
+    baseconfig.CONFIG["ELEMENTS_PER_PAGE"] = 17
+    assert baseconfig.save_config()
+    ini = tmp_path / "uploaded-config.ini"
+    ini.write_text(
+        "[Settings]\n"
+        "language = de\n"
+        "mouse_threshold = 42.5\n"
+        "min_pictures_to_analyze = 10\n",
+        encoding="utf-8",
+    )
+
+    ok, message = baseconfig.import_legacy_config_ini(str(ini))
+
+    assert ok
+    assert message == ""
+    assert baseconfig.CONFIG["LANGUAGE"] == "de"
+    assert baseconfig.CONFIG["MOUSE_THRESHOLD"] == 42.5
+    assert baseconfig.CONFIG["MIN_SECONDS_TO_ANALYZE"] == 3.0
+    assert baseconfig.CONFIG["ELEMENTS_PER_PAGE"] == 17
+
+    baseconfig.CONFIG.clear()
+    baseconfig.load_config()
+    assert baseconfig.CONFIG["MOUSE_THRESHOLD"] == 42.5
+    assert baseconfig.CONFIG["ELEMENTS_PER_PAGE"] == 17
+
+
+def test_import_legacy_config_rejects_file_without_settings(
+    tmp_config_ini, tmp_path
+):
+    ini = tmp_path / "uploaded-config.ini"
+    ini.write_text("[Other]\nlanguage = de\n", encoding="utf-8")
+    original_language = baseconfig.CONFIG["LANGUAGE"]
+
+    ok, message = baseconfig.import_legacy_config_ini(str(ini))
+
+    assert not ok
+    assert message == "missing_settings_section"
+    assert baseconfig.CONFIG["LANGUAGE"] == original_language
+
+
+def test_import_legacy_config_keeps_remote_only_settings(
+    tmp_config_ini, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(baseconfig, "is_remote_mode", lambda: True)
+    baseconfig.CONFIG["REMOTE_TARGET_HOST"] = "192.168.1.70"
+    assert baseconfig.save_config()
+    ini = tmp_path / "uploaded-config.ini"
+    ini.write_text(
+        "[Settings]\n"
+        "language = de\n"
+        "remote_target_host = 192.168.1.99\n"
+        "remote_control_port = 9999\n",
+        encoding="utf-8",
+    )
+
+    ok, message = baseconfig.import_legacy_config_ini(str(ini))
+
+    assert ok
+    assert message == ""
+    assert baseconfig.CONFIG["LANGUAGE"] == "de"
+    assert baseconfig.CONFIG["REMOTE_TARGET_HOST"] == "192.168.1.70"
+    assert baseconfig.CONFIG["REMOTE_CONTROL_PORT"] == 8888

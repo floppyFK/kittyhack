@@ -41,7 +41,7 @@ document.addEventListener("DOMContentLoaded", function() {
     function setThemeColorMeta(effectiveTheme) {
         if (!themeColorMeta) return;
         // Pick colors that look reasonable in browser UI chrome.
-        const color = (effectiveTheme === 'dark') ? '#111827' : '#FFFFFF';
+        const color = (effectiveTheme === 'dark') ? '#0e1218' : '#e8eef6';
         themeColorMeta.setAttribute('content', color);
     }
 
@@ -1678,6 +1678,38 @@ document.addEventListener("DOMContentLoaded", function() {
         window.addEventListener('orientationchange', sync);
         if (typeof ResizeObserver === 'function') {
             new ResizeObserver(sync).observe(navbar);
+        }
+        sync();
+    })();
+
+    /* Bottom edge of the pictures filter dock, so its frosted scrim can run
+       from the navbar to just past the controls without a side or top gap. */
+    (function initPhotosScrimHeight() {
+        var observed = null;
+        var ro = (typeof ResizeObserver === 'function') ? new ResizeObserver(sync) : null;
+
+        function sync() {
+            var dock = document.querySelector('.kh-photos-filter-dock');
+            if (!dock) return;
+            if (ro && observed !== dock) {
+                if (observed) ro.unobserve(observed);
+                ro.observe(dock);
+                observed = dock;
+            }
+            var rect = dock.getBoundingClientRect();
+            if (rect.height < 8) return;
+            document.documentElement.style.setProperty(
+                '--kh-photos-scrim-h',
+                Math.ceil(rect.bottom + 28) + 'px'
+            );
+        }
+
+        window.addEventListener('resize', sync);
+        window.addEventListener('orientationchange', sync);
+        document.addEventListener('shown.bs.tab', sync);
+        var host = document.getElementById('ui_photos_date');
+        if (host && typeof MutationObserver === 'function') {
+            new MutationObserver(sync).observe(host, {childList: true, subtree: true});
         }
         sync();
     })();

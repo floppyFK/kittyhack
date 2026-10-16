@@ -95,16 +95,60 @@
     }
 }
 
+/* Page canvas. One full-viewport wash behind every tab. The glows sit on a
+   fixed layer so tab padding cannot leave a gap along the left, top, or right. */
+html {
+    background-color: #e8eef6;
+}
+
+body {
+    background-color: transparent;
+}
+
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+        radial-gradient(1200px 560px at -5% -10%, rgba(90, 159, 212, 0.34), transparent 64%),
+        radial-gradient(980px 520px at 108% -8%, rgba(129, 110, 246, 0.18), transparent 60%),
+        radial-gradient(760px 460px at 72% 112%, rgba(45, 212, 191, 0.12), transparent 58%);
+}
+
+.navbar.navbar-default.fixed-top {
+    /* bslib sets the navbar fill with !important */
+    background-color: rgba(244, 247, 252, 0.72) !important;
+    backdrop-filter: blur(18px) saturate(1.3);
+    -webkit-backdrop-filter: blur(18px) saturate(1.3);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+    box-shadow: none;
+}
+
 /* Dark mode support (Bootstrap 5.3 uses data-bs-theme="dark") */
-html[data-bs-theme="dark"],
+html[data-bs-theme="dark"] {
+    background-color: #0e1218;
+    color: #f8f9fa;
+    /* Encourage native controls (select, scrollbars) to use dark palette */
+    color-scheme: dark;
+}
+
 html[data-bs-theme="dark"] body {
-    background-color: #121212;
+    background-color: transparent;
     color: #f8f9fa;
 }
 
-html[data-bs-theme="dark"] {
-    /* Encourage native controls (select, scrollbars) to use dark palette */
-    color-scheme: dark;
+html[data-bs-theme="dark"] body::before {
+    background:
+        radial-gradient(1100px 520px at -4% -12%, rgba(90, 159, 212, 0.26), transparent 62%),
+        radial-gradient(900px 480px at 108% -6%, rgba(99, 102, 241, 0.18), transparent 58%),
+        radial-gradient(720px 420px at 78% 112%, rgba(45, 212, 191, 0.10), transparent 56%);
+}
+
+html[data-bs-theme="dark"] .navbar.navbar-default.fixed-top {
+    background-color: rgba(14, 18, 24, 0.72) !important;
+    border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
 html[data-bs-theme="dark"] .card {
@@ -254,23 +298,31 @@ html[data-bs-theme="dark"] .spinner {
     pointer-events: none;
 }
 
-/* Frosted band: content scrolling underneath stays visible, just blurred and
-   slightly dimmed instead of being hidden behind an opaque bar. */
+/* Frosted band behind the sticky filters. Fixed to the viewport so the fade
+   meets the navbar and both side edges; height tracks the dock via
+   --kh-photos-scrim-h (see app.js). */
 .kh-photos-filter-dock::before {
     content: "";
-    position: absolute;
-    inset: -0.35rem 0 0;
-    background: color-mix(in srgb, var(--bs-body-bg, #fff) 45%, transparent);
-    backdrop-filter: blur(10px) saturate(1.1);
-    -webkit-backdrop-filter: blur(10px) saturate(1.1);
+    position: fixed;
+    top: var(--kh-nav-h, 3.4rem);
+    left: 0;
+    right: 0;
+    width: auto;
+    height: calc(
+        var(--kh-photos-scrim-h, calc(var(--kh-nav-h, 3.4rem) + 9.5rem))
+        - var(--kh-nav-h, 3.4rem)
+    );
+    background: color-mix(in srgb, var(--bs-body-bg, #fff) 22%, transparent);
+    backdrop-filter: blur(14px) saturate(1.15);
+    -webkit-backdrop-filter: blur(14px) saturate(1.15);
     -webkit-mask-image: linear-gradient(
         to bottom,
-        rgba(0, 0, 0, 1) 65%,
+        rgba(0, 0, 0, 1) 55%,
         rgba(0, 0, 0, 0) 100%
     );
     mask-image: linear-gradient(
         to bottom,
-        rgba(0, 0, 0, 1) 65%,
+        rgba(0, 0, 0, 1) 55%,
         rgba(0, 0, 0, 0) 100%
     );
     pointer-events: none;
@@ -332,7 +384,7 @@ html[data-bs-theme="dark"] .spinner {
     }
 
     .kh-photos-filter-dock::before {
-        background: color-mix(in srgb, var(--bs-body-bg, #fff) 88%, transparent);
+        background: color-mix(in srgb, var(--bs-body-bg, #fff) 55%, transparent);
     }
 }
 

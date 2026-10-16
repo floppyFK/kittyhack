@@ -103,6 +103,14 @@ _nav_items.append(
 
 # the main kittyhack ui
 app_ui = ui.page_fillable(
+    ui.tags.div(
+        {
+            "id": "kh_reconnect_i18n",
+            "style": "display:none;",
+            "data-message": _("Connection lost. Trying to reconnect…"),
+            "data-try-now": _("Try now"),
+        }
+    ),
     ui.tags.script(src=f"app.js?v={_js_version}", defer=True),
     ui.tags.script(src=f"vendor/chart.umd.min.js?v={_chart_js_version}", defer=True),
     ui.tags.script(src=f"stats.js?v={_stats_js_version}", defer=True),
@@ -153,4 +161,5 @@ app_ui = ui.page_fillable(
         position="fixed-top",
         padding="3rem",
     ),
+    lang=CONFIG.get("LANGUAGE") or "en",
 )

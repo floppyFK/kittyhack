@@ -19,6 +19,7 @@ document.addEventListener("DOMContentLoaded", function() {
     // --- Theme (auto/dark/light) ---
     // Uses Bootstrap 5.3 color modes if available (data-bs-theme), with a safe fallback.
     const THEME_PREF_KEY = 'kittyhack_theme_pref_v1'; // 'auto' | 'dark' | 'light'
+    const KH_LANG_KEY = 'kittyhack_lang_v1';
     const themeToggleButton = document.getElementById('theme_toggle_button');
     const themeColorMeta = document.querySelector('meta[name="theme-color"]');
     const prefersDarkQuery = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
@@ -73,6 +74,11 @@ document.addEventListener("DOMContentLoaded", function() {
 
     let themePref = safeGetThemePref();
     applyTheme(themePref);
+
+    try {
+        const pageLang = (document.documentElement.getAttribute('lang') || '').toLowerCase().split('-')[0];
+        if (pageLang) localStorage.setItem(KH_LANG_KEY, pageLang);
+    } catch (e) {}
 
     if (themeToggleButton) {
         themeToggleButton.addEventListener('click', function() {
@@ -614,6 +620,7 @@ document.addEventListener("DOMContentLoaded", function() {
     const KH_RESTORE_FLAG_KEY = 'kittyhack_restore_form_v1';
     const KH_SNAPSHOT_TTL_MS = 10 * 60 * 1000;
     const KH_RELOAD_FALLBACK_MS = 45000;
+    const KH_RECONNECT_DIM_MS = 8000;
     const KH_VISIBILITY_FLICKER_MS = 750;
     const KH_ZOMBIE_PROBE_MS = 2000;
 
@@ -873,11 +880,124 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
+    function probeServerReachable() {
+        return new Promise(function(resolve) {
+            let settled = false;
+            function finish(value) {
+                if (settled) return;
+                settled = true;
+                resolve(!!value);
+            }
+            const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+            const timer = setTimeout(function() {
+                if (controller) {
+                    try { controller.abort(); } catch (e) {}
+                }
+                finish(false);
+            }, 3000);
+            const opts = { cache: 'no-store', method: 'HEAD' };
+            if (controller) opts.signal = controller.signal;
+            fetch('/', opts).then(function() {
+                clearTimeout(timer);
+                finish(true);
+            }).catch(function() {
+                clearTimeout(timer);
+                finish(false);
+            });
+        });
+    }
+
+    function serviceWorkerIsActive() {
+        return new Promise(function(resolve) {
+            if (!('serviceWorker' in navigator)) {
+                resolve(false);
+                return;
+            }
+            if (navigator.serviceWorker.controller) {
+                resolve(true);
+                return;
+            }
+            let settled = false;
+            function finish(value) {
+                if (settled) return;
+                settled = true;
+                resolve(!!value);
+            }
+            const timer = setTimeout(function() { finish(false); }, 1500);
+            navigator.serviceWorker.getRegistration('/').then(function(reg) {
+                clearTimeout(timer);
+                finish(!!(reg && (reg.active || reg.waiting || reg.installing)));
+            }).catch(function() {
+                clearTimeout(timer);
+                finish(false);
+            });
+        });
+    }
+
+    function goToOfflinePage() {
+        if (typeof window.__kh_saveActiveTab === 'function') {
+            try { window.__kh_saveActiveTab(); } catch (e) {}
+        }
+        window.location.href = '/offline.html';
+    }
+
     // --- Disconnect overlay: reconnect in-place; reload only as a last resort ---
     (function() {
         let reloadInterval = null;
         let reloadedOnce = false;
         let pendingReloadTimeout = null;
+        let probeInFlight = false;
+        let disconnectGeneration = 0;
+        let reconnectDimTimer = null;
+
+        function clearReconnectDimTimer() {
+            if (reconnectDimTimer) {
+                clearTimeout(reconnectDimTimer);
+                reconnectDimTimer = null;
+            }
+        }
+
+        function reconnectCopy() {
+            const el = document.getElementById('kh_reconnect_i18n');
+            return {
+                message: (el && el.getAttribute('data-message')) || 'Connection lost. Trying to reconnect…',
+                tryNow: (el && el.getAttribute('data-try-now')) || 'Try now',
+            };
+        }
+
+        function ensureReconnectCard(overlay) {
+            let card = overlay.querySelector('.kh-reconnect-card');
+            if (!card) {
+                const copy = reconnectCopy();
+                card = document.createElement('div');
+                card.className = 'kh-reconnect-card';
+                card.setAttribute('role', 'status');
+                const msg = document.createElement('p');
+                msg.className = 'kh-reconnect-message';
+                msg.textContent = copy.message;
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'kh-reconnect-try';
+                btn.textContent = copy.tryNow;
+                btn.addEventListener('click', function(ev) {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    tryShinyReconnect('reconnect-card');
+                });
+                card.appendChild(msg);
+                card.appendChild(btn);
+                overlay.appendChild(card);
+            }
+            if (!overlay.dataset.khDimArmed) {
+                overlay.dataset.khDimArmed = '1';
+                clearReconnectDimTimer();
+                reconnectDimTimer = setTimeout(function() {
+                    reconnectDimTimer = null;
+                    const current = document.getElementById('shiny-disconnected-overlay');
+                    if (current) current.classList.add('kh-reconnect-dimmed');
+                }, KH_RECONNECT_DIM_MS);
+            }
+        }
 
         function clearReloadTimers() {
             if (pendingReloadTimeout) {
@@ -893,15 +1013,56 @@ document.addEventListener("DOMContentLoaded", function() {
         function scheduleReloadFallback(reason) {
             // Full reload wipes unsaved edits. Wait long enough for Shiny reconnect
             // (and a brief mobile background) to recover the existing page first.
-            if (pendingReloadTimeout || reloadedOnce) return;
+            if (pendingReloadTimeout || reloadedOnce || probeInFlight) return;
             if (isNavigatingAway || isPageHidden) return;
+            const generation = disconnectGeneration;
             pendingReloadTimeout = setTimeout(() => {
                 pendingReloadTimeout = null;
+                if (generation !== disconnectGeneration) return;
                 if (isNavigatingAway || isPageHidden) return;
                 const stillOverlay = document.getElementById("shiny-disconnected-overlay");
                 if (!stillOverlay) return;
-                reloadedOnce = true;
-                attemptReload(reason);
+                probeInFlight = true;
+                probeServerReachable().then(function(reachable) {
+                    if (generation !== disconnectGeneration) {
+                        probeInFlight = false;
+                        return;
+                    }
+                    const overlayNow = document.getElementById("shiny-disconnected-overlay");
+                    if (!overlayNow) {
+                        probeInFlight = false;
+                        return;
+                    }
+                    if (reachable) {
+                        probeInFlight = false;
+                        reloadedOnce = true;
+                        attemptReload(reason);
+                        return null;
+                    }
+                    return serviceWorkerIsActive().then(function(hasWorker) {
+                        probeInFlight = false;
+                        if (generation !== disconnectGeneration) return;
+                        if (!document.getElementById("shiny-disconnected-overlay")) return;
+                        if (isNavigatingAway) return;
+                        if (hasWorker) {
+                            reloadedOnce = true;
+                            try {
+                                goToOfflinePage();
+                            } catch (e) {
+                                attemptReload(reason);
+                            }
+                            return;
+                        }
+                        console.log('Server unreachable without a service worker; staying on the reconnect notice');
+                        scheduleReloadFallback(reason);
+                    });
+                }).catch(function() {
+                    probeInFlight = false;
+                    if (generation !== disconnectGeneration) return;
+                    if (document.getElementById("shiny-disconnected-overlay")) {
+                        scheduleReloadFallback(reason);
+                    }
+                });
             }, KH_RELOAD_FALLBACK_MS);
         }
 
@@ -945,6 +1106,9 @@ document.addEventListener("DOMContentLoaded", function() {
             // When coming back to foreground, allow reconnect/reload attempts again.
             if (!isPageHidden) {
                 isNavigatingAway = false;
+                if (document.getElementById('shiny-disconnected-overlay')) {
+                    scheduleReloadFallback('Detected disconnection overlay. Reloading...');
+                }
             }
         });
 
@@ -960,6 +1124,7 @@ document.addEventListener("DOMContentLoaded", function() {
             const overlay = document.getElementById("shiny-disconnected-overlay");
 
             if (overlay) {
+                ensureReconnectCard(overlay);
                 enableShinyReconnect();
                 if (!isNavigatingAway && !isPageHidden) {
                     if (!overlayReconnectStarted) {
@@ -969,7 +1134,10 @@ document.addEventListener("DOMContentLoaded", function() {
                     scheduleReloadFallback("Detected disconnection overlay. Reloading...");
                 }
             } else {
+                if (overlayReconnectStarted) disconnectGeneration++;
                 overlayReconnectStarted = false;
+                probeInFlight = false;
+                clearReconnectDimTimer();
                 clearReloadTimers();
                 reloadedOnce = false;
             }
@@ -1336,23 +1504,31 @@ document.addEventListener("DOMContentLoaded", function() {
         }
 
         // Lightweight ping to check reachability when the socket still looks open.
-        fetch('/', { cache: 'no-store', method: 'HEAD' })
-            .then(() => {
+        probeServerReachable().then(function(reachable) {
+            if (reachable) {
                 console.log("Reconnect: server reachable");
-            })
-            .catch(() => {
-                console.log("Reconnect: server not reachable, showing offline page...");
-                if (typeof window.__kh_saveActiveTab === 'function') {
-                    try { window.__kh_saveActiveTab(); } catch (e) {}
-                }
-                if (!isNavigatingAway) {
+                return;
+            }
+            console.log("Reconnect: server not reachable");
+            if (isNavigatingAway || document.visibilityState !== 'visible') return;
+            serviceWorkerIsActive().then(function(hasWorker) {
+                if (isNavigatingAway || document.visibilityState !== 'visible') return;
+                if (hasWorker) {
                     try {
-                        window.location.href = '/offline.html';
+                        goToOfflinePage();
                     } catch (e) {
                         attemptReload('Reconnect: offline redirect failed');
                     }
+                    return;
+                }
+                console.log("Reconnect: no service worker; staying on this page");
+                if (shinySocketIsOpen()) {
+                    probeShinySocket('Reconnect(server unreachable)');
+                } else {
+                    tryShinyReconnect('Reconnect(server unreachable)');
                 }
             });
+        });
     }
 
     document.addEventListener('visibilitychange', function() {

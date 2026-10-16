@@ -4577,6 +4577,12 @@ msgstr "Hell"
 msgid "Appearance: Auto"
 msgstr "Darstellung: Automatisch"
 
+msgid "Connection lost. Trying to reconnect…"
+msgstr "Verbindung unterbrochen. Die Verbindung wird wiederhergestellt…"
+
+msgid "Try now"
+msgstr "Jetzt versuchen"
+
 #~ msgid "Configuration file"
 #~ msgstr "Konfigurationsdatei"
 

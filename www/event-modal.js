@@ -580,6 +580,9 @@
         var html = '<div id="event_scrubber_wrap" class="event-modal-scrubber" data-playing="' + (this.playing ? '1' : '0') + '">';
         html += '<div class="event-modal-range-wrap">';
         html += '<input type="range" class="event-modal-range" min="0" max="' + (n - 1) + '" value="0" step="1">';
+        html += '<div class="event-scrubber-gaps" aria-hidden="true">';
+        html += this._buildGapSegments(n);
+        html += '</div>';
         html += '</div>';
 
         // Marker overlay (prey / other detection segments)
@@ -640,6 +643,37 @@
                 + ' title="' + _escHtml(marker.label || '') + '"'
                 + ' aria-label="' + _escHtml(marker.label || '') + '"></button>';
         }
+        return html;
+    };
+
+    Player.prototype._frameHasPicture = function (frame) {
+        return !!(frame && !frame.missing && frame.pid !== null && typeof frame.pid !== 'undefined');
+    };
+
+    Player.prototype._buildGapSegments = function (nFrames) {
+        if (nFrames <= 1) return '';
+        var html = '';
+        var start = -1;
+        var denom = Math.max(1, nFrames - 1);
+
+        function push(from, to) {
+            var leftEdge = from === 0 ? 0 : from - 0.5;
+            var rightEdge = to === nFrames - 1 ? nFrames - 1 : to + 0.5;
+            var left = (leftEdge / denom) * 100;
+            var width = ((rightEdge - leftEdge) / denom) * 100;
+            html += '<div class="event-scrubber-gap" style="left:'
+                + left.toFixed(4) + '%;width:' + Math.max(width, 0).toFixed(4) + '%;"></div>';
+        }
+
+        for (var i = 0; i < nFrames; i++) {
+            if (!this._frameHasPicture(this.frames[i])) {
+                if (start < 0) start = i;
+            } else if (start >= 0) {
+                push(start, i - 1);
+                start = -1;
+            }
+        }
+        if (start >= 0) push(start, nFrames - 1);
         return html;
     };
 

@@ -1647,6 +1647,8 @@ html[data-bs-theme="dark"] .kh-empty-state {
     --kh-scrubber-marker-prey: #ef4444; /* red-500 */
     --kh-scrubber-marker-prey-soft: #fca5a5; /* red-300 */
     --kh-scrubber-marker-other: #22c55e; /* green-500 */
+    --kh-scrubber-gap-light: rgba(255, 255, 255, 0.72);
+    --kh-scrubber-gap-dark: rgba(0, 0, 0, 0.55);
     --kh-scrubber-inset: 6px;
 }
 
@@ -1654,6 +1656,8 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
     --kh-scrubber-track: rgba(255, 255, 255, 0.22);
     --kh-scrubber-thumb-border: rgba(17, 24, 39, 0.90);
     --kh-scrubber-thumb-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 6px 16px rgba(0, 0, 0, 0.40);
+    --kh-scrubber-gap-light: rgba(255, 255, 255, 0.78);
+    --kh-scrubber-gap-dark: rgba(0, 0, 0, 0.62);
 }
 
 /* Range input wrapper (relative for marker overlay) */
@@ -1729,6 +1733,31 @@ html[data-bs-theme="dark"] #event_scrubber_wrap {
     box-shadow: none;
     cursor: pointer;
     box-sizing: border-box;
+}
+
+/* Hatched track for frames that were captured but not stored as pictures */
+.event-modal-range-wrap .event-scrubber-gaps {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 8px;
+    transform: translateY(-50%);
+    z-index: 3;
+    overflow: hidden;
+    border-radius: 9999px;
+    pointer-events: none;
+}
+
+.event-modal-range-wrap .event-scrubber-gap {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background-image: repeating-linear-gradient(
+        -45deg,
+        var(--kh-scrubber-gap-light) 0 2px,
+        var(--kh-scrubber-gap-dark) 2px 4px
+    );
 }
 
 /* Marker overlay for labeled frames */

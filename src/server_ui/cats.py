@@ -12,7 +12,7 @@ from src.database import (
 )
 from src.mode import is_remote_mode
 from src.shiny_wrappers import uix
-from src.server_ui.state import reload_trigger_config
+from src.server_ui.state import reload_trigger_config, reload_trigger_photos
 from src.server_ui.context import SessionContext
 
 _ = set_language(CONFIG["LANGUAGE"])
@@ -222,6 +222,26 @@ def register_cats(input, output, session, ctx: SessionContext):
                         )
                     )
 
+                try:
+                    show_location = bool(int(data_row.get("show_location", 1)))
+                except (TypeError, ValueError):
+                    show_location = True
+                settings_rows.append(
+                    ui.row(
+                        ui.column(
+                            12,
+                            ui.div(
+                                ui.input_switch(
+                                    id=f"mng_cat_show_location_{data_row['id']}",
+                                    label=_("Show indoors/outdoors status in live-view tab"),
+                                    value=show_location,
+                                ),
+                                style_="padding-bottom: 20px;",
+                            ),
+                        )
+                    )
+                )
+
                 settings_section = ui.div(
                     ui.div(
                         *settings_rows,
@@ -372,6 +392,10 @@ def register_cats(input, output, session, ctx: SessionContext):
                 db_prey = bool(int(data_row.get("enable_prey_detection", 1)))
                 db_allow_entry = bool(int(data_row.get("allow_entry", 1)))
                 db_allow_exit = bool(int(data_row.get("allow_exit", 1)))
+                try:
+                    db_show_location = bool(int(data_row.get("show_location", 1)))
+                except (TypeError, ValueError):
+                    db_show_location = True
 
                 card_name = input[f"mng_cat_name_{db_id}"]()
                 card_rfid = input[f"mng_cat_rfid_{db_id}"]().strip().upper()
@@ -401,6 +425,10 @@ def register_cats(input, output, session, ctx: SessionContext):
                         card_allow_exit = bool(int(prev.get("allow_exit", 1)))
                     except Exception:
                         card_allow_exit = True
+                try:
+                    card_show_location = bool(input[f"mng_cat_show_location_{db_id}"]())
+                except Exception:
+                    card_show_location = db_show_location
                 # Get image path, if a file was uploaded
                 card_pic: list[FileInfo] | None = input[f"mng_cat_pic_{db_id}"]()
                 if card_pic is not None:
@@ -415,6 +443,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                     or (db_prey != card_prey)
                     or (db_allow_entry != card_allow_entry)
                     or (db_allow_exit != card_allow_exit)
+                    or (db_show_location != card_show_location)
                     or (card_pic_path is not None)
                 ):
                     # Add the ID to the list of updated cats
@@ -429,6 +458,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                         card_prey,
                         card_allow_entry,
                         card_allow_exit,
+                        card_show_location,
                     )
                     if result.success:
                         ui.notification_show(
@@ -453,6 +483,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                 )
             else:
                 ctx.reload_trigger_cats.set(ctx.reload_trigger_cats.get() + 1)
+                reload_trigger_photos.set(reload_trigger_photos.get() + 1)
 
     @output
     @render.ui
@@ -574,6 +605,21 @@ def register_cats(input, output, session, ctx: SessionContext):
                     style_="padding-bottom: 20px;",
                 )
             )
+        settings_rows_new.append(
+            ui.row(
+                ui.column(
+                    12,
+                    ui.div(
+                        ui.input_switch(
+                            "add_new_cat_show_location",
+                            _("Show indoors/outdoors status in live-view tab"),
+                            True,
+                        ),
+                        style_="padding-bottom: 20px;",
+                    ),
+                )
+            )
+        )
 
         settings_rows_new.append(
             [
@@ -738,6 +784,10 @@ def register_cats(input, output, session, ctx: SessionContext):
             cat_allow_exit = input.add_new_cat_allow_exit()
         else:
             cat_allow_exit = True
+        try:
+            cat_show_location = bool(input.add_new_cat_show_location())
+        except Exception:
+            cat_show_location = True
 
             # Get image path, if a file was uploaded
         if cat_pic is not None:
@@ -753,6 +803,7 @@ def register_cats(input, output, session, ctx: SessionContext):
             cat_prey,
             cat_allow_entry,
             cat_allow_exit,
+            cat_show_location,
         )
         if result.success:
             ui.notification_show(
@@ -765,7 +816,9 @@ def register_cats(input, output, session, ctx: SessionContext):
             ui.update_switch(id="add_new_cat_prey", value=True)
             ui.update_switch(id="add_new_cat_allow_entry", value=True)
             ui.update_switch(id="add_new_cat_allow_exit", value=True)
+            ui.update_switch(id="add_new_cat_show_location", value=True)
             ctx.reload_trigger_cats.set(ctx.reload_trigger_cats.get() + 1)
+            reload_trigger_photos.set(reload_trigger_photos.get() + 1)
         else:
             ui.notification_show(
                 _("This cat could not be added: {} Check the details and try again.").format(
@@ -838,6 +891,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                 type="message",
             )
             ctx.reload_trigger_cats.set(ctx.reload_trigger_cats.get() + 1)
+            reload_trigger_photos.set(reload_trigger_photos.get() + 1)
         else:
             ui.notification_show(
                 _("{} could not be deleted: {} Try again.").format(

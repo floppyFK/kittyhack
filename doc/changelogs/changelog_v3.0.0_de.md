@@ -5,6 +5,7 @@
 ## Neue Features
 
 - **Statistik**: Neuer Tab *Statistik* mit Ein- und Ausgängen, Beuteerkennungen, Zeit drinnen/draußen und typischen Aktivitätszeiten - auch pro Katze und für verschiedene Zeiträume.
+- **Drinnen/draußen Status**: Die *Live-Ansicht* zeigt, wo jede Katze ist und seit wann. Tippe auf den Zustand, um ihn zu ändern. Unter *Katzen verwalten* kannst du eine Katze dort ausblenden.
 - **Bewegungssensor als Bestätigung bei Kamera-Einlass**: Optionale Einstellung unter *Konfiguration*. Wenn die Kamera Katzen erkennt, öffnet sich die Klappe nur, wenn auch der äußere Bewegungssensor auslöst. Hilfreich, wenn Sonne oder Spiegelungen manchmal eine Katze vortäuschen.
 - **Hinweise ausblenden**: Manche Hinweise können mit *Nicht mehr benachrichtigen* ausgeblendet werden. Unter *Konfiguration* kannst du sie später wieder aktivieren.
 

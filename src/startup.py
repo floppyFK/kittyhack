@@ -662,6 +662,10 @@ def run() -> None:
                     logging.warning(f"Column 'allow_exit' not found in the 'cats' table of {db}. Adding it...")
                     DatabaseCore.add_column_to_table(db, "cats", "allow_exit", "INTEGER DEFAULT 1")
                     DatabaseCore.write_stmt_to_database(db, "UPDATE cats SET allow_exit = 1 WHERE allow_exit IS NULL")
+                if not DatabaseCore.check_if_column_exists(db, "cats", "show_location"):
+                    logging.warning(f"Column 'show_location' not found in the 'cats' table of {db}. Adding it...")
+                    DatabaseCore.add_column_to_table(db, "cats", "show_location", "INTEGER DEFAULT 1")
+                    DatabaseCore.write_stmt_to_database(db, "UPDATE cats SET show_location = 1 WHERE show_location IS NULL")
         except Exception as e:
             logging.error(f"Failed to ensure per-cat settings columns in database {db}: {e}")
 

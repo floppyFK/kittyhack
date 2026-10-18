@@ -23,7 +23,9 @@ from src.database import (
     CatsRepo,
     EventsRepo,
     ReturnDataCatDB,
+    VisitStatsRepo,
 )
+from src.statistics import apply_manual_location, format_duration, parse_utc_datetime
 from src.event_timeline import (
     timeline_entries_to_html,
     timeline_fallback_from_event_type,
@@ -43,6 +45,213 @@ else:
     from src.pir import Pir
 
 from src.server_ui.event_modal import btn_show_event, show_event_server
+
+
+def _clean_cell(value) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        pass
+    return str(value).strip()
+
+
+def _cat_initial(name: str) -> str:
+    text = str(name or "").strip()
+    if not text:
+        return "?"
+    return text[0].upper()
+
+
+def _is_jpeg_b64(value: str) -> bool:
+    if not value or len(value) > 200_000:
+        return False
+    return all(ch.isalnum() or ch in "+/=" for ch in value)
+
+
+def _cat_avatar_html(name: str, thumb_b64: str | None) -> str:
+    """Round photo, or the first letter of the name when there is no photo."""
+    safe_title = html_module.escape(name or "", quote=True)
+    if thumb_b64 and _is_jpeg_b64(thumb_b64):
+        return (
+            f'<img class="kh-cat-avatar" alt="" title="{safe_title}" '
+            f'src="data:image/jpeg;base64,{thumb_b64}">'
+        )
+    letter = html_module.escape(_cat_initial(name), quote=True)
+    return (
+        f'<span class="kh-cat-avatar kh-cat-avatar--letter" title="{safe_title}" '
+        f'aria-hidden="true">{letter}</span>'
+    )
+
+
+def _configured_cats() -> list[dict]:
+    """Configured cats as ``{id, name, rfid}``, RFID or lowercased name."""
+    try:
+        df = CatsRepo.db_get_cats(
+            CONFIG["KITTYHACK_DATABASE_PATH"], ReturnDataCatDB.all_except_photos
+        )
+    except Exception as e:
+        logging.error(f"[SERVER] Failed to read cats for the location strip: {e}")
+        return []
+    if df is None or df.empty:
+        return []
+    cats = []
+    for __, row in df.iterrows():
+        name = _clean_cell(row.get("name"))
+        rfid = _clean_cell(row.get("rfid"))
+        key = rfid or name.lower()
+        if not key:
+            continue
+        try:
+            cat_id = int(row["id"])
+        except (TypeError, ValueError):
+            continue
+        try:
+            if not bool(int(row.get("show_location", 1))):
+                continue
+        except (TypeError, ValueError):
+            pass
+        cats.append({"id": cat_id, "name": name or key, "rfid": key})
+    cats.sort(key=lambda cat: cat["name"].casefold())
+    return cats
+
+
+def _format_elapsed(created_at) -> tuple[str, int | None]:
+    """Visible time-since label and the passage time as unix milliseconds."""
+    dt = parse_utc_datetime(created_at)
+    if dt is None:
+        return "", None
+    seconds = (datetime.now(ZoneInfo("UTC")) - dt.astimezone(ZoneInfo("UTC"))).total_seconds()
+    if seconds < 60:
+        text = _("Just now")
+    else:
+        text = format_duration(max(seconds, 0), d=_("d"), h=_("h"), m=_("m"))
+    return text, int(dt.timestamp() * 1000)
+
+
+def _location_state_label(direction: str) -> str:
+    """Short place name for a cat: indoors or outdoors."""
+    return _("Indoors") if direction == "in" else _("Outdoors")
+
+
+def _location_cycle_icon() -> str:
+    """Hover hint that a click switches the cat's place."""
+    return (
+        '<span class="kh-cat-loc-cycle" aria-hidden="true">'
+        + str(icon_svg("rotate", margin_left="0", margin_right="0", width="1em", height="1em"))
+        + "</span>"
+    )
+
+
+def _location_button(
+    cat_id: int,
+    name: str,
+    direction: str,
+    *,
+    current: bool,
+    time_html: str = "",
+) -> str:
+    """State button. ``direction`` is the direction this click will store.
+
+    A current state shows that state and stores the opposite. An unknown
+    choice shows the direction it will store.
+    """
+    if current:
+        label = _location_state_label("in" if direction == "out" else "out")
+        tone = " kh-cat-loc-btn--inside" if direction == "out" else " kh-cat-loc-btn--outside"
+    else:
+        label = _location_state_label(direction)
+        tone = ""
+    aria_template = (
+        _("Mark {name} as indoors") if direction == "in" else _("Mark {name} as outdoors")
+    )
+    aria = aria_template.format(name=name)
+    return (
+        f'<button type="button" class="kh-cat-loc-btn{tone}" '
+        f'data-cat-id="{int(cat_id)}" data-direction="{direction}" '
+        f'aria-label="{html_module.escape(aria, quote=True)}">'
+        f'<span class="kh-cat-loc-copy">'
+        f'<span class="kh-cat-loc-label">{html_module.escape(label)}</span>'
+        f"{time_html}</span>"
+        f"{_location_cycle_icon()}</button>"
+    )
+
+
+def _cat_locations_html() -> str:
+    cats = _configured_cats()
+    if not cats:
+        return ""
+    database = CONFIG["KITTYHACK_DATABASE_PATH"]
+    chips = []
+    for cat in cats:
+        try:
+            last = VisitStatsRepo.get_last_passed(database, cat["rfid"])
+        except Exception as e:
+            logging.error(f"[SERVER] Failed to read location for {cat['rfid']}: {e}")
+            last = None
+        try:
+            thumb = CatsRepo.get_cat_thumbnail(database, cat["id"])
+        except Exception:
+            thumb = None
+        direction = (last or {}).get("direction")
+        avatar = _cat_avatar_html(cat["name"], thumb)
+        if direction in ("in", "out"):
+            target = "out" if direction == "in" else "in"
+            elapsed, since_ms = _format_elapsed((last or {}).get("created_at"))
+            time_html = ""
+            if elapsed and since_ms is not None:
+                time_html = (
+                    f'<span class="kh-cat-loc-time" data-since="{since_ms}">'
+                    f"{html_module.escape(elapsed)}</span>"
+                )
+            state = _location_button(
+                cat["id"], cat["name"], target, current=True, time_html=time_html
+            )
+        else:
+            state = (
+                '<div class="kh-cat-loc-actions">'
+                + _location_button(cat["id"], cat["name"], "in", current=False)
+                + _location_button(cat["id"], cat["name"], "out", current=False)
+                + "</div>"
+            )
+        chips.append(f'<div class="kh-cat-loc">{avatar}{state}</div>')
+    strip_i18n = (
+        f'data-inside="{html_module.escape(_("Indoors"), quote=True)}" '
+        f'data-outside="{html_module.escape(_("Outdoors"), quote=True)}" '
+        f'data-just-now="{html_module.escape(_("Just now"), quote=True)}" '
+        f'data-unit-d="{html_module.escape(_("d"), quote=True)}" '
+        f'data-unit-h="{html_module.escape(_("h"), quote=True)}" '
+        f'data-unit-m="{html_module.escape(_("m"), quote=True)}" '
+        f'data-aria-in="{html_module.escape(_("Mark {name} as indoors"), quote=True)}" '
+        f'data-aria-out="{html_module.escape(_("Mark {name} as outdoors"), quote=True)}"'
+    )
+    return (
+        f'<div class="kh-cat-loc-strip" {strip_i18n}>'
+        f'<template class="kh-cat-loc-cycle-tpl">{_location_cycle_icon()}</template>'
+        + "".join(chips)
+        + "</div>"
+    )
+
+
+def _parse_cat_location_input(payload) -> tuple[int | None, str | None]:
+    if not isinstance(payload, dict):
+        return None, None
+    raw_id = payload.get("cat_id")
+    raw_dir = payload.get("direction")
+    if isinstance(raw_id, list):
+        raw_id = raw_id[0] if raw_id else None
+    if isinstance(raw_dir, list):
+        raw_dir = raw_dir[0] if raw_dir else None
+    try:
+        cat_id = int(raw_id)
+    except (TypeError, ValueError):
+        return None, None
+    direction = str(raw_dir or "").strip()
+    if direction not in ("in", "out"):
+        return None, None
+    return cat_id, direction
 
 
 def register_live_view(input, output, session, ctx: SessionContext):
@@ -317,9 +526,50 @@ def register_live_view(input, output, session, ctx: SessionContext):
 
     @output
     @render.ui
+    def ui_cat_locations():
+        reload_trigger_photos.get()
+        return ui.HTML(_cat_locations_html())
+
+    @reactive.Effect
+    @reactive.event(input.cat_location_set, ignore_none=True)
+    def on_cat_location_set():
+        cat_id, direction = _parse_cat_location_input(input.cat_location_set())
+        if cat_id is None or direction is None:
+            return
+        match = next((cat for cat in _configured_cats() if cat["id"] == cat_id), None)
+        if match is None:
+            return
+        created_at = DateTimeUtil.get_utc_date_string(
+            datetime.now(ZoneInfo("UTC")).timestamp()
+        )
+        result = apply_manual_location(
+            CONFIG["KITTYHACK_DATABASE_PATH"],
+            cat_rfid=match["rfid"],
+            cat_name=match["name"],
+            direction=direction,
+            created_at=created_at,
+        )
+        if not result.success:
+            logging.error(
+                "[SERVER] Manual location failed for cat %s: %s",
+                cat_id,
+                result.message,
+            )
+            ui.notification_show(
+                _("The location could not be saved. Try again."),
+                duration=5,
+                type="error",
+            )
+            return
+        if result.message != "unchanged":
+            reload_trigger_photos.set(reload_trigger_photos.get() + 1)
+
+    @output
+    @render.ui
     def ui_last_events():
         return ui.layout_column_wrap(
             ui.div(
+                ui.output_ui("ui_cat_locations"),
                 ui.card(
                     ui.card_header(ui.h5(_("Recent events"))),
                     ui.output_ui("ui_last_events_table"),
@@ -476,10 +726,9 @@ def register_live_view(input, output, session, ctx: SessionContext):
                     else _("No microchip found"),
                 )
                 thumb = cat_thumbnails.get(rfid)
-                if thumb:
-                    return f'<img src="data:image/jpeg;base64,{thumb}" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:6px;"> {name}'
-                else:
-                    return name
+                return (
+                    f"{_cat_avatar_html(name, thumb)} {html_module.escape(name)}"
+                )
 
             df_events["cat_name"] = df_events["rfid"].apply(cat_name_with_icon)
 

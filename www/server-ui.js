@@ -559,9 +559,111 @@
         }
     }
 
+    function escapeHtmlText(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function escapeHtmlAttr(value) {
+        return escapeHtmlText(value).replace(/"/g, '&quot;');
+    }
+
+    function formatLocationElapsed(sinceMs, strip) {
+        var sec = Math.max(0, (Date.now() - sinceMs) / 1000);
+        if (sec < 60) return strip.getAttribute('data-just-now') || 'Just now';
+        var total = Math.round(sec);
+        var days = Math.floor(total / 86400);
+        var hours = Math.floor((total % 86400) / 3600);
+        var minutes = Math.floor((total % 3600) / 60);
+        var parts = [];
+        if (days) parts.push(String(days) + (strip.getAttribute('data-unit-d') || 'd'));
+        if (hours) parts.push(String(hours) + (strip.getAttribute('data-unit-h') || 'h'));
+        if (minutes || !parts.length) parts.push(String(minutes) + (strip.getAttribute('data-unit-m') || 'm'));
+        return parts.join(' ');
+    }
+
+    function tickLocationTimes() {
+        qa('.kh-cat-loc-time[data-since]').forEach(function (el) {
+            var strip = el.closest('.kh-cat-loc-strip');
+            var since = Number(el.getAttribute('data-since'));
+            if (!strip || !since) return;
+            el.textContent = formatLocationElapsed(since, strip);
+        });
+    }
+
+    function paintLocationChip(chip, direction) {
+        var strip = chip.closest('.kh-cat-loc-strip');
+        if (!strip || (direction !== 'in' && direction !== 'out')) return;
+        var avatar = chip.querySelector('.kh-cat-avatar');
+        var catBtn = chip.querySelector('[data-cat-id]');
+        var catId = catBtn ? catBtn.getAttribute('data-cat-id') : '';
+        var name = avatar ? (avatar.getAttribute('title') || '') : '';
+        var label = direction === 'in'
+            ? (strip.getAttribute('data-inside') || 'Inside')
+            : (strip.getAttribute('data-outside') || 'Outside');
+        var next = direction === 'in' ? 'out' : 'in';
+        var tone = direction === 'in' ? 'inside' : 'outside';
+        var ariaTpl = next === 'in'
+            ? (strip.getAttribute('data-aria-in') || '')
+            : (strip.getAttribute('data-aria-out') || '');
+        var aria = ariaTpl.replace('{name}', name);
+        var cycleTpl = strip.querySelector('.kh-cat-loc-cycle-tpl');
+        var cycle = cycleTpl ? cycleTpl.innerHTML : '';
+        chip.innerHTML =
+            (avatar ? avatar.outerHTML : '') +
+            '<button type="button" class="kh-cat-loc-btn kh-cat-loc-btn--' + tone + ' is-pressed" ' +
+            'data-cat-id="' + escapeHtmlAttr(catId) + '" data-direction="' + next + '" ' +
+            'aria-label="' + escapeHtmlAttr(aria) + '">' +
+            '<span class="kh-cat-loc-copy">' +
+            '<span class="kh-cat-loc-label">' + escapeHtmlText(label) + '</span>' +
+            '<span class="kh-cat-loc-time" data-since="' + Date.now() + '">' +
+            escapeHtmlText(strip.getAttribute('data-just-now') || 'Just now') +
+            '</span></span>' + cycle + '</button>';
+    }
+
+    function installCatLocationClicks() {
+        if (!onceFlag(window, '__khCatLocationClicks')) return;
+        document.addEventListener('pointerdown', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            var btn = t.closest('.kh-cat-loc-btn');
+            if (!btn) return;
+            btn.classList.add('is-pressed');
+        }, true);
+        document.addEventListener('pointercancel', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            var btn = t.closest('.kh-cat-loc-btn');
+            if (btn) btn.classList.remove('is-pressed');
+        }, true);
+        document.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            var btn = t.closest('.kh-cat-loc-btn');
+            if (!btn) return;
+            e.preventDefault();
+            var catId = btn.getAttribute('data-cat-id');
+            var direction = btn.getAttribute('data-direction');
+            if (!catId || (direction !== 'in' && direction !== 'out')) return;
+            var chip = btn.closest('.kh-cat-loc');
+            if (chip) paintLocationChip(chip, direction);
+            if (!(window.Shiny && typeof window.Shiny.setInputValue === 'function')) return;
+            window.Shiny.setInputValue('cat_location_set', {
+                cat_id: catId,
+                direction: direction,
+                nonce: Date.now()
+            }, { priority: 'event' });
+        });
+        setInterval(tickLocationTimes, 15000);
+        tickLocationTimes();
+    }
+
     window.kittyhackServerUI = window.kittyhackServerUI || {};
     window.kittyhackServerUI.initAll = initAll;
 
     // Auto-install
+    installCatLocationClicks();
     installMutationInit();
 })();

@@ -3,7 +3,7 @@
 import json
 import sqlite3
 
-from src.database import CatsRepo, EventsRepo
+from src.database import CatsRepo, EventsRepo, ReturnDataCatDB
 
 
 def test_add_cat_and_settings_map(tmp_kittyhack_db):
@@ -28,6 +28,20 @@ def test_add_cat_and_settings_map(tmp_kittyhack_db):
 
     tags = CatsRepo.db_get_all_rfid_tags(tmp_kittyhack_db)
     assert "RFID001" in tags
+
+    hidden = CatsRepo.db_add_new_cat(
+        tmp_kittyhack_db,
+        name="Hidden",
+        rfid="RFID002",
+        cat_image_path="",
+        show_location=False,
+    )
+    assert hidden.success
+    df = CatsRepo.db_get_cats(tmp_kittyhack_db, ReturnDataCatDB.all_except_photos)
+    row = df[df["rfid"] == "RFID002"].iloc[0]
+    assert int(row["show_location"]) == 0
+    visible = df[df["rfid"] == "RFID001"].iloc[0]
+    assert int(visible["show_location"]) == 1
 
 
 def test_empty_db_settings_map(tmp_kittyhack_db):

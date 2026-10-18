@@ -5,6 +5,7 @@
 ## New Features
 
 - **Statistics**: New *Statistics* tab with entries, exits, prey detections, time inside/outside and typical activity - also per cat and for different time ranges.
+- **Indoors/outdoors state**: The *Live view* shows where each cat is and for how long. Tap the state to change it. A cat can be hidden from this list under *Manage cats*.
 - **Motion sensor confirmation for camera entry**: Optional setting under *Configuration*. When the camera is used to detect cats, the flap opens only if the outside motion sensor also triggers. Useful if sunlight or reflections sometimes cause a false detection.
 - **Hide warnings**: Some warnings can be hidden with *Do not notify again*. You can restore them later under *Configuration*.
 

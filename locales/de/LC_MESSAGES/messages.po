@@ -4707,6 +4707,37 @@ msgstr "Verbindung unterbrochen. Die Verbindung wird wiederhergestellt…"
 msgid "Try now"
 msgstr "Jetzt versuchen"
 
+#, python-brace-format
+msgid "Mark {name} as inside"
+msgstr "Markiere {name} als innen"
+
+#, python-brace-format
+msgid "Mark {name} as outside"
+msgstr "Markiere {name} als außen"
+
+#, python-brace-format
+msgid "Mark {name} as indoors"
+msgstr "Markiere {name} als drinnen"
+
+#, python-brace-format
+msgid "Mark {name} as outdoors"
+msgstr "Markiere {name} als draußen"
+
+msgid "Indoors"
+msgstr "Drinnen"
+
+msgid "Outdoors"
+msgstr "Draußen"
+
+msgid "Show indoors/outdoors status in live-view tab"
+msgstr "Drinnen/Draußen Status im Live-View Tab anzeigen"
+
+msgid "The location could not be saved. Try again."
+msgstr "Der Aufenthaltsort konnte nicht gespeichert werden. Versuch es noch einmal."
+
+msgid "Just now"
+msgstr "Gerade eben"
+
 #~ msgid "Configuration file"
 #~ msgstr "Konfigurationsdatei"
 

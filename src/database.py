@@ -1840,7 +1840,7 @@ class CatsRepo:
         if return_data == ReturnDataCatDB.all:
              columns = "*"
         elif return_data == ReturnDataCatDB.all_except_photos:
-            columns = "id, created_at, name, rfid, enable_prey_detection, allow_entry, allow_exit"
+            columns = "id, created_at, name, rfid, enable_prey_detection, allow_entry, allow_exit, show_location"
 
         stmt = f"SELECT {columns} FROM cats"
         return DatabaseCore.read_df_from_database(database, stmt)
@@ -1873,7 +1873,7 @@ class CatsRepo:
         return result
 
     @staticmethod
-    def db_update_cat_data_by_id(database: str, cat_id: int, name: str, rfid: str, cat_image_path: str, enable_prey_detection: bool = True, allow_entry: bool = True, allow_exit: bool = True) -> Result:
+    def db_update_cat_data_by_id(database: str, cat_id: int, name: str, rfid: str, cat_image_path: str, enable_prey_detection: bool = True, allow_entry: bool = True, allow_exit: bool = True, show_location: bool = True) -> Result:
         """Update cat fields by ID; pass ``cat_image_path=None`` to keep the image."""
         if cat_image_path:
             try:
@@ -1895,13 +1895,13 @@ class CatsRepo:
             cursor = conn.cursor()
             if cat_image_blob is None:
                 cursor.execute(
-                    "UPDATE cats SET name = ?, rfid = ?, enable_prey_detection = ?, allow_entry = ?, allow_exit = ? WHERE id = ?",
-                    (name, rfid, int(enable_prey_detection), int(allow_entry), int(allow_exit), cat_id)
+                    "UPDATE cats SET name = ?, rfid = ?, enable_prey_detection = ?, allow_entry = ?, allow_exit = ?, show_location = ? WHERE id = ?",
+                    (name, rfid, int(enable_prey_detection), int(allow_entry), int(allow_exit), int(show_location), cat_id)
                 )
             else:
                 cursor.execute(
-                    "UPDATE cats SET name = ?, rfid = ?, cat_image = ?, enable_prey_detection = ?, allow_entry = ?, allow_exit = ? WHERE id = ?",
-                    (name, rfid, cat_image_blob, int(enable_prey_detection), int(allow_entry), int(allow_exit), cat_id)
+                    "UPDATE cats SET name = ?, rfid = ?, cat_image = ?, enable_prey_detection = ?, allow_entry = ?, allow_exit = ?, show_location = ? WHERE id = ?",
+                    (name, rfid, cat_image_blob, int(enable_prey_detection), int(allow_entry), int(allow_exit), int(show_location), cat_id)
                 )
             conn.commit()
             conn.close()
@@ -1917,7 +1917,7 @@ class CatsRepo:
 
     @staticmethod
     def db_add_new_cat(database: str, name: str, rfid: str, cat_image_path: str,
-                       enable_prey_detection: bool = True, allow_entry: bool = True, allow_exit: bool = True) -> Result: 
+                       enable_prey_detection: bool = True, allow_entry: bool = True, allow_exit: bool = True, show_location: bool = True) -> Result: 
         """Insert a new cat row (optional JPEG path becomes the cat_image blob)."""
         if cat_image_path:
             try:
@@ -1944,8 +1944,8 @@ class CatsRepo:
             else:
                 id += 1
             cursor.execute(
-                "INSERT INTO cats (id, created_at, name, rfid, cat_image, enable_prey_detection, allow_entry, allow_exit) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (id, DateTimeUtil.get_utc_date_string(tm.time()), name, rfid, cat_image_blob, int(enable_prey_detection), int(allow_entry), int(allow_exit))
+                "INSERT INTO cats (id, created_at, name, rfid, cat_image, enable_prey_detection, allow_entry, allow_exit, show_location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (id, DateTimeUtil.get_utc_date_string(tm.time()), name, rfid, cat_image_blob, int(enable_prey_detection), int(allow_entry), int(allow_exit), int(show_location))
             )
             conn.commit()
             conn.close()
@@ -2038,6 +2038,53 @@ class CatsRepo:
             return None
 
 
+def _parse_visit_timestamp(value) -> datetime | None:
+    """Parse a visit_stats timestamp to an aware UTC datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return None
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            try:
+                dt = datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _paired_stay_seconds(
+    previous: dict | None, direction: str, created_at: str
+) -> tuple[float | None, float | None]:
+    """Duration against an already-loaded previous passage. Does not lock."""
+    if not previous or direction not in ("in", "out"):
+        return None, None
+    last_dir = previous.get("direction")
+    if last_dir == direction or last_dir not in ("in", "out"):
+        return None, None
+    now_dt = _parse_visit_timestamp(created_at)
+    last_dt = _parse_visit_timestamp(previous.get("created_at"))
+    if now_dt is None or last_dt is None:
+        return None, None
+    delta = (now_dt - last_dt).total_seconds()
+    if delta <= 0:
+        return None, None
+    if direction == "in" and last_dir == "out":
+        return delta, None
+    if direction == "out" and last_dir == "in":
+        return None, delta
+    return None, None
+
+
 class VisitStatsRepo:
     """Durable per-visit statistics (independent of picture purge)."""
 
@@ -2123,6 +2170,115 @@ class VisitStatsRepo:
             logging.error(f"[VISIT_STATS] Failed to read last passed visit: {e}")
             return None
         finally:
+            DatabaseCore.release_database()
+
+    @staticmethod
+    def apply_manual_location(
+        database: str,
+        *,
+        cat_rfid: str,
+        cat_name: str | None,
+        direction: str,
+        created_at: str,
+        conclusion: str,
+        coalesce_s: float,
+    ) -> Result:
+        """Insert, replace, or drop one manual in/out mark under a single lock.
+
+        Returns a successful Result whose message is ``unchanged``, ``reverted``,
+        ``updated``, or ``inserted``.
+        """
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return result
+        conn = None
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, created_at, direction, conclusion
+                FROM visit_stats
+                WHERE cat_rfid = ? AND passed = 1 AND direction IN ('in', 'out')
+                ORDER BY created_at DESC, id DESC
+                LIMIT 2
+                """,
+                (cat_rfid,),
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+            latest = rows[0] if rows else None
+            previous = rows[1] if len(rows) > 1 else None
+
+            if latest and latest.get("direction") == direction:
+                return Result(True, "unchanged")
+
+            if latest and str(latest.get("conclusion") or "") == conclusion:
+                now_dt = _parse_visit_timestamp(created_at)
+                last_dt = _parse_visit_timestamp(latest.get("created_at"))
+                age = None
+                if now_dt is not None and last_dt is not None:
+                    age = (now_dt - last_dt).total_seconds()
+                if age is not None and 0 <= age < float(coalesce_s):
+                    prev_dir = previous.get("direction") if previous else None
+                    if previous is not None and prev_dir == direction:
+                        cursor.execute(
+                            "DELETE FROM visit_stats WHERE id = ?",
+                            (latest["id"],),
+                        )
+                        conn.commit()
+                        return Result(True, "reverted")
+                    dur_out, dur_in = _paired_stay_seconds(
+                        previous, direction, created_at
+                    )
+                    cursor.execute(
+                        """
+                        UPDATE visit_stats
+                        SET created_at = ?, cat_name = ?, direction = ?,
+                            duration_outside_s = ?, duration_inside_s = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            created_at,
+                            cat_name,
+                            direction,
+                            dur_out,
+                            dur_in,
+                            latest["id"],
+                        ),
+                    )
+                    conn.commit()
+                    return Result(True, "updated")
+
+            dur_out, dur_in = _paired_stay_seconds(latest, direction, created_at)
+            cursor.execute(
+                VisitStatsRepo._INSERT_SQL,
+                (
+                    created_at,
+                    cat_rfid,
+                    cat_name,
+                    conclusion,
+                    direction,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    dur_out,
+                    dur_in,
+                    None,
+                ),
+            )
+            conn.commit()
+            return Result(True, "inserted")
+        except Exception as e:
+            error_message = f"[VISIT_STATS] Failed to apply manual location: {e}"
+            logging.error(error_message)
+            return Result(False, error_message)
+        finally:
+            if conn is not None:
+                conn.close()
             DatabaseCore.release_database()
 
     @staticmethod
@@ -2428,7 +2584,8 @@ class DbMigrations:
                 cat_image BLOB,
                 enable_prey_detection INTEGER DEFAULT 1,
                 allow_entry INTEGER DEFAULT 1,
-                allow_exit INTEGER DEFAULT 1
+                allow_exit INTEGER DEFAULT 1,
+                show_location INTEGER DEFAULT 1
             )
         """
         result = DatabaseCore.write_stmt_to_database(database, stmt)

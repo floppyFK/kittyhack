@@ -33,6 +33,9 @@ BUCKETS = ("auto", "hour", "day", "week", "month")
 CAT_FILTER_ALL = "all"
 CAT_FILTER_UNKNOWN = "__unknown__"
 
+MANUAL_LOCATION_CONCLUSION = "manual_location"
+MANUAL_LOCATION_COALESCE_S = 5.0
+
 
 def parse_event_flags(event_type: str, additional: Iterable[str] | None = None) -> tuple[str, set[str]]:
     """Split a comma-separated event_type plus extra flags into (primary, all flags)."""
@@ -151,6 +154,54 @@ def pair_duration(
     if direction == "out" and last_dir == "in":
         return None, delta
     return None, None
+
+
+def apply_manual_location(
+    database: str,
+    *,
+    cat_rfid: str | None,
+    cat_name: str | None,
+    direction: str,
+    created_at: str | None = None,
+) -> Result:
+    """Set where a cat is, and update visit statistics to match.
+
+    The write is one passed ``visit_stats`` row (``manual_location``), so it
+    closes the previous inside or outside stay the same way a flap passage does.
+    If that row is still younger than ``MANUAL_LOCATION_COALESCE_S`` and the
+    cat is switched back, the row is removed or rewritten instead of opening
+    another stay.
+    """
+    rfid_norm = (str(cat_rfid).strip() if cat_rfid else "") or None
+    direction_norm = str(direction or "").strip()
+    if not rfid_norm or direction_norm not in ("in", "out"):
+        return Result(False, "invalid")
+    name_norm = (str(cat_name).strip() if cat_name else "") or None
+    when = (str(created_at).strip() if created_at else "") or DateTimeUtil.get_utc_date_string(
+        datetime.now(timezone.utc).timestamp()
+    )
+    try:
+        result = VisitStatsRepo.apply_manual_location(
+            database,
+            cat_rfid=rfid_norm,
+            cat_name=name_norm,
+            direction=direction_norm,
+            created_at=when,
+            conclusion=MANUAL_LOCATION_CONCLUSION,
+            coalesce_s=MANUAL_LOCATION_COALESCE_S,
+        )
+    except Exception as e:
+        error_message = f"[VISIT_STATS] Failed to apply manual location: {e}"
+        logging.error(error_message)
+        return Result(False, error_message)
+    if result.success and result.message not in ("unchanged", ""):
+        logging.info(
+            "[VISIT_STATS] Manual location %s for %s -> %s",
+            result.message,
+            rfid_norm,
+            direction_norm,
+        )
+    return result
 
 
 def record_motion_conclusion(

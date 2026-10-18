@@ -7,6 +7,8 @@ from src.database import CatsRepo, EventsRepo, VisitStatsRepo
 from src.helper import DateTimeUtil, EventType
 from src.statistics import (
     CAT_FILTER_ALL,
+    MANUAL_LOCATION_CONCLUSION,
+    apply_manual_location,
     backfill_from_events,
     build_dashboard,
     classify_visit,
@@ -15,6 +17,11 @@ from src.statistics import (
     pair_duration,
     record_motion_conclusion,
     resolve_bucket,
+)
+
+_VISIT_RANGE = (
+    "2000-01-01 00:00:00.0000+00:00",
+    "2100-01-01 00:00:00.0000+00:00",
 )
 
 
@@ -308,3 +315,191 @@ def test_same_direction_passages_infer_other_door_and_skip_duration(tmp_kittyhac
     assert payload["kpis"]["other_exit"] == 0
     assert payload["cats"][0]["other_access"] == 1
     assert payload["cats"][0]["location"] == "inside"
+
+
+def _visit_rows(database, rfid="RFID001"):
+    return VisitStatsRepo.query_range(database, _VISIT_RANGE[0], _VISIT_RANGE[1], rfid)
+
+
+def test_manual_location_rejects_bad_input(tmp_kittyhack_db):
+    result = apply_manual_location(
+        tmp_kittyhack_db, cat_rfid="", cat_name="Mia", direction="in"
+    )
+    assert result.success is False
+    result = apply_manual_location(
+        tmp_kittyhack_db, cat_rfid="RFID001", cat_name="Mia", direction="sideways"
+    )
+    assert result.success is False
+    assert VisitStatsRepo.count(tmp_kittyhack_db) == 0
+
+
+def test_manual_location_first_mark_flips_in_place(tmp_kittyhack_db):
+    t0 = DateTimeUtil.get_utc_date_string(1_700_000_000.0)
+    t1 = DateTimeUtil.get_utc_date_string(1_700_000_002.0)
+    inserted = apply_manual_location(
+        tmp_kittyhack_db,
+        cat_rfid="RFID001",
+        cat_name="Mia",
+        direction="in",
+        created_at=t0,
+    )
+    assert inserted.success and inserted.message == "inserted"
+    rows = _visit_rows(tmp_kittyhack_db)
+    assert len(rows) == 1
+    assert rows[0]["conclusion"] == MANUAL_LOCATION_CONCLUSION
+    assert rows[0]["passed"] == 1
+    assert rows[0]["direction"] == "in"
+    assert rows[0]["duration_outside_s"] is None
+    assert rows[0]["duration_inside_s"] is None
+    assert rows[0]["source_block_id"] is None
+
+    flipped = apply_manual_location(
+        tmp_kittyhack_db,
+        cat_rfid="RFID001",
+        cat_name="Mia",
+        direction="out",
+        created_at=t1,
+    )
+    assert flipped.message == "updated"
+    rows = _visit_rows(tmp_kittyhack_db)
+    assert len(rows) == 1
+    assert rows[0]["direction"] == "out"
+    assert rows[0]["created_at"] == t1
+    assert rows[0]["duration_inside_s"] is None
+    assert rows[0]["duration_outside_s"] is None
+
+
+def test_manual_location_closes_stay_and_reverts_within_5s(tmp_kittyhack_db):
+    t0 = DateTimeUtil.get_utc_date_string(1_700_000_000.0)
+    t1 = DateTimeUtil.get_utc_date_string(1_700_000_000.0 + 3600)
+    t2 = DateTimeUtil.get_utc_date_string(1_700_000_000.0 + 3600 + 3)
+    record_motion_conclusion(
+        tmp_kittyhack_db,
+        created_at=t0,
+        rfid="RFID001",
+        cat_name="Mia",
+        event_type=EventType.CAT_WENT_OUTSIDE,
+    )
+    marked = apply_manual_location(
+        tmp_kittyhack_db,
+        cat_rfid="RFID001",
+        cat_name="Mia",
+        direction="in",
+        created_at=t1,
+    )
+    assert marked.message == "inserted"
+    rows = _visit_rows(tmp_kittyhack_db)
+    assert len(rows) == 2
+    assert rows[1]["duration_outside_s"] == 3600
+    payload = build_dashboard(tmp_kittyhack_db, range_key="all", tz=ZoneInfo("UTC"))
+    assert payload["kpis"]["entries"] == 1
+    assert payload["kpis"]["exits"] == 1
+    assert payload["cats"][0]["location"] == "inside"
+
+    reverted = apply_manual_location(
+        tmp_kittyhack_db,
+        cat_rfid="RFID001",
+        cat_name="Mia",
+        direction="out",
+        created_at=t2,
+    )
+    assert reverted.message == "reverted"
+    rows = _visit_rows(tmp_kittyhack_db)
+    assert len(rows) == 1
+    assert rows[0]["direction"] == "out"
+    assert rows[0]["conclusion"] == EventType.CAT_WENT_OUTSIDE
+    assert VisitStatsRepo.get_last_passed(tmp_kittyhack_db, "RFID001")["direction"] == "out"
+    payload = build_dashboard(tmp_kittyhack_db, range_key="all", tz=ZoneInfo("UTC"))
+    assert payload["kpis"]["entries"] == 0
+    assert payload["kpis"]["exits"] == 1
+    assert payload["cats"][0]["location"] == "outside"
+
+
+def test_manual_location_keeps_period_after_5s(tmp_kittyhack_db):
+    t0 = DateTimeUtil.get_utc_date_string(1_700_000_000.0)
+    t1 = DateTimeUtil.get_utc_date_string(1_700_000_000.0 + 3600)
+    t_edge = DateTimeUtil.get_utc_date_string(1_700_000_000.0 + 3600 + 5)
+    record_motion_conclusion(
+        tmp_kittyhack_db,
+        created_at=t0,
+        rfid="RFID001",
+        cat_name="Mia",
+        event_type=EventType.CAT_WENT_OUTSIDE,
+    )
+    apply_manual_location(
+        tmp_kittyhack_db,
+        cat_rfid="RFID001",
+        cat_name="Mia",
+        direction="in",
+        created_at=t1,
+    )
+    kept = apply_manual_location(
+        tmp_kittyhack_db,
+        cat_rfid="RFID001",
+        cat_name="Mia",
+        direction="out",
+        created_at=t_edge,
+    )
+    assert kept.message == "inserted"
+    rows = _visit_rows(tmp_kittyhack_db)
+    assert len(rows) == 3
+    assert rows[1]["duration_outside_s"] == 3600
+    assert rows[2]["duration_inside_s"] == 5
+    assert rows[2]["conclusion"] == MANUAL_LOCATION_CONCLUSION
+    assert VisitStatsRepo.get_last_passed(tmp_kittyhack_db, "RFID001")["direction"] == "out"
+
+
+def test_manual_location_same_direction_is_noop(tmp_kittyhack_db):
+    t0 = DateTimeUtil.get_utc_date_string(1_700_000_000.0)
+    t1 = DateTimeUtil.get_utc_date_string(1_700_000_010.0)
+    record_motion_conclusion(
+        tmp_kittyhack_db,
+        created_at=t0,
+        rfid="RFID001",
+        cat_name="Mia",
+        event_type=EventType.CAT_WENT_OUTSIDE,
+    )
+    same = apply_manual_location(
+        tmp_kittyhack_db,
+        cat_rfid="RFID001",
+        cat_name="Mia",
+        direction="out",
+        created_at=t1,
+    )
+    assert same.message == "unchanged"
+    rows = _visit_rows(tmp_kittyhack_db)
+    assert len(rows) == 1
+    assert rows[0]["created_at"] == t0
+
+
+def test_manual_location_does_not_drop_a_recent_flap_passage(tmp_kittyhack_db):
+    t0 = DateTimeUtil.get_utc_date_string(1_700_000_000.0)
+    t1 = DateTimeUtil.get_utc_date_string(1_700_000_002.0)
+    t2 = DateTimeUtil.get_utc_date_string(1_700_000_004.0)
+    record_motion_conclusion(
+        tmp_kittyhack_db,
+        created_at=t0,
+        rfid="RFID001",
+        cat_name="Mia",
+        event_type=EventType.CAT_WENT_OUTSIDE,
+    )
+    record_motion_conclusion(
+        tmp_kittyhack_db,
+        created_at=t1,
+        rfid="RFID001",
+        cat_name="Mia",
+        event_type=EventType.CAT_WENT_INSIDE,
+    )
+    marked = apply_manual_location(
+        tmp_kittyhack_db,
+        cat_rfid="RFID001",
+        cat_name="Mia",
+        direction="out",
+        created_at=t2,
+    )
+    assert marked.message == "inserted"
+    rows = _visit_rows(tmp_kittyhack_db)
+    assert len(rows) == 3
+    assert rows[1]["conclusion"] == EventType.CAT_WENT_INSIDE
+    assert rows[2]["conclusion"] == MANUAL_LOCATION_CONCLUSION
+    assert rows[2]["duration_inside_s"] == 2

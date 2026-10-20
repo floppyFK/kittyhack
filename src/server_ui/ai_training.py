@@ -1212,7 +1212,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         )
 
         # Start the model training process
-        result = RemoteModelTrainer.enqueue_model_training(
+        code, detail = RemoteModelTrainer.enqueue_model_training(
             zip_file_path,
             model_name,
             user_name,
@@ -1220,11 +1220,21 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             yolo_model_variant=model_variant,
             image_size=image_size,
         )
-        if is_valid_uuid4(result):
+        if code == "ok" and is_valid_uuid4(detail):
             # Update the config with the training details
-            CONFIG["MODEL_TRAINING"] = result
+            CONFIG["MODEL_TRAINING"] = detail
             update_single_config_parameter("MODEL_TRAINING")
-        elif result == "client_outdated":
+        elif code == "file_too_large":
+            ui.notification_show(
+                detail
+                or _(
+                    "The training file is too large. Maximum allowed upload size is 150MB."
+                ),
+                duration=15,
+                type="error",
+            )
+            return
+        elif code == "client_outdated":
             ui.notification_show(
                 _(
                     "This version of Kittyhack cannot start model training. Update Kittyhack and try again."
@@ -1233,7 +1243,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 type="error",
             )
             return
-        elif result == "invalid_file":
+        elif code == "invalid_file":
             ui.notification_show(
                 _(
                     "This is not a valid Label Studio training data ZIP file. Export the project as 'YOLO with Images' and try again."
@@ -1242,7 +1252,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 type="error",
             )
             return
-        elif result in ["destination_unreachable", "destination_not_found"]:
+        elif code in ["destination_unreachable", "destination_not_found"]:
             ui.notification_show(
                 _(
                     "Could not reach the model training server. Check your network connection and try again."
@@ -1253,7 +1263,9 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             return
         else:
             ui.notification_show(
-                _("Could not start model training: {}").format(result),
+                _("Could not start model training: {}").format(
+                    "unknown_error" if code == "ok" else code
+                ),
                 duration=15,
                 type="error",
             )

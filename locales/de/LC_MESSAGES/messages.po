@@ -809,6 +809,9 @@ msgstr ""
 msgid "Could not start model training: {}"
 msgstr "Bei dem Start des Modelltrainings ist ein Fehler aufgetreten: {}"
 
+msgid "The training file is too large. Maximum allowed upload size is 150MB."
+msgstr "Die Trainingsdatei ist zu groß. Die maximal erlaubte Upload-Größe beträgt 150 MB."
+
 msgid ""
 "Label Studio needs at least 1.5 GB of free space. Free some space and try "
 "again."

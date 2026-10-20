@@ -34,6 +34,40 @@ from .yolo_model import YoloModel
 _ = set_language(CONFIG["LANGUAGE"])
 
 _MODEL_DL_STATE_PATH = "/tmp/kittyhack_model_download_state.json"
+_MAX_SERVER_DETAIL_CHARS = 300
+
+
+def plain_server_detail(payload: Any) -> str:
+    """Return a short plain-text server message, or "" when it should not be shown.
+
+    Accepts a parsed JSON object, or a raw response body. ``detail`` may be a
+    string or an object with a ``message`` field. HTML and over-long text are
+    dropped so a proxy error page is not shown in the UI.
+    """
+    if isinstance(payload, (bytes, bytearray)):
+        try:
+            payload = payload.decode("utf-8")
+        except Exception:
+            return ""
+    if isinstance(payload, str):
+        stripped = payload.strip()
+        if not stripped:
+            return ""
+        try:
+            payload = json.loads(stripped)
+        except Exception:
+            return ""
+    if not isinstance(payload, dict):
+        return ""
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        detail = detail.get("message") or ""
+    if not isinstance(detail, str):
+        return ""
+    text = " ".join(detail.split())
+    if not text or len(text) > _MAX_SERVER_DETAIL_CHARS or "<" in text:
+        return ""
+    return text
 
 class RemoteModelTrainer:
     """Remote training API client and local download/install orchestration."""
@@ -204,7 +238,12 @@ class RemoteModelTrainer:
         yolo_model_variant: str = "n",
         image_size: int = 320,
     ):
-        """Upload a training zip; return job_id or an error status string."""
+        """Upload a training zip.
+
+        Returns ``("ok", job_id)`` on success, or ``(error_code, server_message)``.
+        ``server_message`` is set for HTTP 413 when the body contains a short
+        plain-text ``detail``.
+        """
         url = f"{RemoteModelTrainer.BASE_URL}/upload"
         files = {'file': open(zip_file_path, 'rb')}
         variant = str(yolo_model_variant or "n").strip().lower()
@@ -240,31 +279,36 @@ class RemoteModelTrainer:
             if job_token:
                 CONFIG["MODEL_TRAINING_JOB_TOKEN"] = job_token
                 update_single_config_parameter("MODEL_TRAINING_JOB_TOKEN")
-            return response_json.get("job_id")
+            return "ok", response_json.get("job_id") or ""
         except Exception as e:
             # FIXME: If the http return code is 400, we should return "invalid_file" instead of None. If the destination is not reachable, we should return "destination_unreachable"
             status = getattr(response, "status_code", None)
             if status == 400:
                 logging.error(f"[MODEL_TRAINING] Invalid file: {e}")
-                return "invalid_file"
+                return "invalid_file", ""
             elif status in (401, 403):
                 logging.error(f"[MODEL_TRAINING] Client outdated or unauthorized: {e}")
-                return "client_outdated"
+                return "client_outdated", ""
             elif status == 503:
                 logging.error(f"[MODEL_TRAINING] Destination unreachable: {e}")
-                return "destination_unreachable"
+                return "destination_unreachable", ""
             elif status == 413:
                 logging.error(f"[MODEL_TRAINING] File too large: {e}")
-                return "file_too_large"
+                detail = ""
+                try:
+                    detail = plain_server_detail(getattr(response, "content", b"") or b"")
+                except Exception:
+                    detail = ""
+                return "file_too_large", detail
             elif status == 500:
                 logging.error(f"[MODEL_TRAINING] Internal server error: {e}")
-                return "internal_server_error"
+                return "internal_server_error", ""
             elif status == 404:
                 logging.error(f"[MODEL_TRAINING] Destination not found: {e}")
-                return "destination_not_found"
+                return "destination_not_found", ""
             else:
                 logging.error(f"[MODEL_TRAINING] Unknown error: {e}")
-                return "unknown_error"
+                return "unknown_error", ""
         finally:
             files['file'].close()
 

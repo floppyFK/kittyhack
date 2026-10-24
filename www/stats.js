@@ -248,6 +248,27 @@
             if (value >= 60) return Math.round(value / 60) + "m";
             return value;
         };
+        var byHour = payload.activity_by_hour || {};
+        var hourOptions = commonOptions(colors, false);
+        hourOptions.plugins.legend.display = false;
+        makeChart("chart-activity-hour", {
+            type: "bar",
+            data: {
+                labels: byHour.labels || [],
+                datasets: [
+                    {
+                        label: byHour.label || "Passages",
+                        data: byHour.counts || [],
+                        backgroundColor: withAlpha(colors.primary, 0.8),
+                        borderColor: colors.primary,
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }
+                ]
+            },
+            options: hourOptions
+        });
+
         makeChart("chart-durations", {
             type: "line",
             data: {
@@ -286,6 +307,22 @@
     function install() {
         if (window.__khStatsInstalled) return;
         window.__khStatsInstalled = true;
+
+        document.addEventListener("click", function (ev) {
+            var target = ev.target;
+            if (!target || !target.closest) return;
+            var btn = target.closest("[data-stats-cat-key]");
+            if (!btn) return;
+            ev.preventDefault();
+            var key = btn.getAttribute("data-stats-cat-key");
+            if (!key) return;
+            if (!(window.Shiny && typeof window.Shiny.setInputValue === "function")) return;
+            window.Shiny.setInputValue("stats_cat_visibility", {
+                key: key,
+                hidden: btn.getAttribute("data-stats-cat-hidden") === "1",
+                nonce: Date.now()
+            }, { priority: "event" });
+        });
 
         function run() { scheduleRender(); }
 

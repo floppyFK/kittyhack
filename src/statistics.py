@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
@@ -32,6 +34,7 @@ BUCKETS = ("auto", "hour", "day", "week", "month")
 
 CAT_FILTER_ALL = "all"
 CAT_FILTER_UNKNOWN = "__unknown__"
+_HIDDEN_CAT_KEY_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 
 MANUAL_LOCATION_CONCLUSION = "manual_location"
 MANUAL_LOCATION_COALESCE_S = 5.0
@@ -457,6 +460,41 @@ def _cat_key(row: dict) -> str:
     return CAT_FILTER_UNKNOWN
 
 
+def valid_hidden_cat_key(key: str) -> bool:
+    """True for an RFID or the unknown-cat key stored in the per-cat hide list."""
+    return bool(_HIDDEN_CAT_KEY_RE.fullmatch(key))
+
+
+def parse_hidden_cat_keys(raw) -> set[str]:
+    """Decode the persisted per-cat hide list. Invalid entries are dropped."""
+    if isinstance(raw, list):
+        values = raw
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return set()
+        try:
+            values = json.loads(text)
+        except (TypeError, ValueError):
+            return set()
+    else:
+        return set()
+    if not isinstance(values, list):
+        return set()
+    keys: set[str] = set()
+    for item in values:
+        key = str(item).strip()
+        if valid_hidden_cat_key(key):
+            keys.add(key)
+    return keys
+
+
+def dump_hidden_cat_keys(keys) -> str:
+    """Encode the per-cat hide list for the settings table."""
+    clean = sorted({str(key) for key in keys if valid_hidden_cat_key(str(key))})
+    return json.dumps(clean)
+
+
 def _cat_label(row: dict, unknown_label: str) -> str:
     name = row.get("cat_name")
     if name:
@@ -495,7 +533,7 @@ class DashboardLabels:
     attempts_exit: str = "Denied exits"
     median_outside: str = "Median outside"
     median_inside: str = "Median inside"
-    weekdays: tuple[str, ...] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    passages: str = "Passages"
     duration_d: str = "d"
     duration_h: str = "h"
     duration_m: str = "m"
@@ -560,7 +598,7 @@ def build_dashboard(
     attempts_exit = empty_series()
     dur_out_by_bucket = empty_dur_lists()
     dur_in_by_bucket = empty_dur_lists()
-    heatmap = [[0 for _ in range(24)] for _ in range(7)]
+    by_hour = [0 for _ in range(24)]
 
     entries = exits = prey_n = attempts = denied_entry = denied_exit = uncertain = 0
     dur_out_all: list[float] = []
@@ -689,7 +727,7 @@ def build_dashboard(
             pass
 
         if passed:
-            heatmap[local.weekday()][local.hour] += 1
+            by_hour[local.hour] += 1
 
     last_locations: dict[str, str] = {}
     for ck in per_cat:
@@ -699,12 +737,18 @@ def build_dashboard(
         if last and last.get("direction") in ("in", "out"):
             last_locations[ck] = "inside" if last["direction"] == "in" else "outside"
 
+    def _per_cat_order(item: tuple[str, dict]) -> tuple:
+        cat = item[1]
+        passages = int(cat["entries"]) + int(cat["exits"])
+        return (-passages, str(cat["name"]).lower())
+
     cat_cards = []
     thumbs = cat_thumbnails or {}
-    for ck, cat in sorted(per_cat.items(), key=lambda item: item[1]["name"].lower()):
+    for ck, cat in sorted(per_cat.items(), key=_per_cat_order):
         loc = last_locations.get(ck, "unknown")
         cat_cards.append(
             {
+                "key": ck,
                 "rfid": cat["rfid"],
                 "name": cat["name"],
                 "thumbnail": thumbs.get(cat["rfid"] or "", ""),
@@ -802,10 +846,10 @@ def build_dashboard(
             "outside_label": labels.median_outside,
             "inside_label": labels.median_inside,
         },
-        "heatmap": {
-            "weekdays": list(labels.weekdays),
-            "hours": [f"{h:02d}" for h in range(24)],
-            "cells": heatmap,
+        "activity_by_hour": {
+            "labels": [f"{h:02d}" for h in range(24)],
+            "counts": by_hour,
+            "label": labels.passages,
         },
         "cats": cat_cards,
         "i18n": {

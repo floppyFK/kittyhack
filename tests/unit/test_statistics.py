@@ -12,7 +12,9 @@ from src.statistics import (
     backfill_from_events,
     build_dashboard,
     classify_visit,
+    dump_hidden_cat_keys,
     format_duration,
+    parse_hidden_cat_keys,
     infer_other_access,
     pair_duration,
     record_motion_conclusion,
@@ -201,7 +203,7 @@ def test_backfill_from_events_is_idempotent(tmp_kittyhack_db):
     assert rows[0]["cat_name"] == "Mia"
 
 
-def test_build_dashboard_kpis_and_heatmap(tmp_kittyhack_db):
+def test_build_dashboard_kpis_and_activity_by_hour(tmp_kittyhack_db):
     tz = ZoneInfo("UTC")
     base = datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc)
     record_motion_conclusion(
@@ -244,10 +246,82 @@ def test_build_dashboard_kpis_and_heatmap(tmp_kittyhack_db):
     assert payload["kpis"]["denied_entry"] == 1
     assert payload["cats"][0]["name"] == "Mia"
     assert payload["cats"][0]["location"] == "inside"
-    heat_sum = sum(sum(row) for row in payload["heatmap"]["cells"])
-    assert heat_sum == 2  # only passed events
+    by_hour = payload["activity_by_hour"]
+    assert by_hour["labels"] == [f"{h:02d}" for h in range(24)]
+    assert sum(by_hour["counts"]) == 2  # only passed events
+    assert by_hour["counts"][10] == 1
+    assert by_hour["counts"][12] == 1
+    assert "heatmap" not in payload
     assert payload["kpis"]["other_entry"] == 0
     assert payload["kpis"]["other_exit"] == 0
+
+
+def test_activity_by_hour_sums_across_weekdays(tmp_kittyhack_db):
+    tz = ZoneInfo("UTC")
+    # Wednesday and Thursday, same hour of day.
+    for stamp in (
+        datetime(2026, 8, 12, 7, 0, tzinfo=timezone.utc),
+        datetime(2026, 8, 13, 7, 30, tzinfo=timezone.utc),
+    ):
+        record_motion_conclusion(
+            tmp_kittyhack_db,
+            created_at=DateTimeUtil.get_utc_date_string(stamp.timestamp()),
+            rfid="RFID001",
+            cat_name="Mia",
+            event_type=EventType.CAT_WENT_OUTSIDE,
+        )
+
+    payload = build_dashboard(
+        tmp_kittyhack_db,
+        range_key="custom",
+        custom_start=datetime(2026, 8, 12, tzinfo=tz).date(),
+        custom_end=datetime(2026, 8, 13, tzinfo=tz).date(),
+        tz=tz,
+    )
+    counts = payload["activity_by_hour"]["counts"]
+    assert len(counts) == 24
+    assert counts[7] == 2
+    assert sum(counts) == 2
+
+
+def test_per_cat_cards_sort_by_passages_then_name(tmp_kittyhack_db):
+    tz = ZoneInfo("UTC")
+    events = [
+        (datetime(2026, 8, 12, 8, 0, tzinfo=timezone.utc), "RFIDMIA", "Mia", EventType.CAT_WENT_OUTSIDE),
+        (datetime(2026, 8, 12, 9, 0, tzinfo=timezone.utc), "RFIDLEO", "Leo", EventType.CAT_WENT_OUTSIDE),
+        (datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc), "RFIDLEO", "Leo", EventType.CAT_WENT_INSIDE),
+        (datetime(2026, 8, 12, 11, 0, tzinfo=timezone.utc), "RFIDZOE", "Zoe", EventType.CAT_WENT_OUTSIDE),
+        (datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc), "RFIDANN", "Ann", EventType.CAT_WENT_OUTSIDE),
+    ]
+    for stamp, rfid, name, event_type in events:
+        record_motion_conclusion(
+            tmp_kittyhack_db,
+            created_at=DateTimeUtil.get_utc_date_string(stamp.timestamp()),
+            rfid=rfid,
+            cat_name=name,
+            event_type=event_type,
+        )
+
+    payload = build_dashboard(
+        tmp_kittyhack_db,
+        range_key="custom",
+        custom_start=datetime(2026, 8, 12, tzinfo=tz).date(),
+        custom_end=datetime(2026, 8, 12, tzinfo=tz).date(),
+        tz=tz,
+    )
+    assert [(cat["name"], cat["key"]) for cat in payload["cats"]] == [
+        ("Leo", "RFIDLEO"),
+        ("Ann", "RFIDANN"),
+        ("Mia", "RFIDMIA"),
+        ("Zoe", "RFIDZOE"),
+    ]
+
+
+def test_hidden_cat_keys_roundtrip_drops_invalid():
+    raw = dump_hidden_cat_keys(["RFID001", "__unknown__", "bad key", ""])
+    assert parse_hidden_cat_keys(raw) == {"RFID001", "__unknown__"}
+    assert parse_hidden_cat_keys("not-json") == set()
+    assert parse_hidden_cat_keys(None) == set()
 
 
 def test_build_dashboard_empty_without_history(tmp_kittyhack_db):

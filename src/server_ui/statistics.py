@@ -1,4 +1,4 @@
-"""Statistics tab: filters, KPIs, charts, heatmap, per-cat cards."""
+"""Statistics tab: filters, KPIs, charts, per-cat cards."""
 
 from __future__ import annotations
 
@@ -6,21 +6,24 @@ import html
 import json
 from datetime import datetime, timedelta
 
-from shiny import render, ui
+from shiny import reactive, render, ui
 from zoneinfo import ZoneInfo
 from faicons import icon_svg
 
-from src.baseconfig import CONFIG, set_language
+from src.baseconfig import CONFIG, set_language, update_single_config_parameter
 from src.database import CatsRepo, ReturnDataCatDB, VisitStatsRepo
 from src.helper import DateTimeUtil
 from src.server_ui.context import SessionContext
-from src.server_ui.state import reload_trigger_photos
+from src.server_ui.state import reload_trigger_photos, stats_hidden_cats_revision
 from src.statistics import (
     CAT_FILTER_ALL,
     CAT_FILTER_UNKNOWN,
     DashboardLabels,
     build_dashboard,
+    dump_hidden_cat_keys,
     format_duration,
+    parse_hidden_cat_keys,
+    valid_hidden_cat_key,
 )
 
 _ = set_language(CONFIG["LANGUAGE"])
@@ -40,15 +43,7 @@ def _dashboard_labels() -> DashboardLabels:
         attempts_exit=_("Denied exits"),
         median_outside=_("Median time outside"),
         median_inside=_("Median time inside"),
-        weekdays=(
-            _("Mon"),
-            _("Tue"),
-            _("Wed"),
-            _("Thu"),
-            _("Fri"),
-            _("Sat"),
-            _("Sun"),
-        ),
+        passages=_("Passages"),
         duration_d=_("d"),
         duration_h=_("h"),
         duration_m=_("m"),
@@ -114,52 +109,6 @@ def _kpi_card(title: str, value: str, hint: str | None = None):
     return ui.div(*children, class_="stats-kpi-card")
 
 
-def _heatmap_html(payload: dict) -> str:
-    heat = payload.get("heatmap") or {}
-    weekdays = heat.get("weekdays") or []
-    hours = heat.get("hours") or []
-    cells = heat.get("cells") or []
-    max_val = 1
-    for row in cells:
-        for n in row:
-            try:
-                max_val = max(max_val, int(n))
-            except (TypeError, ValueError):
-                pass
-    hour_cells = "".join(
-        f'<div class="stats-heatmap-hour">{html.escape(str(h))}</div>' for h in hours
-    )
-    scale = (
-        '<div class="stats-heatmap-scale" aria-hidden="true">'
-        "<span>0</span><span>6</span><span>12</span><span>18</span><span>23</span>"
-        "</div>"
-    )
-    body = []
-    for i, day in enumerate(weekdays):
-        row = cells[i] if i < len(cells) else [0] * 24
-        parts = [f'<div class="stats-heatmap-day">{html.escape(str(day))}</div>']
-        for hour, n in enumerate(row):
-            try:
-                count = int(n)
-            except (TypeError, ValueError):
-                count = 0
-            pct = 0 if max_val <= 0 else int(round(100 * count / max_val))
-            title = html.escape(f"{day} {hour:02d}:00 — {count}")
-            parts.append(
-                f'<div class="stats-heatmap-cell" data-n="{count}" '
-                f'style="--stats-heat:{pct}%" title="{title}"></div>'
-            )
-        body.append(f'<div class="stats-heatmap-row">{"".join(parts)}</div>')
-    return (
-        f'<div class="stats-heatmap" role="img" '
-        f'aria-label="{html.escape(_("Activity by hour of day"))}">'
-        f"{scale}"
-        f'<div class="stats-heatmap-row stats-heatmap-head">'
-        f'<div class="stats-heatmap-day"></div>{hour_cells}</div>'
-        f'{"".join(body)}</div>'
-    )
-
-
 def _location_label(location: str, labels: DashboardLabels) -> str:
     if location == "inside":
         return labels.last_seen_inside
@@ -168,9 +117,50 @@ def _location_label(location: str, labels: DashboardLabels) -> str:
     return labels.location_unknown
 
 
-def _cat_cards_ui(payload: dict, labels: DashboardLabels):
+def _cat_key_of(cat: dict) -> str:
+    key = cat.get("key")
+    if key:
+        return str(key)
+    rfid = cat.get("rfid")
+    if rfid:
+        return str(rfid)
+    return CAT_FILTER_UNKNOWN
+
+
+def _visibility_button(label: str, key: str, *, hide: bool):
+    return ui.tags.button(
+        label,
+        type="button",
+        class_="stats-cat-hide-btn" if hide else "stats-cat-show-btn",
+        data_stats_cat_key=key,
+        data_stats_cat_hidden="1" if hide else "0",
+    )
+
+
+def _parse_visibility_input(payload) -> tuple[str, bool] | None:
+    if not isinstance(payload, dict):
+        return None
+    raw_key = payload.get("key")
+    raw_hidden = payload.get("hidden")
+    if isinstance(raw_key, list):
+        raw_key = raw_key[0] if raw_key else ""
+    if isinstance(raw_hidden, list):
+        raw_hidden = raw_hidden[0] if raw_hidden else False
+    key = str(raw_key or "").strip()
+    if not valid_hidden_cat_key(key):
+        return None
+    if isinstance(raw_hidden, bool):
+        hide = raw_hidden
+    elif isinstance(raw_hidden, (int, float)):
+        hide = raw_hidden != 0
+    else:
+        hide = str(raw_hidden).strip().lower() in {"1", "true", "yes"}
+    return key, hide
+
+
+def _cat_cards_ui(cats: list, labels: DashboardLabels):
     cards = []
-    for cat in payload.get("cats") or []:
+    for cat in cats:
         loc = cat.get("location") or "unknown"
         loc_safe = loc if loc in ("inside", "outside") else "unknown"
         loc_class = f"stats-loc stats-loc--{loc_safe}"
@@ -239,6 +229,7 @@ def _cat_cards_ui(payload: dict, labels: DashboardLabels):
                         ),
                         class_="stats-cat-identity",
                     ),
+                    _visibility_button(_("Hide"), _cat_key_of(cat), hide=True),
                     class_="stats-cat-head",
                 ),
                 ui.div(
@@ -267,6 +258,38 @@ def _cat_cards_ui(payload: dict, labels: DashboardLabels):
     if not cards:
         return ui.div()
     return ui.div(*cards, class_="stats-cat-grid")
+
+
+def _hidden_cats_ui(cats: list):
+    chips = []
+    for cat in cats:
+        name = cat.get("name") or _("Unknown")
+        chips.append(
+            ui.div(
+                ui.span(name, class_="stats-cats-hidden-name"),
+                _visibility_button(_("Show"), _cat_key_of(cat), hide=False),
+                class_="stats-cats-hidden-chip",
+            )
+        )
+    return ui.div(
+        ui.span(_("Hidden"), class_="stats-cats-hidden-label"),
+        *chips,
+        class_="stats-cats-hidden",
+    )
+
+
+def _cat_section_ui(payload: dict, labels: DashboardLabels, hidden: set[str]):
+    cats = payload.get("cats") or []
+    visible = [cat for cat in cats if _cat_key_of(cat) not in hidden]
+    concealed = [cat for cat in cats if _cat_key_of(cat) in hidden]
+    if not visible and not concealed:
+        return ui.div()
+    parts = [ui.h3(_("Per cat"), class_="stats-section-title")]
+    if visible:
+        parts.append(_cat_cards_ui(visible, labels))
+    if concealed:
+        parts.append(_hidden_cats_ui(concealed))
+    return ui.div(*parts, class_="stats-cats")
 
 
 def _empty_state(has_history: bool):
@@ -343,12 +366,12 @@ def register_statistics(input, output, session, ctx: SessionContext):
                 class_="stats-filters",
             ),
             ui.output_ui("ui_statistics_dashboard"),
+            ui.output_ui("ui_statistics_cats"),
             class_="stats-page",
         )
 
-    @output
-    @render.ui
-    def ui_statistics_dashboard():
+    @reactive.calc
+    def _stats_dashboard_payload():
         # Read reload_trigger_photos so this output re-executes when events change.
         reload_trigger_photos.get()
         try:
@@ -392,6 +415,44 @@ def register_statistics(input, output, session, ctx: SessionContext):
             labels=labels,
             cat_thumbnails=_cat_thumbnails(),
         )
+        return payload
+
+    def _known_cat_keys() -> set[str]:
+        payload = _stats_dashboard_payload()
+        return {_cat_key_of(cat) for cat in (payload.get("cats") or [])}
+
+    def _update_hidden_cat(key: str, *, hide: bool) -> None:
+        if key not in _known_cat_keys():
+            return
+        keys = parse_hidden_cat_keys(CONFIG.get("STATS_HIDDEN_CATS"))
+        if hide:
+            if key in keys:
+                return
+            keys.add(key)
+        else:
+            if key not in keys:
+                return
+            keys.discard(key)
+        previous = CONFIG.get("STATS_HIDDEN_CATS")
+        CONFIG["STATS_HIDDEN_CATS"] = dump_hidden_cat_keys(keys)
+        if not update_single_config_parameter("STATS_HIDDEN_CATS"):
+            CONFIG["STATS_HIDDEN_CATS"] = previous
+            return
+        stats_hidden_cats_revision.set(stats_hidden_cats_revision.get() + 1)
+
+    @reactive.effect
+    @reactive.event(input.stats_cat_visibility, ignore_none=True)
+    def on_stats_cat_visibility():
+        parsed = _parse_visibility_input(input.stats_cat_visibility())
+        if parsed is None:
+            return
+        key, hide = parsed
+        _update_hidden_cat(key, hide=hide)
+
+    @output
+    @render.ui
+    def ui_statistics_dashboard():
+        payload = _stats_dashboard_payload()
 
         if payload.get("empty"):
             return _empty_state(bool(payload.get("has_history")))
@@ -470,14 +531,29 @@ def register_statistics(input, output, session, ctx: SessionContext):
             ),
             ui.div(
                 ui.h3(_("Activity by hour of day"), class_="stats-chart-title"),
-                ui.HTML(_heatmap_html(payload)),
-                class_="stats-chart-card stats-heatmap-card",
+                ui.div(
+                    ui.HTML(
+                        '<canvas id="chart-activity-hour" aria-label="{}"></canvas>'.format(
+                            html.escape(_("Activity by hour of day"))
+                        )
+                    ),
+                    class_="stats-chart-canvas",
+                ),
+                class_="stats-chart-card",
             ),
-            ui.h3(_("Per cat"), class_="stats-section-title"),
-            _cat_cards_ui(payload, labels),
             ui.HTML(
                 f'<script type="application/json" id="stats-payload">{payload_json}</script>'
             ),
             id="stats-dashboard",
             class_="stats-dashboard",
         )
+
+    @output
+    @render.ui
+    def ui_statistics_cats():
+        payload = _stats_dashboard_payload()
+        if payload.get("empty"):
+            return ui.div()
+        stats_hidden_cats_revision.get()
+        hidden = parse_hidden_cat_keys(CONFIG.get("STATS_HIDDEN_CATS"))
+        return _cat_section_ui(payload, _dashboard_labels(), hidden)

@@ -14,6 +14,7 @@ reload_trigger_photos = reactive.Value(0)
 reload_trigger_ai = reactive.Value(0)
 reload_trigger_config = reactive.Value(0)
 reload_trigger_api_tokens = reactive.Value(0)
+stats_hidden_cats_revision = reactive.Value(0)
 
 ls_project_choices = reactive.Value({})
 

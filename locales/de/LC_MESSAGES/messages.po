@@ -3901,6 +3901,15 @@ msgstr "Zeit innen / außen"
 msgid "Per cat"
 msgstr "Pro Katze"
 
+msgid "Hide"
+msgstr "Ausblenden"
+
+msgid "Show"
+msgstr "Einblenden"
+
+msgid "Hidden"
+msgstr "Ausgeblendet"
+
 msgid "Reinstall camera driver"
 msgstr "Kameratreiber neu installieren"
 

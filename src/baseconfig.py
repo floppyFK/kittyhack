@@ -163,6 +163,8 @@ SETTINGS_SCHEMA: list[Setting] = [
     # Update repository: standard | beta | custom (custom uses UPDATE_REPOSITORY)
     _S("UPDATE_REPOSITORY_MODE", "standard"),
     _S("UPDATE_REPOSITORY", ""),
+    # JSON list of cat keys hidden in the Statistics "Per cat" section.
+    _S("STATS_HIDDEN_CATS", "[]"),
 ]
 
 _SETTINGS_BY_KEY: dict[str, Setting] = {s.key: s for s in SETTINGS_SCHEMA}

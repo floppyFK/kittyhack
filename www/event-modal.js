@@ -350,13 +350,15 @@
         this._attachModalCloseHandler();
         this._attachKeyboardHandler();
 
-        // Show first frame
-        this.showFrame(0);
-
-        // Auto-play for multi-frame events
-        if (this.frames.length > 1) {
+        // Auto-play only the frames that actually contain a picture.
+        // Hatched regions stay on the scrubber for manual seeking while paused.
+        var pictureCount = this._pictureCount();
+        if (pictureCount >= 2) {
+            this.showFrame(this._firstPictureIdx());
             this._startPlayback();
         } else {
+            var stillIdx = pictureCount === 1 ? this._firstPictureIdx() : 0;
+            this.showFrame(stillIdx);
             this.playing = false;
         }
         this._updatePlayPauseUI();
@@ -650,6 +652,35 @@
         return !!(frame && !frame.missing && frame.pid !== null && typeof frame.pid !== 'undefined');
     };
 
+    Player.prototype._pictureCount = function () {
+        var count = 0;
+        for (var i = 0; i < this.frames.length; i++) {
+            if (this._frameHasPicture(this.frames[i])) count++;
+        }
+        return count;
+    };
+
+    Player.prototype._firstPictureIdx = function () {
+        for (var i = 0; i < this.frames.length; i++) {
+            if (this._frameHasPicture(this.frames[i])) return i;
+        }
+        return -1;
+    };
+
+    // Next frame that has a picture, wrapping past hatched regions.
+    // Returns -1 when the timeline contains no pictures.
+    Player.prototype._nextPictureIdx = function (fromIdx) {
+        var n = this.frames.length;
+        if (n === 0) return -1;
+        var start = parseIntSafe(fromIdx, -1);
+        for (var step = 1; step <= n; step++) {
+            var idx = (start + step) % n;
+            if (idx < 0) idx += n;
+            if (this._frameHasPicture(this.frames[idx])) return idx;
+        }
+        return -1;
+    };
+
     Player.prototype._buildGapSegments = function (nFrames) {
         if (nFrames <= 1) return '';
         var html = '';
@@ -761,11 +792,27 @@
 
     Player.prototype._startPlayback = function () {
         this._stopPlayback();
+        var pictureCount = this._pictureCount();
+        if (pictureCount < 2) {
+            if (!this._frameHasPicture(this.frames[this.currentIdx])) {
+                var only = this._firstPictureIdx();
+                if (only >= 0) this.showFrame(only);
+            }
+            this.playing = false;
+            return;
+        }
+        // Leave a hatched frame immediately; don't show the placeholder for one tick.
+        if (!this._frameHasPicture(this.frames[this.currentIdx])) {
+            var jump = this._nextPictureIdx(this.currentIdx);
+            if (jump < 0) { this.playing = false; return; }
+            this.showFrame(jump);
+        }
         var intervalMs = Math.max(10, Math.round(1000 / Math.max(0.1, Math.min(30, this.fps))));
         var self = this;
         this.playTimer = setInterval(function () {
             if (self.destroyed || !self.playing) { self._stopPlayback(); return; }
-            var next = (self.currentIdx + 1) % self.frames.length;
+            var next = self._nextPictureIdx(self.currentIdx);
+            if (next < 0) { self.playing = false; self._stopPlayback(); return; }
             self.showFrame(next);
         }, intervalMs);
     };
@@ -775,7 +822,12 @@
     };
 
     Player.prototype.togglePlayPause = function () {
-        if (this.frames.length <= 1) return;
+        if (this.frames.length <= 1 || this._pictureCount() < 2) {
+            if (this._pictureCount() === 1 && !this._frameHasPicture(this.frames[this.currentIdx])) {
+                this.showFrame(this._firstPictureIdx());
+            }
+            return;
+        }
         this.playing = !this.playing;
         if (this.playing) {
             this._startPlayback();

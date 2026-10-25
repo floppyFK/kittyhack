@@ -1,7 +1,14 @@
+import os
+
+from src.shiny_compat import install as install_shiny_compat
+
+# Before the UI session module is imported: patches Shiny's shared reactive lock
+# and the CancelledError traceback from invalidate_later on session teardown.
+install_shiny_compat()
+
 from shiny import App
 from src.ui import app_ui
 from src.server import server
-import os
 from src.paths import pictures_thumbnails_dir, pictures_original_dir
 from src.api import ApiMiddleware
 

@@ -1007,6 +1007,16 @@ html[data-bs-theme="dark"] .kh-photo-modal-close:hover {
     pointer-events: none;
 }
 
+/* Door-lock chips on the frame that owns a timeline marker */
+.event-modal-door-status {
+    position: absolute;
+    left: 8px;
+    bottom: 12px;
+    z-index: 4;
+    max-width: calc(100% - 4.5rem);
+    pointer-events: auto;
+}
+
 /* Backdrop image (set by JS) that stays visible while the next frame decodes */
 .event-modal-picture-wrap img.event-modal-picture-bg {
     z-index: 0;

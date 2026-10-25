@@ -561,6 +561,20 @@ def show_event_server(input, output, session, block_id: int):
                 "fps": float(event_effective_fps[0]) if event_effective_fps[0] else 4.0,
                 "fallbackMode": fallback_mode[0],
                 "blockId": block_id,
+                "doorStatus": {
+                    "inside": _("Inside"),
+                    "outside": _("Outside"),
+                    "insideUnlocked": _("Inside lock: Unlocked"),
+                    "insideLocked": _("Inside lock: Locked"),
+                    "outsideUnlocked": _("Outside lock: Unlocked"),
+                    "outsideLocked": _("Outside lock: Locked"),
+                    "iconUnlocked": str(
+                        icon_svg("lock-open", margin_left="0", margin_right="0")
+                    ),
+                    "iconLocked": str(
+                        icon_svg("lock", margin_left="0", margin_right="0")
+                    ),
+                },
             }
         )
 

@@ -301,6 +301,7 @@
 
         this.frames = data.frames || [];
         this.doorMarkers = data.doorMarkers || [];
+        this.doorStatus = data.doorStatus || {};
         this.missingPictureText = data.missingPictureText || 'No picture stored';
         this.mouseThreshold = parseFloat(data.mouseThreshold) || 50.0;
         this.overlayOn = (data.overlayInitial !== false);
@@ -561,8 +562,63 @@
             + 'background-color:rgba(0,0,0,0.5);color:white;padding:2px 5px;border-radius:3px;z-index:3;">'
             + (idx + 1) + '/' + this.frames.length + '</div>';
 
+        html += this._doorStatusHtml(idx);
+
         html += '</div>';
         this.overlayContainer.innerHTML = html;
+    };
+
+    // Latest door-lock marker at or before this frame, per side.
+    // The chip stays until a later marker of the same side replaces it.
+    Player.prototype._doorMarkersOnFrame = function (idx) {
+        var inside = null;
+        var outside = null;
+        var insideFrame = -1;
+        var outsideFrame = -1;
+        for (var i = 0; i < this.doorMarkers.length; i++) {
+            var marker = this.doorMarkers[i] || {};
+            var frame = parseIntSafe(marker.frame, -1);
+            if (frame < 0 || frame > idx) continue;
+            var kind = String(marker.kind || '');
+            if (kind.indexOf('inside-') === 0 && frame >= insideFrame) {
+                inside = marker;
+                insideFrame = frame;
+            } else if (kind.indexOf('outside-') === 0 && frame >= outsideFrame) {
+                outside = marker;
+                outsideFrame = frame;
+            }
+        }
+        return { inside: inside, outside: outside };
+    };
+
+    Player.prototype._doorChipHtml = function (side, marker) {
+        var copy = this.doorStatus || {};
+        var kind = String((marker && marker.kind) || '');
+        var open = kind.indexOf('-open') !== -1;
+        var title = (marker && marker.label) || '';
+        if (!title) {
+            if (side === 'inside') title = open ? copy.insideUnlocked : copy.insideLocked;
+            else title = open ? copy.outsideUnlocked : copy.outsideLocked;
+        }
+        var sideLabel = side === 'inside' ? copy.inside : copy.outside;
+        var icon = open ? copy.iconUnlocked : copy.iconLocked;
+        var variant = open ? 'ok' : 'muted';
+        return '<div class="live-view-overlay-chip">'
+            + '<span class="live-view-overlay-title">' + _escHtml(sideLabel || '') + '</span>'
+            + '<span class="live-view-pill live-view-pill--' + variant + '"'
+            + ' title="' + _escHtml(title) + '" aria-label="' + _escHtml(title) + '">'
+            + (icon || '')
+            + '</span></div>';
+    };
+
+    Player.prototype._doorStatusHtml = function (idx) {
+        var marks = this._doorMarkersOnFrame(idx);
+        if (!marks.inside && !marks.outside) return '';
+        var html = '<div class="event-modal-door-status live-view-overlay-row">';
+        if (marks.inside) html += this._doorChipHtml('inside', marks.inside);
+        if (marks.outside) html += this._doorChipHtml('outside', marks.outside);
+        html += '</div>';
+        return html;
     };
 
     function _escHtml(s) {

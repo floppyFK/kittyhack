@@ -3798,7 +3798,28 @@ msgid "Longest time outside"
 msgstr "Längste Zeit außen"
 
 msgid "Another way"
-msgstr "Andere Möglichkeit"
+msgstr "Anderer Weg"
+
+msgid "Explain another way"
+msgstr "Anderer Weg erklären"
+
+msgid "In"
+msgstr "Rein"
+
+msgid "Out"
+msgstr "Raus"
+
+msgid "Solid: in through the flap. Hatched: out through the flap."
+msgstr "Ausgefüllt: Rein, durch die Klappe nach drinnen. Schraffiert: Raus, durch die Klappe nach draußen."
+
+msgid ""
+"Two flap passages in a row went the same way. The crossing in "
+"between, for example through the house door or a window, is "
+"estimated here and is not included in entries or exits."
+msgstr ""
+"Zwei Klappendurchgänge hintereinander in dieselbe Richtung. Der Weg "
+"dazwischen, zum Beispiel durch die Haustür oder ein Fenster, ist hier "
+"geschätzt und nicht in Eingängen oder Ausgängen enthalten."
 
 msgid "Based on the last flap passage"
 msgstr "Basierend auf dem letzten Klappendurchgang"

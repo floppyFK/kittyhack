@@ -3976,6 +3976,13 @@ html[data-bs-theme="dark"] .live-view-banner {
     color: var(--bs-body-color, #212529);
 }
 
+.stats-chart-key {
+    margin: -0.35rem 0 0.55rem;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    color: var(--bs-secondary-color, #6c757d);
+}
+
 .stats-section-title {
     margin-top: 0.5rem;
 }
@@ -4139,6 +4146,37 @@ html[data-bs-theme="dark"] .live-view-banner {
     gap: 0.45rem 0.75rem;
     font-size: 0.85rem;
     min-width: 0;
+}
+
+.stats-cat-metrics--with-other {
+    grid-template-columns: 1fr 1fr 1fr;
+}
+
+.stats-cat-metrics + .stats-cat-metrics {
+    margin-top: 0.45rem;
+}
+
+.stats-cat-metric-label-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1rem;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.stats-cat-metric-label-row .stats-cat-metric-label {
+    display: inline;
+}
+
+.stats-cat-info-btn.kh-info-btn {
+    width: 1.35rem;
+    height: 1.35rem;
+    flex: 0 0 auto;
+}
+
+.stats-cat-info-btn.kh-info-btn svg {
+    width: 0.85rem !important;
+    height: 0.85rem !important;
 }
 
 .stats-cat-extra {

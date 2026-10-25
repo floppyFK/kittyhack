@@ -34,8 +34,8 @@ def _dashboard_labels() -> DashboardLabels:
         unknown=_("Unknown"),
         entries=_("Entries"),
         exits=_("Exits"),
-        in_label=_("Inside"),
-        out_label=_("Outside"),
+        in_label=_("In"),
+        out_label=_("Out"),
         prey=_("Prey"),
         prey_entered=_("Entered with prey"),
         prey_blocked=_("Prey blocked"),
@@ -158,6 +158,43 @@ def _parse_visibility_input(payload) -> tuple[str, bool] | None:
     return key, hide
 
 
+def _other_way_info_id(cat_key: str) -> str:
+    safe = "".join(ch if ch.isalnum() else "_" for ch in cat_key).strip("_")
+    return f"info_stats_other_{safe or 'cat'}"[:80]
+
+
+def _other_way_label(cat_key: str):
+    """Label plus a click-to-open (i). Hover tooltips do not work on touch screens."""
+    return ui.span(
+        ui.span(_("Another way"), class_="stats-cat-metric-label"),
+        ui.popover(
+            ui.tags.button(
+                icon_svg("circle-info", margin_left="0", margin_right="0"),
+                type="button",
+                class_="kh-info-btn stats-cat-info-btn",
+                **{"aria-label": _("Explain another way")},
+            ),
+            ui.div(
+                _(
+                    "Two flap passages in a row went the same way. The crossing in "
+                    "between, for example through the house door or a window, is "
+                    "estimated here and is not included in entries or exits."
+                ),
+                class_="kh-info-popover-body",
+            ),
+            id=_other_way_info_id(cat_key),
+            placement="bottom",
+            options={
+                "customClass": "kh-info-popover",
+                "container": "body",
+                "trigger": "click",
+                "fallbackPlacements": ["top", "bottom", "left", "right"],
+            },
+        ),
+        class_="stats-cat-metric-label-row",
+    )
+
+
 def _cat_cards_ui(cats: list, labels: DashboardLabels):
     cards = []
     for cat in cats:
@@ -177,14 +214,6 @@ def _cat_cards_ui(cats: list, labels: DashboardLabels):
             )
         name = cat.get("name") or labels.unknown
         extra_items = [
-            ui.div(
-                ui.span(_("Typical first exit"), class_="stats-cat-metric-label"),
-                ui.span(cat.get("typical_first_exit") or "—"),
-            ),
-            ui.div(
-                ui.span(_("Typical last return"), class_="stats-cat-metric-label"),
-                ui.span(cat.get("typical_last_return") or "—"),
-            ),
             ui.div(
                 ui.span(_("Longest time outside"), class_="stats-cat-metric-label"),
                 ui.span(
@@ -209,52 +238,58 @@ def _cat_cards_ui(cats: list, labels: DashboardLabels):
             ),
         ]
         other_n = int(cat.get("other_access") or 0)
+        passage_items = [
+            ui.div(
+                ui.span(_("Entries"), class_="stats-cat-metric-label"),
+                ui.span(str(cat.get("entries") or 0), class_="stats-cat-metric-value"),
+            ),
+            ui.div(
+                ui.span(_("Exits"), class_="stats-cat-metric-label"),
+                ui.span(str(cat.get("exits") or 0), class_="stats-cat-metric-value"),
+            ),
+        ]
         if other_n:
-            extra_items.append(
+            passage_items.append(
                 ui.div(
-                    ui.span(_("Another way"), class_="stats-cat-metric-label"),
-                    ui.span(str(other_n)),
+                    _other_way_label(_cat_key_of(cat)),
+                    ui.span(str(other_n), class_="stats-cat-metric-value"),
                 )
             )
-        cards.append(
+        passage_class = "stats-cat-metrics"
+        if other_n:
+            passage_class += " stats-cat-metrics--with-other"
+        card_parts = [
+            ui.div(
+                img,
+                ui.div(
+                    ui.span(name, class_="stats-cat-name"),
+                    ui.span(
+                        _location_label(loc, labels),
+                        class_=loc_class,
+                        title=_("Based on the last flap passage"),
+                    ),
+                    class_="stats-cat-identity",
+                ),
+                _visibility_button(_("Hide"), _cat_key_of(cat), hide=True),
+                class_="stats-cat-head",
+            ),
+            ui.div(*passage_items, class_=passage_class),
+        ]
+        card_parts.append(
             ui.div(
                 ui.div(
-                    img,
-                    ui.div(
-                        ui.span(name, class_="stats-cat-name"),
-                        ui.span(
-                            _location_label(loc, labels),
-                            class_=loc_class,
-                            title=_("Based on the last flap passage"),
-                        ),
-                        class_="stats-cat-identity",
-                    ),
-                    _visibility_button(_("Hide"), _cat_key_of(cat), hide=True),
-                    class_="stats-cat-head",
+                    ui.span(_("Prey"), class_="stats-cat-metric-label"),
+                    ui.span(str(cat.get("prey") or 0), class_="stats-cat-metric-value"),
                 ),
                 ui.div(
-                    ui.div(
-                        ui.span(_("Entries"), class_="stats-cat-metric-label"),
-                        ui.span(str(cat.get("entries") or 0), class_="stats-cat-metric-value"),
-                    ),
-                    ui.div(
-                        ui.span(_("Exits"), class_="stats-cat-metric-label"),
-                        ui.span(str(cat.get("exits") or 0), class_="stats-cat-metric-value"),
-                    ),
-                    ui.div(
-                        ui.span(_("Prey"), class_="stats-cat-metric-label"),
-                        ui.span(str(cat.get("prey") or 0), class_="stats-cat-metric-value"),
-                    ),
-                    ui.div(
-                        ui.span(_("Attempts"), class_="stats-cat-metric-label"),
-                        ui.span(str(cat.get("attempts") or 0), class_="stats-cat-metric-value"),
-                    ),
-                    class_="stats-cat-metrics",
+                    ui.span(_("Attempts"), class_="stats-cat-metric-label"),
+                    ui.span(str(cat.get("attempts") or 0), class_="stats-cat-metric-value"),
                 ),
-                ui.div(*extra_items, class_="stats-cat-extra"),
-                class_="stats-cat-card",
+                class_="stats-cat-metrics",
             )
         )
+        card_parts.append(ui.div(*extra_items, class_="stats-cat-extra"))
+        cards.append(ui.div(*card_parts, class_="stats-cat-card"))
     if not cards:
         return ui.div()
     return ui.div(*cards, class_="stats-cat-grid")
@@ -495,6 +530,12 @@ def register_statistics(input, output, session, ctx: SessionContext):
             ui.div(
                 ui.div(
                     ui.h3(_("Passages"), class_="stats-chart-title"),
+                    ui.p(
+                        _(
+                            "Solid: in through the flap. Hatched: out through the flap."
+                        ),
+                        class_="stats-chart-key",
+                    ),
                     ui.div(
                         ui.HTML('<canvas id="chart-passages" aria-label="{}"></canvas>'.format(
                             html.escape(_("Passages"))

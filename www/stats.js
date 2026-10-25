@@ -58,6 +58,22 @@
         return "rgba(" + r + ", " + g + ", " + b + ", " + alpha + ")";
     }
 
+    function hatchPattern(color) {
+        // Horizontal bands stay visible on the narrow bars of a multi-cat chart.
+        var size = 6;
+        var canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        var ctx = canvas.getContext("2d");
+        if (!ctx) return withAlpha(color, 0.45);
+        ctx.clearRect(0, 0, size, size);
+        ctx.fillStyle = withAlpha(color, 0.28);
+        ctx.fillRect(0, 0, size, size);
+        ctx.fillStyle = color;
+        ctx.fillRect(0, 0, size, 2);
+        return ctx.createPattern(canvas, "repeat");
+    }
+
     function destroyCharts() {
         charts.forEach(function (ch) {
             try { ch.destroy(); } catch (e) {}
@@ -172,6 +188,9 @@
         var pal = palette();
 
         var passageSets = (payload.passages && payload.passages.datasets) ? payload.passages.datasets : [];
+        var passageOptions = commonOptions(colors, true);
+        passageOptions.plugins.legend.labels.boxWidth = isNarrow() ? 18 : 16;
+        passageOptions.plugins.legend.labels.boxHeight = isNarrow() ? 14 : 12;
         makeChart("chart-passages", {
             type: "bar",
             data: {
@@ -183,14 +202,14 @@
                         label: ds.label,
                         data: ds.data,
                         stack: ds.stack || "passages",
-                        backgroundColor: withAlpha(color, isOut ? 0.45 : 0.85),
+                        backgroundColor: isOut ? hatchPattern(color) : withAlpha(color, 0.9),
                         borderColor: color,
-                        borderWidth: 1,
+                        borderWidth: isOut ? 0 : 1,
                         borderRadius: 4
                     };
                 })
             },
-            options: commonOptions(colors, true)
+            options: passageOptions
         });
 
         var prey = payload.prey || {};

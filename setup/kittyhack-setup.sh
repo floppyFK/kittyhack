@@ -51,6 +51,45 @@ INSTALL_LEGACY_KITTYHACK=1
 # Optional: install a specific git ref (tag/commit) instead of the latest tagged release.
 KITTYHACK_VERSION_REF=""
 
+# Highest stable release tag (vX.Y.Z). Beta tags such as v3.0.0_beta_2 are ignored.
+# Reads tag names or `git ls-remote` lines from stdin.
+pick_latest_stable_tag() {
+    sed 's#.*refs/tags/##' \
+        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+        | sort -V \
+        | tail -n1
+}
+
+# Latest GitHub release, then the highest stable tag if the API stays empty.
+# Prints the tag on stdout. Warnings go to stderr so command substitution stays clean.
+# --version may still select a beta ref; this helper is only the default.
+fetch_latest_stable_release_tag() {
+    local tag=""
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        tag=$(curl -sf "https://api.github.com/repos/floppyFK/kittyhack/releases/latest" | grep -Po '"tag_name": "\K.*?(?=")' || true)
+        if [[ -n "$tag" ]]; then
+            printf '%s\n' "$tag"
+            return 0
+        fi
+        if [[ "$attempt" -lt 5 ]]; then
+            echo -e "${YELLOW}Attempt ${attempt} of 5 to fetch latest release failed. Retrying in 10 seconds...${NC}" >&2
+            sleep 10
+        fi
+    done
+
+    echo -e "${YELLOW}GitHub latest-release API unavailable. Selecting the highest stable tag...${NC}" >&2
+    tag=$(
+        git ls-remote --tags --refs "https://github.com/floppyFK/kittyhack.git" \
+            | pick_latest_stable_tag || true
+    )
+    if [[ -n "$tag" ]]; then
+        printf '%s\n' "$tag"
+        return 0
+    fi
+    return 1
+}
+
 # Optional: uninstall mode
 DO_UNINSTALL=false
 
@@ -652,17 +691,7 @@ install_remote_mode() {
             echo -e "${GREY}Using requested version ref: ${remote_git_ref}${NC}"
         else
             echo -e "${GREY}Fetching latest release...${NC}"
-            for i in {1..5}; do
-                remote_git_ref=$(curl -sf https://api.github.com/repos/floppyFK/kittyhack/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
-                if [[ -n "$remote_git_ref" ]]; then
-                    break
-                fi
-                remote_git_ref=$(git ls-remote --tags --refs https://github.com/floppyFK/kittyhack.git | tail -n1 | sed 's/.*\///')
-                if [[ -n "$remote_git_ref" ]]; then
-                    break
-                fi
-                sleep 5
-            done
+            remote_git_ref=$(fetch_latest_stable_release_tag || true)
             if [[ -z "$remote_git_ref" ]]; then
                 remote_git_ref="v2.4.0"
                 echo -e "${YELLOW}Failed to fetch latest version. Using fallback ${remote_git_ref}.${NC}"
@@ -836,22 +865,7 @@ install_kittyhack() {
         echo -e "${GREY}Using requested version ref: ${GIT_TAG}${NC}"
     elif [ $INSTALL_LEGACY_KITTYHACK -eq 0 ]; then
         echo -e "${GREY}Fetching latest release...${NC}"
-        # Try up to 5 times to get the latest tag
-        for i in {1..5}; do
-            GIT_TAG=$(curl -sf https://api.github.com/repos/floppyFK/kittyhack/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
-            if [[ -n "$GIT_TAG" ]]; then
-                break
-            fi
-            # Alternative method using git ls-remote
-            GIT_TAG=$(git ls-remote --tags --refs https://github.com/floppyFK/kittyhack.git | tail -n1 | sed 's/.*\///')
-            if [[ -n "$GIT_TAG" ]]; then
-                break
-            fi
-            echo -e "${YELLOW}Attempt $i of 5 to fetch latest release failed. Retrying in 10 seconds...${NC}"
-            sleep 10
-        done
-
-        # If still empty, use fallback version
+        GIT_TAG=$(fetch_latest_stable_release_tag || true)
         if [[ -z "$GIT_TAG" ]]; then
             echo -e "${YELLOW}Failed to fetch latest version. Using latest known version.${NC}"
             GIT_TAG="v2.4.0"

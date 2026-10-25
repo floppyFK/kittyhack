@@ -44,6 +44,49 @@ def _load_api_docs_markdown() -> str | None:
     return text
 
 
+# Shiny reconnect keeps the open page, including action-button click counts.
+# A restored "Restart" click would open this dialog again and reboot once more.
+_POWER_ACTION_MARKER_NAME = ".power-action"
+_POWER_ACTION_MAX_AGE_S = 30 * 60
+
+
+def _power_action_marker_path() -> str:
+    return os.path.join(kittyhack_root(), _POWER_ACTION_MARKER_NAME)
+
+
+def arm_local_power_action() -> None:
+    """Remember that this device is about to reboot or shut down.
+
+    The next UI session closes the restart dialog that the previous page
+    still has open after Shiny reconnects.
+    """
+    path = _power_action_marker_path()
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(str(tm.time()))
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception as e:
+        logging.warning(f"[SYSTEM] Failed to write power-action marker '{path}': {e}")
+
+
+def consume_local_power_action(now: float | None = None) -> bool:
+    """Return True once when a recent local reboot or shutdown was requested."""
+    path = _power_action_marker_path()
+    if not os.path.isfile(path):
+        return False
+    current = tm.time() if now is None else now
+    try:
+        age = current - os.path.getmtime(path)
+    except OSError:
+        age = _POWER_ACTION_MAX_AGE_S + 1
+    try:
+        os.remove(path)
+    except OSError as e:
+        logging.warning(f"[SYSTEM] Failed to remove power-action marker '{path}': {e}")
+    return age <= _POWER_ACTION_MAX_AGE_S
+
+
 if is_remote_mode():
     from src.remote.hardware import Magnets, Pir  # type: ignore
 else:
@@ -53,6 +96,9 @@ else:
 
 def register_system_tab(input, output, session, ctx: SessionContext):
     """Register System tab UI (API tokens, reboot/shutdown, updates)."""
+    # Drop the "restarting" dialog left on the page by the pre-reboot session.
+    if consume_local_power_action():
+        ui.modal_remove()
 
     @output
     @render.ui
@@ -480,7 +526,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             set_update_progress(in_progress=False, result=None)
 
     @reactive.effect
-    @reactive.event(input.btn_modal_reboot_ok)
+    @reactive.event(input.btn_modal_reboot_ok, ignore_init=True)
     def modal_reboot():
         state = get_update_progress()
         if state["result"] == "ok" or state["result"] == "reboot_dialog":
@@ -538,6 +584,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         ui.modal_show(
             ui.modal(reboot_message, title=_("Restart Kittyflap"), footer=None)
         )
+        arm_local_power_action()
         ServiceOps.systemcmd(["/sbin/reboot"])
 
         # ------------------------------------------------------------------
@@ -751,7 +798,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         reload_trigger_api_tokens.set(reload_trigger_api_tokens.get() + 1)
 
     @reactive.Effect
-    @reactive.event(input.bRestartKittyflap)
+    @reactive.event(input.bRestartKittyflap, ignore_init=True)
     def on_action_restart_system():
         m = ui.modal(
             _("Restart the Kittyflap now?"),
@@ -765,7 +812,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         ui.modal_show(m)
 
     @reactive.Effect
-    @reactive.event(input.bTargetRebootKittyflap)
+    @reactive.event(input.bTargetRebootKittyflap, ignore_init=True)
     def on_action_target_reboot_system():
         if not is_remote_mode():
             return
@@ -781,7 +828,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         ui.modal_show(m)
 
     @reactive.effect
-    @reactive.event(input.btn_modal_reboot_target_ok)
+    @reactive.event(input.btn_modal_reboot_target_ok, ignore_init=True)
     def modal_reboot_target_only():
         if not is_remote_mode():
             return
@@ -807,7 +854,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             )
 
     @reactive.Effect
-    @reactive.event(input.bRemoteReboot)
+    @reactive.event(input.bRemoteReboot, ignore_init=True)
     def on_action_local_reboot_system():
         if not is_remote_mode():
             return
@@ -823,7 +870,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         ui.modal_show(m)
 
     @reactive.effect
-    @reactive.event(input.btn_modal_reboot_local_ok)
+    @reactive.event(input.btn_modal_reboot_local_ok, ignore_init=True)
     def modal_reboot_local_only():
         if not is_remote_mode():
             return
@@ -837,10 +884,11 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 footer=None,
             )
         )
+        arm_local_power_action()
         ServiceOps.systemcmd(["/sbin/reboot"])
 
     @reactive.effect
-    @reactive.event(input.btn_modal_shutdown_ok)
+    @reactive.event(input.btn_modal_shutdown_ok, ignore_init=True)
     def modal_shutdown():
         ui.modal_remove()
         ui.modal_show(
@@ -852,10 +900,11 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 footer=None,
             )
         )
+        arm_local_power_action()
         ServiceOps.systemcmd(["/usr/sbin/shutdown", "-H", "now"])
 
     @reactive.Effect
-    @reactive.event(input.bShutdownKittyflap)
+    @reactive.event(input.bShutdownKittyflap, ignore_init=True)
     def on_action_shutdown_system():
         m = ui.modal(
             _("Shut down the Kittyflap now?"),
@@ -869,7 +918,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         ui.modal_show(m)
 
     @reactive.Effect
-    @reactive.event(input.bTargetShutdownKittyflap)
+    @reactive.event(input.bTargetShutdownKittyflap, ignore_init=True)
     def on_action_target_shutdown_system():
         if not is_remote_mode():
             return
@@ -887,7 +936,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         ui.modal_show(m)
 
     @reactive.effect
-    @reactive.event(input.btn_modal_shutdown_target_ok)
+    @reactive.event(input.btn_modal_shutdown_target_ok, ignore_init=True)
     def modal_shutdown_target_only():
         if not is_remote_mode():
             return
@@ -913,7 +962,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             )
 
     @reactive.Effect
-    @reactive.event(input.bRemoteShutdown)
+    @reactive.event(input.bRemoteShutdown, ignore_init=True)
     def on_action_local_shutdown_system():
         if not is_remote_mode():
             return
@@ -931,7 +980,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         ui.modal_show(m)
 
     @reactive.effect
-    @reactive.event(input.btn_modal_shutdown_local_ok)
+    @reactive.event(input.btn_modal_shutdown_local_ok, ignore_init=True)
     def modal_shutdown_local_only():
         if not is_remote_mode():
             return
@@ -943,4 +992,5 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 footer=None,
             )
         )
+        arm_local_power_action()
         ServiceOps.systemcmd(["/usr/sbin/shutdown", "-H", "now"])

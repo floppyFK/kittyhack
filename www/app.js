@@ -632,6 +632,55 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
+    // A confirmed reboot/shutdown leaves this tab open. Shiny then reconnects
+    // in place and would resend the click that opened "Restart Kittyflap".
+    const KH_POWER_ACTION_KEY = 'kittyhack_power_action_v1';
+    const KH_POWER_CONFIRM_IDS = {
+        btn_modal_reboot_ok: true,
+        btn_modal_reboot_local_ok: true,
+        btn_modal_shutdown_ok: true,
+        btn_modal_shutdown_local_ok: true
+    };
+    function armPowerAction() {
+        try { sessionStorage.setItem(KH_POWER_ACTION_KEY, '1'); } catch (e) {}
+        // Remember Live view before the tab is torn down, so a full reload
+        // during the reboot does not restore System.
+        if (typeof window.__kh_openTab === 'function') {
+            window.__kh_openTab('live-view');
+        }
+    }
+
+    function powerActionIsArmed() {
+        try { return sessionStorage.getItem(KH_POWER_ACTION_KEY) === '1'; } catch (e) { return false; }
+    }
+
+    function dismissShinyModal() {
+        const $ = window.jQuery;
+        if (!$) return;
+        try {
+            const $wrap = $('#shiny-modal-wrapper');
+            $wrap.off('keydown.shinymodal');
+            $wrap.remove();
+            $('.modal-backdrop').remove();
+            $(document.body).removeClass('modal-open').css('padding-right', '');
+        } catch (e) {}
+    }
+
+    function recoverAfterPowerAction() {
+        if (!powerActionIsArmed()) return;
+        try { sessionStorage.removeItem(KH_POWER_ACTION_KEY); } catch (e) {}
+        dismissShinyModal();
+        if (typeof window.__kh_openTab === 'function') {
+            window.__kh_openTab('live-view');
+        }
+    }
+
+    document.addEventListener('click', function(ev) {
+        const btn = ev.target && ev.target.closest ? ev.target.closest('button, a') : null;
+        if (!btn || !btn.id || !KH_POWER_CONFIRM_IDS[btn.id]) return;
+        armPowerAction();
+    }, true);
+
     function enableShinyReconnect() {
         const app = getShinyApp();
         if (!app) return;
@@ -797,6 +846,7 @@ document.addEventListener("DOMContentLoaded", function() {
     if (window.jQuery) {
         window.jQuery(document).on('shiny:connected', function() {
             enableShinyReconnect();
+            recoverAfterPowerAction();
             try {
                 if (sessionStorage.getItem(KH_RESTORE_FLAG_KEY) === '1') {
                     sessionStorage.removeItem(KH_RESTORE_FLAG_KEY);
@@ -1261,6 +1311,17 @@ document.addEventListener("DOMContentLoaded", function() {
             try { sessionStorage.setItem(TAB_SESSION_KEY, value || ''); } catch (e) {}
         }
 
+        function tabToPersist() {
+            // A manual reboot should come back on Live view, even if System
+            // was still the visible tab when the browser saved state.
+            try {
+                if (sessionStorage.getItem('kittyhack_power_action_v1') === '1') {
+                    return 'live-view';
+                }
+            } catch (e) {}
+            return getActiveTabValue();
+        }
+
         function loadTabFromSession() {
             try { return sessionStorage.getItem(TAB_SESSION_KEY) || ''; } catch (e) { return ''; }
         }
@@ -1351,14 +1412,30 @@ document.addEventListener("DOMContentLoaded", function() {
 
         // Persist active tab before any reload / navigation.
         window.addEventListener('beforeunload', function() {
-            var cur = getActiveTabValue();
+            var cur = tabToPersist();
             if (cur) saveTabToSession(cur);
         });
 
         // Expose helper for other code (e.g. attemptReload) to save tab eagerly.
         window.__kh_saveActiveTab = function() {
-            var cur = getActiveTabValue();
+            var cur = tabToPersist();
             if (cur) saveTabToSession(cur);
+        };
+
+        // Switch to a tab and keep the URL on that tab. replaceState avoids a
+        // history entry when recovering from a reboot.
+        window.__kh_openTab = function(tabValue) {
+            tabValue = resolveTabAlias(tabValue);
+            if (!tabValue || !TAB_ROUTES[tabValue]) return false;
+            saveTabToSession(tabValue);
+            var desired = TAB_ROUTES[tabValue];
+            try {
+                var cur = window.location.pathname;
+                if (cur !== desired && cur !== desired.replace(/\/$/, '')) {
+                    history.replaceState({ tab: tabValue }, '', desired);
+                }
+            } catch (e) {}
+            return activateTab(tabValue);
         };
 
         // Activate on load.

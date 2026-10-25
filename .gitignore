@@ -23,6 +23,7 @@ config.remote.ini
 .remote-mode
 .remote-control-session
 .wlan-action-in-progress
+.power-action
 *.remote_synced
 *.remote_restart_pending
 .release_body_*.md

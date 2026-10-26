@@ -488,8 +488,8 @@ atomic_swap_new_to_current() {
     mv "$VENV_NEW" "$VENV"
     rewrite_venv_paths_after_rename "$VENV" "$VENV_NEW" "$VENV"
 
-    # Keep one previous venv for manual recovery; prune only if smoke of new current fails
-    # (should not happen after tests above).
+    # Keep .venv.old across this swap so a failed post-swap smoke test can restore it.
+    # The app removes it after startup.run() succeeds (discard_previous_venv).
     if ! smoke_test_venv "$VENV"; then
         warn "Post-swap smoke failed; restoring ${VENV_OLD}"
         rm -rf "$VENV"

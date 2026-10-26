@@ -249,6 +249,14 @@ sudo systemctl start kittyhack_control.service
 
 - UI loads
 - Camera / door / basic navigation works
+- `.venv.old` disappears shortly after the UI is up (the delete runs in the
+  background once startup finishes, so it can lag the first page load):
+
+```bash
+# Give the background delete a moment, then:
+test ! -e .venv.old && echo old_removed_ok
+```
+
 - Inference path smoke (open live view / trigger a detection if practical):
 
 ```bash
@@ -264,7 +272,8 @@ sudo systemctl stop kittyhack.service kittyhack_control.service 2>/dev/null || t
 cp /tmp/REQUIRED_PYTHON.bak setup/REQUIRED_PYTHON
 # Either rebuild correct venv:
 sudo bash setup/ensure_venv.sh --bootstrap --root /root/kittyhack
-# Or, if .venv.old is the known-good previous venv and versions match REQUIRED_PYTHON:
+# Or, only if .venv.old is still present (the service did not finish startup)
+# and that tree's Python matches REQUIRED_PYTHON:
 # sudo rm -rf .venv && sudo mv .venv.old .venv
 sudo systemctl start kittyhack_control.service   # or kittyhack.service in remote mode
 ```

@@ -249,6 +249,208 @@ _STABLE_TAG_RE = re.compile(r"(?i)^v?\d+(?:\.\d+)+$")
 HEAVY_UPDATE_REPO_FILES = ("setup/REQUIRED_PYTHON", "requirements.txt")
 MIN_HEAVY_UPDATE_FREE_DISK_MB = 2048
 
+# Previous runtime left by ensure_venv.sh --apply. Removed after a successful
+# startup; --prepare also deletes it before building the next .venv.new.
+_PREVIOUS_VENV_DIR = ".venv.old"
+_previous_venv_size_cache: dict[str, tuple[tuple[int, int], float]] = {}
+
+
+def _install_root(root: str | None) -> str:
+    if root is None:
+        from src.paths import kittyhack_root
+
+        return kittyhack_root()
+    return os.path.abspath(root)
+
+
+def _read_required_python(root: str) -> str:
+    path = os.path.join(root, "setup", "REQUIRED_PYTHON")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            version = handle.read().strip()
+    except OSError:
+        return ""
+    if not re.fullmatch(r"[0-9]+\.[0-9]+", version):
+        return ""
+    return version
+
+
+def venv_python_mm(venv_dir: str) -> str:
+    """Return ``major.minor`` for ``venv_dir/bin/python``, or ``""`` on failure."""
+    python = os.path.join(venv_dir, "bin", "python")
+    # bin/python is a symlink in a normal venv; follow it. Only .venv.old itself
+    # is rejected when it is a symlink (see previous_venv_discard_block_reason).
+    if not os.path.isfile(python) or not os.access(python, os.X_OK):
+        return ""
+    try:
+        completed = subprocess.run(
+            [
+                python,
+                "-c",
+                'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")',
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if completed.returncode != 0:
+        return ""
+    version = (completed.stdout or "").strip()
+    if not re.fullmatch(r"[0-9]+\.[0-9]+", version):
+        return ""
+    return version
+
+
+def active_venv_matches_required(root: str | None = None) -> bool:
+    """True when ``.venv`` reports the same Python as ``setup/REQUIRED_PYTHON``."""
+    root = _install_root(root)
+    required = _read_required_python(root)
+    if not required:
+        return False
+    return venv_python_mm(os.path.join(root, ".venv")) == required
+
+
+def _directory_size_mb(path: str) -> float:
+    """Sum regular-file sizes under ``path`` in MB. Symlinks are not followed."""
+    total = 0
+    try:
+        for dirpath, _dirnames, filenames in os.walk(path, followlinks=False):
+            for name in filenames:
+                file_path = os.path.join(dirpath, name)
+                if os.path.islink(file_path):
+                    continue
+                try:
+                    total += os.path.getsize(file_path)
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return total / (1024 * 1024)
+
+
+def previous_venv_size_mb(root: str | None = None) -> float:
+    """Size of a real ``.venv.old`` directory in MB, otherwise 0.
+
+    The result is cached until the directory's inode or mtime changes. A missing
+    directory returns 0 without walking the tree.
+    """
+    root = _install_root(root)
+    path = os.path.join(root, _PREVIOUS_VENV_DIR)
+    if os.path.islink(path) or not os.path.isdir(path):
+        return 0.0
+    try:
+        stat_result = os.stat(path)
+        cache_key = os.path.realpath(path)
+    except OSError:
+        return 0.0
+    stamp = (stat_result.st_mtime_ns, stat_result.st_ino)
+    cached = _previous_venv_size_cache.get(cache_key)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    size_mb = _directory_size_mb(path)
+    if os.path.islink(path) or not os.path.isdir(path):
+        return 0.0
+    _previous_venv_size_cache[cache_key] = (stamp, size_mb)
+    return size_mb
+
+
+def free_disk_mb_for_heavy_update(
+    free_mb: float,
+    runtime_changes: dict | None,
+    root: str | None = None,
+) -> float:
+    """Free MB for the 2 GB update gate.
+
+    ``--prepare`` deletes ``.venv.old`` before it creates ``.venv.new`` when
+    ``setup/REQUIRED_PYTHON`` changes, so that directory counts as free space.
+    A requirements-only update leaves ``.venv.old`` in place.
+    """
+    if not runtime_changes or not runtime_changes.get("setup/REQUIRED_PYTHON"):
+        return float(free_mb)
+    credit_mb = previous_venv_size_mb(root)
+    if credit_mb <= 0:
+        return float(free_mb)
+    logging.info(
+        "[UPDATE] Counting %.1f MB from .venv.old toward the Python-runtime disk check",
+        credit_mb,
+    )
+    return float(free_mb) + credit_mb
+
+
+def previous_venv_discard_block_reason(root: str | None = None) -> str | None:
+    """Why ``.venv.old`` must be kept, or None when it may be removed.
+
+    ``"missing"`` means there is nothing to delete. Any other string means the
+    directory is still needed for recovery.
+    """
+    root = _install_root(root)
+    old = os.path.join(root, _PREVIOUS_VENV_DIR)
+    if not os.path.lexists(old):
+        return "missing"
+    if os.path.islink(old) or not os.path.isdir(old):
+        return "not a real directory"
+    try:
+        old_real = os.path.realpath(old)
+        root_real = os.path.realpath(root)
+    except OSError:
+        return "path resolution failed"
+    if os.path.basename(old_real) != _PREVIOUS_VENV_DIR or os.path.dirname(old_real) != root_real:
+        return "path escaped install root"
+    if os.path.lexists(os.path.join(root, ".venv.new")):
+        return ".venv.new still present"
+    if os.path.lexists(os.path.join(root, ".runtime-update-pending")):
+        return "runtime update still pending"
+    if not active_venv_matches_required(root):
+        return "active .venv does not match REQUIRED_PYTHON"
+    return None
+
+
+def discard_previous_venv(root: str | None = None, *, background: bool = True) -> bool:
+    """Remove ``.venv.old`` after a successful startup.
+
+    Best-effort: failures are logged and never raised. With ``background=True``
+    (the startup path) the delete runs on a daemon thread so a large tree does
+    not delay the UI. Returns True when a delete was started or completed.
+    """
+    try:
+        root = _install_root(root)
+        reason = previous_venv_discard_block_reason(root)
+        if reason:
+            if reason != "missing":
+                logging.info("[VENV] Keeping .venv.old: %s", reason)
+            return False
+        old = os.path.join(root, _PREVIOUS_VENV_DIR)
+
+        def _remove() -> bool:
+            if os.path.islink(old) or not os.path.isdir(old):
+                logging.info("[VENV] Keeping .venv.old: it is no longer a real directory")
+                return False
+            try:
+                cache_key = os.path.realpath(old)
+            except OSError:
+                cache_key = ""
+            try:
+                logging.info("[VENV] Removing previous runtime at .venv.old after successful startup")
+                shutil.rmtree(old)
+                if cache_key:
+                    _previous_venv_size_cache.pop(cache_key, None)
+                logging.info("[VENV] Removed .venv.old")
+                return True
+            except Exception as exc:
+                logging.warning("[VENV] Failed to remove .venv.old: %s", exc)
+                return False
+
+        if background:
+            threading.Thread(target=_remove, name="discard-venv-old", daemon=True).start()
+            return True
+        return _remove()
+    except Exception as exc:
+        logging.warning("[VENV] Failed to schedule removal of .venv.old: %s", exc)
+        return False
+
 
 def active_requirements_filename() -> str:
     """Requirements file this host should pip-install.

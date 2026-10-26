@@ -475,7 +475,7 @@ def register_info(input, output, session, ctx: SessionContext):
             ctx.version_mismatch_warning_shown = False
 
         # 2 GB hard gate only when REQUIRED_PYTHON or this host's requirements file will change.
-        from src.helper import MIN_HEAVY_UPDATE_FREE_DISK_MB
+        from src.helper import MIN_HEAVY_UPDATE_FREE_DISK_MB, free_disk_mb_for_heavy_update
 
         startup.free_disk_space = SystemInfo.get_free_disk_space()
         latest_version = CONFIG["LATEST_VERSION"]
@@ -487,8 +487,12 @@ def register_info(input, output, session, ctx: SessionContext):
                 logging.warning(f"[UPDATE] Heavy-update file compare failed: {e}")
         needs_heavy_disk = any(runtime_changes.values())
         is_venv_update = bool(runtime_changes.get("setup/REQUIRED_PYTHON"))
+        # .venv.old is deleted before .venv.new is built, so count it only then.
+        free_for_update = free_disk_mb_for_heavy_update(
+            startup.free_disk_space, runtime_changes
+        )
         update_disabled = bool(
-            needs_heavy_disk and startup.free_disk_space < MIN_HEAVY_UPDATE_FREE_DISK_MB
+            needs_heavy_disk and free_for_update < MIN_HEAVY_UPDATE_FREE_DISK_MB
         )
         update_disk_warning = None
         if update_disabled:
@@ -498,7 +502,7 @@ def register_info(input, output, session, ctx: SessionContext):
                     + _(
                         "The update needs at least 2 GB of free disk space, but only {:.1f} MB is available. "
                         "Free some space, for example by reducing the picture limit, then reload this page."
-                    ).format(startup.free_disk_space)
+                    ).format(free_for_update)
                 ),
                 style_="overflow-wrap: anywhere; word-break: break-word; max-width: 100%;",
             )

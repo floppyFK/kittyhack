@@ -29,6 +29,7 @@ from src.helper import (
     SystemInfo,
     Versioning,
     check_and_stop_kittyflap_services,
+    discard_previous_venv,
     is_valid_uuid4,
     sigterm_monitor,
     wait_for_network,
@@ -746,3 +747,9 @@ def run() -> None:
         logging.warning("[REMOTE_MODE] Remote configuration missing; background tasks deferred.")
     else:
         start_background_task_if_needed()
+
+    # The new runtime has finished booting. Drop the previous venv so the next
+    # Python migration is not blocked by a ~1 GB leftover on a small SD card.
+    # Skipped when the swap is unfinished or the active .venv does not match
+    # REQUIRED_PYTHON, so a failed boot can still be restored over SSH.
+    discard_previous_venv()

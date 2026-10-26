@@ -56,10 +56,14 @@ Console scripts embed absolute shebangs that break when `.venv.new` is renamed t
 
 - Never `rm -rf .venv` before a smoke-tested replacement exists.
 - Prefer side-by-side `.venv.new` + atomic rename.
-- Keep `.venv.old` for one generation after a successful swap (manual recovery via SSH).
-  On the *next* Python migration, `--prepare` deletes `.venv.old` **before** creating
-  `.venv.new`, so peak disk is `.venv` + `.venv.new` (not three full copies). After
-  reboot `--apply` swaps and recreates `.venv.old` from the previous live `.venv`.
+- Keep `.venv.old` through the swap so a failed post-swap smoke test can restore
+  the previous tree. After `startup.run()` returns, the app deletes `.venv.old`
+  in the background. It is not needed once the new process is up, and leaving it
+  (~1 GB) can block the next Python migration on a 16 GB flap: the 2 GB check
+  runs before `--prepare`. If a leftover is still present when an update changes
+  `REQUIRED_PYTHON`, that check counts its size as free space, because
+  `--prepare` removes it **before** creating `.venv.new`. A requirements-only
+  update does not. Peak disk during the next migration stays `.venv` + `.venv.new`.
 - `TimeoutStartSec=3600` so a cold wheel download on a Pi does not get SIGKILL’d.
 - File lock (`.venv-ensure.lock`) so control + kittyhack `ExecStartPre` do not race.
 - Pip installs use `--no-cache-dir`; after a successful bootstrap / prepare / apply-swap

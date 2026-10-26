@@ -1463,27 +1463,35 @@ class KittyhackUpdater:
             )
 
             # 2 GB hard gate only when those runtime files change on the target ref.
+            # A Python-version change also reclaims .venv.old inside --prepare.
+            runtime_changes: dict = {}
             needs_heavy_disk = False
             if versioning_cls is not None:
                 try:
-                    needs_heavy_disk = bool(
-                        versioning_cls.update_changes_runtime_files(
+                    runtime_changes = dict(
+                        versioning_cls.get_runtime_file_changes(
                             latest_version,
                             use_git_show=True,
                             update_source=update_source,
                         )
                     )
+                    needs_heavy_disk = any(runtime_changes.values())
                 except Exception as e:
                     logging.warning(f"[UPDATE] Heavy-update file compare failed: {e}")
                     needs_heavy_disk = False
             if needs_heavy_disk:
-                from src.helper import MIN_HEAVY_UPDATE_FREE_DISK_MB, SystemInfo
+                from src.helper import (
+                    MIN_HEAVY_UPDATE_FREE_DISK_MB,
+                    SystemInfo,
+                    free_disk_mb_for_heavy_update,
+                )
 
                 try:
                     free_mb = SystemInfo.get_free_disk_space()
                 except Exception as e:
                     logging.error(f"[UPDATE] Failed to check free disk space: {e}")
                     free_mb = 0.0
+                free_mb = free_disk_mb_for_heavy_update(free_mb, runtime_changes)
                 if free_mb < MIN_HEAVY_UPDATE_FREE_DISK_MB:
                     msg = _(
                         "The update needs at least 2 GB of free space ({:.1f} MB available). "

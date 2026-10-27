@@ -1487,6 +1487,43 @@ html[data-bs-theme="dark"] .kh-empty-state {
     height: 150px;
 }
 
+/* Log-download preparing dialog. Shown from JS on click, not via Bootstrap Modal,
+   so a fast archive cannot leave the dialog stuck open during the fade. */
+.kh-log-download-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+    padding: 1rem;
+}
+
+.kh-log-download-overlay[hidden] {
+    display: none !important;
+}
+
+.kh-log-download-dialog {
+    width: min(420px, 100%);
+    background: var(--bs-body-bg, #fff);
+    color: var(--bs-body-color, #212529);
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    border-radius: 0.5rem;
+    padding: 1.25rem 1.5rem 0.5rem;
+    box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.25);
+}
+
+.kh-log-download-dialog h4,
+.kh-log-download-dialog p {
+    margin: 0;
+    text-align: center;
+}
+
+.kh-log-download-dialog h4 {
+    margin-bottom: 0.75rem;
+}
+
 .disabled-wrapper {
     pointer-events: none;
     opacity: 0.5;

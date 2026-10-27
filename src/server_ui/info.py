@@ -17,8 +17,8 @@ import shutil
 from src.baseconfig import (
     CONFIG,
     ensure_settings_persisted,
-    get_loggable_config_value,
     import_legacy_config_ini,
+    redact_sensitive_settings_in_database,
     set_language,
     settings_count,
 )
@@ -55,23 +55,15 @@ else:
 def register_info(input, output, session, ctx: SessionContext):
     """Register Info tab handlers (logs, backups, changelogs, update)."""
 
+    def _signal_log_download_finished() -> None:
+        """Tell the browser the archive is ready so it can close the overlay."""
+        try:
+            session._send_message_sync({"custom": {"log-download-finished": {}}})
+        except Exception:
+            logging.exception("[DOWNLOAD_LOGS] Failed to close the preparing dialog")
+
     @render.download(filename="kittyhack_logs.zip")
     def download_logfile():
-        # Show a modal dialog to inform the user that the download is in progress
-        ui.modal_show(
-            ui.modal(
-                ui.div(
-                    ui.markdown(_("Creating the log archive. This may take a moment.")),
-                    ui.HTML(
-                        '<div class="spinner-container"><div class="spinner"></div></div>'
-                    ),
-                ),
-                title=_("Preparing download"),
-                easy_close=False,
-                footer=None,
-            )
-        )
-
         try:
             # Create a temporary directory for the logs
             temp_dir = os.path.join("/tmp", f"kittyhack_logs_{int(tm.time())}")
@@ -170,7 +162,7 @@ def register_info(input, output, session, ctx: SessionContext):
                     except Exception:
                         pass
 
-                        # Create a zip file with compression and include only the journal and sanitized config + setup logs
+                        # Create a zip file with compression: journal, redacted database, setup logs
             with zipfile.ZipFile(
                 zip_file_path, "w", compression=zipfile.ZIP_DEFLATED
             ) as z:
@@ -182,22 +174,10 @@ def register_info(input, output, session, ctx: SessionContext):
                 if os.path.exists(target_journal_file_path):
                     z.write(target_journal_file_path, arcname="journalctl_target.log")
 
-                    # Add a sanitized settings dump to the zip file
-                sanitized_config_path = os.path.join(temp_dir, "config_sanitized.ini")
-
-                # Create a sanitized version of the config using the CONFIG dictionary
-                with open(sanitized_config_path, "w") as sanitized_file:
-                    sanitized_file.write("[Settings]\n")
-                    for key, value in CONFIG.items():
-                        # Use the existing function to mask sensitive values
-                        loggable_value = get_loggable_config_value(key, value)
-                        sanitized_file.write(f"{key.lower()} = {loggable_value}\n")
-
-                        # Add the sanitized config to the zip file
-                z.write(sanitized_config_path, arcname="config_sanitized.ini")
-
-                # Include a consistent kittyhack.db snapshot (same approach as download_kittyhack_db)
-                db_arcname = "kittyhack_database.db"
+                # Include a consistent kittyhack.db snapshot (same approach as download_kittyhack_db).
+                # Sensitive settings are masked in this copy only. The dedicated database
+                # download stays intact so a restore still has the real credentials.
+                db_arcname = "kittyhack_database_sanitized.db"
                 if (
                     startup.ids_with_original_blob
                     and len(startup.ids_with_original_blob) > 0
@@ -219,7 +199,26 @@ def register_info(input, output, session, ctx: SessionContext):
                         CONFIG["KITTYHACK_DATABASE_PATH"], db_snapshot_path
                     )
                     if result.success and os.path.exists(db_snapshot_path):
-                        z.write(db_snapshot_path, arcname=db_arcname)
+                        try:
+                            redact_sensitive_settings_in_database(db_snapshot_path)
+                        except Exception as redact_error:
+                            logging.error(
+                                f"[DOWNLOAD_LOGS] Failed to redact settings snapshot: {redact_error}"
+                            )
+                            note_path = os.path.join(
+                                temp_dir, "kittyhack_database_unavailable.txt"
+                            )
+                            with open(note_path, "w", encoding="utf-8") as note_file:
+                                note_file.write(
+                                    "Kittyhack database snapshot was omitted because "
+                                    "sensitive settings could not be redacted.\n"
+                                    f"{redact_error}\n"
+                                )
+                            z.write(
+                                note_path, arcname="kittyhack_database_unavailable.txt"
+                            )
+                        else:
+                            z.write(db_snapshot_path, arcname=db_arcname)
                     else:
                         logging.error(
                             f"[DOWNLOAD_LOGS] Database snapshot failed: {result.message}"
@@ -290,7 +289,6 @@ def register_info(input, output, session, ctx: SessionContext):
             except:
                 pass
 
-            ui.modal_remove()
             return zip_file_path
         except Exception as e:
             logging.error(f"Failed to create logs zip file: {e}")
@@ -301,8 +299,9 @@ def register_info(input, output, session, ctx: SessionContext):
                 duration=10,
                 type="error",
             )
-            ui.modal_remove()
             return None
+        finally:
+            _signal_log_download_finished()
 
     @render.download(
         filename=lambda: (
@@ -1197,6 +1196,10 @@ def register_info(input, output, session, ctx: SessionContext):
                             "download_logfile",
                             _("Download Kittyhack logs"),
                             icon=icon_svg("download"),
+                            data_kh_prepare_title=_("Preparing download"),
+                            data_kh_prepare_body=_(
+                                "Creating the log archive. This may take a moment."
+                            ),
                         )
                     ),
                     ui.br(),

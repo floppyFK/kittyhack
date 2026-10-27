@@ -690,13 +690,17 @@ CONFIG = {}
 CONFIG_CREATED_AT_STARTUP = False
 
 # Keys that contain sensitive information (passwords, credentials, etc.) which should not be logged
+# or included in a diagnostic database export.
 SENSITIVE_CONFIG_KEYS = {
     'MQTT_PASSWORD',
     'MQTT_USERNAME',
     'EMAIL',
     'IP_CAMERA_URL',  # May contain embedded credentials
-    'LABELSTUDIO_API_TOKEN'
+    'LABELSTUDIO_API_TOKEN',
+    'MODEL_TRAINING_JOB_TOKEN',
 }
+
+_REDACTED_SETTING_VALUE = "********"
 
 # Legacy config defaults (kept for migration only; not written to new configs)
 _LEGACY_MIN_PICTURES_TO_ANALYZE_DEFAULT = 5
@@ -971,9 +975,59 @@ def get_loggable_config_value(key, value):
         A string representation of the value, masked if sensitive
     """
     if key in SENSITIVE_CONFIG_KEYS and value:
-        return "********"  # Mask sensitive values
+        return _REDACTED_SETTING_VALUE
     return value
-    
+
+
+def redact_sensitive_settings_in_database(path: str) -> None:
+    """Mask non-empty sensitive settings inside a database snapshot.
+
+    ``path`` must be a copy used for a diagnostic export. The live Kittyhack
+    database is never modified. Empty values stay empty so it remains visible
+    that a setting was not configured. Other tables are left unchanged.
+    """
+    if not path or not os.path.isfile(path):
+        return
+    live = os.path.abspath(str(CONFIG.get("KITTYHACK_DATABASE_PATH") or ""))
+    if not live:
+        try:
+            live = os.path.abspath(kittyhack_db_path())
+        except Exception:
+            live = ""
+    if live and os.path.abspath(path) == live:
+        raise ValueError("refusing to redact the live kittyhack database")
+
+    conn = sqlite3.connect(path, timeout=30)
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if "settings" not in tables:
+            return
+        keys = tuple(sorted(SENSITIVE_CONFIG_KEYS))
+        rows = conn.execute(
+            f"SELECT key, value FROM settings WHERE key IN ({','.join('?' * len(keys))})",
+            keys,
+        ).fetchall()
+        updates: list[tuple[str, str]] = []
+        masked = json.dumps(_REDACTED_SETTING_VALUE, ensure_ascii=False)
+        for key, raw in rows:
+            try:
+                value = json.loads(raw)
+            except Exception:
+                value = raw
+            if not value:
+                continue
+            updates.append((masked, key))
+        if not updates:
+            return
+        conn.executemany("UPDATE settings SET value = ? WHERE key = ?", updates)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 class UserNotifications:
     """
     Class to handle user notifications.

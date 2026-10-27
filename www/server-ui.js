@@ -660,10 +660,87 @@
         tickLocationTimes();
     }
 
+    function installLogDownloadOverlay() {
+        if (!onceFlag(window, '__khLogDownloadOverlay')) return;
+
+        function hideOverlay() {
+            var el = document.getElementById('kh-log-download-overlay');
+            if (el) el.hidden = true;
+        }
+
+        function showOverlay(link) {
+            var title = link.getAttribute('data-kh-prepare-title') || 'Preparing download';
+            var body = link.getAttribute('data-kh-prepare-body') || 'Creating the log archive. This may take a moment.';
+            var el = document.getElementById('kh-log-download-overlay');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'kh-log-download-overlay';
+                el.className = 'kh-log-download-overlay';
+                el.hidden = true;
+                el.setAttribute('role', 'dialog');
+                el.setAttribute('aria-modal', 'true');
+                el.setAttribute('aria-labelledby', 'kh-log-download-title');
+                el.innerHTML =
+                    '<div class="kh-log-download-dialog">' +
+                    '<h4 id="kh-log-download-title"></h4>' +
+                    '<p id="kh-log-download-body"></p>' +
+                    '<div class="spinner-container"><div class="spinner"></div></div>' +
+                    '</div>';
+                document.body.appendChild(el);
+            }
+            var titleEl = document.getElementById('kh-log-download-title');
+            var bodyEl = document.getElementById('kh-log-download-body');
+            if (titleEl) titleEl.textContent = title;
+            if (bodyEl) bodyEl.textContent = body;
+            el.hidden = false;
+        }
+
+        document.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            var link = t.closest('a.shiny-download-link');
+            if (!link || !/download_logfile$/.test(link.id || '')) return;
+            if (link.classList.contains('disabled')) return;
+            var href = link.getAttribute('href') || '';
+            if (href.indexOf('/download/') === -1) return;
+            showOverlay(link);
+        }, true);
+
+        function registerHandler() {
+            if (window.__khLogDownloadHandler) return true;
+            if (!(window.Shiny && typeof window.Shiny.addCustomMessageHandler === 'function')) {
+                return false;
+            }
+            try {
+                // Shiny requires the handler to take exactly one argument.
+                window.Shiny.addCustomMessageHandler('log-download-finished', function (message) {
+                    hideOverlay();
+                    return message;
+                });
+            } catch (err) {
+                return false;
+            }
+            window.__khLogDownloadHandler = true;
+            return true;
+        }
+
+        if (!registerHandler()) {
+            document.addEventListener('shiny:connected', function () {
+                registerHandler();
+            });
+            var tries = 0;
+            var timer = setInterval(function () {
+                tries += 1;
+                if (registerHandler() || tries > 40) clearInterval(timer);
+            }, 250);
+        }
+    }
+
     window.kittyhackServerUI = window.kittyhackServerUI || {};
     window.kittyhackServerUI.initAll = initAll;
 
     // Auto-install
     installCatLocationClicks();
+    installLogDownloadOverlay();
     installMutationInit();
 })();

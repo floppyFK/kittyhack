@@ -152,18 +152,17 @@ def sync_pir_second_factor_suggestion() -> bool:
             UserNotifications.remove(nid)
         return False
     added = UserNotifications.add(
-        header=_("PIR confirmation for camera entry"),
+        header=_("Second factor for opening inward"),
         message=(
-            _("You are using the camera to detect cats, but the outside PIR is not configured "
-              "as a second factor for entry.")
+            _("You are using the camera to detect cats.")
             + "\n\n"
-            + _("If the camera keeps detecting a cat when none is at the flap, magnet protection "
-                "will lock the inside. A real cat without RFID can then only enter when the "
-                "outside PIR also triggers.")
+            + _("To cut down on false detections, for example from sunlight reflections, you can "
+                "require the outside motion sensor as a second factor. The flap then opens inward "
+                "only when the camera sees a cat and the motion sensor triggers at the same time. "
+                "Every other condition still has to be met.")
             + "\n\n"
-            + _("Consider enabling **Additionally require the outside PIR for camera-based entry** in Settings. "
-                "This is useful if the camera sometimes falsely detects a cat due to sun glare "
-                "or reflections.")
+            + _("Turn it on under **Settings**, in the **Flap** section: "
+                "**Additionally require the outside PIR for camera-based entry**.")
         ),
         type="warning",
         id=nid,

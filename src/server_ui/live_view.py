@@ -509,6 +509,12 @@ def register_live_view(input, output, session, ctx: SessionContext):
         # Add a delayed-load flag for the Last Events table
 
     last_events_ready = reactive.Value(False)
+    cat_location_refresh = reactive.Value(0)
+
+    def refresh_cat_locations() -> None:
+        with reactive.isolate():
+            revision = cat_location_refresh.get()
+        cat_location_refresh.set(revision + 1)
 
     @reactive.Effect
     def init_last_events_delay():
@@ -523,12 +529,22 @@ def register_live_view(input, output, session, ctx: SessionContext):
                 return
                 # Second run (after 1s): mark ready
             last_events_ready.set(True)
+            # The location output can be sent before a restored mobile page has
+            # rebound its nested Shiny output. Send it again once the surrounding
+            # recent-events UI is ready.
+            refresh_cat_locations()
 
     @output
     @render.ui
     def ui_cat_locations():
         reload_trigger_photos.get()
+        cat_location_refresh.get()
         return ui.HTML(_cat_locations_html())
+
+    @reactive.Effect
+    @reactive.event(input.cat_location_resync, ignore_none=True)
+    def on_cat_location_resync():
+        refresh_cat_locations()
 
     @reactive.Effect
     @reactive.event(input.cat_location_set, ignore_none=True)

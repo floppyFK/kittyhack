@@ -117,6 +117,42 @@ def test_record_and_pair_durations(tmp_kittyhack_db):
     assert last["direction"] == "out"
 
 
+def test_live_view_location_html_uses_latest_passage(tmp_kittyhack_db, monkeypatch):
+    from src.server_ui import live_view
+
+    monkeypatch.setitem(
+        live_view.CONFIG, "KITTYHACK_DATABASE_PATH", tmp_kittyhack_db
+    )
+    added = CatsRepo.db_add_new_cat(
+        tmp_kittyhack_db, "Mia", "RFID001", "", show_location=True
+    )
+    assert added.success
+
+    entered_at = DateTimeUtil.get_utc_date_string(1_700_000_000.0)
+    left_at = DateTimeUtil.get_utc_date_string(1_700_000_600.0)
+    entered = apply_manual_location(
+        tmp_kittyhack_db,
+        cat_rfid="RFID001",
+        cat_name="Mia",
+        direction="in",
+        created_at=entered_at,
+    )
+    assert entered.success
+    assert "kh-cat-loc-btn--inside" in live_view._cat_locations_html()
+
+    left = record_motion_conclusion(
+        tmp_kittyhack_db,
+        created_at=left_at,
+        rfid="RFID001",
+        cat_name="Mia",
+        event_type=EventType.CAT_WENT_OUTSIDE,
+    )
+    assert left.success
+    html = live_view._cat_locations_html()
+    assert "kh-cat-loc-btn--outside" in html
+    assert "kh-cat-loc-btn--inside" not in html
+
+
 def test_pair_duration_skips_clock_jump_and_same_direction(tmp_kittyhack_db):
     later = DateTimeUtil.get_utc_date_string(1_700_010_000.0)
     earlier = DateTimeUtil.get_utc_date_string(1_700_000_000.0)

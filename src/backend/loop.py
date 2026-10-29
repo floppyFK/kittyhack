@@ -76,7 +76,7 @@ def _persist_concluded_motion(
 ):
     """Record visit_stats always; persist pictures only when ``write_pictures``."""
     try:
-        record_motion_conclusion(
+        result = record_motion_conclusion(
             database,
             created_at=created_at,
             rfid=rfid,
@@ -84,6 +84,11 @@ def _persist_concluded_motion(
             event_type=all_events,
             additional_verdict_infos=extra_infos,
         )
+        if not result.success:
+            logging.error(
+                "[BACKEND] Failed to record visit statistics: %s",
+                result.message,
+            )
     except Exception as e:
         logging.error(f"[BACKEND] Failed to record visit statistics: {e}")
     if write_pictures:

@@ -660,6 +660,29 @@
         tickLocationTimes();
     }
 
+    function installCatLocationResync() {
+        if (!onceFlag(window, '__khCatLocationResync')) return;
+
+        function requestResync(delayMs) {
+            setTimeout(function () {
+                if (!(window.Shiny && typeof window.Shiny.setInputValue === 'function')) return;
+                window.Shiny.setInputValue('cat_location_resync', Date.now(), {
+                    priority: 'event'
+                });
+            }, delayMs || 0);
+        }
+
+        document.addEventListener('shiny:connected', function () {
+            requestResync(0);
+        });
+        window.addEventListener('pageshow', function (e) {
+            if (e.persisted) requestResync(250);
+        });
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') requestResync(250);
+        });
+    }
+
     function installLogDownloadOverlay() {
         if (!onceFlag(window, '__khLogDownloadOverlay')) return;
 
@@ -741,6 +764,7 @@
 
     // Auto-install
     installCatLocationClicks();
+    installCatLocationResync();
     installLogDownloadOverlay();
     installMutationInit();
 })();

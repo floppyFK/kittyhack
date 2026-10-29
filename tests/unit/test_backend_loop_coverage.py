@@ -87,6 +87,28 @@ def _enable_camera_motion_all(harness):
     harness.set_outside(False)
 
 
+def test_persist_concluded_motion_logs_failed_statistics_result(monkeypatch, caplog):
+    monkeypatch.setattr(
+        loop_mod,
+        "record_motion_conclusion",
+        lambda *args, **kwargs: Result(False, "database busy"),
+    )
+
+    loop_mod._persist_concluded_motion(
+        "/tmp/unused.db",
+        1,
+        "cat_went_outside",
+        write_pictures=False,
+        timeline_entries=None,
+        rfid="CAT001",
+        cat_name="Mia",
+        created_at="2026-10-29 21:19:31+00:00",
+        extra_infos=None,
+    )
+
+    assert "Failed to record visit statistics: database busy" in caplog.text
+
+
 # --- Entry modes -------------------------------------------------------------
 
 

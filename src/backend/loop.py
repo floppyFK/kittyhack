@@ -1626,6 +1626,12 @@ def backend_main(
             if magnets.get_inside_state():
                 logging.info("[BACKEND] Manual override: Locking inside door")
                 magnets.empty_queue()
+                # On the flap, empty_queue() locks immediately. In remote mode it
+                # only clears local pending intents, so the flap stays open unless
+                # lock_inside is sent. A recognized cat keeps mouse_check True, so
+                # the prey re-lock path will not close the door either.
+                if magnets.get_inside_state() and magnets.check_queued("lock_inside") == False:
+                    magnets.queue_command("lock_inside")
                 _timeline_log_inside_close(TimelineAction.INSIDE_CLOSED_MANUAL)
             else:
                 logging.info("[BACKEND] Manual override: Inside door is already locked.")

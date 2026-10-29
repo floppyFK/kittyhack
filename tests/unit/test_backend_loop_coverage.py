@@ -389,6 +389,37 @@ def test_manual_lock_inside_while_open(harness):
     harness.pump(2)
 
 
+def test_manual_lock_inside_queues_when_empty_queue_does_not_lock(harness):
+    """Remote empty_queue() does not lock the flap.
+
+    A cat-detection unlock leaves mouse_check True, so the prey re-lock path
+    must not be what closes the door.
+    """
+    queued = []
+    real_queue = harness.magnets.queue_command
+
+    def tracking_queue(command):
+        queued.append(command)
+        real_queue(command)
+
+    def remote_empty_queue(shutdown=False):
+        return None
+
+    baseconfig.CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter.ALL
+    baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = False
+    harness.set_outside(True)
+    harness.pump(3)
+    assert harness.magnets.get_inside_state() is True
+
+    harness.magnets.empty_queue = remote_empty_queue
+    harness.magnets.queue_command = tracking_queue
+    harness.set_manual_override(lock_inside=True)
+    harness.pump(2)
+
+    assert "lock_inside" in queued
+    assert harness.magnets.get_inside_state() is False
+
+
 def test_manual_unlock_inside_already_open(harness):
     harness.set_manual_override(unlock_inside=True)
     harness.pump(3)

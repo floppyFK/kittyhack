@@ -30,6 +30,8 @@ update_progress_state = {
     "result": None,
     "error_msg": "",
     "is_venv_update": False,
+    # False: the failure did not change the install, so the UI must not demand a reboot.
+    "reboot_required": True,
 }
 update_progress_lock = threading.Lock()
 

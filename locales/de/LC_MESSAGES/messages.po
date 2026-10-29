@@ -3110,6 +3110,17 @@ msgstr ""
 "es erneut."
 
 msgid ""
+"This device is already up to date. The Kittyflap is still starting or is not "
+"connected. Close this message and try again in a minute."
+msgstr ""
+"Dieses Gerät ist bereits auf dem neuesten Stand. Die Kittyflap startet noch "
+"oder ist nicht verbunden. Schließe diese Meldung und versuche es in einer "
+"Minute erneut."
+
+msgid "Update not started"
+msgstr "Update nicht gestartet"
+
+msgid ""
 "The Kittyflap update took too long. Check the connection and logs before "
 "trying again."
 msgstr ""

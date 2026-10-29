@@ -1641,7 +1641,9 @@ def register_info(input, output, session, ctx: SessionContext):
             _("Restart the Kittyflap now to apply the restored configuration.")
         )
 
-    def _start_update_process(update_target: bool, update_local: bool):
+    def _start_update_process(
+        update_target: bool, update_local: bool, *, force: bool = False
+    ):
         latest_version = CONFIG["LATEST_VERSION"]
         current_version = startup.git_version
 
@@ -1664,6 +1666,23 @@ def register_info(input, output, session, ctx: SessionContext):
                 _("Updating only the Kittyflap is available only in remote mode."),
                 duration=8,
                 type="error",
+            )
+            return
+
+        # A restored browser click after reboot must not start another update
+        # when this device is already on the requested version.
+        if (
+            not force
+            and update_local
+            and not update_target
+            and Versioning.is_same_kittyhack_version(
+                str(current_version or ""), str(latest_version or "")
+            )
+        ):
+            logging.info(
+                "[UPDATE] Local version %s already matches %s. Skipping.",
+                current_version,
+                latest_version,
             )
             return
 
@@ -1694,17 +1713,26 @@ def register_info(input, output, session, ctx: SessionContext):
             result=None,
             error_msg="",
             is_venv_update=is_venv_update,
+            reboot_required=True,
         )
 
         # Start the update in a background thread so the UI can update immediately
         def run_update():
             remote_mode_active = bool(is_remote_mode())
 
-            def _set_error_and_stop(message: str):
+            def _set_error_and_stop(message: str, *, reboot_required: bool = True):
                 logging.error(f"Kittyhack update failed: {message}")
                 set_update_progress(
-                    result="error", in_progress=False, error_msg=message
+                    result="error",
+                    in_progress=False,
+                    error_msg=message,
+                    reboot_required=reboot_required,
                 )
+
+            local_already_current = Versioning.is_same_kittyhack_version(
+                str(current_version or ""), str(latest_version or "")
+            )
+            target_update_started = False
 
             if remote_mode_active and update_target:
                 try:
@@ -1723,16 +1751,23 @@ def register_info(input, output, session, ctx: SessionContext):
                     client = RemoteControlClient.instance()
                     client.ensure_started()
                     if not client.wait_until_ready(timeout=20.0):
-                        _set_error_and_stop(
-                            _(
+                        # Nothing has been checked out yet. A reboot cannot help,
+                        # and demanding one restarts the loop after a reconnect.
+                        if update_local and local_already_current:
+                            message = _(
+                                "This device is already up to date. The Kittyflap is still starting or is not connected. Close this message and try again in a minute."
+                            )
+                        else:
+                            message = _(
                                 "The Kittyflap is not connected. Check the remote connection, then try again."
                             )
-                        )
+                        _set_error_and_stop(message, reboot_required=False)
                         return
 
                     client.start_target_update(
                         latest_version=latest_version, current_version=current_version
                     )
+                    target_update_started = True
                     target_update_started_at = monotonic_time()
                     reconnect_grace_s = 120.0
                     had_in_progress_state = False
@@ -1803,10 +1838,13 @@ def register_info(input, output, session, ctx: SessionContext):
                                 error_msg="",
                             )
                             if elapsed >= reconnect_grace_s:
+                                # The install on this device was not changed. Asking
+                                # for a reboot here just repeats the same attempt.
                                 _set_error_and_stop(
                                     _(
                                         "The Kittyflap did not reconnect after the update. Check its power and network connection."
-                                    )
+                                    ),
+                                    reboot_required=False,
                                 )
                                 return
                             tm.sleep(1.0)
@@ -1920,7 +1958,8 @@ def register_info(input, output, session, ctx: SessionContext):
                     _set_error_and_stop(
                         _(
                             "The Kittyflap update could not run. Check the connection and logs, then try again: {}."
-                        ).format(e)
+                        ).format(e),
+                        reboot_required=target_update_started,
                     )
                     return
 
@@ -1964,29 +2003,32 @@ def register_info(input, output, session, ctx: SessionContext):
         tm.sleep(1.0)
 
     @reactive.Effect
-    @reactive.event(input.update_kittyhack)
+    @reactive.event(input.update_kittyhack, ignore_init=True)
     def update_kittyhack_process():
         # In remote-mode: target first, then local device.
         # In target/local mode: local device only.
         _start_update_process(update_target=bool(is_remote_mode()), update_local=True)
 
     @reactive.Effect
-    @reactive.event(input.update_target_kittyhack)
+    @reactive.event(input.update_target_kittyhack, ignore_init=True)
     def update_target_kittyhack_process():
         _start_update_process(update_target=True, update_local=False)
 
     @reactive.Effect
-    @reactive.event(input.update_remote_kittyhack)
+    @reactive.event(input.update_remote_kittyhack, ignore_init=True)
     def update_remote_kittyhack_process():
         _start_update_process(update_target=False, update_local=True)
 
     @reactive.Effect
-    @reactive.event(input.btn_force_update_kittyhack)
+    @reactive.event(input.btn_force_update_kittyhack, ignore_init=True)
     def force_update_kittyhack_process():
         # Same flow as the regular update button; the underlying KittyhackUpdater.update_kittyhack()
         # already handles both tag mode (re-checkout) and branch mode (reset to
         # origin/<ref>) correctly when called with the current latest_version.
-        _start_update_process(update_target=bool(is_remote_mode()), update_local=True)
+        # force=True still re-checkouts when this device is already on that version.
+        _start_update_process(
+            update_target=bool(is_remote_mode()), update_local=True, force=True
+        )
 
     @output
     @render.text
@@ -2099,12 +2141,15 @@ def register_info(input, output, session, ctx: SessionContext):
             update_progress_watcher.modal_open = False
         if not hasattr(update_progress_watcher, "reboot_dialog_shown"):
             update_progress_watcher.reboot_dialog_shown = False
+        if not hasattr(update_progress_watcher, "dismiss_dialog_shown"):
+            update_progress_watcher.dismiss_dialog_shown = False
 
             # Show update progress modal only when starting update
         if state["in_progress"] and not update_progress_watcher.modal_open:
             show_update_progress_modal()
             update_progress_watcher.modal_open = True
             update_progress_watcher.reboot_dialog_shown = False
+            update_progress_watcher.dismiss_dialog_shown = False
 
             # Remove modal and show result only when update is finished
         elif (
@@ -2115,6 +2160,7 @@ def register_info(input, output, session, ctx: SessionContext):
             ui.modal_remove()
             update_progress_watcher.modal_open = False
             update_progress_watcher.reboot_dialog_shown = False
+            update_progress_watcher.dismiss_dialog_shown = False
 
             # Show reboot dialog if update finished and reboot required, but only once
         elif (
@@ -2155,9 +2201,38 @@ def register_info(input, output, session, ctx: SessionContext):
             update_progress_watcher.modal_open = True
             update_progress_watcher.reboot_dialog_shown = True
 
+            # Connection failures leave the install unchanged. Offer Close,
+            # not another reboot, so a restored browser session cannot loop.
+        elif (
+            state["result"] == "error"
+            and not state.get("reboot_required", True)
+            and not update_progress_watcher.dismiss_dialog_shown
+        ):
+            ui.modal_remove()
+            error_text = str(state.get("error_msg") or "").strip()
+            ui.modal_show(
+                ui.modal(
+                    ui.div(
+                        error_text,
+                        style_=(
+                            "white-space: pre-wrap; overflow-wrap: anywhere; "
+                            "word-break: break-word; max-width: 100%;"
+                        ),
+                    ),
+                    title=_("Update not started"),
+                    easy_close=True,
+                    footer=ui.div(
+                        ui.input_action_button("btn_modal_cancel", _("Close")),
+                    ),
+                )
+            )
+            update_progress_watcher.modal_open = True
+            update_progress_watcher.dismiss_dialog_shown = True
+
             # Show reboot dialog with error if update failed, but only once
         elif (
             state["result"] == "error"
+            and state.get("reboot_required", True)
             and not update_progress_watcher.reboot_dialog_shown
         ):
             ui.modal_remove()
@@ -2210,3 +2285,4 @@ def register_info(input, output, session, ctx: SessionContext):
             ui.modal_remove()
             update_progress_watcher.modal_open = False
             update_progress_watcher.reboot_dialog_shown = False
+            update_progress_watcher.dismiss_dialog_shown = False

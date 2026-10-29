@@ -520,10 +520,13 @@ def register_system_tab(input, output, session, ctx: SessionContext):
     @reactive.event(input.btn_modal_cancel)
     def modal_cancel():
         ui.modal_remove()
-        # Reset update progress result if the restart-required modal was open
+        # Reset update progress result if the restart-required modal was open.
+        # A connection failure is closable and must not stay queued for the next tick.
         state = get_update_progress()
-        if state["result"] == "ok" or state["result"] == "reboot_dialog":
-            set_update_progress(in_progress=False, result=None)
+        if state["result"] in ("ok", "reboot_dialog") or (
+            state["result"] == "error" and not state.get("reboot_required", True)
+        ):
+            set_update_progress(in_progress=False, result=None, reboot_required=True)
 
     @reactive.effect
     @reactive.event(input.btn_modal_reboot_ok, ignore_init=True)

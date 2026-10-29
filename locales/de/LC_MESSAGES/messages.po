@@ -1105,8 +1105,18 @@ msgstr "für"
 msgid "Check for updates automatically"
 msgstr "Automatisch nach Updates suchen"
 
+msgid "Check for updates"
+msgstr "Nach Updates suchen"
+
 msgid "Kittyhack will regularly check whether a new version is available."
 msgstr "Kittyhack prüft regelmäßig, ob eine neue Version verfügbar ist."
+
+msgid ""
+"Automatic update checks are turned off. Use this button to look for a new "
+"version."
+msgstr ""
+"Die automatische Update-Suche ist ausgeschaltet. Mit dieser Schaltfläche "
+"suchst du selbst nach einer neuen Version."
 
 msgid "Update source"
 msgstr "Update-Quelle"
@@ -3587,6 +3597,10 @@ msgid "Kittyhack {} is available. Open Info to review and install the update."
 msgstr ""
 "Kittyhack {} ist verfügbar. Öffne Info, um das Update zu prüfen und zu "
 "installieren."
+
+#, python-brace-format
+msgid "Kittyhack {} is available."
+msgstr "Kittyhack {} ist verfügbar."
 
 msgid ""
 " You can also remove pictures from the original Kittyflap database. Open "

@@ -396,16 +396,27 @@ def register_info(input, output, session, ctx: SessionContext):
         try:
             # Ensure network is up, then fetch latest version
             if wait_for_network(timeout=5):
-                CONFIG["LATEST_VERSION"] = Versioning.read_latest_kittyhack_version(
-                    timeout=5
-                )
-                if CONFIG["LATEST_VERSION"] == "unknown":
+                latest = Versioning.read_latest_kittyhack_version(timeout=5)
+                CONFIG["LATEST_VERSION"] = latest
+                if latest == "unknown":
                     ui.notification_show(
                         _(
                             "The latest version could not be checked. Check the internet connection, then try again."
                         ),
                         duration=8,
                         type="warning",
+                    )
+                elif Versioning.is_same_kittyhack_version(startup.git_version, latest):
+                    ui.notification_show(
+                        _("You are already using the latest version of Kittyhack."),
+                        duration=8,
+                        type="message",
+                    )
+                else:
+                    ui.notification_show(
+                        _("Kittyhack {} is available.").format(latest),
+                        duration=8,
+                        type="message",
                     )
             else:
                 ui.notification_show(
@@ -526,15 +537,6 @@ def register_info(input, output, session, ctx: SessionContext):
                     _(
                         "The latest version could not be loaded from GitHub. Check the internet connection, then try again."
                     )
-                ),
-                ui.br(),
-                ui.div(
-                    ui.input_task_button(
-                        "btn_retry_latest_version",
-                        _("Check again"),
-                        icon=icon_svg("rotate"),
-                    ),
-                    style_="text-align: center;",
                 ),
             )
 
@@ -981,6 +983,23 @@ def register_info(input, output, session, ctx: SessionContext):
                         + ":** `"
                         + latest_version
                         + "`"
+                    ),
+                    (
+                        ui.help_text(
+                            _(
+                                "Automatic update checks are turned off. Use this button to look for a new version."
+                            )
+                        )
+                        if not CONFIG["PERIODIC_VERSION_CHECK"]
+                        else ui.HTML("")
+                    ),
+                    ui.div(
+                        ui.input_task_button(
+                            "btn_retry_latest_version",
+                            _("Check for updates"),
+                            icon=icon_svg("rotate"),
+                        ),
+                        style_="text-align: center;",
                     ),
                     (
                         ui.div(

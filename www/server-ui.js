@@ -223,7 +223,7 @@
     }
 
     function initUpdateRepoToggle() {
-        // Toggle custom repository input / custom-format help / beta warning
+        // Toggle custom repository input / help texts / beta warning
         // based on #update_repository_mode.
         // Expects: #update_repository_container, #update_repository_help,
         //          #update_repository_custom_help, #update_repository_beta_warning
@@ -242,9 +242,9 @@
             try { mode = String(sel.value || ''); } catch (e) {}
             var isCustom = (mode === 'custom');
             var isBeta = (mode === 'beta');
+            var isStandard = (mode === 'standard');
             if (urlWrap) urlWrap.style.display = isCustom ? '' : 'none';
-            // General Standard/Beta/Custom help stays visible for all modes.
-            if (helpWrap) helpWrap.style.display = '';
+            if (helpWrap) helpWrap.style.display = isStandard ? '' : 'none';
             // owner/repo format details only when Custom is selected.
             if (customHelpWrap) customHelpWrap.style.display = isCustom ? '' : 'none';
             if (betaWarn) betaWarn.style.display = isBeta ? '' : 'none';

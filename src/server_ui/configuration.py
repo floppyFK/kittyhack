@@ -349,17 +349,25 @@ def register_configuration(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "Use **Standard** for official stable releases from "
-                                        "`floppyFK/kittyhack` (beta tags like `v2.6.3_beta_1` "
-                                        "are never offered here). "
-                                        "Use **Beta** to follow official beta releases named "
-                                        "`vX.Y.Z_beta_N` (falls back to the latest stable release "
-                                        "when no beta exists, or when the latest release is newer "
-                                        "than or equal to the latest beta base version). "
-                                        "Select **Custom** to test your own fork or a feature branch."
+                                        "**Standard** uses the officially released versions."
                                     )
                                 ),
-                                style_="color: grey;",
+                                style_=(
+                                    "color: grey;"
+                                    + (
+                                        ""
+                                        if str(
+                                            CONFIG.get(
+                                                "UPDATE_REPOSITORY_MODE", "standard"
+                                            )
+                                            or "standard"
+                                        )
+                                        .strip()
+                                        .lower()
+                                        == "standard"
+                                        else "display: none;"
+                                    )
+                                ),
                                 id="update_repository_help",
                             ),
                             ui.column(

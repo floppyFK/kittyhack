@@ -45,6 +45,30 @@ pytest tests/unit/test_backend_loop_scenarios.py -v
 
 `pytest.ini` sets `addopts = -m "not hardware"` so local/CI never touches real GPIO by default.
 
+## Live REST API and MQTT test
+
+`tools/test_remote_interfaces.py` exercises the remote interfaces of a running
+Kittyhack development instance. It is intentionally separate from pytest so CI
+never contacts or controls a live flap.
+
+```bash
+# Create the gitignored .local/remote-interfaces.json credential file
+.venv/bin/python tools/test_remote_interfaces.py --init
+
+# Test REST and MQTT; mode and cat-setting changes are restored automatically
+.venv/bin/python tools/test_remote_interfaces.py
+
+# Do not change any remote state
+.venv/bin/python tools/test_remote_interfaces.py --read-only
+
+# Also test both magnets (explicit opt-in because this moves the doors)
+.venv/bin/python tools/test_remote_interfaces.py --with-door
+```
+
+Use `--only api` or `--only mqtt` to limit the run. Run `--help` for credential
+file overrides and timeout options. The script prints a PASS/FAIL/SKIP summary
+and returns a non-zero exit code when an executed check fails.
+
 ## Simulate mode (process flag)
 
 Simulation is **not** a stored setting (the old `simulate_kittyflap` key is ignored during a legacy import). Use a process-level flag:

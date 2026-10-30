@@ -1341,6 +1341,10 @@ class Versioning:
 class SystemInfo:
     """Disk/RAM/DB size, IP/port checks, and system information logging."""
 
+    # Info-tab folder sizes are refreshed often; avoid walking large trees each time.
+    _dir_size_cache: dict[str, tuple[float, float]] = {}
+    _DIR_SIZE_TTL_S = 60.0
+
     @staticmethod
     def get_free_disk_space():
         """Return free root filesystem space in MB (0 on error)."""
@@ -1405,6 +1409,33 @@ class SystemInfo:
         except Exception as e:
             logging.error(f"Failed to get the size of the Kittyhack database: {e}")
             return 0
+
+    @staticmethod
+    def get_directory_size_mb(path: str) -> float:
+        """Return the total size of files under ``path`` in MB.
+
+        Missing directories count as 0. The result is cached for one minute so
+        the Info tab can refresh without walking large picture folders each time.
+        """
+        now = tm.monotonic()
+        cached = SystemInfo._dir_size_cache.get(path)
+        if cached is not None and (now - cached[0]) < SystemInfo._DIR_SIZE_TTL_S:
+            return cached[1]
+        total = 0
+        try:
+            if os.path.isdir(path):
+                for root, _dirs, files in os.walk(path):
+                    for name in files:
+                        try:
+                            total += os.path.getsize(os.path.join(root, name))
+                        except OSError:
+                            continue
+        except Exception as e:
+            logging.error(f"Failed to get the size of directory '{path}': {e}")
+            total = 0
+        size_mb = total / (1024 * 1024)
+        SystemInfo._dir_size_cache[path] = (now, size_mb)
+        return size_mb
 
     @staticmethod
     def get_file_size(file_path):

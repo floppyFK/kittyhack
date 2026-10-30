@@ -2616,6 +2616,12 @@ msgstr "Nur dieses Gerät aktualisieren"
 msgid "Release notes for"
 msgstr "Release Notes für"
 
+msgid "Show more"
+msgstr "Mehr anzeigen"
+
+msgid "Show less"
+msgstr "Weniger anzeigen"
+
 #, python-brace-format
 msgid ""
 "Release notes could not be loaded. Check the internet connection, then try "
@@ -2636,13 +2642,6 @@ msgstr "Halte die WLAN-Verbindung während des Updates stabil."
 
 msgid "The Kittyflap will restart when the update is complete."
 msgstr "Die Kittyflap startet nach Abschluss des Updates neu."
-
-msgid ""
-"Read the [changelog](https://github.com/floppyFK/kittyhack/releases) to see "
-"what changed."
-msgstr ""
-"Lies das [Changelog](https://github.com/floppyFK/kittyhack/releases), um zu "
-"sehen, was sich in der neuesten Version geändert hat."
 
 msgid "Choose one device to update if you want to align the versions first."
 msgstr "Verwende eine der Schaltflächen unten, um die Versionen anzugleichen."
@@ -2685,32 +2684,35 @@ msgid "You are already using the latest version of Kittyhack."
 msgstr "Du verwendest bereits die neueste Version von Kittyhack."
 
 msgid ""
-"The update source is your custom repository. Use this button to pull the "
-"latest commit from the selected branch or reinstall the selected tag."
+"Forces a fresh install from your custom repository, even when that version "
+"is already installed. A branch is reset to its newest commit. A selected "
+"tag is checked out again."
 msgstr ""
-"Die aktuelle Update-Quelle ist dein benutzerdefiniertes Repository. Dieser "
-"Button holt den neuesten Commit des gewählten Branches oder installiert den "
-"ausgewählten Tag erneut."
+"Installiert den Stand deines benutzerdefinierten Repositorys erneut, auch "
+"wenn er schon installiert ist. Ein Branch wird auf den neuesten Commit "
+"gesetzt, ein ausgewählter Tag wird erneut ausgecheckt."
 
 msgid ""
-"The current update source is the official beta channel. Use this button to "
-"reinstall the latest beta tag (`vX.Y.Z_beta_N`), or the latest stable "
-"release when no newer beta is available."
+"Forces a fresh install of the newest beta (`vX.Y.Z_beta_N`), even when that "
+"version is already installed. If no newer beta exists, the newest stable "
+"release is installed."
 msgstr ""
-"Die aktuelle Update-Quelle ist der offizielle Beta-Kanal. Dieser Button "
-"installiert den neuesten Beta-Tag (`vX.Y.Z_beta_N`) erneut, oder das neueste "
-"stabile Release, wenn kein neueres Beta verfügbar ist."
+"Installiert die neueste Beta (`vX.Y.Z_beta_N`) erneut, auch wenn sie schon "
+"installiert ist. Gibt es keine neuere Beta, wird das neueste stabile Release "
+"installiert."
 
-msgid "Reinstall the selected version from the configured update source."
+msgid ""
+"Forces a fresh install of the newest stable release, even when that version "
+"is already installed. If a newer release exists, that release is installed."
 msgstr ""
-"Die aktuell ausgewählte Version aus der konfigurierten Update-Quelle erneut "
-"installieren."
+"Installiert die neueste stabile Version erneut, auch wenn sie schon "
+"installiert ist. Gibt es eine neuere Version, wird diese installiert."
 
-msgid "Reinstall update"
-msgstr "Update neu installieren"
+msgid "Force update"
+msgstr "Update erzwingen"
 
-msgid "Reinstall now"
-msgstr "Jetzt neu installieren"
+msgid "Force update now"
+msgstr "Update jetzt erzwingen"
 
 #, python-brace-format
 msgid ""
@@ -3040,14 +3042,23 @@ msgstr "Unbekannt"
 msgid "Kittyhack database size"
 msgstr "Kittyhack Datenbank Größe"
 
-msgid "Free disk space"
-msgstr "Freier Speicherplatz"
+msgid "Used disk space"
+msgstr "Belegter Speicherplatz"
 
 msgid "Used RAM"
 msgstr "Verwendeter RAM"
 
 msgid "WLAN status"
 msgstr "WLAN Status"
+
+msgid "Pictures folder size"
+msgstr "Größe des Bilderordners"
+
+msgid "Models folder size"
+msgstr "Größe des Modellordners"
+
+msgid "Advanced details"
+msgstr "Erweitert"
 
 msgid "No changelogs are available."
 msgstr "Keine Changelogs gefunden."

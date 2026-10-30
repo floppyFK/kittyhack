@@ -513,6 +513,31 @@
         });
     }
 
+    function initReleaseNotesFold() {
+        qa('.release-notes-fold').forEach(function (fold) {
+            if (fold.getAttribute('data-kh-fold-init') === '1') return;
+            var notes = q('.release_notes', fold);
+            var btn = q('.release-notes-fold-toggle', fold);
+            if (!notes || !btn) return;
+            fold.setAttribute('data-kh-fold-init', '1');
+
+            btn.addEventListener('click', function () {
+                var expanded = fold.classList.toggle('is-expanded');
+                btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+                var more = btn.getAttribute('data-label-more') || 'Show more';
+                var less = btn.getAttribute('data-label-less') || 'Show less';
+                btn.textContent = expanded ? less : more;
+            });
+
+            requestAnimationFrame(function () {
+                if (fold.classList.contains('is-expanded')) return;
+                if (notes.scrollHeight <= notes.clientHeight + 8) {
+                    fold.classList.add('is-short');
+                }
+            });
+        });
+    }
+
     function initAll(scope) {
         initCollapseAriaExpanded();
         initTooltipWrappers(scope);
@@ -525,6 +550,7 @@
         initLogicToggles();
         initManageCatsRFIDValidation();
         initUpdateProgressModal();
+        initReleaseNotesFold();
 
         // Unsaved change markers
         initUnsavedChangesHighlighter({ containerId: 'config_tab_container', saveButtonId: 'bSaveKittyhackConfig', initDelayMs: 1000, sliderSelector: 'input.js-range-slider' });

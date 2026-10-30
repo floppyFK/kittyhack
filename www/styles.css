@@ -1318,6 +1318,154 @@ html[data-bs-theme="dark"] .event-modal-picture-spinner {
     border-bottom: 1px solid rgba(0, 0, 0, 0.25);
 }
 
+.kh-sysinfo {
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+    margin: 0.15rem 0 0.35rem;
+}
+
+.kh-sysinfo-row {
+    display: grid;
+    grid-template-columns: 1.35rem minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 0.65rem;
+    row-gap: 0.35rem;
+    padding: 0.55rem 0.1rem;
+    border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+}
+
+.kh-sysinfo-row:last-child {
+    border-bottom: none;
+}
+
+.kh-sysinfo-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+.kh-sysinfo-icon svg {
+    height: 1rem;
+    width: 1rem;
+    margin: 0 !important;
+}
+
+.kh-sysinfo-label {
+    min-width: 0;
+    color: var(--bs-body-color, #212529);
+    line-height: 1.25;
+}
+
+.kh-sysinfo-value {
+    color: var(--bs-body-color, #212529);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.kh-sysinfo-row.has-meter .kh-sysinfo-meter {
+    grid-column: 2 / -1;
+}
+
+.kh-sysinfo-meter {
+    height: 0.35rem;
+    border-radius: 999px;
+    background: var(--bs-secondary-bg, #e9ecef);
+    overflow: hidden;
+}
+
+.kh-sysinfo-meter-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: var(--bs-primary, #0d6efd);
+}
+
+.kh-sysinfo-meter-fill.is-warn {
+    background: var(--bs-warning, #ffc107);
+}
+
+.kh-sysinfo-meter-fill.is-high {
+    background: var(--bs-danger, #dc3545);
+}
+
+.changelog-accordion.kh-advanced-disclosure {
+    margin-top: 0.85rem;
+    max-height: none;
+}
+
+.kh-advanced-disclosure .changelog-item-title {
+    font-family: inherit;
+    font-weight: 600;
+}
+
+.kh-advanced-disclosure .changelog-item-body-inner {
+    padding-left: 1rem;
+    padding-right: 1rem;
+}
+
+.kh-advanced-disclosure .changelog-item-body-inner h6 {
+    margin-top: 0;
+}
+
+/* Info tab: legacy config restore, same surface as the database box above it. */
+.changelog-accordion.kh-info-disclosure {
+    margin-top: 8px;
+    max-height: none;
+    overflow: hidden;
+    border-radius: 6px;
+    background: var(--bs-tertiary-bg, #fafafa);
+    border: 1px solid var(--bs-border-color, #ddd);
+}
+
+html[data-bs-theme="dark"] .changelog-accordion.kh-info-disclosure {
+    background: #212529;
+    border-color: #495057;
+    color: #f8f9fa;
+}
+
+.kh-info-disclosure .changelog-item-btn.btn {
+    white-space: normal;
+    color: inherit;
+    border-radius: 6px;
+}
+
+.kh-info-disclosure .changelog-item-btn.btn[aria-expanded="true"] {
+    border-radius: 6px 6px 0 0;
+}
+
+.kh-info-disclosure .changelog-item-btn:hover,
+.kh-info-disclosure .changelog-item-btn:focus {
+    background: transparent;
+    color: inherit;
+}
+
+.kh-info-disclosure .changelog-item-title {
+    font-family: inherit;
+    font-weight: 600;
+    white-space: normal;
+}
+
+.kh-info-disclosure .changelog-item-body {
+    background: transparent;
+    border-top: 1px solid var(--bs-border-color, #dee2e6);
+}
+
+html[data-bs-theme="dark"] .kh-info-disclosure .changelog-item-body {
+    border-top-color: #495057;
+}
+
+.kh-info-disclosure .changelog-item-body-inner {
+    padding: 0.85rem 0.75rem 0.9rem;
+    text-align: center;
+}
+
+.kh-info-disclosure .changelog-item-body-inner p {
+    text-align: center;
+}
+
 .image-container-alert {
     background-color: rgb(255 251 223) !important;
 }
@@ -2372,6 +2520,43 @@ html[data-bs-theme="dark"] .kh-reconnect-card {
 }
 .release_notes h6 {
     font-size: 0.85em;
+}
+
+/* Info tab: preview the latest release notes, expand on demand. */
+.release-notes-fold {
+    --kh-release-notes-preview: 8.5rem;
+}
+
+.release-notes-fold:not(.is-expanded):not(.is-short) .release_notes {
+    max-height: var(--kh-release-notes-preview);
+    overflow: hidden;
+    position: relative;
+}
+
+.release-notes-fold:not(.is-expanded):not(.is-short) .release_notes::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2.75rem;
+    background: linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--bs-tertiary-bg, #f8f9fa) 0%, transparent),
+        var(--bs-tertiary-bg, #f8f9fa)
+    );
+    pointer-events: none;
+    z-index: 1;
+}
+
+.release-notes-fold.is-short .release-notes-fold-toggle {
+    display: none;
+}
+
+.release-notes-fold-toggle {
+    display: block;
+    margin: 0.15rem auto 0.25rem;
+    text-decoration: none;
 }
 
 /* REST API documentation modal (System tab) */

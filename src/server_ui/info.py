@@ -2,7 +2,6 @@
 
 import os
 import re
-import pandas as pd
 from datetime import datetime
 import time as tm
 from src.clock import monotonic_time
@@ -35,7 +34,7 @@ from src.database import (
     DatabaseCore,
     DbMigrations,
 )
-from src.paths import kittyhack_root
+from src.paths import kittyhack_root, models_yolo_root, pictures_root
 from src.mode import is_remote_mode
 from src.shiny_wrappers import uix
 import src.startup as startup
@@ -589,7 +588,20 @@ def register_info(input, output, session, ctx: SessionContext):
                     ui.markdown(
                         "**" + _("Release notes for") + " " + latest_version + ":**"
                     ),
-                    ui.div(ui.markdown(release_notes), class_="release_notes"),
+                    ui.div(
+                        ui.div(ui.markdown(release_notes), class_="release_notes"),
+                        ui.tags.button(
+                            {
+                                "type": "button",
+                                "class": "btn btn-link btn-sm release-notes-fold-toggle",
+                                "aria-expanded": "false",
+                                "data-label-more": _("Show more"),
+                                "data-label-less": _("Show less"),
+                            },
+                            _("Show more"),
+                        ),
+                        class_="release-notes-fold",
+                    ),
                     ui.br(),
                 )
             except Exception as e:
@@ -632,11 +644,6 @@ def register_info(input, output, session, ctx: SessionContext):
                         ui.br(),
                         ui.help_text(
                             _("The Kittyflap will restart when the update is complete.")
-                        ),
-                        ui.markdown(
-                            _(
-                                "Read the [changelog](https://github.com/floppyFK/kittyhack/releases) to see what changed."
-                            )
                         ),
                     ),
                 )
@@ -788,17 +795,15 @@ def register_info(input, output, session, ctx: SessionContext):
             )
             if update_repo_mode == "custom":
                 force_update_help = _(
-                    "The update source is your custom repository. Use this button to pull the latest commit from the selected branch or reinstall the selected tag."
+                    "Forces a fresh install from your custom repository, even when that version is already installed. A branch is reset to its newest commit. A selected tag is checked out again."
                 )
             elif update_repo_mode == "beta":
                 force_update_help = _(
-                    "The current update source is the official beta channel. "
-                    "Use this button to reinstall the latest beta tag (`vX.Y.Z_beta_N`), "
-                    "or the latest stable release when no newer beta is available."
+                    "Forces a fresh install of the newest beta (`vX.Y.Z_beta_N`), even when that version is already installed. If no newer beta exists, the newest stable release is installed."
                 )
             else:
                 force_update_help = _(
-                    "Reinstall the selected version from the configured update source."
+                    "Forces a fresh install of the newest stable release, even when that version is already installed. If a newer release exists, that release is installed."
                 )
             # Show disk/venv notices next to Force update when the primary Update
             # button is not shown (already-latest / unknown-version paths).
@@ -807,31 +812,37 @@ def register_info(input, output, session, ctx: SessionContext):
             ) or latest_version == "unknown"
             ui_update_kittyhack = (
                 ui_update_kittyhack,
-                ui.hr(),
                 ui.div(
-                    ui.h6(_("Reinstall update")),
-                    ui.help_text(force_update_help),
-                    ui.br(),
-                    ui.div(
-                        ui.input_task_button(
-                            "btn_force_update_kittyhack",
-                            _("Reinstall now"),
-                            icon=icon_svg("rotate"),
-                            class_="btn-default",
-                            disabled=update_disabled,
+                    changelog_expandable_item(
+                        "info_advanced_reinstall",
+                        _("Advanced details"),
+                        ui.div(
+                            ui.h6(_("Force update")),
+                            ui.help_text(force_update_help),
+                            ui.br(),
+                            ui.div(
+                                ui.input_task_button(
+                                    "btn_force_update_kittyhack",
+                                    _("Force update now"),
+                                    icon=icon_svg("rotate"),
+                                    class_="btn-default",
+                                    disabled=update_disabled,
+                                ),
+                                style_="text-align: center;",
+                            ),
+                            (
+                                update_disk_warning
+                                if show_notices_at_force and update_disk_warning
+                                else ui.div()
+                            ),
+                            (
+                                venv_update_notice
+                                if show_notices_at_force and venv_update_notice
+                                else ui.div()
+                            ),
                         ),
-                        style_="text-align: center;",
                     ),
-                    (
-                        update_disk_warning
-                        if show_notices_at_force and update_disk_warning
-                        else ui.div()
-                    ),
-                    (
-                        venv_update_notice
-                        if show_notices_at_force and venv_update_notice
-                        else ui.div()
-                    ),
+                    class_="changelog-accordion kh-advanced-disclosure",
                 ),
             )
 
@@ -1109,8 +1120,7 @@ def register_info(input, output, session, ctx: SessionContext):
                                     ),
                                 ),
                             ),
-                            class_="changelog-accordion",
-                            style_="margin-top: 8px; max-height: none;",
+                            class_="changelog-accordion kh-info-disclosure",
                         ),
                     ),
                     ui.br(),
@@ -1234,28 +1244,72 @@ def register_info(input, output, session, ctx: SessionContext):
             ui.br(),
         )
 
-    @render.table
+    @render.ui
     def ui_system_info():
         reactive.invalidate_later(10.0)
 
+        def _format_storage_mb(size_mb: float) -> str:
+            if size_mb >= 1024:
+                return f"{size_mb / 1024:.1f} GB"
+            return f"{size_mb:.1f} MB"
+
+        def _usage_meter(used_mb: float, total_mb: float):
+            if total_mb <= 0:
+                return None
+            pct = max(0.0, min(100.0, (used_mb / total_mb) * 100.0))
+            if pct >= 90:
+                tone = "is-high"
+            elif pct >= 75:
+                tone = "is-warn"
+            else:
+                tone = "is-ok"
+            return ui.div(
+                ui.div(
+                    class_=f"kh-sysinfo-meter-fill {tone}",
+                    style_=f"width: {pct:.1f}%;",
+                ),
+                class_="kh-sysinfo-meter",
+            )
+
+        def _sysinfo_row(icon_name: str, label: str, value, *, meter=None, icon=None):
+            icon_node = (
+                icon
+                if icon is not None
+                else ui.span(
+                    icon_svg(icon_name, margin_left="0", margin_right="0"),
+                    class_="kh-sysinfo-icon",
+                )
+            )
+            children = [
+                icon_node,
+                ui.span(label, class_="kh-sysinfo-label"),
+                ui.span(value, class_="kh-sysinfo-value"),
+            ]
+            if meter is not None:
+                children.append(meter)
+            return ui.div(
+                *children,
+                class_="kh-sysinfo-row" + (" has-meter" if meter is not None else ""),
+            )
+
         database_size = SystemInfo.get_database_size()
+        pictures_size = SystemInfo.get_directory_size_mb(pictures_root())
+        models_size = SystemInfo.get_directory_size_mb(os.path.dirname(models_yolo_root()))
         startup.free_disk_space = SystemInfo.get_free_disk_space()
         total_disk_space = SystemInfo.get_total_disk_space()
         used_ram_space = SystemInfo.get_used_ram_space()
         total_ram_space = SystemInfo.get_total_ram_space()
-        ram_usage_percentage = (used_ram_space / total_ram_space) * 100
-
-        def _wlan_status_icon(color_class: str, title: str):
-            try:
-                icon = icon_svg("wifi", margin_left="0", margin_right="0")
-            except Exception:
-                return ui.span("•", class_=f"table-icon {color_class}", title=title)
-            return ui.span(icon, class_=f"table-icon {color_class}", title=title)
-
-            # Get WLAN status information
+        ram_usage_percentage = (
+            (used_ram_space / total_ram_space) * 100 if total_ram_space else 0
+        )
+        used_disk_space = max(0.0, total_disk_space - startup.free_disk_space)
 
         if is_remote_mode():
-            wlan_info = _("Not available in remote mode")
+            wlan_icon = ui.span(
+                icon_svg("wifi", margin_left="0", margin_right="0"),
+                class_="kh-sysinfo-icon",
+            )
+            wlan_text = _("Not available in remote mode")
         else:
             try:
                 wlan = subprocess.run(
@@ -1270,7 +1324,6 @@ def register_info(input, output, session, ctx: SessionContext):
                     quality_value = float(quality.split("/")[0]) / float(
                         quality.split("/")[1]
                     )
-
                     if quality_value >= 0.8:
                         color_class = "text-success"
                         title = _("Strong signal")
@@ -1280,37 +1333,56 @@ def register_info(input, output, session, ctx: SessionContext):
                     else:
                         color_class = "text-danger"
                         title = _("Weak signal")
-
-                    wlan_info = ui.span(
-                        _wlan_status_icon(color_class, title),
-                        " ",
-                        _("Quality: {}, Signal: {} dBm").format(quality, signal),
+                    wlan_icon = ui.span(
+                        icon_svg("wifi", margin_left="0", margin_right="0"),
+                        class_=f"kh-sysinfo-icon {color_class}",
+                        title=title,
                     )
+                    wlan_text = _("Quality: {}, Signal: {} dBm").format(quality, signal)
                 else:
-                    wlan_info = _("Not connected")
+                    wlan_icon = ui.span(
+                        icon_svg("wifi", margin_left="0", margin_right="0"),
+                        class_="kh-sysinfo-icon text-secondary",
+                    )
+                    wlan_text = _("Not connected")
             except Exception:
-                wlan_info = _("Unknown")
+                wlan_icon = ui.span(
+                    icon_svg("wifi", margin_left="0", margin_right="0"),
+                    class_="kh-sysinfo-icon text-secondary",
+                )
+                wlan_text = _("Unknown")
 
-                # Create a DataFrame with the system information
-        df = pd.DataFrame(
-            {
-                "Property": [
-                    _("Kittyhack database size"),
-                    _("Free disk space"),
-                    _("Used RAM"),
-                    _("WLAN status"),
-                ],
-                "Value": [
-                    f"{database_size:.1f} MB",
-                    f"{startup.free_disk_space:.1f} MB / {total_disk_space:.1f} MB",
-                    f"{used_ram_space:.1f} MB / {total_ram_space:.1f} MB ({ram_usage_percentage:.1f}%)",
-                    wlan_info,
-                ],
-            }
+        return ui.div(
+            _sysinfo_row(
+                "database",
+                _("Kittyhack database size"),
+                _format_storage_mb(database_size),
+            ),
+            _sysinfo_row(
+                "images",
+                _("Pictures folder size"),
+                _format_storage_mb(pictures_size),
+            ),
+            _sysinfo_row(
+                "cube",
+                _("Models folder size"),
+                _format_storage_mb(models_size),
+            ),
+            _sysinfo_row(
+                "hard-drive",
+                _("Used disk space"),
+                f"{_format_storage_mb(used_disk_space)} / {_format_storage_mb(total_disk_space)}",
+                meter=_usage_meter(used_disk_space, total_disk_space),
+            ),
+            _sysinfo_row(
+                "memory",
+                _("Used RAM"),
+                f"{_format_storage_mb(used_ram_space)} / {_format_storage_mb(total_ram_space)} ({ram_usage_percentage:.0f}%)",
+                meter=_usage_meter(used_ram_space, total_ram_space),
+            ),
+            _sysinfo_row("wifi", _("WLAN status"), wlan_text, icon=wlan_icon),
+            class_="kh-sysinfo",
         )
-        return df.style.set_table_attributes(
-            'class="dataframe shiny-table table w-auto"'
-        ).hide(axis="index")
 
     @reactive.Effect
     @reactive.event(input.btn_changelogs)

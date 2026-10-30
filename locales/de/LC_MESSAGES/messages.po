@@ -3998,6 +3998,9 @@ msgstr "Wähle eine Aktion für die Kittyflap."
 msgid "API tokens"
 msgstr "API-Tokens"
 
+msgid "Create tokens so scripts and devices can control the flap through the REST API."
+msgstr "Erstelle Tokens, damit Skripte und Geräte die Klappe über die REST-API steuern können."
+
 msgid ""
 "Tokens let scripts and devices — for example Home Assistant, Stream Deck, or "
 "iOS Shortcuts — control the flap through the REST API. Each token is shown "

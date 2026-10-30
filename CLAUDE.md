@@ -139,7 +139,7 @@ Post-reconnect: call `apply_wlan_runtime_settings()` to re-apply TX-Power + `pow
 
 Under `/api/v1/*`. Three auth methods (priority order): `Authorization: Bearer`, `X-API-Key` header, `?token=`/`?api_key=` query param (for URL-only clients like Stream Deck).
 
-Tokens in `api_tokens.json` next to `kittyhack.db`, SHA-256 hashed. Managed via the **System tab** card (list/create/revoke) or CLI `tools/api_token.py`.
+Tokens in `api_tokens.json` next to `kittyhack.db`, SHA-256 hashed. Managed via the **Settings tab** card (list/create/revoke) or CLI `tools/api_token.py`.
 
 Routes:
 - `GET /status` — door state + mode

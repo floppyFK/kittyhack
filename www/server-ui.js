@@ -97,7 +97,7 @@
         // Input/change delegation
         container.addEventListener('change', function (ev) {
             var t = ev.target;
-            if (!t) return;
+            if (!t || closest(t, '.kh-no-unsaved')) return;
             // Range slider hidden input
             if (t.matches && t.matches(opts.sliderSelector || 'input.js-range-slider')) {
                 markSliderUnsaved(t);
@@ -110,7 +110,7 @@
 
         container.addEventListener('input', function (ev) {
             var t = ev.target;
-            if (!t) return;
+            if (!t || closest(t, '.kh-no-unsaved')) return;
             if (t.matches && t.matches(opts.sliderSelector || 'input.js-range-slider')) {
                 markSliderUnsaved(t);
                 return;

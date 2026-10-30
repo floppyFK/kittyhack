@@ -1,4 +1,4 @@
-"""System tab, API tokens, reboot/shutdown."""
+"""System tab, reboot/shutdown, and API token handlers."""
 
 import os
 import time as tm
@@ -23,7 +23,6 @@ from src.server_ui.state import (
 )
 from src.paths import kittyhack_root
 from src.server_ui.context import SessionContext
-from src.server_ui.helpers import centered_form_row
 
 _ = set_language(CONFIG["LANGUAGE"])
 
@@ -95,7 +94,7 @@ else:
 
 
 def register_system_tab(input, output, session, ctx: SessionContext):
-    """Register System tab UI (API tokens, reboot/shutdown, updates)."""
+    """Register System tab UI and API token handlers."""
     # Drop the "restarting" dialog left on the page by the pre-reboot session.
     if consume_local_power_action():
         ui.modal_remove()
@@ -208,77 +207,6 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 ),
             )
 
-        api_tokens_card = ui.card(
-            ui.card_header(
-                ui.h4(_("API tokens"), style_="text-align: center;"),
-            ),
-            ui.div(
-                ui.markdown(
-                    _(
-                        "Tokens let scripts and devices — for example Home Assistant, "
-                        "Stream Deck, or iOS Shortcuts — control the flap through the "
-                        "REST API. Each token is shown only once when you create it, "
-                        "so copy it immediately and store it in a safe place."
-                        "\n\n"
-                        "Send the token as an `Authorization: Bearer <token>` header. "
-                        "If a client can only open a URL (Stream Deck, bookmarks), "
-                        "you can pass it as a `?token=<token>` query parameter instead."
-                    )
-                ),
-                style_="text-align: left;",
-            ),
-            ui.div(
-                ui.input_action_button(
-                    "btn_api_docs",
-                    _("Open API documentation"),
-                    icon=icon_svg("book"),
-                    class_="btn-default",
-                ),
-                style_="text-align: center; margin-top: 0.5rem;",
-            ),
-            ui.br(),
-            ui.output_ui("ui_api_tokens_table"),
-            ui.hr(),
-            ui.h5(_("Create new token"), style_="text-align: center;"),
-            centered_form_row(
-                ui.input_text(
-                    "api_token_label",
-                    _("Label"),
-                    placeholder=_("e.g. stream-deck"),
-                    width="90%",
-                ),
-            ),
-            ui.div(
-                ui.input_action_button(
-                    "btn_create_api_token",
-                    _("Create token"),
-                    icon=icon_svg("plus"),
-                    class_="btn-default",
-                ),
-                style_="text-align: center;",
-            ),
-            ui.hr(),
-            ui.h5(_("Revoke token"), style_="text-align: center;"),
-            ui.output_ui("ui_api_tokens_revoke_select"),
-            ui.div(
-                ui.input_action_button(
-                    "btn_revoke_api_token",
-                    _("Revoke selected token"),
-                    icon=icon_svg("trash"),
-                    class_="btn-default",
-                ),
-                style_="text-align: center;",
-            ),
-            ui.br(),
-            full_screen=False,
-            class_="generic-container",
-            style_=(
-                "padding-left: 1rem !important; "
-                "padding-right: 1rem !important; "
-                "padding-bottom: 1.5rem !important;"
-            ),
-        )
-
         return ui.div(
             ui.div(
                 ui.card(
@@ -295,8 +223,6 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 ),
                 width="400px",
             ),
-            ui.br(),
-            ui.div(api_tokens_card, width="400px"),
             (
                 ui.div(
                     ui.br(),
@@ -591,7 +517,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         ServiceOps.systemcmd(["/sbin/reboot"])
 
         # ------------------------------------------------------------------
-        # API token management (System tab)
+        # API token management (rendered on the Settings tab)
         # ------------------------------------------------------------------
 
     @reactive.effect
@@ -667,7 +593,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 )
             ),
             ui.tags.tbody(*rows),
-            class_="dataframe shiny-table table w-auto",
+            class_="dataframe shiny-table table",
         )
 
     @output
@@ -685,10 +611,11 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             tid = t.get("id", "")
             label = t.get("label", "?")
             choices[tid] = f"{label} ({tid})"
-        return centered_form_row(
-            ui.input_select(
-                "api_token_revoke_id", None, choices=choices, width="90%"
-            ),
+        return ui.input_select(
+            "api_token_revoke_id",
+            _("Revoke token"),
+            choices=choices,
+            width="100%",
         )
 
     @reactive.effect
@@ -713,7 +640,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 type="error",
             )
             return
-        logging.info(f"[API] Created new API token '{label}' via System tab")
+        logging.info(f"[API] Created new API token '{label}' via Settings tab")
         reload_trigger_api_tokens.set(reload_trigger_api_tokens.get() + 1)
         ui.update_text("api_token_label", value="")
         m = ui.modal(
@@ -790,7 +717,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             )
             return
         if ok:
-            logging.info(f"[API] Revoked API token {token_id} via System tab")
+            logging.info(f"[API] Revoked API token {token_id} via Settings tab")
             ui.notification_show(_("Token revoked."), duration=5, type="message")
         else:
             ui.notification_show(

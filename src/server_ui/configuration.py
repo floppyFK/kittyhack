@@ -1774,6 +1774,102 @@ def register_configuration(input, output, session, ctx: SessionContext):
                         style_="padding-left: 1rem !important; padding-right: 1rem !important;",
                     ),
                 ),
+                # --- API tokens ---
+                collapsible_section(
+                    "api_tokens_settings",
+                    _("API tokens"),
+                    _(
+                        "Create tokens so scripts and devices can control the flap through the REST API."
+                    ),
+                    ui.div(
+                        ui.br(),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.markdown(
+                                    _(
+                                        "Tokens let scripts and devices — for example Home Assistant, "
+                                        "Stream Deck, or iOS Shortcuts — control the flap through the "
+                                        "REST API. Each token is shown only once when you create it, "
+                                        "so copy it immediately and store it in a safe place."
+                                        "\n\n"
+                                        "Send the token as an `Authorization: Bearer <token>` header. "
+                                        "If a client can only open a URL (Stream Deck, bookmarks), "
+                                        "you can pass it as a `?token=<token>` query parameter instead."
+                                    )
+                                ),
+                                style_="color: grey;",
+                            ),
+                        ),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.input_action_button(
+                                    "btn_api_docs",
+                                    _("Open API documentation"),
+                                    icon=icon_svg("book"),
+                                    class_="btn-outline-secondary kh-wrap-btn",
+                                ),
+                            ),
+                        ),
+                        ui.hr(),
+                        ui.output_ui("ui_api_tokens_table"),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.p(
+                                    _("Create new token"),
+                                    class_="fw-semibold mb-2",
+                                ),
+                            ),
+                        ),
+                        ui.row(
+                            ui.column(
+                                6,
+                                ui.input_text(
+                                    "api_token_label",
+                                    _("Label"),
+                                    placeholder=_("e.g. stream-deck"),
+                                    width="100%",
+                                ),
+                            ),
+                        ),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.input_action_button(
+                                    "btn_create_api_token",
+                                    _("Create token"),
+                                    icon=icon_svg("plus"),
+                                    class_="btn-outline-secondary kh-wrap-btn",
+                                ),
+                            ),
+                        ),
+                        ui.hr(),
+                        ui.row(
+                            ui.column(
+                                6,
+                                ui.output_ui("ui_api_tokens_revoke_select"),
+                            ),
+                        ),
+                        ui.row(
+                            ui.column(
+                                12,
+                                ui.input_action_button(
+                                    "btn_revoke_api_token",
+                                    _("Revoke selected token"),
+                                    icon=icon_svg("trash"),
+                                    class_="btn-outline-secondary kh-wrap-btn",
+                                ),
+                            ),
+                        ),
+                        ui.br(),
+                        full_screen=False,
+                        class_="generic-container align-left kh-no-unsaved",
+                        style_="padding-left: 1rem !important; padding-right: 1rem !important;",
+                    ),
+                ),
                 # --- Advanced settings ---
                 collapsible_section(
                     "advanced_settings",

@@ -654,6 +654,28 @@ document.addEventListener("DOMContentLoaded", function() {
         try { return sessionStorage.getItem(KH_POWER_ACTION_KEY) === '1'; } catch (e) { return false; }
     }
 
+    function modalIsOpen() {
+        return !!(
+            document.body.classList.contains('modal-open') ||
+            document.querySelector('.modal.show')
+        );
+    }
+
+    // Bootstrap's modal scrollbar lock writes overflow:hidden on body and
+    // restores whatever value was current when the dialog opened. A restart
+    // dialog that is removed during reconnect therefore puts the lock back.
+    function releaseModalScrollLock() {
+        if (modalIsOpen()) return;
+        const body = document.body;
+        if (!body) return;
+        if (body.style.overflow === 'hidden') body.style.overflow = '';
+        if (body.style.overflowY === 'hidden') body.style.overflowY = '';
+        if (body.style.paddingRight) body.style.paddingRight = '';
+        document.querySelectorAll('.modal-backdrop').forEach(function(el) {
+            el.remove();
+        });
+    }
+
     function dismissShinyModal() {
         const $ = window.jQuery;
         if (!$) return;
@@ -663,8 +685,13 @@ document.addEventListener("DOMContentLoaded", function() {
             $wrap.remove();
             $('.modal-backdrop').remove();
             $(document.body).removeClass('modal-open').css('padding-right', '');
+            releaseModalScrollLock();
         } catch (e) {}
     }
+
+    document.addEventListener('hidden.bs.modal', function() {
+        releaseModalScrollLock();
+    });
 
     function recoverAfterPowerAction() {
         if (!powerActionIsArmed()) return;
@@ -847,6 +874,10 @@ document.addEventListener("DOMContentLoaded", function() {
         window.jQuery(document).on('shiny:connected', function() {
             enableShinyReconnect();
             recoverAfterPowerAction();
+            releaseModalScrollLock();
+            setTimeout(releaseModalScrollLock, 0);
+            setTimeout(releaseModalScrollLock, 400);
+            setTimeout(releaseModalScrollLock, 1500);
             try {
                 if (sessionStorage.getItem(KH_RESTORE_FLAG_KEY) === '1') {
                     sessionStorage.removeItem(KH_RESTORE_FLAG_KEY);

@@ -1024,8 +1024,15 @@ def backend_main(
                 rfid.set_field(True)
                 logging.info(f"[BACKEND] Enabled RFID field.")
         
-        # Outside motion detected
-        if last_outside == 0 and motion_outside == 1 and not suppress_outside_motion_block and not _motion_processing_suspended():
+        # Outside motion detected. Besides the rising edge, a block is also started while outside motion
+        # persists without an outside block start: after MAX_MOTION_BLOCK_SECONDS finalized the block, or
+        # when the rising edge fell into the post-event cooldown. Otherwise first_motion_outside_mono stays
+        # 0, the prey analysis time never elapses and a cat sitting at the flap is never let in, not even
+        # after its RFID tag was read.
+        outside_start_missing = first_motion_outside_mono <= 0.0 and pending_fast_exit_finalize_mono <= 0.0
+        if (last_outside == 0 or outside_start_missing) and motion_outside == 1 and not suppress_outside_motion_block and not _motion_processing_suspended():
+            if last_outside == 1:
+                logging.info("[BACKEND] Outside motion still present without an outside block start. Starting a new motion block.")
             if wait_for_outside_rising_after_exit:
                 wait_for_outside_rising_after_exit = False
                 # This is the first outside-motion rise after an exit just completed. With

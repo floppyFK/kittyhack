@@ -554,6 +554,56 @@ def test_camera_identification_ignores_frames_before_motion_block(harness, monke
     assert harness.magnets.get_inside_state() is False
 
 
+@pytest.mark.parametrize("immediate_lock", [False, True])
+def test_cat_staying_past_block_timeout_unlocks_after_rfid(harness, caplog, immediate_lock):
+    """A cat that keeps sitting at the flap past MAX_MOTION_BLOCK_SECONDS must still get in.
+
+    The block is force-finalized while outside motion persists. Without a new block start the prey
+    analysis time stays at 0, so even the RFID confirmation that clears the magnet protection hold
+    could not unlock the inside door.
+    """
+    baseconfig.CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter.ALL
+    baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = True
+    baseconfig.CONFIG["MOUSE_THRESHOLD"] = 70.0
+    baseconfig.CONFIG["MIN_SECONDS_TO_ANALYZE"] = 1.0
+    baseconfig.CONFIG["IMMEDIATE_LOCK_AFTER_PASSAGE"] = immediate_lock
+    caplog.set_level(logging.INFO)
+
+    harness.set_outside(True)
+    for _ in range(80):  # 8 s: max unlock after 3 s, block timeout after 5 s
+        _inject_frame(harness, mouse=5.0)
+        harness.advance(0.1)
+        harness.pump(1)
+    assert "exceeded 5s" in caplog.text
+    assert harness.magnets.get_inside_state() is False
+
+    harness.inject_rfid("CAT001")
+    unlocked = False
+    for _ in range(40):
+        _inject_frame(harness, mouse=5.0)
+        harness.advance(0.1)
+        harness.pump(1)
+        unlocked = unlocked or harness.magnets.get_inside_state()
+    assert "Starting a new motion block" in caplog.text
+    assert unlocked
+
+
+def test_cat_staying_past_block_timeout_keeps_magnet_protection(harness):
+    """The new block after a timeout must not bypass the hold after MAX_UNLOCK_TIME."""
+    baseconfig.CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter.ALL
+    baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = False
+
+    harness.set_outside(True)
+    states = []
+    for _ in range(120):  # 12 s of continuous outside motion, no confirmation
+        harness.advance(0.1)
+        harness.pump(1)
+        states.append(harness.magnets.get_inside_state())
+    # Unlocked once at the start, then held after MAX_UNLOCK_TIME (3 s) despite new blocks.
+    assert states[5] is True
+    assert not any(states[50:])
+
+
 # --- Manual overrides / max unlock ------------------------------------------
 
 

@@ -87,6 +87,23 @@ def test_parse_yolo_empty_results():
     assert mouse == 0 and cat == 0 and objs == []
 
 
+def test_build_detection_payload_keeps_strongest_box():
+    from src.model.detection import build_detection_payload
+
+    # Boxes arrive sorted by descending confidence; the weaker second box must not win.
+    items = [
+        (0.1, 0.1, 0.4, 0.4, 0.85, 0),
+        (0.5, 0.5, 0.6, 0.6, 0.30, 0),
+        (0.2, 0.2, 0.7, 0.9, 0.78, 1),
+        (0.6, 0.1, 0.9, 0.5, 0.52, 2),
+    ]
+    mouse, cat, objs = build_detection_payload(
+        items, labels=["prey", "phil", "mia"], cat_names=["phil", "mia"], min_threshold=50.0
+    )
+    assert mouse == 85
+    assert cat == 78
+    assert len(objs) == 4
+
 def test_letterbox_bgr_800x600_to_320():
     from src.model.ncnn_detect import letterbox_bgr
 

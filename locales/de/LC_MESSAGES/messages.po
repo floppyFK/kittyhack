@@ -4882,3 +4882,6 @@ msgstr "Gerade eben"
 
 #~ msgid "Average / median inside"
 #~ msgstr "Durchschnitt / Median innen"
+
+msgid "Person"
+msgstr "Person"

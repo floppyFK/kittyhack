@@ -33,6 +33,8 @@ from src.backend.constants import (
     MAX_MOTION_BLOCK_SECONDS,
     INSIDE_UNLOCK_CONFIRM_QUIET_SECONDS,
     INSIDE_UNLOCK_SAFETY_COOLDOWN_SECONDS,
+    VIDEO_ID_MIN_FRAMES,
+    VIDEO_ID_SWITCH_RATIO,
 )
 import src.backend.model_runtime as model_runtime
 import src.backend.mqtt_bridge as mqtt_bridge
@@ -1022,8 +1024,15 @@ def backend_main(
                 rfid.set_field(True)
                 logging.info(f"[BACKEND] Enabled RFID field.")
         
-        # Outside motion detected
-        if last_outside == 0 and motion_outside == 1 and not suppress_outside_motion_block and not _motion_processing_suspended():
+        # Outside motion detected. Besides the rising edge, a block is also started while outside motion
+        # persists without an outside block start: after MAX_MOTION_BLOCK_SECONDS finalized the block, or
+        # when the rising edge fell into the post-event cooldown. Otherwise first_motion_outside_mono stays
+        # 0, the prey analysis time never elapses and a cat sitting at the flap is never let in, not even
+        # after its RFID tag was read.
+        outside_start_missing = first_motion_outside_mono <= 0.0 and pending_fast_exit_finalize_mono <= 0.0
+        if (last_outside == 0 or outside_start_missing) and motion_outside == 1 and not suppress_outside_motion_block and not _motion_processing_suspended():
+            if last_outside == 1:
+                logging.info("[BACKEND] Outside motion still present without an outside block start. Starting a new motion block.")
             if wait_for_outside_rising_after_exit:
                 wait_for_outside_rising_after_exit = False
                 # This is the first outside-motion rise after an exit just completed. With
@@ -1217,35 +1226,67 @@ def backend_main(
                 wait_for_outside_rising_after_exit = True
                 _timeline_log_outside_close()
 
-        # Check also for a cat via the camera, if the option is enabled and no RFID tag is detected
-        if CONFIG['USE_CAMERA_FOR_CAT_DETECTION'] and tag_id_from_video is None and motion_outside == 1:
+        # Check also for a cat via the camera, if the option is enabled and no RFID tag is detected.
+        # Every frame of the motion block votes for its most prominent registered cat, weighted by
+        # probability and box size: a cat directly at the flap fills the image, a second cat further
+        # away on the stairs only a small box. The result is re-evaluated while the block runs, so a
+        # single misdetected frame neither decides nor locks the identification, and an existing
+        # identification is only revised when another cat scores clearly higher (hysteresis).
+        if CONFIG['USE_CAMERA_FOR_CAT_DETECTION'] and motion_outside == 1 and first_motion_outside_tm > 0.0:
             imgs_with_cats = image_buffer.get_filtered_ids(first_motion_outside_tm, min_own_cat_probability=CONFIG['CAT_THRESHOLD'])
             if len(imgs_with_cats) > 0:
-                # Find the element with the highest probability
-                max_prob = 0.0
-                detected_cat = ""
+                # Only consider labels that belong to a registered cat; other classes
+                # (e.g. persons or a vacuum robot) must not win the identification.
+                known_cat_names = {str(name).lower() for name in cat_rfid_name_dict.values()}
+                votes = {}  # cat name -> [frames, weighted score, best probability, best image ID]
                 for element in imgs_with_cats:
                     img = image_buffer.get_by_id(element)
+                    frame_cat = ""
+                    frame_score = 0.0
+                    frame_prob = 0.0
                     for obj in getattr(img, 'detected_objects', []):
                         obj_name = getattr(obj, 'object_name', '').lower()
                         obj_probability = getattr(obj, 'probability', 0.0)
-                        if obj_name not in ["prey", "beute"] and obj_probability > max_prob:
-                            max_prob = obj_probability
-                            detected_cat = obj_name
-                if detected_cat != "":
-                    logging.info(f"[BACKEND] Detected cat '{detected_cat}' by video stream with probability {max_prob:.2f} in image ID {element}")
-                    # Look for the cat name in the values of the dictionary
-                    matching_tag = next((rfid for rfid, name in cat_rfid_name_dict.items() if name.lower() == detected_cat), None)
-                    if matching_tag:
-                        tag_id_from_video = matching_tag
-                        logging.info(f"[BACKEND] Detected cat '{detected_cat}' matches RFID tag '{tag_id_from_video}'")
-                        if timeline_video_cat_logged != matching_tag:
-                            timeline_video_cat_logged = matching_tag
-                            timeline_append(
-                                motion_timeline_entries,
-                                TimelineAction.CAT_DETECTED_VIDEO,
-                                cat_name=get_cat_name(matching_tag),
-                            )
+                        obj_area = max(getattr(obj, 'width', 0.0), 0.0) * max(getattr(obj, 'height', 0.0), 0.0)
+                        obj_score = obj_probability * obj_area
+                        if obj_name in known_cat_names and obj_score > frame_score:
+                            frame_score = obj_score
+                            frame_prob = obj_probability
+                            frame_cat = obj_name
+                    if frame_cat:
+                        vote = votes.setdefault(frame_cat, [0, 0.0, 0.0, None])
+                        vote[0] += 1
+                        vote[1] += frame_score
+                        if frame_prob > vote[2]:
+                            vote[2] = frame_prob
+                            vote[3] = element
+                detected_cat = ""
+                eligible = {name: v for name, v in votes.items() if v[0] >= VIDEO_ID_MIN_FRAMES}
+                if eligible:
+                    detected_cat, (frames, score, max_prob, best_element) = max(
+                        eligible.items(), key=lambda item: item[1][1]
+                    )
+                    current_cat = str(cat_rfid_name_dict.get(tag_id_from_video, "")).lower() if tag_id_from_video else ""
+                    if current_cat and current_cat != detected_cat and current_cat in votes:
+                        if score < votes[current_cat][1] * VIDEO_ID_SWITCH_RATIO:
+                            detected_cat = current_cat
+                # Look for the cat name in the values of the dictionary
+                matching_tag = next((rfid for rfid, name in cat_rfid_name_dict.items() if name.lower() == detected_cat), None) if detected_cat else None
+                if matching_tag and matching_tag != tag_id_from_video:
+                    vote_summary = ", ".join(f"{name}: {v[0]} frames / score {v[1]:.0f}" for name, v in sorted(votes.items()))
+                    if tag_id_from_video is None:
+                        logging.info(f"[BACKEND] Detected cat '{detected_cat}' by video stream in {frames} frames (max probability {max_prob:.2f}, image ID {best_element}; votes: {vote_summary})")
+                    else:
+                        logging.info(f"[BACKEND] Revised video identification from '{get_cat_name(tag_id_from_video)}' to '{detected_cat}' (votes: {vote_summary})")
+                    tag_id_from_video = matching_tag
+                    logging.info(f"[BACKEND] Detected cat '{detected_cat}' matches RFID tag '{tag_id_from_video}'")
+                    if timeline_video_cat_logged != matching_tag:
+                        timeline_video_cat_logged = matching_tag
+                        timeline_append(
+                            motion_timeline_entries,
+                            TimelineAction.CAT_DETECTED_VIDEO,
+                            cat_name=get_cat_name(matching_tag),
+                        )
             
         # Check for a valid RFID tag
         if ( tag_id and

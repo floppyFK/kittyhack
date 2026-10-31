@@ -35,10 +35,12 @@ def build_detection_payload(
             "probability": probability,
         })
 
+        # Detections usually arrive sorted by descending confidence, so keep the maximum instead
+        # of the last value (otherwise a weak second box would mask a strong first one).
         if object_name.lower() in ["prey", "beute"]:
-            mouse_probability = int(probability)
+            mouse_probability = max(mouse_probability, int(probability))
         elif object_name.lower() in cat_names:
-            own_cat_probability = int(probability)
+            own_cat_probability = max(own_cat_probability, int(probability))
 
     if detected_info and probability_threshold_exceeded:
         logging.info(

@@ -746,9 +746,32 @@ def register_live_view(input, output, session, ctx: SessionContext):
                     f"{_cat_avatar_html(name, thumb)} {html_module.escape(name)}"
                 )
 
-            df_events["cat_name"] = df_events["rfid"].apply(cat_name_with_icon)
-
             block_ids = [int(b) for b in df_events["block_id"].tolist()]
+            cat_label_names = [str(n).lower() for n in cat_name_dict.values()]
+            block_object_max = EventsRepo.db_get_block_object_max(
+                CONFIG["KITTYHACK_DATABASE_PATH"], block_ids, cat_label_names + ["person"]
+            )
+            min_threshold = float(CONFIG.get("MIN_THRESHOLD", 0.0) or 0.0)
+
+            def event_subject(row):
+                # Events without a microchip: show what the camera saw instead of "No microchip found".
+                # A cat that could not be assigned to a registered cat is "Unknown cat", persons are
+                # "Person". If both were seen, the more confident detection wins.
+                if row["rfid"]:
+                    return cat_name_with_icon(row["rfid"])
+                seen = block_object_max.get(int(row["block_id"]), {})
+                cat_prob = max([p for name, p in seen.items() if name in cat_label_names] or [0.0])
+                person_prob = seen.get("person", 0.0)
+                if cat_prob >= min_threshold and cat_prob > 0.0 and cat_prob >= person_prob:
+                    label = _("Unknown cat")
+                elif person_prob >= min_threshold and person_prob > 0.0:
+                    label = _("Person")
+                else:
+                    return cat_name_with_icon(row["rfid"])
+                return f"{_cat_avatar_html(label, None)} {html_module.escape(label)}"
+
+            df_events["cat_name"] = df_events.apply(event_subject, axis=1)
+
             timelines_by_block = EventsRepo.db_get_motion_timelines(
                 CONFIG["KITTYHACK_DATABASE_PATH"], block_ids
             )

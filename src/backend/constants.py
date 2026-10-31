@@ -12,3 +12,5 @@ EVENT_COOLDOWN_SECONDS = 3.0     # After an event is finalized, ignore all new m
 MAX_MOTION_BLOCK_SECONDS = 90.0  # Finalize a motion block after this time even if outside motion never falls cleanly
 INSIDE_UNLOCK_CONFIRM_QUIET_SECONDS = 15.0  # After max-unlock hold, resume camera-only unlocks once own-cat detections have been absent this long
 INSIDE_UNLOCK_SAFETY_COOLDOWN_SECONDS = 60.0  # After a second max-unlock without passage, block camera/PIR auto-unlock this long
+VIDEO_ID_MIN_FRAMES = 2          # A cat must win at least this many frames before the camera identifies it
+VIDEO_ID_SWITCH_RATIO = 1.3      # Another cat must score this much higher before a camera identification is revised

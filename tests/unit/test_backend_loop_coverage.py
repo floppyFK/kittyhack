@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time as time_mod
 
 import pytest
@@ -11,6 +12,7 @@ import src.backend.loop as loop_mod
 import src.backend.model_runtime as model_runtime
 from src.baseconfig import AllowedToEnter, AllowedToExit
 from src.camera import DetectedObject, image_buffer
+from src.database import CatsRepo
 from src.helper import Result
 from src.magnets_rfid import RfidRunState
 from tests.helpers.backend_loop_harness import build_loop_context
@@ -354,6 +356,8 @@ def test_camera_cat_detection_known_without_rfid(harness):
     harness.set_outside(True)
     harness.pump(3)
     _inject_frame(harness, own_cat=90.0, cat_name="Mia")
+    harness.advance(0.1)
+    _inject_frame(harness, own_cat=90.0, cat_name="Mia")
     harness.advance(0.2)
     harness.pump(8)
     assert harness.magnets.get_inside_state() is True
@@ -369,11 +373,184 @@ def test_rfid_overrides_video_and_locks(harness):
     harness.set_outside(True)
     harness.pump(3)
     _inject_frame(harness, own_cat=90.0, cat_name="Mia")
+    harness.advance(0.1)
+    _inject_frame(harness, own_cat=90.0, cat_name="Mia")
     harness.pump(8)
     assert harness.magnets.get_inside_state() is True
 
     harness.inject_rfid("STRANGER")
     harness.pump(8)
+    assert harness.magnets.get_inside_state() is False
+
+
+def test_camera_single_frame_does_not_identify_cat(harness):
+    baseconfig.CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter.KNOWN
+    baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = False
+    baseconfig.CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = True
+    baseconfig.CONFIG["CAT_THRESHOLD"] = 50.0
+
+    harness.clear_rfid()
+    harness.set_outside(True)
+    harness.pump(3)
+    _inject_frame(harness, own_cat=90.0, cat_name="Mia")
+    harness.advance(0.2)
+    harness.pump(8)
+    assert harness.magnets.get_inside_state() is False
+
+
+def test_camera_majority_vote_revises_identification(loop_db, caplog):
+    CatsRepo.db_add_new_cat(loop_db, "Leo", "CAT002", "")
+    h = build_loop_context(db_path=loop_db, cat_rfid="CAT001")
+    try:
+        baseconfig.CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter.ALL
+        baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = False
+        baseconfig.CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = True
+        baseconfig.CONFIG["CAT_THRESHOLD"] = 50.0
+        caplog.set_level(logging.INFO)
+
+        h.clear_rfid()
+        h.set_outside(True)
+        h.pump(3)
+        for _ in range(2):
+            _inject_frame(h, own_cat=90.0, cat_name="Mia")
+            h.advance(0.1)
+        h.pump(2)
+        assert "matches RFID tag 'CAT001'" in caplog.text
+
+        for _ in range(3):
+            _inject_frame(h, own_cat=94.0, cat_name="Leo")
+            h.advance(0.1)
+        h.pump(2)
+        assert "Revised video identification from 'Mia' to 'leo'" in caplog.text
+        assert "matches RFID tag 'CAT002'" in caplog.text
+    finally:
+        h.shutdown()
+        image_buffer.clear()
+
+
+def _inject_sized_frame(harness, *, cat_name, prob, size):
+    """Append a frame with one cat box of the given edge length (percent of the image)."""
+    image_buffer.append(
+        harness.clock.wall_time(),
+        b"",
+        b"",
+        0.0,
+        100.0,
+        float(prob),
+        detected_objects=[DetectedObject(10.0, 10.0, float(size), float(size), cat_name, float(prob))],
+        timestamp_mono=harness.clock.monotonic(),
+    )
+
+
+@pytest.fixture
+def two_cat_harness(loop_db):
+    CatsRepo.db_add_new_cat(loop_db, "Leo", "CAT002", "")
+    h = build_loop_context(db_path=loop_db, cat_rfid="CAT001")
+    baseconfig.CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter.ALL
+    baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = False
+    baseconfig.CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = True
+    baseconfig.CONFIG["CAT_THRESHOLD"] = 50.0
+    h.clear_rfid()
+    yield h
+    h.shutdown()
+    image_buffer.clear()
+
+
+def test_camera_vote_prefers_large_cat_at_flap(two_cat_harness, caplog):
+    h = two_cat_harness
+    caplog.set_level(logging.INFO)
+    h.set_outside(True)
+    h.pump(3)
+    # Leo sits far away on the stairs (small box, many frames), Mia is at the flap (large box).
+    for _ in range(6):
+        _inject_sized_frame(h, cat_name="Leo", prob=95.0, size=8.0)
+        h.advance(0.1)
+    for _ in range(2):
+        _inject_sized_frame(h, cat_name="Mia", prob=90.0, size=40.0)
+        h.advance(0.1)
+    h.pump(2)
+    assert "matches RFID tag 'CAT001'" in caplog.text
+
+
+def test_camera_vote_does_not_flip_on_near_tie(two_cat_harness, caplog):
+    h = two_cat_harness
+    caplog.set_level(logging.INFO)
+    h.set_outside(True)
+    h.pump(3)
+    for _ in range(3):
+        _inject_sized_frame(h, cat_name="Mia", prob=90.0, size=30.0)
+        h.advance(0.1)
+    h.pump(2)
+    assert "matches RFID tag 'CAT001'" in caplog.text
+    # Leo gets slightly more weight, but not enough to pass the hysteresis.
+    for _ in range(3):
+        _inject_sized_frame(h, cat_name="Leo", prob=92.0, size=30.0)
+        h.advance(0.1)
+    h.pump(2)
+    assert "Revised video identification" not in caplog.text
+
+
+def test_camera_identification_ignores_unregistered_labels(harness, caplog):
+    """Extra model classes (e.g. a person) must not win the camera identification."""
+    baseconfig.CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter.KNOWN
+    baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = False
+    baseconfig.CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = True
+    baseconfig.CONFIG["CAT_THRESHOLD"] = 50.0
+    caplog.set_level(logging.INFO)
+
+    harness.clear_rfid()
+    harness.set_outside(True)
+    harness.pump(3)
+    for _ in range(2):
+        image_buffer.append(
+            harness.clock.wall_time(),
+            b"",
+            b"",
+            0.0,
+            100.0,
+            80.0,
+            detected_objects=[
+                DetectedObject(10.0, 10.0, 30.0, 60.0, "Person", 98.0),
+                DetectedObject(50.0, 50.0, 20.0, 20.0, "Mia", 80.0),
+            ],
+            timestamp_mono=harness.clock.monotonic(),
+        )
+        harness.advance(0.1)
+    harness.pump(8)
+    assert "Detected cat 'person'" not in caplog.text
+    assert "matches RFID tag 'CAT001'" in caplog.text
+    assert harness.magnets.get_inside_state() is True
+
+
+def test_camera_identification_ignores_frames_before_motion_block(harness, monkeypatch, caplog):
+    """Without an outside motion block start, older buffered frames must not identify a cat."""
+    baseconfig.CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter.KNOWN
+    baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = False
+    baseconfig.CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = True
+    baseconfig.CONFIG["CAT_THRESHOLD"] = 50.0
+    caplog.set_level(logging.INFO)
+
+    # Frames of a cat that was at the flap long before, still in the image buffer.
+    for _ in range(3):
+        _inject_frame(harness, own_cat=90.0, cat_name="Mia")
+        harness.advance(0.1)
+    harness.advance(60.0)
+
+    # A short outside event finalizes and starts the post-event cooldown. Outside motion rises
+    # again during the cooldown, so no new motion block (and no block start time) exists.
+    monkeypatch.setattr(loop_mod, "EVENT_COOLDOWN_SECONDS", 5.0)
+    harness.clear_rfid()
+    harness.set_outside(True)
+    harness.pump(3)
+    harness.advance(0.5)
+    harness.set_outside(False)
+    harness.pump(3)
+    harness.advance(0.5)
+    harness.set_outside(True)
+    harness.pump(3)
+    harness.advance(6.0)
+    harness.pump(8)
+    assert "matches RFID tag" not in caplog.text
     assert harness.magnets.get_inside_state() is False
 
 

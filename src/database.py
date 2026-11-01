@@ -1060,6 +1060,34 @@ class EventsRepo:
         return result
 
     @staticmethod
+    def db_get_block_object_max(database: str, block_ids: list[int], object_names: list[str]) -> dict:
+        """Return {block_id: {object_name: max probability}} for the given objects (names compared case-insensitively)."""
+        wanted = {str(n).lower() for n in object_names}
+        if not block_ids or not wanted:
+            return {}
+        ids = ",".join(str(int(b)) for b in block_ids)
+        stmt = (
+            f"SELECT block_id, event_text FROM events WHERE block_id IN ({ids}) "
+            "AND deleted = 0 AND event_text LIKE '%object_name%'"
+        )
+        df = DatabaseCore.read_df_from_database(database, stmt)
+        result: dict = {}
+        if df is None or df.empty:
+            return result
+        for __, row in df.iterrows():
+            try:
+                objects = json.loads(row["event_text"] or "{}").get("detected_objects", [])
+            except Exception:
+                continue
+            for obj in objects:
+                name = str(obj.get("object_name", "")).lower()
+                if name not in wanted:
+                    continue
+                block = result.setdefault(int(row["block_id"]), {})
+                block[name] = max(block.get(name, 0.0), float(obj.get("probability", 0.0) or 0.0))
+        return result
+
+    @staticmethod
     def db_get_motion_frames(database: str, block_id: int) -> list:
         """Return the complete captured-frame timeline for a motion block."""
         if not DatabaseCore.check_if_table_exists(database, "motion_timeline"):

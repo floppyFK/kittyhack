@@ -70,3 +70,27 @@ def test_motion_frame_timeline_round_trip_and_action_update(tmp_kittyhack_db):
     )
     assert result.success
     assert EventsRepo.db_get_motion_frames(tmp_kittyhack_db, 7) == frames
+
+
+def test_block_object_max(tmp_kittyhack_db):
+    rows = [
+        (1, 101, json.dumps({"detected_objects": [{"object_name": "Person", "probability": 91.0}]})),
+        (2, 101, json.dumps({"detected_objects": [{"object_name": "Mia", "probability": 66.0}]})),
+        (3, 101, json.dumps({"detected_objects": [{"object_name": "Mia", "probability": 52.0}]})),
+        (4, 102, json.dumps({"detected_objects": [{"object_name": "Leo", "probability": 95.0}]})),
+        (5, 103, json.dumps({"detected_objects": [{"object_name": "Person", "probability": 88.0}]})),
+        (6, 104, json.dumps({"detected_objects": []})),
+    ]
+    con = sqlite3.connect(tmp_kittyhack_db)
+    con.executemany(
+        "INSERT INTO events (id, block_id, created_at, event_type, rfid, event_text, deleted) "
+        "VALUES (?, ?, '2026-10-31 05:00:00', 'motion_outside_only', '', ?, 0)",
+        rows,
+    )
+    con.execute("UPDATE events SET deleted = 1 WHERE block_id = 103")
+    con.commit()
+    con.close()
+
+    result = EventsRepo.db_get_block_object_max(tmp_kittyhack_db, [101, 102, 103, 104], ["mia", "Leo", "person"])
+    assert result == {101: {"person": 91.0, "mia": 66.0}, 102: {"leo": 95.0}}
+    assert EventsRepo.db_get_block_object_max(tmp_kittyhack_db, [], ["person"]) == {}

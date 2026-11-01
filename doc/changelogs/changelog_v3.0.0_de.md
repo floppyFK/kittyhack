@@ -23,6 +23,9 @@
 - **Modell-Training**: Kittyhack meldet sich jetzt am Server für das Modell-Training an. Ältere Versionen der Reihe 2.x funktionieren noch für eine kurze Übergangszeit. Danach ist das Update auf v3 nötig, um Modelle zu trainieren.
 - **Remote-Modus**: Läuft Kittyhack auf einem separaten Computer, fällt die Installation kleiner aus. Die Erkennung über Prozessor oder Grafikkarte bleibt möglich. Beim Wechsel führt Kittyhack die erforderlichen zusätzlichen Installationen im Hintergrund aus.
 - **Sichern und Wiederherstellen**: Einstellungen werden nicht mehr in einer eigenen config.ini gespeichert. Alle Informationen liegen in der Kittyhack-Datenbank, die du unter *Info* sichern und wieder einspielen kannst. Eine config.ini aus einer älteren Version kannst du dort weiterhin wiederherstellen.
+- **Systeminformationen**: Unter *Info* siehst du neben der Datenbank auch die Größe des Bilderordners und des Modellordners. Balken zeigen, wie voll Speicher und Arbeitsspeicher sind.
+- **Versionshinweise**: Lange Hinweise unter *Info* lassen sich mit *Mehr anzeigen* und *Weniger anzeigen* auf- und zuklappen.
+- **Ereignisse ohne Chip**: Erkennt die Kamera eine Katze, ohne dass ein Chip gelesen wurde, zeigt die Liste *Unbekannte Katze*. Eine erkannte Person erscheint als *Person*. Sonst bleibt es bei *Kein Mikrochip gefunden* (von [WeichEi04](https://github.com/floppyFK/kittyhack/pull/193))
 
 ## Bugfixes
 
@@ -30,3 +33,6 @@
 - **Remote-Update von einem eigenen Branch**: Ein Update der Kittyflap über ein Remote-Gerät verwendet jetzt das Update-Repository, das auf dem Remote-Gerät eingestellt ist.
 - **Update-Fenster auf einem Remote-Gerät**: Während eines Updates verdeckt der Hinweis "Remote-Verbindung getrennt" nicht mehr das Update- und Neustart-Fenster.
 - **Zu große Datei beim Modell-Training**: Ist die Datei zu groß, erscheint eine klare Meldung statt eines unklaren Fehlers.
+- **Mehrere Markierungen in einem Bild**: Sieht die Kamera in einem Bild mehrere Katzen oder Beute, zählt die sicherste Erkennung. Vorher konnte eine schwache zweite Markierung eine starke erste verdecken (von [WeichEi04](https://github.com/floppyFK/kittyhack/pull/193))
+- **Zuordnung per Kamera**: Die Kamera schaut sich die Bilder des laufenden Ereignisses an. Eine Katze braucht mehrere Bilder, und es zählen nur registrierte Katzen direkt an der Klappe. Ein einzelnes Fehlbild, eine Person oder Aufnahmen eines früheren Ereignisses legen den Namen nicht mehr fest (von [WeichEi04](https://github.com/floppyFK/kittyhack/pull/193))
+- **Katze bleibt vor der Klappe**: Sitzt eine Katze länger vor der Klappe, wird sie nach dem Ende eines Erkennungsblocks weiter eingelassen, sobald ihr Chip gelesen wurde. Vorher blieb die Klappe dann zu (von [WeichEi04](https://github.com/floppyFK/kittyhack/pull/193))

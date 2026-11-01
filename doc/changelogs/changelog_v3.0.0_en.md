@@ -23,10 +23,15 @@
 - **Model training**: Kittyhack now signs in to the model training server. Older 2.x versions keep working for a short transition period. After that, the update to v3 is required to train models.
 - **Remote mode**: When Kittyhack runs on a separate computer, less is installed. Detection on the processor or a graphics card still works. When you switch, Kittyhack installs the required additional packages in the background.
 - **Backup and restore**: Settings are no longer saved in a separate config.ini. Everything is stored in the Kittyhack database, which you can back up and restore under *Info*. A config.ini from an older version can still be restored there.
-
+- **System information**: Under *Info*, you also see the size of the pictures folder and the models folder, next to the database. Bars show how full the disk and the memory are.
+- **Release notes**: Long notes under *Info* can be expanded and collapsed with *Show more* and *Show less*.
+- **Events without a chip**: If the camera sees a cat and no chip was read, the list shows *Unknown cat*. A detected person is shown as *Person*. Otherwise it stays *No microchip found* (Contribution by [WeichEi04](https://github.com/floppyFK/kittyhack/pull/193))
 ## Bugfixes
 
 - **Average FPS**: The display of the average FPS per model in the model management interface was no longer being updated. This has now been fixed.
 - **Remote update from a custom branch**: Updating the Kittyflap from a remote device now uses the update repository configured on the remote.
 - **Update dialog on a remote device**: While an update is running, the "remote disconnected" notice no longer covers the update and reboot dialog.
 - **Training file too large**: If a file for model training is too large, Kittyhack shows a clear message instead of an unclear error.
+- **Several boxes in one picture**: If the camera sees several cats or prey in one picture, the most confident detection counts. A weak second box could previously hide a strong first one (Contribution by [WeichEi04](https://github.com/floppyFK/kittyhack/pull/193))
+- **Camera identification**: The camera looks at the pictures of the current event. A cat needs several pictures, and only registered cats right at the flap count. A single wrong picture, a person, or pictures from an earlier event no longer decide the name (Contribution by [WeichEi04](https://github.com/floppyFK/kittyhack/pull/193))
+- **Cat stays at the flap**: If a cat keeps sitting at the flap, it is still let in after a detection block ends, once its chip has been read. Previously the flap stayed closed in that case (Contribution by [WeichEi04](https://github.com/floppyFK/kittyhack/pull/193))

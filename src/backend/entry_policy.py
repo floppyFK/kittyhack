@@ -18,6 +18,22 @@ def _identified_tag_for_entry(tag_id, tag_id_from_video, known_rfid_tags, allowe
     return None, None
 
 
+def _entry_decision_follows_video(allowed_to_enter, tag_id, video_tag, known_rfid_tags) -> bool:
+    """True when a revised camera identity must redo the entry decision.
+
+    A chip read by the RFID reader stays authoritative. Only known-cat and
+    per-cat mode change the door when the camera switches registered cats.
+    """
+    if allowed_to_enter not in (AllowedToEnter.KNOWN, AllowedToEnter.CONFIGURE_PER_CAT):
+        return False
+    if not video_tag:
+        return False
+    _, source = _identified_tag_for_entry(
+        tag_id, video_tag, known_rfid_tags, allowed_to_enter
+    )
+    return source == "video"
+
+
 def _compute_tag_id_valid_for_entry(allowed_to_enter, tag_id, identified_tag, cat_settings_map):
     """Return whether the identified cat/tag is allowed to enter under the current policy."""
     if allowed_to_enter == AllowedToEnter.CONFIGURE_PER_CAT:

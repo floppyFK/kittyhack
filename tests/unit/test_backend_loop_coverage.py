@@ -472,6 +472,76 @@ def test_camera_vote_prefers_large_cat_at_flap(two_cat_harness, caplog):
     assert "matches RFID tag 'CAT001'" in caplog.text
 
 
+@pytest.fixture
+def per_cat_two_cat_harness(loop_db):
+    """Mia may enter, Leo may not. Camera identification, no mouse check."""
+    CatsRepo.db_add_new_cat(loop_db, "Leo", "CAT002", "", allow_entry=False)
+    h = build_loop_context(db_path=loop_db, cat_rfid="CAT001", allow_entry=True)
+    baseconfig.CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter.CONFIGURE_PER_CAT
+    baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = False
+    baseconfig.CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = True
+    baseconfig.CONFIG["CAT_THRESHOLD"] = 50.0
+    h.clear_rfid()
+    yield h
+    h.shutdown()
+    image_buffer.clear()
+
+
+def _show_cat_frames(harness, cat_name, *, count, prob):
+    for _ in range(count):
+        _inject_frame(harness, own_cat=prob, cat_name=cat_name)
+        harness.advance(0.1)
+
+
+def test_camera_vote_revision_locks_when_new_cat_is_denied(per_cat_two_cat_harness, caplog):
+    """An allowed cat that opened the door must not keep it open after the vote switches to a denied cat."""
+    h = per_cat_two_cat_harness
+    caplog.set_level(logging.INFO)
+    h.set_outside(True)
+    h.pump(3)
+    _show_cat_frames(h, "Mia", count=2, prob=90.0)
+    h.pump(4)
+    assert h.magnets.get_inside_state() is True
+
+    _show_cat_frames(h, "Leo", count=3, prob=94.0)
+    h.pump(4)
+    assert "updates the entry decision" in caplog.text
+    assert "Locking the inside door." in caplog.text
+    assert h.magnets.get_inside_state() is False
+
+
+def test_camera_vote_revision_unlocks_when_new_cat_is_allowed(per_cat_two_cat_harness):
+    """A denied first guess must not keep the door closed after the vote switches to an allowed cat."""
+    h = per_cat_two_cat_harness
+    h.set_outside(True)
+    h.pump(3)
+    _show_cat_frames(h, "Leo", count=2, prob=90.0)
+    h.pump(4)
+    assert h.magnets.get_inside_state() is False
+
+    _show_cat_frames(h, "Mia", count=3, prob=94.0)
+    h.pump(4)
+    assert h.magnets.get_inside_state() is True
+
+
+def test_camera_vote_revision_does_not_override_rfid(per_cat_two_cat_harness, caplog):
+    """A chip read by the reader stays authoritative when the camera later votes for another cat."""
+    h = per_cat_two_cat_harness
+    caplog.set_level(logging.INFO)
+    h.set_outside(True)
+    h.pump(3)
+    _show_cat_frames(h, "Mia", count=2, prob=90.0)
+    h.pump(4)
+    assert h.magnets.get_inside_state() is True
+
+    h.inject_rfid("CAT001")
+    h.pump(2)
+    _show_cat_frames(h, "Leo", count=3, prob=94.0)
+    h.pump(4)
+    assert "Locking the inside door." not in caplog.text
+    assert h.magnets.get_inside_state() is True
+
+
 def test_camera_vote_does_not_flip_on_near_tie(two_cat_harness, caplog):
     h = two_cat_harness
     caplog.set_level(logging.INFO)

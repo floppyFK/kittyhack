@@ -42,6 +42,7 @@ from src.model import YoloModel
 from src.backend.entry_policy import (
     _identified_tag_for_entry,
     _compute_tag_id_valid_for_entry,
+    _entry_decision_follows_video,
     _set_per_cat_entry_verdict_flag,
 )
 from src.backend.decisions import (
@@ -1280,6 +1281,45 @@ def backend_main(
                         logging.info(f"[BACKEND] Revised video identification from '{get_cat_name(tag_id_from_video)}' to '{detected_cat}' (votes: {vote_summary})")
                     tag_id_from_video = matching_tag
                     logging.info(f"[BACKEND] Detected cat '{detected_cat}' matches RFID tag '{tag_id_from_video}'")
+                    # The vote can switch cats after the entry decision was already taken.
+                    # Redo that decision while the camera is still the authority, and lock
+                    # again if the newly identified cat is not allowed in.
+                    if unlock_inside_decision_made and _entry_decision_follows_video(
+                        CONFIG['ALLOWED_TO_ENTER'], tag_id, tag_id_from_video, known_rfid_tags
+                    ):
+                        identified_tag, id_source = _identified_tag_for_entry(
+                            tag_id, tag_id_from_video, known_rfid_tags, CONFIG['ALLOWED_TO_ENTER']
+                        )
+                        old_tag_id_valid = tag_id_valid
+                        tag_id_valid = _compute_tag_id_valid_for_entry(
+                            CONFIG['ALLOWED_TO_ENTER'], tag_id, identified_tag, cat_settings_map
+                        )
+                        logging.info(
+                            f"[BACKEND] Revised video identification updates the entry decision "
+                            f"for '{detected_cat}' (allowed={tag_id_valid})."
+                        )
+                        if CONFIG['ALLOWED_TO_ENTER'] == AllowedToEnter.CONFIGURE_PER_CAT and identified_tag is not None:
+                            new_flag = _set_per_cat_entry_verdict_flag(additional_verdict_infos, tag_id_valid)
+                            logging.info(
+                                f"[BACKEND] Per-cat entry: updated verdict info '{new_flag}' "
+                                f"for tag '{identified_tag}' after video revision (source: {id_source})."
+                            )
+                        _timeline_log_entry_decision(
+                            identified_tag, id_source, tag_id_valid, rfid_for_name=tag_id
+                        )
+                        if old_tag_id_valid and not tag_id_valid:
+                            if (
+                                magnets.get_inside_state()
+                                and magnets.check_queued("lock_inside") == False
+                                and inside_manually_unlocked == False
+                            ):
+                                magnets.queue_command("lock_inside")
+                                unlock_inside_tm = 0.0
+                                _timeline_log_inside_close(TimelineAction.INSIDE_CLOSED_ENTRY_DENIED)
+                                logging.info(
+                                    "[BACKEND] Entry denied after the video identification was revised. "
+                                    "Locking the inside door."
+                                )
                     if timeline_video_cat_logged != matching_tag:
                         timeline_video_cat_logged = matching_tag
                         timeline_append(

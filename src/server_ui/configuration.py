@@ -2768,7 +2768,16 @@ def register_configuration(input, output, session, ctx: SessionContext):
                 type="warning",
             )
 
-        if inference_device_changed:
+        model_export_needed = (
+            selected_model_changed
+            and is_remote_mode()
+            and bool(CONFIG.get("YOLO_MODEL"))
+            and DependencyInstaller.model_needs_export(
+                CONFIG.get("INFERENCE_DEVICE"),
+                YoloModel.get_model_path(CONFIG["YOLO_MODEL"]) or "",
+            )
+        )
+        if inference_device_changed or model_export_needed:
             model_root = ""
             model_imgsz = 320
             if CONFIG.get("YOLO_MODEL"):

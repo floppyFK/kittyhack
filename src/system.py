@@ -632,6 +632,22 @@ class DependencyInstaller:
         return DependencyInstaller._install_opencv_distribution(spec, progress=progress, phase="opencv")
 
     @staticmethod
+    def model_needs_export(device: str, model_root: str) -> bool:
+        """True when an OpenVINO device is selected but the model has no IR yet.
+
+        Server-trained models ship only ``best_ncnn_model``. Activating one on an
+        OpenVINO device without exporting it first starts the camera without inference.
+        """
+        selected = str(device or "").strip().lower()
+        if selected == "gpu":
+            selected = "intel:gpu"
+        if selected not in {"intel:gpu", "intel:cpu", "intel:npu"} or not model_root:
+            return False
+        return not DependencyInstaller._dir_has_file_suffix(
+            os.path.join(model_root, "model_openvino_model"), ".xml"
+        )
+
+    @staticmethod
     def prepare_inference_device(device: str, model_root: str, imgsz: int, progress=None) -> tuple[bool, str]:
         """Install the packages (and model export) the selected device needs.
 

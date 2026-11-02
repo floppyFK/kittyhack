@@ -168,3 +168,16 @@ def test_headless_opencv_is_left_alone_when_import_works(monkeypatch):
     )
 
     assert DependencyInstaller._ensure_headless_opencv() is True
+
+
+def test_model_needs_export_only_for_openvino_without_ir(tmp_path):
+    assert DependencyInstaller.model_needs_export("intel:gpu", str(tmp_path)) is True
+    assert DependencyInstaller.model_needs_export("gpu", str(tmp_path)) is True
+    assert DependencyInstaller.model_needs_export("cpu", str(tmp_path)) is False
+    assert DependencyInstaller.model_needs_export("cuda:0", str(tmp_path)) is False
+    assert DependencyInstaller.model_needs_export("intel:gpu", "") is False
+
+    ir = tmp_path / "model_openvino_model"
+    ir.mkdir()
+    (ir / "model.xml").write_text("<net/>", encoding="utf-8")
+    assert DependencyInstaller.model_needs_export("intel:cpu", str(tmp_path)) is False

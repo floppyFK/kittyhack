@@ -2286,6 +2286,12 @@ msgstr "Die NVIDIA-CUDA-Pakete werden installiert."
 msgid "Exporting the model for this device."
 msgstr "Das Modell wird für dieses Gerät exportiert."
 
+msgid "Exporting the model for this device. This can take several minutes."
+msgstr "Das Modell wird für dieses Gerät exportiert. Das kann einige Minuten dauern."
+
+msgid "The model could not be exported for this device. The previous model stays active."
+msgstr "Das Modell konnte für dieses Gerät nicht exportiert werden. Das bisherige Modell bleibt aktiv."
+
 msgid "Removing the temporary PyTorch packages."
 msgstr "Die temporären PyTorch-Pakete werden entfernt."
 

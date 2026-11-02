@@ -1,5 +1,6 @@
 """YOLO model manage/activate Shiny modules."""
 
+import asyncio
 from shiny import ui, reactive, module
 import logging
 from faicons import icon_svg
@@ -7,6 +8,7 @@ from src.baseconfig import CONFIG, set_language, update_single_config_parameter
 from src.mode import is_remote_mode
 from src.model import YoloModel
 from src.backend import reload_model_handler_runtime
+from src.system import DependencyInstaller
 from src.server_ui.state import reload_trigger_ai, reload_trigger_config
 
 _ = set_language(CONFIG["LANGUAGE"])
@@ -199,7 +201,7 @@ def activate_yolo_model_server(input, output, session, unique_id: str):
 
     @reactive.effect
     @reactive.event(input.btn_yolo_activate)
-    def on_activate_yolo_model():
+    async def on_activate_yolo_model():
         global model_handler
 
         if not (unique_id or "").strip():
@@ -230,6 +232,33 @@ def activate_yolo_model_server(input, output, session, unique_id: str):
             reload_trigger_ai.set(reload_trigger_ai.get() + 1)
             reload_trigger_config.set(reload_trigger_config.get() + 1)
             return
+
+        if is_remote_mode() and DependencyInstaller.model_needs_export(
+            CONFIG.get("INFERENCE_DEVICE"), model_path
+        ):
+            try:
+                model_imgsz = int(YoloModel.get_model_image_size(unique_id) or 320)
+            except Exception:
+                model_imgsz = 320
+            with ui.Progress() as export_progress:
+                export_progress.set(
+                    message=_("Exporting the model for this device. This can take several minutes.")
+                )
+                # Let the progress panel reach the browser before the export starts.
+                await asyncio.sleep(0)
+                prepare_ok, _prepare_error = await asyncio.to_thread(
+                    DependencyInstaller.prepare_inference_device,
+                    str(CONFIG.get("INFERENCE_DEVICE") or "cpu"),
+                    model_path,
+                    model_imgsz,
+                )
+            if not prepare_ok:
+                ui.notification_show(
+                    _("The model could not be exported for this device. The previous model stays active."),
+                    duration=None,
+                    type="error",
+                )
+                return
 
         CONFIG["YOLO_MODEL"] = unique_id
         CONFIG["TFLITE_MODEL_VERSION"] = ""

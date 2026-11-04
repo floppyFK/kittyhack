@@ -136,3 +136,23 @@ def wlan_add_dialog():
         ),
     )
     ui.modal_show(m)
+
+
+# Settings that together decide which model runs on which device.
+MODEL_SELECTION_KEYS = ("YOLO_MODEL", "TFLITE_MODEL_VERSION", "INFERENCE_DEVICE")
+
+
+def snapshot_model_selection(config) -> dict:
+    """Remember the current model and inference device before the form overwrites them."""
+    return {key: config.get(key) for key in MODEL_SELECTION_KEYS}
+
+
+def restore_model_selection(config, snapshot: dict) -> None:
+    """Put the model and inference device back after a failed switch.
+
+    The save handler writes the selected model into CONFIG before it prepares the
+    device. If that fails, CONFIG must not keep the new model: a later unrelated save
+    would persist it and the camera would start without inference.
+    """
+    for key, value in snapshot.items():
+        config[key] = value

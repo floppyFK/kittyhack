@@ -46,6 +46,8 @@ from src.server_ui.helpers import (
     _disable_numeric_input,
     _disable_switch,
     collapsible_section,
+    restore_model_selection,
+    snapshot_model_selection,
 )
 from src.server_ui.unlock_logic import entry_logic_ui, exit_logic_ui
 from src.server_ui.context import SessionContext
@@ -2565,6 +2567,9 @@ def register_configuration(input, output, session, ctx: SessionContext):
         CONFIG["LOGLEVEL"] = input.txtLoglevel()
         CONFIG["MOUSE_CHECK_ENABLED"] = input.btnDetectPrey()
 
+        # Restored if preparing the device or the model fails below.
+        previous_model_selection = snapshot_model_selection(CONFIG)
+
         # Always update the model configuration and ensure, that only one of the two is set
         # Check if the selected model is a TFLite model or a YOLO model
         if input.selectedModel().startswith("yolo::"):
@@ -2576,7 +2581,6 @@ def register_configuration(input, output, session, ctx: SessionContext):
             )
             CONFIG["YOLO_MODEL"] = ""
 
-        previous_inference_device = CONFIG.get("INFERENCE_DEVICE", "cpu")
         CONFIG["INFERENCE_DEVICE"] = (
             input.inference_device() if is_remote_mode() else "cpu"
         )
@@ -2825,15 +2829,19 @@ def register_configuration(input, output, session, ctx: SessionContext):
 
                     loop.call_soon_threadsafe(_apply)
 
-                prepare_ok, prepare_error = await asyncio.to_thread(
-                    DependencyInstaller.prepare_inference_device,
-                    str(CONFIG.get("INFERENCE_DEVICE") or "cpu"),
-                    model_root,
-                    model_imgsz,
-                    _report,
-                )
+                try:
+                    prepare_ok, prepare_error = await asyncio.to_thread(
+                        DependencyInstaller.prepare_inference_device,
+                        str(CONFIG.get("INFERENCE_DEVICE") or "cpu"),
+                        model_root,
+                        model_imgsz,
+                        _report,
+                    )
+                except Exception:
+                    logging.exception("[CONFIG] Preparing the inference device failed")
+                    prepare_ok, prepare_error = False, ""
             if not prepare_ok:
-                CONFIG["INFERENCE_DEVICE"] = previous_inference_device
+                restore_model_selection(CONFIG, previous_model_selection)
                 prepare_messages = {
                     "cuda_install_failed": _(
                         "The NVIDIA CUDA packages could not be installed. Changes were not saved."

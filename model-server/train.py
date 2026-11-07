@@ -239,13 +239,37 @@ def _read_class_names(work_dir: Path) -> list[str]:
     return names
 
 
+def resolve_train_device(setting: str, torch_module=None) -> str | None:
+    """Return the ``device`` argument for YOLO.train, or None to let Ultralytics pick.
+
+    Ultralytics only picks CUDA on its own. On a Mac with Apple silicon, ``auto``
+    would train on the CPU, so it selects the Metal GPU (``mps``) there.
+    """
+    if setting != "auto":
+        return setting
+    try:
+        torch = torch_module
+        if torch is None:
+            import torch
+        if torch.cuda.is_available():
+            return None
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            return "mps"
+    except Exception:
+        return None
+    return None
+
+
 def describe_runtime_device(device) -> str:
     """Return ``CPU`` or ``GPU``, with the GPU name when PyTorch can provide it."""
     kind = getattr(device, "type", None)
     if kind is None:
         kind = str(device or "")
     kind = str(kind).lower()
-    if "cuda" in kind or kind == "mps":
+    if kind.startswith("mps"):
+        return "GPU (Apple MPS)"
+    if "cuda" in kind:
         name = ""
         try:
             import torch
@@ -373,8 +397,9 @@ def execute_training(request: TrainRequest) -> None:
         "exist_ok": True,
         "plots": False,
     }
-    if request.settings.device != "auto":
-        train_kwargs["device"] = request.settings.device
+    device = resolve_train_device(request.settings.device)
+    if device is not None:
+        train_kwargs["device"] = device
 
     log.info(
         "Training %s job %s imgsz=%s epochs=%s device=%s",
@@ -382,7 +407,7 @@ def execute_training(request: TrainRequest) -> None:
         request.job_id,
         request.image_size,
         request.settings.epochs,
-        request.settings.device,
+        device or request.settings.device,
     )
     _report_progress(
         request,

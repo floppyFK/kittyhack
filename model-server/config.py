@@ -10,7 +10,7 @@ from pathlib import Path
 
 log = logging.getLogger("kittyhack.model_server")
 
-_DEVICE_RE = re.compile(r"^(auto|cpu|cuda(?::\d+)?)$")
+_DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(?::\d+)?)$")
 
 
 @dataclass(frozen=True)

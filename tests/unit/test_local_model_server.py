@@ -81,6 +81,9 @@ def test_load_settings_defaults_and_overrides(tmp_path):
     assert fallback.imgsz == 320
     assert fallback.device == "auto"
 
+    path.write_text("[training]\ndevice = MPS\n", encoding="utf-8")
+    assert config.load_settings(path).device == "mps"
+
 
 def test_validate_and_split_dataset(tmp_path):
     _config, train = _load_model_server()
@@ -108,6 +111,29 @@ def test_runtime_device_label():
     _config, train = _load_model_server()
     assert train.describe_runtime_device(type("Device", (), {"type": "cpu"})()) == "CPU"
     assert train.describe_runtime_device(type("Device", (), {"type": "cuda", "index": 0})()).startswith("GPU")
+    assert train.describe_runtime_device(type("Device", (), {"type": "mps"})()) == "GPU (Apple MPS)"
+
+
+def _fake_torch(*, cuda: bool, mps: bool | None):
+    backends = type("Backends", (), {})()
+    if mps is not None:
+        backends.mps = type("Mps", (), {"is_available": staticmethod(lambda: mps)})()
+    return type(
+        "Torch",
+        (),
+        {"cuda": type("Cuda", (), {"is_available": staticmethod(lambda: cuda)})(), "backends": backends},
+    )()
+
+
+def test_resolve_train_device():
+    _config, train = _load_model_server()
+    mac = _fake_torch(cuda=False, mps=True)
+    assert train.resolve_train_device("auto", mac) == "mps"
+    assert train.resolve_train_device("auto", _fake_torch(cuda=True, mps=False)) is None
+    assert train.resolve_train_device("auto", _fake_torch(cuda=False, mps=False)) is None
+    assert train.resolve_train_device("auto", _fake_torch(cuda=False, mps=None)) is None
+    assert train.resolve_train_device("cpu", mac) == "cpu"
+    assert train.resolve_train_device("cuda:0", mac) == "cuda:0"
 
 
 def test_status_page_shows_epoch_log_and_device():

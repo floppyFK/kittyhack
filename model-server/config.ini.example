@@ -12,7 +12,10 @@ port = 8000
 [training]
 # Passed to Ultralytics YOLO.train.
 # device: auto (GPU when this PyTorch build can see one; ROCm reports an AMD
-# GPU as cuda:0), cpu, or cuda:0
+# GPU as cuda:0, a Mac with Apple silicon uses mps), cpu, cuda:0, or mps
+# batch: on a Mac the GPU shares the main memory. With 16 GB, use batch = 8
+# for yolov8s at image size 512 or larger, or macOS may end the training
+# when memory runs out.
 epochs = 60
 imgsz = 320
 batch = 16

@@ -1,0 +1,6 @@
+# Windows CUDA 12.6 build. The Linux CUDA file is the PyPI wheel and does not
+# apply here. The download is several GB.
+--index-url https://download.pytorch.org/whl/cu126
+--extra-index-url https://pypi.org/simple
+torch==2.9.1
+torchvision==0.24.1

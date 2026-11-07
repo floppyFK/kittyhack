@@ -124,6 +124,10 @@ SETTINGS_SCHEMA: list[Setting] = [
     _S("USER_NAME", ""),
     _S("MODEL_TRAINING", ""),
     _S("MODEL_TRAINING_JOB_TOKEN", ""),
+    # Which trainer receives new jobs. Kept on a remote controller across a flap sync.
+    _S("MODEL_SERVER_MODE", "public", remote_only=True),  # public | local | custom
+    _S("MODEL_SERVER_HOST", "", remote_only=True),
+    _S("MODEL_SERVER_PORT", 8000, "int", remote_only=True),
     _S("YOLO_MODEL", ""),
     _S("INFERENCE_DEVICE", "cpu"),
     _S("STARTUP_SHUTDOWN_FLAG", False, "bool"),

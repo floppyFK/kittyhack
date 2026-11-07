@@ -8,6 +8,7 @@
 - **Indoors/outdoors state**: The *Live view* shows where each cat is and for how long. Tap the state to change it manually. A cat can be hidden from this list under *Cats*.
 - **Motion sensor confirmation for camera entry**: Optional setting under *Settings*. When the camera is used to detect cats, the flap opens only if the outside motion sensor also triggers. Useful if sunlight or reflections sometimes cause a false detection.
 - **Hide warnings**: Some warnings can be hidden with *Do not notify again*. You can restore them later under *Settings*.
+- **Train models on your own computer**: You can train models now on your own network, not only on the public server. The public server limits the number of pictures and the upload size. On your own computer, training uses the CPU (slow) or a supported Nvidia / AMD GPU (much faster).
 
 ## Improvements
 

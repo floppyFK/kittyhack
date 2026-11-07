@@ -41,10 +41,20 @@ dmesg > "${LOGPATH}/kernel.log"
 uname -r > "${LOGPATH}/kernel_version.log"
 systemctl list-units --type=service --all > "${LOGPATH}/systemd-services.log"
 
-# Get the current IP address
-CURRENT_IP=$(hostname -I | awk '{print $1}')
+# Get the current IP address. hostname -I is Debian-specific.
+primary_ipv4() {
+    local host=""
+    if host="$(hostname -I 2>/dev/null | awk '{print $1}')" && [[ -n "$host" ]]; then
+        printf '%s\n' "$host"
+        return
+    fi
+    host="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}' || true)"
+    printf '%s\n' "${host:-127.0.0.1}"
+}
+CURRENT_IP="$(primary_ipv4)"
 
 FAIL_COUNT=0
+MODEL_SERVER_DONE=0
 
 INSTALL_LEGACY_KITTYHACK=1
 
@@ -812,6 +822,32 @@ EOF
     fi
 
     echo -e "${GREEN}Remote-mode installation complete.${NC}"
+
+    local model_answer=""
+    local model_arch
+    model_arch="$(uname -m)"
+    case "$model_arch" in
+        arm*|aarch64)
+            return 0
+            ;;
+    esac
+    if [[ -f /proc/device-tree/model ]] && tr -d '\0' < /proc/device-tree/model | grep -qi raspberry; then
+        return 0
+    fi
+    if [ "$LANGUAGE" == "de" ]; then
+        read -r -p "Modellserver auf diesem Computer ebenfalls installieren? (y/N): " model_answer || true
+    else
+        read -r -p "Also install the model server on this computer? (y/N): " model_answer || true
+    fi
+    case "${model_answer,,}" in
+        y|yes|j|ja)
+            if ! bash "${KITTYHACK_INSTALL_DIR}/setup/install_model_server.sh" install \
+                --sources "${KITTYHACK_INSTALL_DIR}" --lang "$LANGUAGE"; then
+                echo -e "${YELLOW}Model server installation failed. Kittyhack remote-mode is still installed.${NC}"
+                FAIL_COUNT=$((FAIL_COUNT + 1))
+            fi
+            ;;
+    esac
 }
 
 # Update Kittyhack only
@@ -1075,6 +1111,32 @@ uninstall_kittyhack() {
         REMOVE_DIR="$wd"
     fi
 
+    local model_unit="/etc/systemd/system/kittyhack-model-server.service"
+    local model_script="${REMOVE_DIR}/setup/install_model_server.sh"
+    if [[ -f "$model_unit" ]]; then
+        if [[ -f "$model_script" ]]; then
+            bash "$model_script" uninstall --lang "$LANGUAGE" || true
+        else
+            local model_answer="" model_dir=""
+            model_dir="$(grep -E '^WorkingDirectory=' "$model_unit" | head -n1 | cut -d= -f2- || true)"
+            if [ "$LANGUAGE" == "de" ]; then
+                read -r -p "Modellserver und ${model_dir:-die Installationsdateien} entfernen? (y/N): " model_answer || true
+            else
+                read -r -p "Remove the model server and ${model_dir:-its files}? (y/N): " model_answer || true
+            fi
+            case "${model_answer,,}" in
+                y|yes|j|ja)
+                    systemctl disable --now kittyhack-model-server.service 2>/dev/null || true
+                    rm -f "$model_unit"
+                    systemctl daemon-reload || true
+                    if [[ -n "$model_dir" && "$model_dir" != "/" && "$model_dir" != "/root" && -d "$model_dir" ]]; then
+                        rm -rf "$model_dir"
+                    fi
+                    ;;
+            esac
+        fi
+    fi
+
     echo -e "${CYAN}--- UNINSTALL: Stop and disable services ---${NC}"
     systemctl stop kittyhack_control.service 2>/dev/null || true
     systemctl stop kittyhack.service 2>/dev/null || true
@@ -1246,7 +1308,7 @@ KITTYHACK_INSTALL_DIR="/root/kittyhack"
 
 print_usage() {
     cat << EOF
-Usage: $(basename "$0") [en|de] [--use-local-sources] [--sources-dir=/path] [--lang=en|de] [--version=<tag-or-commit>] [--uninstall]
+Usage: $(basename "$0") [en|de] [--use-local-sources] [--sources-dir=/path] [--lang=en|de] [--version=<tag-or-commit>] [--uninstall] [--model-server=cpu|cuda|rocm]
 
   --use-local-sources   Use the current repo folder (no git clone).
   --sources-dir=/path   Use a specific local repo folder (implies --use-local-sources).
@@ -1258,6 +1320,7 @@ EOF
 
 # Parse args (order independent)
 LANGUAGE="en"
+MODEL_SERVER_VARIANT=""
 for arg in "$@"; do
     case "$arg" in
         --uninstall)
@@ -1278,6 +1341,9 @@ for arg in "$@"; do
             ;;
         en|de)
             LANGUAGE="$arg"
+            ;;
+        --model-server=cpu|--model-server=cuda|--model-server=rocm)
+            MODEL_SERVER_VARIANT="${arg#*=}"
             ;;
         -h|--help)
             print_usage
@@ -1382,8 +1448,41 @@ if [ -n "$SCRIPT_LANG" ]; then
     LANGUAGE="$SCRIPT_LANG"
 fi
 
+install_model_server_menu() {
+    local sources="" tmp=""
+    if [[ -n "${KITTYHACK_ROOT:-}" && -f "${KITTYHACK_ROOT}/model-server/server.py" ]]; then
+        sources="$KITTYHACK_ROOT"
+    elif [[ -f /root/kittyhack/model-server/server.py ]]; then
+        sources="/root/kittyhack"
+    else
+        tmp="$(mktemp -d)"
+        echo -e "${CYAN}Downloading Kittyhack sources for the model server…${NC}"
+        if ! git clone --depth 1 https://github.com/floppyFK/kittyhack.git "${tmp}/kittyhack"; then
+            rm -rf "$tmp"
+            echo -e "${RED}Failed to download Kittyhack sources.${NC}"
+            return 1
+        fi
+        sources="${tmp}/kittyhack"
+    fi
+    local torch_args=()
+    case "${MODEL_SERVER_VARIANT:-}" in
+        cpu|cuda|rocm) torch_args=(--"$MODEL_SERVER_VARIANT") ;;
+    esac
+    bash "${sources}/setup/install_model_server.sh" install --sources "$sources" --lang "$LANGUAGE" "${torch_args[@]}"
+    local status=$?
+    if [[ -n "$tmp" ]]; then
+        rm -rf "$tmp"
+    fi
+    return "$status"
+}
+
 # Check for command-line arguments or prompt for a choice 
 ERRMSG=""
+
+if [[ -n "${MODEL_SERVER_VARIANT:-}" ]]; then
+    install_model_server_menu
+    exit $?
+fi
 
 while true; do
     # Clear the terminal
@@ -1446,6 +1545,7 @@ EOF
         echo -e ""
         echo -e "${GREY}--- Remote-Mode (beliebiger Linux-PC) ---${NC}"
         echo -e "(${BLUE}${FMTBOLD}4${FMTDEF}${NC}) Installation als Remote-Control (remote-mode) auf einem separaten System"
+        echo -e "(${BLUE}${FMTBOLD}6${FMTDEF}${NC}) Modellserver installieren"
         echo -e ""
         echo -e "${GREY}--- Sonstiges ---${NC}"
         echo -e "(${BLUE}${FMTBOLD}5${FMTDEF}${NC}) Kittyhack deinstallieren"
@@ -1459,6 +1559,7 @@ EOF
         echo -e ""
         echo -e "${GREY}--- Remote mode (any Linux PC) ---${NC}"
         echo -e "(${BLUE}${FMTBOLD}4${FMTDEF}${NC}) Install as remote-control (remote-mode) on a dedicated system"
+        echo -e "(${BLUE}${FMTBOLD}6${FMTDEF}${NC}) Install the model server"
         echo -e ""
         echo -e "${GREY}--- Other ---${NC}"
         echo -e "(${BLUE}${FMTBOLD}5${FMTDEF}${NC}) Uninstall Kittyhack"
@@ -1491,6 +1592,15 @@ EOF
             install_remote_mode || ((FAIL_COUNT++))
             break
             ;;
+        6)
+            echo -e "${CYAN}Installing the model server...${NC}"
+            if install_model_server_menu; then
+                MODEL_SERVER_DONE=1
+            else
+                ((FAIL_COUNT++))
+            fi
+            break
+            ;;
         5)
             echo -e "${CYAN}Uninstalling Kittyhack...${NC}"
             uninstall_kittyhack
@@ -1502,9 +1612,9 @@ EOF
             ;;
         *)
             if [ "$LANGUAGE" == "de" ]; then
-                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2', '3', '4', '5' oder 'b' eingeben.${NC}\n"
+                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2', '3', '4', '5', '6' oder 'b' eingeben.${NC}\n"
             else
-                ERRMSG="${RED}Invalid choice. Please enter '1', '2', '3', '4', '5' or 'q'.${NC}\n"
+                ERRMSG="${RED}Invalid choice. Please enter '1', '2', '3', '4', '5', '6' or 'q'.${NC}\n"
             fi
             MODE=""
             ;;
@@ -1528,6 +1638,12 @@ if systemctl is-active --quiet kittyhack.service; then
             echo -e "\n${YELLOW}Setup complete with warnings. Please check the logs in ${LOGFILE} for more details.${NC}\n"
             echo -e "You could still try to open ${CYAN}http://${CURRENT_IP}${NC} in your browser to access your Kittyflap.\n"
         fi
+    fi
+elif [[ "$MODEL_SERVER_DONE" -eq 1 && $FAIL_COUNT -eq 0 ]]; then
+    if [ "$LANGUAGE" == "de" ]; then
+        echo -e "\n${GREEN}Modellserver-Setup abgeschlossen.${NC}\n"
+    else
+        echo -e "\n${GREEN}Model server setup complete.${NC}\n"
     fi
 else
     if [ "$LANGUAGE" == "de" ]; then

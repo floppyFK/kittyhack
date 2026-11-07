@@ -555,6 +555,9 @@ msgstr "Projekt-ZIP manuell hochladen"
 msgid "### Training data"
 msgstr "### Trainingsdaten"
 
+msgid "Training data"
+msgstr "Trainingsdaten"
+
 msgid "Training data source"
 msgstr "Quelle der Trainingsdaten"
 
@@ -4891,3 +4894,78 @@ msgstr "Gerade eben"
 
 msgid "Person"
 msgstr "Person"
+
+msgid "Model server"
+msgstr "Modellserver"
+
+msgid "Public model server"
+msgstr "Öffentlicher Modellserver"
+
+msgid "Model server on this computer"
+msgstr "Modellserver auf diesem Computer"
+
+msgid "Other model server"
+msgstr "Anderer Modellserver"
+
+msgid "Training requests on the public model server are limited in the number of pictures and the upload size. Full control is only available with a self-hosted model server."
+msgstr "Trainingsanfragen an den öffentlichen Modellserver sind in der Anzahl der Bilder und der Upload-Größe begrenzt. Volle Kontrolle gibt es nur mit einem selbst gehosteten Modellserver."
+
+msgid "IP address"
+msgstr "IP-Adresse"
+
+msgid "Port"
+msgstr "Port"
+
+msgid "Enter the IP address and port of your model server."
+msgstr "Gib die IP-Adresse und den Port deines Modellservers ein."
+
+msgid "This model server does not send email."
+msgstr "Dieser Modellserver verschickt keine E-Mail."
+
+msgid "Training on the model server on this computer."
+msgstr "Training auf dem Modellserver auf diesem Computer."
+
+msgid "Training on {}."
+msgstr "Training auf {}."
+
+msgid "Training on the public model server."
+msgstr "Training auf dem öffentlichen Modellserver."
+
+msgid "Enter a valid IP address."
+msgstr "Gib eine gültige IP-Adresse ein."
+
+msgid "The model server on this computer is not installed. Choose another model server."
+msgstr "Auf diesem Computer ist kein Modellserver installiert. Wähle einen anderen Modellserver."
+
+msgid "A training job is already running on this model server."
+msgstr "Auf diesem Modellserver läuft bereits ein Training."
+
+msgid "Training is running…"
+msgstr "Training läuft…"
+
+msgid "Updating the model server…"
+msgstr "Modellserver wird aktualisiert…"
+
+msgid "Show installation instructions"
+msgstr "Installationsanleitung anzeigen"
+
+msgid "You can run a model server on your own computer. Training on the CPU always works, but it is very slow. Training on a GPU is much faster when one is available."
+msgstr "Du kannst einen Modellserver auf deinem eigenen Computer betreiben. Ein Training über die CPU funktioniert immer, ist aber sehr langsam. Ein Training über eine GPU ist deutlich schneller, sofern vorhanden."
+
+msgid "Linux"
+msgstr "Linux"
+
+msgid "Windows"
+msgstr "Windows"
+
+msgid "Open PowerShell as administrator and run one of the following commands. Python 3.10 or newer must already be installed. AMD graphics cards are supported on Linux only."
+msgstr "Öffne PowerShell als Administrator und führe einen der folgenden Befehle aus. Python 3.10 oder neuer muss bereits installiert sein. AMD-Grafikkarten werden nur unter Linux unterstützt."
+
+msgid "Processor only"
+msgstr "Nur Prozessor"
+
+msgid "NVIDIA graphics card"
+msgstr "NVIDIA-Grafikkarte"
+
+msgid "AMD graphics card"
+msgstr "AMD-Grafikkarte"

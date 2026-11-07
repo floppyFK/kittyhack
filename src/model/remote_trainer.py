@@ -20,7 +20,7 @@ from src.helper import (
     Versioning,
     is_valid_uuid4,
 )
-from src.model.model_server_api import BASE_URL as MODEL_SERVER_BASE_URL, model_server_headers
+from src.model.model_server_api import model_server_headers, resolved_model_server_base_url
 from src.paths import kittyhack_root, models_yolo_root
 
 from .json_util import (
@@ -72,7 +72,9 @@ def plain_server_detail(payload: Any) -> str:
 class RemoteModelTrainer:
     """Remote training API client and local download/install orchestration."""
 
-    BASE_URL = MODEL_SERVER_BASE_URL
+    @staticmethod
+    def base_url() -> str:
+        return resolved_model_server_base_url()
 
     @staticmethod
     def _headers(job_token: str | None = None) -> dict[str, str]:
@@ -138,7 +140,7 @@ class RemoteModelTrainer:
             "-m",
             "src.model_download_worker",
             "--base-url",
-            RemoteModelTrainer.BASE_URL,
+            RemoteModelTrainer.base_url(),
             "--result-id",
             result_id,
             "--model-name",
@@ -214,11 +216,14 @@ class RemoteModelTrainer:
         return True
 
     @staticmethod
-    def get_server_status():
+    def get_server_status(timeout: float | tuple = 5):
         """Return `{maintenance, message}` from the training server, or None on error."""
-        url = f"{RemoteModelTrainer.BASE_URL}/server_status"
+        base = RemoteModelTrainer.base_url()
+        if not base:
+            return None
+        url = f"{base}/server_status"
         try:
-            response = requests.get(url, headers=RemoteModelTrainer._headers(), verify=True, timeout=5)
+            response = requests.get(url, headers=RemoteModelTrainer._headers(), verify=True, timeout=timeout)
             response.raise_for_status()
             data = response.json()
             # Normalize keys and defaults
@@ -244,7 +249,10 @@ class RemoteModelTrainer:
         ``server_message`` is set for HTTP 413 when the body contains a short
         plain-text ``detail``.
         """
-        url = f"{RemoteModelTrainer.BASE_URL}/upload"
+        base = RemoteModelTrainer.base_url()
+        if not base:
+            return "destination_unreachable", ""
+        url = f"{base}/upload"
         files = {'file': open(zip_file_path, 'rb')}
         variant = str(yolo_model_variant or "n").strip().lower()
         if variant not in {"n", "s", "m", "l", "x"}:
@@ -300,6 +308,9 @@ class RemoteModelTrainer:
                 except Exception:
                     detail = ""
                 return "file_too_large", detail
+            elif status == 409:
+                logging.error(f"[MODEL_TRAINING] Server busy: {e}")
+                return "server_busy", ""
             elif status == 500:
                 logging.error(f"[MODEL_TRAINING] Internal server error: {e}")
                 return "internal_server_error", ""
@@ -315,7 +326,7 @@ class RemoteModelTrainer:
     @staticmethod
     def get_model_training_status(job_id):
         """Fetch remote training status JSON for `job_id`, or None on error."""
-        url = f"{RemoteModelTrainer.BASE_URL}/status/{job_id}"
+        url = f"{RemoteModelTrainer.base_url()}/status/{job_id}"
         try:
             response = requests.get(url, headers=RemoteModelTrainer._headers(), verify=True, timeout=5)
             if response.status_code == 404:
@@ -330,7 +341,7 @@ class RemoteModelTrainer:
     @staticmethod
     def cancel_model_training(job_id):
         """Cancel a pending remote training job; return True on success."""
-        url = f"{RemoteModelTrainer.BASE_URL}/cancel/{job_id}"
+        url = f"{RemoteModelTrainer.base_url()}/cancel/{job_id}"
         try:
             response = requests.post(url, headers=RemoteModelTrainer._headers(), verify=True)
             if response.status_code == 404:
@@ -380,7 +391,7 @@ class RemoteModelTrainer:
     @staticmethod
     def _download_model_zip_to_tempfile(result_id: str, token: str | None = None) -> str:
         """Download the model zip for `result_id` to `/tmp` and return its path."""
-        url = f"{RemoteModelTrainer.BASE_URL}/download/{result_id}"
+        url = f"{RemoteModelTrainer.base_url()}/download/{result_id}"
         headers = RemoteModelTrainer._headers(job_token=token)
 
         tmp_path = os.path.join("/tmp", f"kittyhack_model_{result_id}.zip")
@@ -426,7 +437,7 @@ class RemoteModelTrainer:
                 raise RuntimeError("sha256_mismatch")
 
             if delete_token:
-                ack_url = f"{RemoteModelTrainer.BASE_URL}/download/{result_id}/ack"
+                ack_url = f"{RemoteModelTrainer.base_url()}/download/{result_id}/ack"
                 payload = {"delete_token": delete_token, "sha256": sha, "size_bytes": size_bytes}
                 ack_resp = requests.post(ack_url, json=payload, headers=headers, verify=True, timeout=(5, 30))
                 if ack_resp.status_code != 200:
@@ -658,6 +669,7 @@ class RemoteModelTrainer:
         pretty_status_messages = {
             "pending": _("Training will start soon…"),
             "queued": _("Training is waiting for resources…"),
+            "training": _("Training is running…"),
             "completed": _("Training complete."),
             "downloading": _("Training complete. Downloading the model…"),
             "extracting": _("Training complete. Installing the model…"),

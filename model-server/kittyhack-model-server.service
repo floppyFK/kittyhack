@@ -1,0 +1,17 @@
+[Unit]
+Description=Kittyhack model server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=__INSTALL_DIR__/.venv/bin/python server.py
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

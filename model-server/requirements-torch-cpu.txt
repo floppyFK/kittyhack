@@ -1,0 +1,5 @@
+# CPU wheels live on the PyTorch CPU index. The +cpu versions are not on PyPI,
+# so this install does not pull the multi-GB CUDA build.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.9.1+cpu
+torchvision==0.24.1+cpu

@@ -8,6 +8,7 @@
 - **Drinnen/draußen Status**: Die *Live-Ansicht* zeigt, wo jede Katze ist und seit wann. Tippe auf den Zustand, um ihn manuell zu ändern. Unter *Katzen* kannst du eine Katze dort ausblenden.
 - **Bewegungssensor als Bestätigung bei Kamera-Einlass**: Optionale Einstellung unter *Einstellungen*. Wenn die Kamera Katzen erkennt, öffnet sich die Klappe nur, wenn auch der äußere Bewegungssensor auslöst. Hilfreich, wenn Sonne oder Spiegelungen manchmal eine Katze vortäuschen.
 - **Hinweise ausblenden**: Manche Hinweise können mit *Nicht mehr benachrichtigen* ausgeblendet werden. Unter *Einstellungen* kannst du sie später wieder aktivieren.
+- **Modell lokal trainieren**: Modelle lassen sich nun auch im eigenen Netzwerk trainieren, nicht nur auf dem öffentlichen Server. Der öffentliche Server begrenzt die Anzahl der Bilder und die Größe des Uploads. Auf einem eigenen Computer läuft das Training wahlweise über die CPU (langsam) oder mit einer Nvidia / AMD GPU (deutlich schneller).
 
 ## Verbesserungen
 

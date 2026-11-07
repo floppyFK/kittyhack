@@ -1,0 +1,3 @@
+# PyPI torch on x86_64 is the CUDA build and downloads several GB of nvidia wheels.
+torch==2.9.1
+torchvision==0.24.1

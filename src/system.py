@@ -1656,7 +1656,40 @@ class KittyhackUpdater:
                     logging.error(f"Rollback failed: {rollback_e}")
             return False, _("Update failed. Check the logs, then try again: {}").format(e)
         KittyhackUpdater.purge_pip_cache()
+        try:
+            if progress_callback and os.path.isfile("/etc/systemd/system/kittyhack-model-server.service"):
+                progress_callback(8, _("Updating the model server…"), "")
+            KittyhackUpdater.refresh_installed_model_server()
+        except Exception as refresh_error:
+            logging.error(f"[UPDATE] Model server refresh failed: {refresh_error}")
         return True, _("Update complete")
+
+    @staticmethod
+    def refresh_installed_model_server() -> None:
+        """Copy a newer model-server tree over an existing install and restart it.
+
+        Keeps config.ini and training data. Recreates the virtualenv only when
+        the requirements files changed. Does nothing when the service is absent.
+        """
+        unit = "/etc/systemd/system/kittyhack-model-server.service"
+        script = os.path.join(kittyhack_root(), "setup", "install_model_server.sh")
+        if not os.path.isfile(unit) or not os.path.isfile(script):
+            return
+        logging.info("[UPDATE] Refreshing the local model server")
+        try:
+            completed = subprocess.run(
+                ["/bin/bash", script, "refresh", "--sources", kittyhack_root(), "--noninteractive"],
+                check=False,
+                timeout=3600,
+            )
+        except Exception as exc:
+            logging.error(f"[UPDATE] Model server refresh failed: {exc}")
+            return
+        if completed.returncode != 0:
+            logging.error(
+                "[UPDATE] Model server refresh exited with code %s",
+                completed.returncode,
+            )
 
     @staticmethod
     def ensure_target_boot_service_semantics() -> None:

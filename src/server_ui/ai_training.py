@@ -26,6 +26,11 @@ from src.labelstudio_api import (
     get_labelstudio_project_task_summary,
 )
 from src.model import YoloModel, RemoteModelTrainer
+from src.model.model_server_api import (
+    local_model_server_available,
+    normalize_model_server_host,
+    resolved_model_server_base_url,
+)
 from src.shiny_wrappers import uix
 from src.server_ui.state import (
     reload_trigger_ai,
@@ -51,8 +56,576 @@ from src.server_ui.yolo_modules import (
 )
 
 
+def _model_server_mode() -> str:
+    mode = str(CONFIG.get("MODEL_SERVER_MODE") or "public").strip().lower()
+    if mode not in {"public", "local", "custom"}:
+        return "public"
+    return mode
+
+
+def _model_server_choices() -> dict[str, str]:
+    choices = {
+        "public": _("Public model server"),
+        "custom": _("Other model server"),
+    }
+    if local_model_server_available():
+        choices = {
+            "public": _("Public model server"),
+            "local": _("Model server on this computer"),
+            "custom": _("Other model server"),
+        }
+    return choices
+
+
+def _model_server_in_progress_label() -> str:
+    mode = _model_server_mode()
+    if mode == "local":
+        return _("Training on the model server on this computer.")
+    if mode == "custom":
+        host = str(CONFIG.get("MODEL_SERVER_HOST") or "").strip()
+        return _("Training on {}.").format(host or _("Other model server"))
+    return _("Training on the public model server.")
+
+
+def _model_server_chooser():
+    mode = _model_server_mode()
+    choices = _model_server_choices()
+    if mode not in choices:
+        mode = "public"
+    host = str(CONFIG.get("MODEL_SERVER_HOST") or "")
+    try:
+        port = int(CONFIG.get("MODEL_SERVER_PORT") or 8000)
+    except (TypeError, ValueError):
+        port = 8000
+    return ui.div(
+        ui.input_select(
+            "model_server_mode",
+            _("Model server"),
+            choices,
+            selected=mode,
+            width="100%",
+        ),
+        ui.div(
+            ui.help_text(
+                _(
+                    "Training requests on the public model server are limited in the number of pictures and the upload size. Full control is only available with a self-hosted model server."
+                )
+            ),
+            id="model_server_public_note",
+            class_="kh-train-note",
+            style_="" if mode == "public" else "display:none;",
+        ),
+        ui.div(
+            ui.input_text(
+                "model_server_host",
+                _("IP address"),
+                value=host,
+                placeholder="192.168.1.50",
+                width="100%",
+            ),
+            ui.input_numeric(
+                "model_server_port",
+                _("Port"),
+                value=port,
+                min=1,
+                max=65535,
+                step=1,
+                width="100%",
+            ),
+            ui.div(
+                ui.help_text(_("Enter the IP address and port of your model server.")),
+                class_="kh-train-note",
+            ),
+            id="model_server_custom_fields",
+            style_="" if mode == "custom" else "display:none;",
+        ),
+        id="model_server_chooser",
+    )
+
+
+def _setup_language() -> str:
+    return "de" if str(CONFIG.get("LANGUAGE") or "en").lower().startswith("de") else "en"
+
+
+def _model_server_setup_command(variant: str) -> str:
+    """Linux command that installs one model-server build."""
+    lang = _setup_language()
+    return (
+        "sudo curl -sSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/kittyhack-setup.sh "
+        "-o /tmp/kittyhack-setup.sh && sudo chmod +x /tmp/kittyhack-setup.sh && "
+        f"sudo /tmp/kittyhack-setup.sh {lang} --model-server={variant} && sudo rm /tmp/kittyhack-setup.sh"
+    )
+
+
+def _model_server_windows_command(variant: str) -> str:
+    """PowerShell command that installs one model-server build on Windows."""
+    lang = _setup_language()
+    return (
+        "Invoke-WebRequest -Uri https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/install_model_server.ps1 "
+        f"-OutFile $env:TEMP\\install_model_server.ps1; & $env:TEMP\\install_model_server.ps1 -Variant {variant} -Lang {lang}"
+    )
+
+
+def _model_server_install_variant(label: str, command: str):
+    return ui.div(
+        ui.tags.div(label, class_="kh-install-variant"),
+        ui.tags.pre(
+            ui.tags.code(command),
+            class_="kh-install-command",
+        ),
+    )
+
+
+def _model_server_install_section(section_id: str, title: str, *body):
+    """One operating system, collapsed until its own button is opened."""
+    return ui.div(
+        ui.tags.button(
+            ui.tags.span(
+                "\u25b6",
+                class_="toggle-chevron",
+                style_="display:inline-block; transition:transform .2s;",
+            ),
+            " ",
+            title,
+            type="button",
+            class_="btn btn-link p-0 info-toggle-btn kh-install-section",
+            style_="text-decoration:none;",
+            **{
+                "data-bs-toggle": "collapse",
+                "data-bs-target": f"#{section_id}",
+                "aria-expanded": "false",
+                "aria-controls": section_id,
+            },
+        ),
+        ui.div(*body, id=section_id, class_="collapse"),
+        class_="kh-install-section-wrap",
+    )
+
+
+def _model_server_install_help():
+    """Info button that opens how to install a model server on another computer."""
+    return ui.div(
+        ui.tags.button(
+            ui.tags.span(
+                "\u25b6",
+                class_="toggle-chevron",
+                style_="display:inline-block; transition:transform .2s;",
+            ),
+            " ",
+            _("Show installation instructions"),
+            type="button",
+            class_="btn btn-link p-0 info-toggle-btn",
+            style_="text-decoration:none;",
+            **{
+                "data-bs-toggle": "collapse",
+                "data-bs-target": "#model_server_install_help",
+                "aria-expanded": "false",
+                "aria-controls": "model_server_install_help",
+            },
+        ),
+        ui.div(
+            ui.div(
+                ui.markdown(
+                    _(
+                        "You can run a model server on your own computer. Training on the CPU always works, but it is very slow. Training on a GPU is much faster when one is available."
+                    )
+                ),
+                _model_server_install_section(
+                    "model_server_install_linux",
+                    _("Linux"),
+                    _model_server_install_variant(_("Processor only"), _model_server_setup_command("cpu")),
+                    _model_server_install_variant(_("NVIDIA graphics card"), _model_server_setup_command("cuda")),
+                    _model_server_install_variant(_("AMD graphics card"), _model_server_setup_command("rocm")),
+                ),
+                _model_server_install_section(
+                    "model_server_install_windows",
+                    _("Windows"),
+                    ui.tags.div(
+                        _(
+                            "Open PowerShell as administrator and run one of the following commands. Python 3.10 or newer must already be installed. AMD graphics cards are supported on Linux only."
+                        ),
+                        class_="kh-install-os-note",
+                    ),
+                    _model_server_install_variant(_("Processor only"), _model_server_windows_command("cpu")),
+                    _model_server_install_variant(_("NVIDIA graphics card"), _model_server_windows_command("cuda")),
+                ),
+                class_="kh-info-box",
+            ),
+            id="model_server_install_help",
+            class_="collapse info-toggle-body",
+            style_="margin-top:0.6rem;",
+        ),
+        class_="kh-info-toggle kh-train-install-help",
+    )
+
+
 def register_ai_training(input, output, session, ctx: SessionContext):
     """Register AI Training / Label Studio tab handlers."""
+    model_server_check = reactive.Value(0)
+    try:
+        _applied_port = int(CONFIG.get("MODEL_SERVER_PORT") or 8000)
+    except (TypeError, ValueError):
+        _applied_port = 8000
+    _server_choice = {
+        "gen": 0,
+        "applied": (
+            str(CONFIG.get("MODEL_SERVER_MODE") or "public").strip().lower(),
+            str(CONFIG.get("MODEL_SERVER_HOST") or ""),
+            _applied_port,
+        ),
+    }
+    # The form reads this. The network check updates it only after the request
+    # finishes, so the card is not faded while a server is still being contacted.
+    server_probe = reactive.Value({"seq": -1, "phase": "ok", "message": ""})
+
+    @reactive.effect
+    @reactive.event(input.model_server_mode, input.model_server_host, input.model_server_port)
+    async def persist_model_server_choice():
+        """Save the model server choice and refresh the training form."""
+        try:
+            mode = str(input.model_server_mode() or "").strip().lower()
+        except Exception:
+            return
+        if mode not in {"public", "local", "custom"}:
+            return
+        if mode == "local" and not local_model_server_available():
+            mode = "public"
+        host = str(CONFIG.get("MODEL_SERVER_HOST") or "")
+        try:
+            port = int(CONFIG.get("MODEL_SERVER_PORT") or 8000)
+        except (TypeError, ValueError):
+            port = 8000
+        try:
+            raw_host = input.model_server_host()
+        except Exception:
+            raw_host = None
+        if raw_host is not None:
+            cleaned = normalize_model_server_host(str(raw_host))
+            if cleaned is None:
+                ui.notification_show(
+                    _("Enter a valid IP address."),
+                    duration=8,
+                    type="warning",
+                )
+                return
+            host = cleaned
+        try:
+            raw_port = input.model_server_port()
+            if raw_port is not None and str(raw_port).strip() != "":
+                port = int(raw_port)
+        except (TypeError, ValueError):
+            return
+        if port < 1 or port > 65535:
+            return
+        key = (mode, host, port)
+        if key == tuple(_server_choice["applied"]):
+            return
+        mode_changed = mode != _server_choice["applied"][0]
+        if mode != str(CONFIG.get("MODEL_SERVER_MODE") or "public"):
+            CONFIG["MODEL_SERVER_MODE"] = mode
+            update_single_config_parameter("MODEL_SERVER_MODE")
+        if host != str(CONFIG.get("MODEL_SERVER_HOST") or ""):
+            CONFIG["MODEL_SERVER_HOST"] = host
+            update_single_config_parameter("MODEL_SERVER_HOST")
+        if port != int(CONFIG.get("MODEL_SERVER_PORT") or 8000):
+            CONFIG["MODEL_SERVER_PORT"] = port
+            update_single_config_parameter("MODEL_SERVER_PORT")
+        _server_choice["gen"] += 1
+        gen = _server_choice["gen"]
+        # Host and port edits settle before a new connection attempt. A dropdown
+        # change is applied immediately.
+        if not mode_changed:
+            await asyncio.sleep(0.6)
+            if gen != _server_choice["gen"]:
+                return
+        _server_choice["applied"] = key
+        model_server_check.set(model_server_check.get() + 1)
+
+    @reactive.effect
+    async def probe_selected_model_server():
+        """Check the selected server without blocking the training form."""
+        seq = int(model_server_check.get() or 0)
+        mode = _model_server_mode()
+        if mode == "local" and not local_model_server_available():
+            server_probe.set({"seq": seq, "phase": "missing", "message": ""})
+            return
+        if not resolved_model_server_base_url():
+            host = str(CONFIG.get("MODEL_SERVER_HOST") or "").strip()
+            # An unfinished address stays on the form. Do not report it as down.
+            if mode == "custom" and host:
+                server_probe.set({"seq": seq, "phase": "ok", "message": ""})
+                return
+            server_probe.set({"seq": seq, "phase": "need_host", "message": ""})
+            return
+        # Show the form immediately. The card stays fully visible while the
+        # status request runs, and is replaced only when that request fails.
+        server_probe.set({"seq": seq, "phase": "ok", "message": ""})
+        result = await asyncio.to_thread(
+            RemoteModelTrainer.get_server_status, (0.8, 1.5)
+        )
+        if int(model_server_check.get() or 0) != seq:
+            return
+        if result is None:
+            server_probe.set({"seq": seq, "phase": "down", "message": ""})
+            return
+        if result.get("maintenance"):
+            server_probe.set(
+                {
+                    "seq": seq,
+                    "phase": "maintenance",
+                    "message": result.get("message") or "",
+                }
+            )
+
+    @output
+    @render.ui
+    def ui_model_training_body():
+        probe = server_probe.get() or {}
+        phase = probe.get("phase") or "ok"
+        if phase == "missing":
+            return ui.div(
+                _(
+                    "The model server on this computer is not installed. Choose another model server."
+                ),
+                _model_server_install_help(),
+                class_="kh-train-status",
+            )
+        if phase == "need_host":
+            return ui.div(
+                _("Enter the IP address and port of your model server."),
+                _model_server_install_help(),
+                class_="kh-train-status",
+            )
+        if phase == "down":
+            down_parts = [
+                ui.div(
+                    icon_svg("triangle-exclamation", margin_left="-0.1em"),
+                    " ",
+                    _(
+                        "Could not reach the model training server. Check your network connection and try again."
+                    ),
+                ),
+                ui.div(
+                    _(
+                        "If it still does not work, the server may be temporarily unavailable."
+                    )
+                ),
+            ]
+            if _model_server_mode() != "public":
+                down_parts.append(_model_server_install_help())
+            return ui.div(*down_parts, class_="kh-train-status")
+        if phase == "maintenance":
+            msg = _(
+                "The model training server is under maintenance. Try again later."
+            )
+            maintenance_msg = probe.get("message") or ""
+            if maintenance_msg:
+                msg += " " + maintenance_msg
+            return ui.div(
+                icon_svg("wrench", margin_left="-0.1em"),
+                " ",
+                msg,
+                class_="kh-train-status",
+            )
+        else:
+            # Show the original upload form
+            model_training_base_model_input = ui.input_select(
+                "model_training_base_model",
+                _("YOLOv8 model"),
+                {
+                    "n": "YOLOv8n",
+                    "s": "YOLOv8s",
+                    "m": "YOLOv8m",
+                    "l": "YOLOv8l",
+                    "x": "YOLOv8x",
+                },
+                selected="n",
+                width="100%",
+            )
+            model_training_image_size_input = ui.input_select(
+                "model_training_image_size",
+                _("Image size"),
+                {str(s): str(s) for s in YoloModel.get_supported_image_sizes()},
+                selected="320",
+                width="100%",
+            )
+
+            if not is_remote_mode():
+                model_training_base_model_input = _disable_input(
+                    model_training_base_model_input
+                )
+                model_training_image_size_input = _disable_input(
+                    model_training_image_size_input
+                )
+
+                # Build training data source options
+            api_token = CONFIG.get("LABELSTUDIO_API_TOKEN", "").strip()
+            saved_project = CONFIG.get("LABELSTUDIO_PROJECT", "").strip()
+            project_title = (
+                CONFIG.get("LABELSTUDIO_PROJECT_TITLE", "").strip() or saved_project
+            )
+            labelstudio_source_label = _("Export from Label Studio project")
+            if project_title:
+                labelstudio_source_label += f" ({project_title})"
+
+            ls_training_source_options = {
+                "__labelstudio__": labelstudio_source_label,
+                "__manual__": _("Upload project ZIP manually"),
+            }
+            default_training_source = (
+                "__labelstudio__"
+                if (
+                    api_token
+                    and saved_project
+                    and LabelStudioInstall.get_labelstudio_status()
+                )
+                else "__manual__"
+            )
+
+            training_content = ui.div(
+                        ui.div(_("Training data"), class_="kh-train-heading"),
+                        ui.input_select(
+                            "model_training_labelstudio_project",
+                            _("Training data source"),
+                            ls_training_source_options,
+                            selected=default_training_source,
+                            width="100%",
+                        ),
+                        ui.output_ui("ui_model_training_project_note"),
+                        ui.output_ui("ui_model_training_data_upload"),
+                        ui.input_text(
+                            "model_name",
+                            _("Model name (optional)"),
+                            placeholder=_("Enter a name for your model"),
+                            width="100%",
+                        ),
+                        ui.div(
+                            ui.input_text(
+                                "user_name",
+                                _("Your name (optional)"),
+                                value=CONFIG["USER_NAME"],
+                                placeholder=_("Enter your name"),
+                                width="100%",
+                            ),
+                            ui.input_text(
+                                "email_notification",
+                                _("Email for notification (optional)"),
+                                value=CONFIG["EMAIL"],
+                                placeholder=_("Enter your email address"),
+                                width="100%",
+                            ),
+                            ui.div(
+                                ui.help_text(
+                                    _(
+                                        "Add an email address to receive a message when training is complete."
+                                    )
+                                ),
+                                id="model_server_email_public",
+                            ),
+                            id="model_server_identity",
+                            style_="" if _model_server_mode() == "public" else "display:none;",
+                        ),
+                        (
+                            ui.div(
+                                ui.tags.button(
+                                    ui.tags.span(
+                                        "\u25b6",
+                                        class_="toggle-chevron",
+                                        style_="display:inline-block; transition:transform .2s;",
+                                    ),
+                                    " ",
+                                    _("Show advanced options"),
+                                    type="button",
+                                    class_="btn btn-link p-0 info-toggle-btn",
+                                    style_="text-decoration:none;",
+                                    **{
+                                        "data-bs-toggle": "collapse",
+                                        "data-bs-target": "#model_training_advanced_options_body",
+                                        "aria-expanded": "false",
+                                        "aria-controls": "model_training_advanced_options_body",
+                                    },
+                                ),
+                                ui.div(
+                                    ui.div(
+                                        ui.br(),
+                                        model_training_base_model_input,
+                                        ui.help_text(
+                                            _(
+                                                "Base model (YOLOv8n/s/m/l/x): larger variants are usually more accurate, but run more slowly and need more CPU and RAM. "
+                                                "Choose a smaller variant, such as 'n', if your computer cannot keep up in real time."
+                                            )
+                                        ),
+                                        model_training_image_size_input,
+                                        ui.help_text(
+                                            _(
+                                                "Image size (imgsz): higher values may improve detection of small objects, but need more processing power and may reduce FPS."
+                                            )
+                                        ),
+                                        ui.help_text(
+                                            _(
+                                                "Defaults: YOLOv8n and image size 320."
+                                            )
+                                        ),
+                                        class_="kh-info-box",
+                                    ),
+                                    id="model_training_advanced_options_body",
+                                    class_="collapse info-toggle-body",
+                                    style_="margin-top:6px;",
+                                ),
+                                class_="kh-info-toggle",
+                            )
+                            if is_remote_mode()
+                            else ui.div(
+                                ui.br(),
+                                ui.hr(),
+                                ui.help_text(
+                                    _(
+                                        "Advanced model options are available when Kittyhack runs on a separate server in remote mode."
+                                    )
+                                ),
+                                style_="text-align: center;",
+                            ),
+                        ),
+                        ui.div(
+                            ui.input_task_button(
+                                "submit_model_training",
+                                _("Start model training"),
+                                class_="btn-primary",
+                            ),
+                            class_="kh-train-actions",
+                        ),
+                        ui.tags.script(
+                            ui.HTML("""
+                                (function() {
+                                    var btn = document.getElementById('submit_model_training');
+                                    if (!btn) return;
+                                    btn.disabled = true;
+                                    var tid = setInterval(function() {
+                                        if (!document.body.contains(btn)) { clearInterval(tid); return; }
+
+                                        var srcSelect = document.querySelector('select[id*="model_training_labelstudio_project"]');
+                                        var src = srcSelect ? srcSelect.value : '';
+
+                                        if (src === '__labelstudio__') {
+                                            // LS project: enable if no warning note is visible
+                                            var note = document.getElementById('ls_project_task_warning');
+                                            btn.disabled = !!note;
+                                        } else {
+                                            // Manual upload: enable when file upload is complete
+                                            var bar = document.querySelector('#model_training_data_progress .progress-bar');
+                                            var fileUploaded = bar && bar.textContent.trim().toLowerCase() === 'upload complete';
+                                            btn.disabled = !fileUploaded;
+                                        }
+                                    }, 300);
+                                })();
+                            """)
+                        ),
+                        id="model_training_form",
+            )
+
+        return training_content
+
+
 
     @output
     @render.ui
@@ -324,22 +897,19 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             "https://github.com/floppyFK/kittyhack/wiki/%5BEN%5D-Kittyhack-v2.0-%E2%80%90-Train-own-AI%E2%80%90Models",
         )
 
-        # --- Server maintenance check when no training is in progress ---
-        server_status = None
         training_in_progress = is_valid_uuid4(CONFIG["MODEL_TRAINING"])
-        if not training_in_progress:
-            server_status = RemoteModelTrainer.get_server_status()
 
-            # Build Model Training section content depending on maintenance state or active training
+        # Build Model Training section content depending on maintenance state or active training
         if training_in_progress:
             # Already in progress: show existing status UI only
             training_content = ui.div(
+                ui.markdown(_model_server_in_progress_label()),
                 ui.markdown(
                     _("Model training is in progress.")
                     + (
                         " "
                         + _("You will receive an email when training is complete.")
-                        if CONFIG["EMAIL"]
+                        if CONFIG["EMAIL"] and _model_server_mode() == "public"
                         else ""
                     )
                 ),
@@ -351,252 +921,36 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                     _("Refresh training status"),
                     class_="btn-primary",
                 ),
-                ui.hr(),
-                ui.markdown(
-                    _("Your training ID:")
-                    + "\n\n"
-                    + f"`{CONFIG['MODEL_TRAINING']}`"
+                *(
+                    [
+                        ui.hr(),
+                        ui.markdown(
+                            _("Your training ID:")
+                            + "\n\n"
+                            + f"`{CONFIG['MODEL_TRAINING']}`"
+                        ),
+                        ui.help_text(_("Use this ID for support requests.")),
+                        ui.br(),
+                        ui.br(),
+                    ]
+                    if _model_server_mode() == "public"
+                    else []
                 ),
-                ui.help_text(_("Use this ID for support requests.")),
-                ui.br(),
-                ui.br(),
                 ui.input_task_button(
                     "btn_cancel_model_training",
                     _("Cancel training"),
                     class_="btn-danger",
                 ),
                 id="model_training_status",
+                class_="kh-train-card",
                 style_="text-align: center;",
             )
         else:
-            # No training in progress: check maintenance or timeout/error
-            is_maintenance = bool(
-                server_status and server_status.get("maintenance", False)
+            training_content = ui.div(
+                _model_server_chooser(),
+                ui.output_ui("ui_model_training_body"),
+                class_="kh-train-card",
             )
-            maintenance_msg = (server_status or {}).get("message", "")
-            if server_status is None:
-                # Timeout or request failure: inform user
-                training_content = ui.div(
-                    ui.markdown(
-                        f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
-                        + _(
-                            "Could not reach the model training server. Check your network connection and try again."
-                        )
-                    ),
-                    ui.br(),
-                    ui.markdown(
-                        _(
-                            "If it still does not work, the server may be temporarily unavailable."
-                        )
-                    ),
-                    style_="text-align: center;",
-                )
-            elif is_maintenance:
-                # Show maintenance notice and do not render upload inputs
-                msg = _(
-                    "The model training server is under maintenance. Try again later."
-                )
-                if maintenance_msg:
-                    msg += "\n\n" + maintenance_msg
-                training_content = ui.div(
-                    ui.markdown(f"{icon_svg('wrench', margin_left='-0.1em')} {msg}"),
-                    style_="text-align: center;",
-                )
-            else:
-                # Show the original upload form
-                model_training_base_model_input = ui.input_select(
-                    "model_training_base_model",
-                    _("YOLOv8 model"),
-                    {
-                        "n": "YOLOv8n",
-                        "s": "YOLOv8s",
-                        "m": "YOLOv8m",
-                        "l": "YOLOv8l",
-                        "x": "YOLOv8x",
-                    },
-                    selected="n",
-                    width="90%",
-                )
-                model_training_image_size_input = ui.input_select(
-                    "model_training_image_size",
-                    _("Image size"),
-                    {str(s): str(s) for s in YoloModel.get_supported_image_sizes()},
-                    selected="320",
-                    width="90%",
-                )
-
-                if not is_remote_mode():
-                    model_training_base_model_input = _disable_input(
-                        model_training_base_model_input
-                    )
-                    model_training_image_size_input = _disable_input(
-                        model_training_image_size_input
-                    )
-
-                    # Build training data source options
-                api_token = CONFIG.get("LABELSTUDIO_API_TOKEN", "").strip()
-                saved_project = CONFIG.get("LABELSTUDIO_PROJECT", "").strip()
-                project_title = (
-                    CONFIG.get("LABELSTUDIO_PROJECT_TITLE", "").strip() or saved_project
-                )
-                labelstudio_source_label = _("Export from Label Studio project")
-                if project_title:
-                    labelstudio_source_label += f" ({project_title})"
-
-                ls_training_source_options = {
-                    "__labelstudio__": labelstudio_source_label,
-                    "__manual__": _("Upload project ZIP manually"),
-                }
-                default_training_source = (
-                    "__labelstudio__"
-                    if (
-                        api_token
-                        and saved_project
-                        and LabelStudioInstall.get_labelstudio_status()
-                    )
-                    else "__manual__"
-                )
-
-                training_content = ui.div(
-                    ui.div(
-                        ui.div(
-                            ui.markdown(_("### Training data")),
-                            ui.input_select(
-                                "model_training_labelstudio_project",
-                                _("Training data source"),
-                                ls_training_source_options,
-                                selected=default_training_source,
-                                width="90%",
-                            ),
-                            ui.output_ui("ui_model_training_project_note"),
-                            ui.output_ui("ui_model_training_data_upload"),
-                            ui.input_text(
-                                "model_name",
-                                _("Model name (optional)"),
-                                placeholder=_("Enter a name for your model"),
-                                width="90%",
-                            ),
-                            ui.input_text(
-                                "user_name",
-                                _("Your name (optional)"),
-                                value=CONFIG["USER_NAME"],
-                                placeholder=_("Enter your name"),
-                                width="90%",
-                            ),
-                            ui.input_text(
-                                "email_notification",
-                                _("Email for notification (optional)"),
-                                value=CONFIG["EMAIL"],
-                                placeholder=_("Enter your email address"),
-                                width="90%",
-                            ),
-                            ui.help_text(
-                                _(
-                                    "Add an email address to receive a message when training is complete."
-                                )
-                            ),
-                            (
-                                ui.div(
-                                    ui.tags.button(
-                                        ui.tags.span(
-                                            "\u25b6",
-                                            class_="toggle-chevron",
-                                            style_="display:inline-block; transition:transform .2s;",
-                                        ),
-                                        " ",
-                                        _("Show advanced options"),
-                                        type="button",
-                                        class_="btn btn-link p-0 info-toggle-btn",
-                                        style_="text-decoration:none;",
-                                        **{
-                                            "data-bs-toggle": "collapse",
-                                            "data-bs-target": "#model_training_advanced_options_body",
-                                            "aria-expanded": "false",
-                                            "aria-controls": "model_training_advanced_options_body",
-                                        },
-                                    ),
-                                    ui.div(
-                                        ui.div(
-                                            ui.br(),
-                                            model_training_base_model_input,
-                                            ui.help_text(
-                                                _(
-                                                    "Base model (YOLOv8n/s/m/l/x): larger variants are usually more accurate, but run more slowly and need more CPU and RAM. "
-                                                    "Choose a smaller variant, such as 'n', if your computer cannot keep up in real time."
-                                                )
-                                            ),
-                                            model_training_image_size_input,
-                                            ui.help_text(
-                                                _(
-                                                    "Image size (imgsz): higher values may improve detection of small objects, but need more processing power and may reduce FPS."
-                                                )
-                                            ),
-                                            ui.help_text(
-                                                _(
-                                                    "Defaults: YOLOv8n and image size 320."
-                                                )
-                                            ),
-                                            class_="kh-info-box",
-                                        ),
-                                        id="model_training_advanced_options_body",
-                                        class_="collapse info-toggle-body",
-                                        style_="margin-top:6px;",
-                                    ),
-                                    class_="kh-info-toggle",
-                                    style_="width: 90%; text-align: left; margin: 0.75rem auto 0 auto;",
-                                )
-                                if is_remote_mode()
-                                else ui.div(
-                                    ui.br(),
-                                    ui.hr(),
-                                    ui.help_text(
-                                        _(
-                                            "Advanced model options are available when Kittyhack runs on a separate server in remote mode."
-                                        )
-                                    ),
-                                    style_="text-align: center;",
-                                ),
-                            ),
-                            ui.br(),
-                            ui.hr(),
-                            ui.br(),
-                            ui.input_task_button(
-                                "submit_model_training",
-                                _("Start model training"),
-                                class_="btn-primary",
-                            ),
-                            ui.tags.script(
-                                ui.HTML("""
-                                    (function() {
-                                        var btn = document.getElementById('submit_model_training');
-                                        if (!btn) return;
-                                        btn.disabled = true;
-                                        var tid = setInterval(function() {
-                                            if (!document.body.contains(btn)) { clearInterval(tid); return; }
-
-                                            var srcSelect = document.querySelector('select[id*="model_training_labelstudio_project"]');
-                                            var src = srcSelect ? srcSelect.value : '';
-
-                                            if (src === '__labelstudio__') {
-                                                // LS project: enable if no warning note is visible
-                                                var note = document.getElementById('ls_project_task_warning');
-                                                btn.disabled = !!note;
-                                            } else {
-                                                // Manual upload: enable when file upload is complete
-                                                var bar = document.querySelector('#model_training_data_progress .progress-bar');
-                                                var fileUploaded = bar && bar.textContent.trim().toLowerCase() === 'upload complete';
-                                                btn.disabled = !fileUploaded;
-                                            }
-                                        }, 300);
-                                    })();
-                                """)
-                            ),
-                            id="model_training_form",
-                            style_="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%;",
-                        ),
-                        style_="text-align: center; width: 100%;",
-                    ),
-                )
 
         ui_ai_training = ui.div(
             ui.div(
@@ -887,10 +1241,8 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                         _("Upload Label Studio training data (ZIP file)"),
                         accept=".zip",
                         multiple=False,
-                        width="90%",
+                        width="100%",
                     ),
-                    ui.br(),
-                    style_="width: 100%; max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; align-items: center;",
                 )
             else:
                 return ui.div()
@@ -901,10 +1253,8 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                     _("Upload Label Studio training data (ZIP file)"),
                     accept=".zip",
                     multiple=False,
-                    width="90%",
+                    width="100%",
                 ),
-                ui.br(),
-                style_="width: 100%; max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; align-items: center;",
             )
 
     @output
@@ -1152,8 +1502,12 @@ def register_ai_training(input, output, session, ctx: SessionContext):
             logging.info(f"[MODEL_TRAINING] User uploaded ZIP file: {zip_file_path}")
 
         model_name = input.model_name()
-        email_notification = input.email_notification()
-        user_name = input.user_name()
+        if _model_server_mode() == "public":
+            email_notification = input.email_notification()
+            user_name = input.user_name()
+        else:
+            email_notification = ""
+            user_name = ""
 
         # Advanced model parameters are only available in remote-mode.
         # In target-mode, the select inputs are not rendered in the DOM,
@@ -1257,6 +1611,13 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                 _(
                     "Could not reach the model training server. Check your network connection and try again."
                 ),
+                duration=15,
+                type="error",
+            )
+            return
+        elif code == "server_busy":
+            ui.notification_show(
+                _("A training job is already running on this model server."),
                 duration=15,
                 type="error",
             )

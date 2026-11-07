@@ -254,6 +254,29 @@
         sel.addEventListener('change', apply, true);
     }
 
+    function initModelServerToggle() {
+        // Show the public-server note, custom host/port, and the name/email
+        // fields that match #model_server_mode. Name and email are public only.
+        var sel = q('#model_server_mode');
+        if (!sel) return;
+        if (sel.getAttribute('data-kh-modelserver-bound') === '1') return;
+        sel.setAttribute('data-kh-modelserver-bound', '1');
+
+        function apply() {
+            var mode = '';
+            try { mode = String(sel.value || ''); } catch (e) {}
+            var publicNote = q('#model_server_public_note');
+            var customFields = q('#model_server_custom_fields');
+            var identity = q('#model_server_identity');
+            if (publicNote) publicNote.style.display = mode === 'public' ? '' : 'none';
+            if (customFields) customFields.style.display = mode === 'custom' ? '' : 'none';
+            if (identity) identity.style.display = mode === 'public' ? '' : 'none';
+        }
+
+        apply();
+        sel.addEventListener('change', apply, true);
+    }
+
     function initOriginalModelWarning() {
         // Show the v1/v2 warning only while an original Kittyflap model is selected.
         var sel = q('#selectedModel');
@@ -545,6 +568,7 @@
         // These run opportunistically when the corresponding UI is present.
         initIpCameraUrlToggle();
         initUpdateRepoToggle();
+        initModelServerToggle();
         initOriginalModelWarning();
         initRequirePirForCameraEntryToggle();
         initLogicToggles();

@@ -26,6 +26,119 @@
     max-width: 100%;
 }
 
+/* Model training card: one centered column, labels left, notes centered. */
+.kh-train-card {
+    width: min(100%, 34rem);
+    margin: 0.25rem auto 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    text-align: left;
+}
+
+.kh-train-card .shiny-input-container,
+.kh-train-card .form-group {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+}
+
+.kh-train-card .control-label {
+    display: block;
+    width: 100%;
+    text-align: left;
+    margin-bottom: 0.25rem;
+}
+
+.kh-train-card .kh-train-note,
+.kh-train-card .kh-train-note .help-block,
+.kh-train-card .kh-train-status {
+    text-align: center;
+    font-size: 0.92rem;
+    line-height: 1.45;
+    margin: 0.15rem 0 0.65rem;
+}
+
+.kh-train-card .shiny-input-container .help-block {
+    text-align: left;
+    font-size: 0.9rem;
+    margin: 0.2rem 0 0.45rem;
+}
+
+.kh-train-card .kh-train-heading {
+    margin: 1rem 0 0.7rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--bs-border-color, rgba(0, 0, 0, 0.12));
+    text-align: center;
+    font-size: 1.05rem;
+    font-weight: 650;
+    line-height: 1.3;
+}
+
+.kh-train-card .kh-train-actions {
+    display: flex;
+    justify-content: center;
+    margin-top: 0.9rem;
+}
+
+/* Local training has no training-ID block between these two buttons. */
+#model_training_status > .bslib-task-button + .bslib-task-button {
+    margin-top: 0.75rem;
+}
+
+.kh-train-card .kh-info-toggle {
+    width: 100% !important;
+    margin: 0.4rem 0 0 !important;
+    text-align: left;
+}
+
+.kh-train-card .kh-train-install-help {
+    text-align: center;
+    margin-top: 0.85rem !important;
+}
+
+.kh-train-card .kh-train-install-help .kh-info-box {
+    text-align: left;
+}
+
+.kh-train-card .kh-install-section-wrap {
+    margin-top: 0.75rem;
+}
+
+.kh-train-card .kh-install-section {
+    font-weight: 700;
+    font-size: 0.95rem;
+}
+
+.kh-train-card .kh-install-os-note {
+    margin: 0.45rem 0 0.2rem;
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.kh-train-card .kh-install-variant {
+    margin-top: 0.7rem;
+    font-weight: 650;
+    font-size: 0.9rem;
+}
+
+.kh-train-card .kh-install-command {
+    margin: 0.45rem 0;
+    padding: 0.55rem 0.7rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    text-align: left;
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+
+/* A status check must not fade the card while the request is still running. */
+.kh-train-card .recalculating,
+#ui_model_training_body.recalculating {
+    opacity: 1 !important;
+}
+
 /* Theme toggle button (in navbar title area) */
 .theme-toggle-btn {
     font-weight: 600;

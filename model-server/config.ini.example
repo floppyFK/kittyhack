@@ -2,6 +2,7 @@
 # Restart after a change:
 #   Linux:   systemctl restart kittyhack-model-server
 #   Windows: Restart-ScheduledTask -TaskName KittyhackModelServer
+#   macOS:   launchctl kickstart -k gui/$(id -u)/de.kittyhack.model-server
 #
 # Only the listen port and the training parameters below are read.
 

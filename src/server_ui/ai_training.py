@@ -166,6 +166,16 @@ def _model_server_windows_command(variant: str) -> str:
     )
 
 
+def _model_server_macos_command() -> str:
+    """Terminal command that installs the model server on a Mac with Apple silicon."""
+    lang = _setup_language()
+    return (
+        "curl -fsSL https://raw.githubusercontent.com/floppyFK/kittyhack/main/setup/install_model_server_macos.sh "
+        f"-o /tmp/install_model_server_macos.sh && bash /tmp/install_model_server_macos.sh install --lang {lang} "
+        "&& rm /tmp/install_model_server_macos.sh"
+    )
+
+
 def _model_server_install_variant(label: str, command: str):
     return ui.div(
         ui.tags.div(label, class_="kh-install-variant"),
@@ -248,6 +258,17 @@ def _model_server_install_help():
                     ),
                     _model_server_install_variant(_("Processor only"), _model_server_windows_command("cpu")),
                     _model_server_install_variant(_("NVIDIA graphics card"), _model_server_windows_command("cuda")),
+                ),
+                _model_server_install_section(
+                    "model_server_install_macos",
+                    _("macOS"),
+                    ui.tags.div(
+                        _(
+                            "Open Terminal as your normal user and run the following command. A Mac with Apple silicon (M1 or newer) and Python 3.10 to 3.13 are required, for example from Homebrew. Training runs on the Apple GPU."
+                        ),
+                        class_="kh-install-os-note",
+                    ),
+                    _model_server_install_variant(_("Apple silicon"), _model_server_macos_command()),
                 ),
                 class_="kh-info-box",
             ),

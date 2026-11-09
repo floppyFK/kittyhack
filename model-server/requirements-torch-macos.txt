@@ -1,0 +1,4 @@
+# macOS on Apple silicon. The default PyPI wheels include the Metal (mps)
+# backend, so no extra index is needed.
+torch==2.9.1
+torchvision==0.24.1

@@ -123,6 +123,7 @@ def test_send_chain_keeps_message_order():
 
 def test_full_outbound_queue_closes_the_session(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(shiny_compat, "MAX_QUEUED_MESSAGES", 2)
+    monkeypatch.setattr(shiny_compat, "OVERFLOW_GRACE_S", 0.05)
 
     async def scenario() -> None:
         from shiny import reactive
@@ -132,11 +133,38 @@ def test_full_outbound_queue_closes_the_session(monkeypatch: pytest.MonkeyPatch)
             await _send_message(session, {"n": 1})
             await _send_message(session, {"n": 2})
             await _send_message(session, {"n": 3})
+        # The burst is over the cap, but a client that is still reading gets
+        # the grace period before the session is closed.
+        await asyncio.sleep(0)
+        assert not session.close_called.is_set()
         await asyncio.wait_for(session.close_called.wait(), timeout=1)
         assert session._conn._closed is True
         session._conn.release.set()
         for _ in range(5):
             await asyncio.sleep(0)
+
+    asyncio.run(scenario())
+
+
+def test_drained_burst_does_not_close_the_session(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(shiny_compat, "MAX_QUEUED_MESSAGES", 2)
+    monkeypatch.setattr(shiny_compat, "OVERFLOW_GRACE_S", 0.2)
+
+    async def scenario() -> None:
+        from shiny import reactive
+
+        session = _Session(block=False)
+        async with reactive.lock():
+            for n in range(6):
+                await _send_message(session, {"n": n})
+        await asyncio.sleep(0.5)
+        assert not session.close_called.is_set()
+        assert session._conn._closed is False
+        assert [json.loads(message)["n"] for message in session._conn.messages] == list(
+            range(6)
+        )
+        assert session._kh_send_overflow is False
+        assert session._kh_send_pending_count == 0
 
     asyncio.run(scenario())
 

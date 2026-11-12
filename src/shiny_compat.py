@@ -27,9 +27,14 @@ logger = logging.getLogger(__name__)
 
 # A client that stops reading must not queue output forever. Live status is
 # every 0.25s, so 32 messages is a few seconds of backlog. 1 MiB bounds large
-# live-view frames. Past either cap the session is closed and its timers stop.
+# live-view frames. A short burst may cross either cap while the event loop is
+# busy (pip progress, for example). Those messages are still sent. The session
+# is closed only if the backlog is still over the cap after OVERFLOW_GRACE_S,
+# which means the client is not reading. One message larger than
+# MAX_QUEUED_BYTES is not queued and closes the session immediately.
 MAX_QUEUED_MESSAGES = 32
 MAX_QUEUED_BYTES = 1024 * 1024
+OVERFLOW_GRACE_S = 2.0
 _CLOSE_TIMEOUT_S = 2.0
 
 _installed = False
@@ -81,6 +86,7 @@ def _ensure_send_state(session: AppSession) -> None:
     session._kh_send_pending_count = 0  # type: ignore[attr-defined]
     session._kh_send_pending_bytes = 0  # type: ignore[attr-defined]
     session._kh_send_overflow = False  # type: ignore[attr-defined]
+    session._kh_overflow_watch = None  # type: ignore[attr-defined]
     session._kh_send_ready = True  # type: ignore[attr-defined]
 
 
@@ -90,9 +96,8 @@ def _enqueue_send(session: AppSession, message_str: str) -> asyncio.Future[None]
         return _completed_future()
 
     nbytes = len(message_str.encode("utf-8"))
-    next_count = session._kh_send_pending_count + 1  # type: ignore[attr-defined]
-    next_bytes = session._kh_send_pending_bytes + nbytes  # type: ignore[attr-defined]
-    if next_count > MAX_QUEUED_MESSAGES or next_bytes > MAX_QUEUED_BYTES:
+    # A single payload this large will not drain inside the grace period.
+    if nbytes > MAX_QUEUED_BYTES:
         session._kh_send_overflow = True  # type: ignore[attr-defined]
         asyncio.create_task(
             _close_for_overflow(session),
@@ -100,6 +105,8 @@ def _enqueue_send(session: AppSession, message_str: str) -> asyncio.Future[None]
         )
         return _completed_future()
 
+    next_count = session._kh_send_pending_count + 1  # type: ignore[attr-defined]
+    next_bytes = session._kh_send_pending_bytes + nbytes  # type: ignore[attr-defined]
     session._kh_send_pending_count = next_count  # type: ignore[attr-defined]
     session._kh_send_pending_bytes = next_bytes  # type: ignore[attr-defined]
     prev: asyncio.Future[None] = session._kh_send_chain  # type: ignore[attr-defined]
@@ -123,7 +130,42 @@ def _enqueue_send(session: AppSession, message_str: str) -> asyncio.Future[None]
 
     task = asyncio.create_task(_write(), name="kittyhack-ws-send")
     session._kh_send_chain = task  # type: ignore[attr-defined]
+    if next_count > MAX_QUEUED_MESSAGES or next_bytes > MAX_QUEUED_BYTES:
+        _arm_overflow_grace(session)
     return task
+
+
+def _queue_over_cap(session: AppSession) -> bool:
+    return (
+        session._kh_send_pending_count > MAX_QUEUED_MESSAGES  # type: ignore[attr-defined]
+        or session._kh_send_pending_bytes > MAX_QUEUED_BYTES  # type: ignore[attr-defined]
+    )
+
+
+def _arm_overflow_grace(session: AppSession) -> None:
+    watch = session._kh_overflow_watch  # type: ignore[attr-defined]
+    if watch is not None and not watch.done():
+        return
+    session._kh_overflow_watch = asyncio.create_task(  # type: ignore[attr-defined]
+        _overflow_grace(session),
+        name="kittyhack-ws-overflow-grace",
+    )
+
+
+async def _overflow_grace(session: AppSession) -> None:
+    """Close only when the backlog is still over the cap after the grace period."""
+    try:
+        await asyncio.sleep(OVERFLOW_GRACE_S)
+        if session._kh_send_overflow:  # type: ignore[attr-defined]
+            return
+        if not _queue_over_cap(session):
+            return
+        session._kh_send_overflow = True  # type: ignore[attr-defined]
+        await _close_for_overflow(session)
+    finally:
+        current = asyncio.current_task()
+        if getattr(session, "_kh_overflow_watch", None) is current:
+            session._kh_overflow_watch = None  # type: ignore[attr-defined]
 
 
 def _completed_future() -> asyncio.Future[None]:

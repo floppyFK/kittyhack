@@ -74,6 +74,33 @@ def test_update_kittyhack_button_id_is_valid_shiny_id():
     assert all("." not in button_id for button_id in button_ids)
 
 
+def test_labelstudio_actions_ignore_restored_clicks():
+    """A reconnect must not repeat install, update, remove, start, or stop."""
+    text = (SERVER_UI / "ai_training.py").read_text(encoding="utf-8")
+    for event in (
+        "input.btn_labelstudio_install, ignore_init=True",
+        "input.btn_labelstudio_update, ignore_init=True",
+        "input.btn_labelstudio_remove_ok, ignore_init=True",
+        "input.btn_labelstudio_stop, ignore_init=True",
+        "input.btn_labelstudio_start, ignore_init=True",
+    ):
+        assert event in text
+    assert "await asyncio.sleep(0.4)" in text
+    assert "threading.Thread(" in text
+
+
+def test_labelstudio_job_is_single_flight():
+    from src.server_ui import ai_training as training
+
+    assert training._try_begin_labelstudio_job() is True
+    try:
+        assert training._labelstudio_job_is_running() is True
+        assert training._try_begin_labelstudio_job() is False
+    finally:
+        training._end_labelstudio_job()
+    assert training._labelstudio_job_is_running() is False
+
+
 def test_statistics_tab_is_wired():
     """Statistics tab must be registered in nav, routing, and register_all."""
     init = (SERVER_UI / "__init__.py").read_text(encoding="utf-8")

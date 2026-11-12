@@ -3,6 +3,8 @@
 import os
 import time as tm
 import tempfile
+import threading
+from collections.abc import Callable
 from src.clock import monotonic_time
 from shiny import render, ui, reactive
 import logging
@@ -257,6 +259,125 @@ def _model_server_install_help():
         ),
         class_="kh-info-toggle kh-train-install-help",
     )
+
+
+_labelstudio_job_lock = threading.Lock()
+_labelstudio_job_running = False
+
+
+def _labelstudio_job_is_running() -> bool:
+    with _labelstudio_job_lock:
+        return _labelstudio_job_running
+
+
+def _try_begin_labelstudio_job() -> bool:
+    global _labelstudio_job_running
+    with _labelstudio_job_lock:
+        if _labelstudio_job_running:
+            return False
+        _labelstudio_job_running = True
+        return True
+
+
+def _end_labelstudio_job() -> None:
+    global _labelstudio_job_running
+    with _labelstudio_job_lock:
+        _labelstudio_job_running = False
+
+
+def _notify_labelstudio_job_busy() -> None:
+    ui.notification_show(
+        _(
+            "A Label Studio install or update is already running. Wait for it to finish."
+        ),
+        duration=8,
+        type="warning",
+    )
+
+
+async def _run_labelstudio_pip_job(
+    work: Callable[[Callable[..., None]], bool],
+    *,
+    min_value: int,
+    max_value: int,
+) -> bool | None:
+    """Run a Label Studio pip job off the event loop.
+
+    The worker keeps only the latest progress line. This handler copies that
+    line into the progress panel a few times a second, so pip output does not
+    flood the websocket. Returns None when another job is already running.
+    """
+    if not _try_begin_labelstudio_job():
+        _notify_labelstudio_job_busy()
+        return None
+
+    state_lock = threading.Lock()
+    state: dict[str, object] = {
+        "step": min_value,
+        "message": "",
+        "detail": "",
+        "done": False,
+        "ok": False,
+        "version": None,
+    }
+
+    def progress(step: object, message: object, detail: object) -> None:
+        with state_lock:
+            state["step"] = step
+            state["message"] = message or ""
+            state["detail"] = detail or ""
+
+    def worker() -> None:
+        ok = False
+        version = None
+        try:
+            ok = bool(work(progress))
+            if ok:
+                version = LabelStudioInstall.get_labelstudio_installed_version()
+                if version:
+                    CONFIG["LABELSTUDIO_VERSION"] = version
+        except Exception:
+            logging.exception("[SYSTEM] Label Studio job failed")
+            ok = False
+        finally:
+            with state_lock:
+                state["ok"] = ok
+                state["version"] = version
+                state["done"] = True
+            _end_labelstudio_job()
+
+    thread = threading.Thread(
+        target=worker,
+        name="kittyhack-labelstudio-job",
+        daemon=True,
+    )
+    try:
+        thread.start()
+    except Exception:
+        _end_labelstudio_job()
+        raise
+
+    last_progress: tuple[object, object, object] | None = None
+    with ui.Progress(min=min_value, max=max_value) as progress_ui:
+        while True:
+            with state_lock:
+                step = state["step"]
+                message = state["message"]
+                detail = state["detail"]
+                done = bool(state["done"])
+                ok = bool(state["ok"])
+            current = (step, message, detail)
+            if current != last_progress:
+                progress_value = step if isinstance(step, (int, float)) else min_value
+                progress_ui.set(
+                    progress_value,
+                    message=str(message or ""),
+                    detail=str(detail or ""),
+                )
+                last_progress = current
+            if done:
+                return ok
+            await asyncio.sleep(0.4)
 
 
 def register_ai_training(input, output, session, ctx: SessionContext):
@@ -1636,79 +1757,106 @@ def register_ai_training(input, output, session, ctx: SessionContext):
 
         # --- Label Studio installation and update ---
 
+    # ignore_init: a reconnect restores the task-button click count. The first
+    # flush of the new session must not start pip, stop, or remove again.
     @reactive.Effect
-    @reactive.event(input.btn_labelstudio_install)
-    def btn_labelstudio_install():
-        with ui.Progress(min=1, max=5) as p:
-            # Check available disk space
-            if SystemInfo.get_free_disk_space() < 1500:
-                ui.notification_show(
-                    _(
-                        "Label Studio needs at least 1.5 GB of free space. Free some space and try again."
-                    ),
-                    duration=15,
-                    type="error",
-                )
-                return
+    @reactive.event(input.btn_labelstudio_install, ignore_init=True)
+    async def btn_labelstudio_install():
+        if _labelstudio_job_is_running():
+            _notify_labelstudio_job_busy()
+            return
 
-            def update_progress(step, message, detail):
-                p.set(step, message=message, detail=detail)
-
-                # Start the installation with progress updates
-
-            success = LabelStudioInstall.install_labelstudio(
-                progress_callback=update_progress
+        installed = LabelStudioInstall.get_labelstudio_installed_version()
+        if installed:
+            # A restored click after a finished install must not delete the venv.
+            # A failed install leaves no version, so that attempt can be repeated.
+            CONFIG["LABELSTUDIO_VERSION"] = installed
+            ui.notification_show(
+                _("Label Studio is already installed."),
+                duration=8,
+                type="message",
             )
+            reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+            return
 
-            if success:
-                ui.notification_show(
-                    _("Label Studio installed. You can start it now."),
-                    duration=15,
-                    type="message",
-                )
-                CONFIG["LABELSTUDIO_VERSION"] = (
-                    LabelStudioInstall.get_labelstudio_installed_version()
-                )
-            else:
-                ui.notification_show(
-                    _(
-                        "Could not install Label Studio. Check the logs for details."
-                    ),
-                    duration=None,
-                    type="error",
-                )
+        if SystemInfo.get_free_disk_space() < 1500:
+            ui.notification_show(
+                _(
+                    "Label Studio needs at least 1.5 GB of free space. Free some space and try again."
+                ),
+                duration=15,
+                type="error",
+            )
+            return
+
+        success = await _run_labelstudio_pip_job(
+            lambda progress: LabelStudioInstall.install_labelstudio(
+                progress_callback=progress
+            ),
+            min_value=1,
+            max_value=5,
+        )
+        if success is None:
+            return
+
+        if success:
+            ui.notification_show(
+                _("Label Studio installed. You can start it now."),
+                duration=15,
+                type="message",
+            )
+        else:
+            ui.notification_show(
+                _(
+                    "Could not install Label Studio. Check the logs for details."
+                ),
+                duration=None,
+                type="error",
+            )
 
         reload_trigger_ai.set(reload_trigger_ai.get() + 1)
 
     @reactive.Effect
-    @reactive.event(input.btn_labelstudio_update)
-    def btn_labelstudio_update():
-        with ui.Progress(min=1, max=2) as p:
+    @reactive.event(input.btn_labelstudio_update, ignore_init=True)
+    async def btn_labelstudio_update():
+        if _labelstudio_job_is_running():
+            _notify_labelstudio_job_busy()
+            return
 
-            def update_progress(step, message, detail):
-                p.set(step, message=message, detail=detail)
-
-                # Start the installation with progress updates
-
-            success = LabelStudioInstall.update_labelstudio(
-                progress_callback=update_progress
+        installed = LabelStudioInstall.get_labelstudio_installed_version()
+        latest = LabelStudioInstall.get_labelstudio_latest_version()
+        if installed and latest and installed == latest:
+            CONFIG["LABELSTUDIO_VERSION"] = installed
+            ui.notification_show(
+                _("Label Studio is already up to date."),
+                duration=8,
+                type="message",
             )
+            reload_trigger_ai.set(reload_trigger_ai.get() + 1)
+            return
 
-            if success:
-                ui.notification_show(
-                    _("Label Studio updated. You can start it now."),
-                    duration=15,
-                    type="message",
-                )
-                CONFIG["LABELSTUDIO_VERSION"] = (
-                    LabelStudioInstall.get_labelstudio_installed_version()
-                )
-            else:
-                ui.notification_show(
-                    _("Could not update Label Studio. Check the logs for details."),
-                    duration=None,
-                    type="error",
-                )
+        success = await _run_labelstudio_pip_job(
+            lambda progress: LabelStudioInstall.update_labelstudio(
+                progress_callback=progress
+            ),
+            min_value=1,
+            max_value=2,
+        )
+        if success is None:
+            return
+
+        if success:
+            ui.notification_show(
+                _("Label Studio updated. You can start it now."),
+                duration=15,
+                type="message",
+            )
+        else:
+            ui.notification_show(
+                _("Could not update Label Studio. Check the logs for details."),
+                duration=None,
+                type="error",
+            )
 
         reload_trigger_ai.set(reload_trigger_ai.get() + 1)
 
@@ -1731,7 +1879,7 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         ui.modal_show(m)
 
     @reactive.effect
-    @reactive.event(input.btn_labelstudio_remove_ok)
+    @reactive.event(input.btn_labelstudio_remove_ok, ignore_init=True)
     def btn_labelstudio_remove_ok():
         with ui.Progress(min=1, max=2) as p:
             p.set(1, message=_("Removing Label Studio"), detail=_("Please wait…"))
@@ -1756,8 +1904,8 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         reload_trigger_ai.set(reload_trigger_ai.get() + 1)
 
     @reactive.Effect
-    @reactive.event(input.btn_labelstudio_stop)
-    def stop_labelstudio():
+    @reactive.event(input.btn_labelstudio_stop, ignore_init=True)
+    async def stop_labelstudio():
         ServiceOps.systemctl("stop", "labelstudio")
         ServiceOps.systemctl("disable", "labelstudio")
 
@@ -1778,14 +1926,12 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                     reload_trigger_ai.set(reload_trigger_ai.get() + 1)
                     return
 
-                    # Update progress
                 progress_percent = int(
                     ((monotonic_time() - start_time) / max_wait_time) * 100
                 )
                 p.set(progress_percent)
-                tm.sleep(0.5)
+                await asyncio.sleep(0.5)
 
-                # If we get here, the process didn't stop within the timeout period
         ui.notification_show(
             _("Label Studio may still be running. Check the logs for details."),
             duration=5,
@@ -1794,8 +1940,8 @@ def register_ai_training(input, output, session, ctx: SessionContext):
         reload_trigger_ai.set(reload_trigger_ai.get() + 1)
 
     @reactive.Effect
-    @reactive.event(input.btn_labelstudio_start)
-    def start_labelstudio():
+    @reactive.event(input.btn_labelstudio_start, ignore_init=True)
+    async def start_labelstudio():
         ServiceOps.systemctl("enable", "labelstudio")
         ServiceOps.systemctl("start", "labelstudio")
 
@@ -1824,14 +1970,12 @@ def register_ai_training(input, output, session, ctx: SessionContext):
                         reload_trigger_ai.set(reload_trigger_ai.get() + 1)
                         return
 
-                        # Update progress
                 progress_percent = int(
                     ((monotonic_time() - start_time) / max_wait_time) * 100
                 )
                 p.set(progress_percent)
-                tm.sleep(0.5)
+                await asyncio.sleep(0.5)
 
-                # If we get here, the process didn't start within the timeout period
         ui.notification_show(
             _("Label Studio may not have started. Check the logs for details."),
             duration=5,

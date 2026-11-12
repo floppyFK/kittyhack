@@ -822,6 +822,17 @@ msgstr ""
 msgid "Label Studio installed. You can start it now."
 msgstr "Label Studio wurde installiert. Du kannst es jetzt starten."
 
+msgid "Label Studio is already installed."
+msgstr "Label Studio ist bereits installiert."
+
+msgid "Label Studio is already up to date."
+msgstr "Label Studio ist bereits auf dem neuesten Stand."
+
+msgid "A Label Studio install or update is already running. Wait for it to finish."
+msgstr ""
+"Eine Installation oder Aktualisierung von Label Studio läuft bereits. "
+"Warte, bis sie fertig ist."
+
 msgid "Could not install Label Studio. Check the logs for details."
 msgstr "Label Studio konnte nicht installiert werden. Prüfe die Protokolle."
 

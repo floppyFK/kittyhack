@@ -4975,6 +4975,15 @@ msgstr "Öffne PowerShell als Administrator und führe einen der folgenden Befeh
 msgid "Processor only"
 msgstr "Nur Prozessor"
 
+msgid "macOS"
+msgstr "macOS"
+
+msgid "Open Terminal as your normal user and run the following command. A Mac with Apple silicon (M1 or newer) and Python 3.10 to 3.13 are required, for example from Homebrew. Training runs on the Apple GPU."
+msgstr "Öffne das Terminal als normaler Benutzer und führe den folgenden Befehl aus. Benötigt werden ein Mac mit Apple-Chip (M1 oder neuer) und Python 3.10 bis 3.13, zum Beispiel aus Homebrew. Das Training läuft auf der Apple-GPU."
+
+msgid "Apple silicon"
+msgstr "Apple-Chip"
+
 msgid "NVIDIA graphics card"
 msgstr "NVIDIA-Grafikkarte"
 

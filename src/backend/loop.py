@@ -24,6 +24,7 @@ from src.event_timeline import TimelineAction, timeline_append
 from src.backend.constants import (
     TAG_TIMEOUT,
     RFID_READER_OFF_DELAY,
+    RFID_FIELD_RETRY_SECONDS,
     OPEN_OUTSIDE_TIMEOUT,
     MAX_UNLOCK_TIME,
     LAZY_CAT_DELAY_PIR_MOTION,
@@ -179,6 +180,12 @@ def backend_main(
     tag_id_from_video = None
     tag_timestamp = 0.0
     tag_seen_mono = 0.0
+    # Remote mode echoes the antenna flag from the flap. Request it once, then
+    # retry slowly if the echo never arrives, instead of every control tick.
+    rfid_field_requested = False
+    rfid_field_requested_mono = 0.0
+    rfid_field_echo_warned = False
+    remote_observer_logged = False
     motion_outside = 0
     motion_inside = 0
     motion_outside_raw = 0
@@ -490,6 +497,18 @@ def backend_main(
         suppress_inside_motion_block = True
         _reset_inside_unlock_escalation("fast in/out crossing")
 
+    def _remote_link_up() -> bool:
+        """True on the flap, and on the remote only while the control socket is held.
+
+        A half-open socket after a network cut leaves this false once the client
+        drops it. The flap then runs kittyhack itself, so this device must not
+        record camera-only passages as if it still owned the door.
+        """
+        if not is_remote_mode():
+            return True
+        from src.remote.control_client import RemoteControlClient
+        return RemoteControlClient.instance().has_control()
+
     def _finalize_motion_block(trigger_source: str = "outside_motion_end", locks_already_applied: bool = False):
         """Conclude the motion block: lock if needed, classify event, persist DB/MQTT, reset state."""
         nonlocal unlock_inside_decision_made
@@ -515,6 +534,7 @@ def backend_main(
         nonlocal pending_fast_exit_finalize_mono
         nonlocal entry_unlocked_in_block
         nonlocal entry_unlocked_mono
+        nonlocal remote_observer_logged
         nonlocal event_cooldown_until_mono
         nonlocal pending_exit_rfid_check
         nonlocal deferred_entry_due_to_exit
@@ -646,7 +666,16 @@ def backend_main(
         persist_at = DateTimeUtil.get_utc_date_string(
             first_motion_outside_tm if first_motion_outside_tm > 0.0 else _wall()
         )
-        should_write_pictures = (
+        record_here = _remote_link_up()
+        if record_here:
+            remote_observer_logged = False
+        elif not remote_observer_logged:
+            logging.warning(
+                "[BACKEND] Remote control link is down. Motion is not stored on this device; "
+                "the flap runs standalone until the link returns."
+            )
+            remote_observer_logged = True
+        should_write_pictures = record_here and (
             (len(ids_exceeding_mouse_th) + len(ids_exceeding_nomouse_th) + len(ids_exceeding_own_cat_th) > 0)
             or (event_type in [EventType.CAT_WENT_OUTSIDE])
             or (tag_id is not None)
@@ -662,26 +691,28 @@ def backend_main(
             logging.info(f"[BACKEND] Minimal threshold exceeded or tag ID detected. Images will be written to the database. Updated block ID for {len(img_ids_for_motion_block)} elements to '{motion_block_id}' and tag ID to '{tag_id if tag_id is not None else ''}'")
             timeline_snapshot = list(motion_timeline_entries)
         else:
-            logging.info(f"[BACKEND] No elements found that exceed the minimal threshold '{CONFIG['MIN_THRESHOLD']}' and no tag ID was detected. No picture database entry will be created.")
+            if record_here:
+                logging.info(f"[BACKEND] No elements found that exceed the minimal threshold '{CONFIG['MIN_THRESHOLD']}' and no tag ID was detected. No picture database entry will be created.")
             if len(img_ids_for_motion_block) > 0:
                 for element in img_ids_for_motion_block:
                     image_buffer.delete_by_id(element)
             timeline_snapshot = None
 
-        db_thread = threading.Thread(
-            target=_persist_concluded_motion,
-            args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, all_events),
-            kwargs={
-                "write_pictures": should_write_pictures,
-                "timeline_entries": timeline_snapshot,
-                "rfid": persist_rfid,
-                "cat_name": persist_name,
-                "created_at": persist_at,
-                "extra_infos": verdict_snapshot,
-            },
-            daemon=True,
-        )
-        db_thread.start()
+        if record_here:
+            db_thread = threading.Thread(
+                target=_persist_concluded_motion,
+                args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, all_events),
+                kwargs={
+                    "write_pictures": should_write_pictures,
+                    "timeline_entries": timeline_snapshot,
+                    "rfid": persist_rfid,
+                    "cat_name": persist_name,
+                    "created_at": persist_at,
+                    "extra_infos": verdict_snapshot,
+                },
+                daemon=True,
+            )
+            db_thread.start()
 
         first_motion_outside_tm = 0.0
         first_motion_inside_tm = 0.0
@@ -699,7 +730,7 @@ def backend_main(
         if CONFIG.get('IMMEDIATE_LOCK_AFTER_PASSAGE'):
             event_cooldown_until_mono = _mono() + EVENT_COOLDOWN_SECONDS
 
-        if mqtt_bridge.mqtt_publisher:
+        if record_here and mqtt_bridge.mqtt_publisher:
             if tag_id is not None:
                 cat_name = get_cat_name(tag_id)
             else:
@@ -743,7 +774,7 @@ def backend_main(
         nonlocal known_rfid_tags, last_auto_model_recover_mono, last_fps_metadata_write_mono, last_inside_crossing, last_inside_raw_crossing, last_low_fps_check_mono, last_motion_inside_mono, last_motion_inside_raw_mono
         nonlocal last_motion_outside_mono, last_motion_outside_tm, last_outside_crossing, last_written_effective_fps, low_fps_window_count, motion_block_id, motion_inside, motion_inside_mono
         nonlocal motion_inside_raw, motion_inside_raw_mono, motion_outside, motion_outside_mono, motion_outside_raw, pending_exit_rfid_check, pending_fast_exit_finalize_mono, previous_use_camera_for_motion
-        nonlocal rfid_thread, suppress_entry_decision_after_fast_exit, suppress_inside_motion_block, suppress_outside_motion_block, tag_id, tag_id_from_video, tag_id_valid, tag_seen_mono
+        nonlocal rfid_thread, rfid_field_echo_warned, rfid_field_requested, rfid_field_requested_mono, remote_observer_logged, suppress_entry_decision_after_fast_exit, suppress_inside_motion_block, suppress_outside_motion_block, tag_id, tag_id_from_video, tag_id_valid, tag_seen_mono
         nonlocal tag_timestamp, timeline_no_prey_logged, timeline_prey_logged, timeline_rfid_cat_logged, timeline_video_cat_logged, unlock_inside, unlock_inside_decision_made, unlock_inside_tm
         nonlocal unlock_outside_tm, wait_for_outside_rising_after_exit
         nonlocal mouse_check_conditions, motion_source, use_camera_for_motion
@@ -1018,12 +1049,33 @@ def backend_main(
             if motion_outside == 0 and motion_inside_raw == 0:
                 suppress_entry_decision_after_fast_exit = False
 
-        # Start the RFID thread with infinite read cycles, if it is not running and motion is detected outside or inside
-        # Note: Check this here to enable the RFID reader as soon as motion is detected
-        if motion_outside == 1 or motion_inside == 1:
-            if rfid.get_field() == False and (tag_id == None or tag_id not in known_rfid_tags):
+        # Enable the RFID antenna as soon as motion is detected. On the flap the
+        # flag flips immediately. In remote mode it only flips when the flap
+        # echoes it, so a missing echo must not re-arm the antenna every tick.
+        if rfid.get_field():
+            rfid_field_requested = False
+            rfid_field_echo_warned = False
+        elif (
+            _remote_link_up()
+            and (motion_outside == 1 or motion_inside == 1)
+            and (tag_id == None or tag_id not in known_rfid_tags)
+        ):
+            now_mono = _mono()
+            retry_due = (not rfid_field_requested) or (
+                (now_mono - rfid_field_requested_mono) >= RFID_FIELD_RETRY_SECONDS
+            )
+            if retry_due:
                 rfid.set_field(True)
-                logging.info(f"[BACKEND] Enabled RFID field.")
+                if rfid_field_requested and not rfid_field_echo_warned:
+                    logging.warning(
+                        "[BACKEND] RFID field was requested but is still off. "
+                        f"Retrying every {RFID_FIELD_RETRY_SECONDS:.0f}s."
+                    )
+                    rfid_field_echo_warned = True
+                elif not rfid_field_requested:
+                    logging.info("[BACKEND] Enabled RFID field.")
+                rfid_field_requested = True
+                rfid_field_requested_mono = now_mono
         
         # Outside motion detected. Besides the rising edge, a block is also started while outside motion
         # persists without an outside block start: after MAX_MOTION_BLOCK_SECONDS finalized the block, or
@@ -1328,10 +1380,10 @@ def backend_main(
                             cat_name=get_cat_name(matching_tag),
                         )
             
-        # Check for a valid RFID tag
-        if ( tag_id and
-            tag_id != previous_tag_id and 
-            rfid.get_field() ):
+        # A tag reported by the reader is real even when the field echo has not
+        # arrived yet. Gating on the echo dropped chips for the whole visit
+        # whenever the flap never confirmed the antenna.
+        if tag_id and tag_id != previous_tag_id:
             logging.info(f"[BACKEND] RFID tag detected: '{tag_id}'.")
             if timeline_rfid_cat_logged != tag_id:
                 timeline_rfid_cat_logged = tag_id

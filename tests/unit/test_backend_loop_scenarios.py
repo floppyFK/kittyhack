@@ -52,6 +52,44 @@ def test_entry_allow_known_rfid(harness):
     assert harness.magnets.get_inside_state() is True
 
 
+def test_entry_accepts_tag_while_field_echo_stays_false(harness):
+    """A chip the reader already reported must open the door before the field echo."""
+    baseconfig.CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter.KNOWN
+    baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = False
+
+    def ignore_enable(state):
+        if state:
+            return
+        harness.rfid.field_state = False
+
+    harness.rfid.set_field = ignore_enable
+    harness.set_outside(True)
+    harness.inject_rfid("CAT001")
+    harness.advance(2.0)
+    harness.pump(5)
+
+    assert harness.rfid.get_field() is False
+    assert harness.magnets.get_inside_state() is True
+
+
+def test_rfid_field_enable_is_not_repeated_every_tick(harness, monkeypatch):
+    monkeypatch.setattr(loop_mod, "RFID_FIELD_RETRY_SECONDS", 5.0)
+    calls: list[bool] = []
+
+    def record(state):
+        calls.append(bool(state))
+
+    harness.rfid.set_field = record
+    harness.rfid.get_field = lambda: False
+    harness.set_outside(True)
+    harness.pump(4)
+    assert calls == [True]
+
+    harness.advance(5.0)
+    harness.pump(2)
+    assert calls == [True, True]
+
+
 def test_entry_deny_unknown_rfid(harness):
     baseconfig.CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter.KNOWN
     baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = False

@@ -71,6 +71,51 @@ def _is_jpeg_b64(value: str) -> bool:
     return all(ch.isalnum() or ch in "+/=" for ch in value)
 
 
+def resolve_event_subject(
+    rfid,
+    seen: dict | None,
+    cat_label_names,
+    name_to_rfid: dict,
+    min_threshold: float,
+) -> tuple[str, str | None]:
+    """Choose who a last-events row names when the chip column may be empty.
+
+    A chip on the event wins. Otherwise the strongest camera class at or above
+    ``min_threshold`` is used: a registered cat name maps to that cat's RFID,
+    a generic ``cat`` class is unknown, and a person is a person.
+
+    Returns ``("chip"|"camera", rfid)`` or ``("unknown"|"person"|"none", None)``.
+    """
+    if rfid:
+        return "chip", str(rfid)
+    seen = seen or {}
+    labels = {str(name).lower() for name in cat_label_names}
+    cat_hits = [
+        (str(name), float(prob or 0.0))
+        for name, prob in seen.items()
+        if str(name).lower() in labels
+    ]
+    best_name, cat_prob = max(cat_hits, key=lambda item: item[1]) if cat_hits else ("", 0.0)
+    person_prob = float(seen.get("person", 0.0) or 0.0)
+    generic_cat = float(seen.get("cat", 0.0) or 0.0)
+    threshold = float(min_threshold or 0.0)
+    if (
+        cat_prob >= threshold
+        and cat_prob > 0.0
+        and cat_prob >= person_prob
+        and cat_prob >= generic_cat
+    ):
+        matched = name_to_rfid.get(str(best_name).lower())
+        if matched:
+            return "camera", matched
+        return "unknown", None
+    if generic_cat >= threshold and generic_cat > 0.0 and generic_cat >= person_prob:
+        return "unknown", None
+    if person_prob >= threshold and person_prob > 0.0:
+        return "person", None
+    return "none", None
+
+
 def _cat_avatar_html(name: str, thumb_b64: str | None) -> str:
     """Round photo, or the first letter of the name when there is no photo."""
     safe_title = html_module.escape(name or "", quote=True)
@@ -748,23 +793,34 @@ def register_live_view(input, output, session, ctx: SessionContext):
 
             block_ids = [int(b) for b in df_events["block_id"].tolist()]
             cat_label_names = [str(n).lower() for n in cat_name_dict.values()]
+            name_to_rfid = {
+                str(name).lower(): rfid_tag
+                for rfid_tag, name in cat_name_dict.items()
+                if name
+            }
             block_object_max = EventsRepo.db_get_block_object_max(
-                CONFIG["KITTYHACK_DATABASE_PATH"], block_ids, cat_label_names + ["person"]
+                CONFIG["KITTYHACK_DATABASE_PATH"],
+                block_ids,
+                cat_label_names + ["person", "cat"],
             )
             min_threshold = float(CONFIG.get("MIN_THRESHOLD", 0.0) or 0.0)
 
             def event_subject(row):
-                # Events without a microchip: show what the camera saw instead of "No microchip found".
-                # A cat that could not be assigned to a registered cat is "Unknown cat", persons are
-                # "Person". If both were seen, the more confident detection wins.
-                if row["rfid"]:
-                    return cat_name_with_icon(row["rfid"])
-                seen = block_object_max.get(int(row["block_id"]), {})
-                cat_prob = max([p for name, p in seen.items() if name in cat_label_names] or [0.0])
-                person_prob = seen.get("person", 0.0)
-                if cat_prob >= min_threshold and cat_prob > 0.0 and cat_prob >= person_prob:
+                # A chip on the event names that cat. Without a chip, a camera
+                # class that matches a registered cat keeps that name. "Unknown
+                # cat" is only a cat the camera could not assign.
+                kind, subject_rfid = resolve_event_subject(
+                    row["rfid"],
+                    block_object_max.get(int(row["block_id"]), {}),
+                    cat_label_names,
+                    name_to_rfid,
+                    min_threshold,
+                )
+                if kind in ("chip", "camera") and subject_rfid:
+                    return cat_name_with_icon(subject_rfid)
+                if kind == "unknown":
                     label = _("Unknown cat")
-                elif person_prob >= min_threshold and person_prob > 0.0:
+                elif kind == "person":
                     label = _("Person")
                 else:
                     return cat_name_with_icon(row["rfid"])

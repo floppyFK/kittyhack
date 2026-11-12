@@ -535,15 +535,23 @@ class Rfid:
         Args:
             state (bool): Desired state of the RFID field. True to enable, False to disable.
         """
+        state = bool(state)
         if self.simulate_kittyflap:
+            if self.field_state == state:
+                return
             logging.info(f"[RFID] Simulation: RFID field would be {'enabled' if state else 'disabled'}.")
             self.field_state = state
             return
 
-        # Use the shared command queue for setting the RFID field
-        self.command_queue.queue_command("rfid", self._set_field_hardware, state)
-        # Update the field state immediately for status queries
-        self.field_state = state
+        # The shared queue runs one GPIO command per second. A repeated request
+        # for the state we already latched would pile up behind that delay and
+        # keep the antenna off for the whole visit.
+        with self.thread_lock:
+            if self.field_state == state:
+                return
+            self.command_queue.queue_command("rfid", self._set_field_hardware, state)
+            # Update the field state immediately for status queries
+            self.field_state = state
         logging.info(f"[RFID] RFID field {'enable' if state else 'disable'} command queued.")
 
     def _set_field_hardware(self, state: bool):

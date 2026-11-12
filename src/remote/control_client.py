@@ -15,6 +15,13 @@ from src.baseconfig import CONFIG, restore_remote_only_settings, snapshot_remote
 from src.clock import monotonic_time
 from src.helper import sigterm_monitor
 
+# A blackholed route (switch between flap WLAN and this host) must not leave
+# connect() or send() blocked. The flap drops control after its own timeout and
+# starts kittyhack locally; this client has to notice and take control again.
+_WS_OPEN_TIMEOUT_S = 10.0
+_WS_SEND_TIMEOUT_S = 5.0
+_RFID_FIELD_RESEND_S = 5.0
+
 
 @dataclass
 class RemoteStates:
@@ -102,6 +109,11 @@ class RemoteControlClient:
             "truncated": False,
             "received_at": 0.0,
         }
+        # Last antenna request sent to the flap, so a 10 Hz caller does not
+        # refill the socket while the echo is still outstanding.
+        self._rfid_field_pending: bool | None = None
+        self._rfid_field_sent_mono = 0.0
+        self._rfid_field_echo_warned = False
 
     @classmethod
     def instance(cls) -> "RemoteControlClient":
@@ -125,6 +137,10 @@ class RemoteControlClient:
 
     def get_field(self) -> bool:
         return self.get_states().rfid_field
+
+    def has_control(self) -> bool:
+        """True after take_control until the socket drops."""
+        return self._ready_for_use.is_set()
 
     def wait_until_ready(self, timeout: float = 30.0) -> bool:
         return self._ready_for_use.wait(timeout=timeout)
@@ -184,7 +200,33 @@ class RemoteControlClient:
             self._pending_magnet_commands.clear()
 
     def set_rfid_field(self, enabled: bool) -> None:
-        self._send_async({"type": "rfid", "field": bool(enabled)})
+        """Ask the flap to switch the RFID antenna, at most once per retry interval.
+
+        The backend calls this on every tick while the echoed field is off.
+        Sending each call fills the socket and, on the flap, the 1-second GPIO
+        queue, so the antenna never turns on during a visit.
+        """
+        enabled = bool(enabled)
+        now = monotonic_time()
+        with self._lock:
+            pending = self._rfid_field_pending
+            sent_mono = self._rfid_field_sent_mono
+            if pending is not None and pending == enabled and (now - sent_mono) < _RFID_FIELD_RESEND_S:
+                return
+            if pending is not None and pending == enabled and not self._rfid_field_echo_warned:
+                logging.warning(
+                    "[REMOTE_CTRL] RFID field is still %s on the target %.0fs after the request. "
+                    "Retrying every %.0fs.",
+                    "off" if enabled else "on",
+                    now - sent_mono,
+                    _RFID_FIELD_RESEND_S,
+                )
+                self._rfid_field_echo_warned = True
+            elif pending != enabled:
+                self._rfid_field_echo_warned = False
+            self._rfid_field_pending = enabled
+            self._rfid_field_sent_mono = now
+        self._send_async({"type": "rfid", "field": enabled})
 
     def set_rfid_power(self, enabled: bool) -> None:
         self._send_async({"type": "rfid", "power": bool(enabled)})
@@ -423,6 +465,8 @@ class RemoteControlClient:
         self._target_shutdown_ack_event.set()
         with self._lock:
             self._pending_magnet_commands.clear()
+            self._rfid_field_pending = None
+            self._rfid_field_echo_warned = False
 
     async def _main(self) -> None:
         timeout_s = float(CONFIG.get("REMOTE_CONTROL_TIMEOUT") or 10.0)
@@ -449,7 +493,12 @@ class RemoteControlClient:
 
             try:
                 logging.info(f"[REMOTE_CTRL] Connecting to {url} ...")
-                async with websockets.connect(url, ping_interval=None, max_size=2**24) as ws:
+                async with websockets.connect(
+                    url,
+                    ping_interval=None,
+                    max_size=2**24,
+                    open_timeout=_WS_OPEN_TIMEOUT_S,
+                ) as ws:
                     self._ws = ws
                     self._connected.set()
                     backoff = 1.0
@@ -485,9 +534,12 @@ class RemoteControlClient:
                         now = time.time()
                         if now - last_ping >= max(1.0, timeout_s / 3.0):
                             try:
-                                await ws.send(json.dumps({"type": "ping", "ts": now}))
-                            except Exception:
-                                break
+                                await asyncio.wait_for(
+                                    ws.send(json.dumps({"type": "ping", "ts": now})),
+                                    timeout=_WS_SEND_TIMEOUT_S,
+                                )
+                            except Exception as e:
+                                raise RuntimeError(f"control ping failed: {e}") from e
                             last_ping = now
 
                         # Connection may stay half-open on WLAN loss for several minutes.
@@ -538,6 +590,12 @@ class RemoteControlClient:
                 self._states.lock_inside_unlocked = bool(data.get("lock_inside_unlocked", self._states.lock_inside_unlocked))
                 self._states.lock_outside_unlocked = bool(data.get("lock_outside_unlocked", self._states.lock_outside_unlocked))
                 self._states.rfid_field = bool(data.get("rfid_field", self._states.rfid_field))
+                if (
+                    self._rfid_field_pending is not None
+                    and self._states.rfid_field == self._rfid_field_pending
+                ):
+                    self._rfid_field_pending = None
+                    self._rfid_field_echo_warned = False
 
                 # Resolve local pending magnet commands once target state reflects them.
                 if self._states.lock_inside_unlocked:
@@ -759,6 +817,22 @@ class RemoteControlClient:
         if not ws:
             return
         try:
-            await ws.send(json.dumps(msg))
+            await asyncio.wait_for(ws.send(json.dumps(msg)), timeout=_WS_SEND_TIMEOUT_S)
+        except Exception as e:
+            await self._drop_socket(ws, f"send failed: {e}")
+
+    async def _drop_socket(self, ws, reason: str) -> None:
+        """Close a socket that stopped making progress so the client reconnects.
+
+        Only the first caller logs. A stuck send (no TCP reset after the switch
+        died) otherwise pins the control task, the flap starts kittyhack on its
+        own, and this process keeps watching the IP camera.
+        """
+        already_dropped = self._ws is not ws
+        if not already_dropped:
+            self._ws = None
+            logging.warning(f"[REMOTE_CTRL] Dropping control connection: {reason}")
+        try:
+            await ws.close()
         except Exception:
             pass

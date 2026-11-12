@@ -3,6 +3,7 @@ from src.baseconfig import CONFIG
 
 TAG_TIMEOUT = 30.0               # after 30 seconds, a detected tag is considered invalid
 RFID_READER_OFF_DELAY = 15.0     # Turn the RFID reader off 15 seconds after the last detected motion outside
+RFID_FIELD_RETRY_SECONDS = 5.0   # Re-request the RFID antenna if the target has not echoed it on
 OPEN_OUTSIDE_TIMEOUT = 6.0 + CONFIG['PIR_INSIDE_THRESHOLD'] # Keep the magnet to the outside open for 6 + PIR_INSIDE_THRESHOLD seconds after the last motion on the inside
 MAX_UNLOCK_TIME = 60.0           # Maximum time the door is allowed to stay open
 LAZY_CAT_DELAY_PIR_MOTION = 6.0  # Keep the PIR active for an additional 6 seconds after the last detected motion when using PIR-based motion detection

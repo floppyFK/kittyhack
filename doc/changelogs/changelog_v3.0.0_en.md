@@ -26,7 +26,8 @@
 - **Backup and restore**: Settings are no longer saved in a separate config.ini. Everything is stored in the Kittyhack database, which you can back up and restore under *Info*. A config.ini from an older version can still be restored there.
 - **System information**: Under *Info*, you also see the size of the pictures folder and the models folder, next to the database. Bars show how full the disk and the memory are.
 - **Release notes**: Long notes under *Info* can be expanded and collapsed with *Show more* and *Show less*.
-- **Events without a chip**: If the camera sees a cat and no chip was read, the list shows *Unknown cat*. A detected person is shown as *Person*. Otherwise it stays *No microchip found* (Contribution by [WeichEi04](https://github.com/floppyFK/kittyhack/pull/193))
+- **Events without a chip**: In *Chip only* mode the list shows *Unknown cat* when no chip was read. A detected person is shown as *Person*. Otherwise it stays *No microchip found* (Contribution by [WeichEi04](https://github.com/floppyFK/kittyhack/pull/193))
+- **Chip + camera**: Next to the events you can switch between *Chip + camera* and *Chip only*. Without a recognized chip, the name comes from the pictures of the event, or only the chip counts.
 ## Bugfixes
 
 - **Average FPS**: The display of the average FPS per model in the model management interface was no longer being updated. This has now been fixed.

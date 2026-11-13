@@ -10,6 +10,9 @@ def test_schema_has_no_simulate_kittyflap():
     keys = {s.key for s in SETTINGS_SCHEMA}
     assert "SIMULATE_KITTYFLAP" not in keys
     assert "REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY" in keys
+    subject_mode = next(s for s in SETTINGS_SCHEMA if s.key == "EVENT_SUBJECT_MODE")
+    assert subject_mode.default == "camera"
+    assert subject_mode.kind == "str"
 
 
 def test_create_default_and_reload(tmp_config_ini):

@@ -106,6 +106,7 @@ def register_photos(input, output, session, ctx: SessionContext):
                     class_="kh-photo-filter-group",
                 ),
                 ui.div(
+                    ui.output_ui("ui_event_subject_mode_photos"),
                     ui.tooltip(
                         ui.div(
                             ui.input_switch(

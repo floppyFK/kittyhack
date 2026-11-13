@@ -26,7 +26,8 @@
 - **Sichern und Wiederherstellen**: Einstellungen werden nicht mehr in einer eigenen config.ini gespeichert. Alle Informationen liegen in der Kittyhack-Datenbank, die du unter *Info* sichern und wieder einspielen kannst. Eine config.ini aus einer älteren Version kannst du dort weiterhin wiederherstellen.
 - **Systeminformationen**: Unter *Info* siehst du neben der Datenbank auch die Größe des Bilderordners und des Modellordners. Balken zeigen, wie voll Speicher und Arbeitsspeicher sind.
 - **Versionshinweise**: Lange Hinweise unter *Info* lassen sich mit *Mehr anzeigen* und *Weniger anzeigen* auf- und zuklappen.
-- **Ereignisse ohne Chip**: Erkennt die Kamera eine Katze, ohne dass ein Chip gelesen wurde, zeigt die Liste *Unbekannte Katze*. Eine erkannte Person erscheint als *Person*. Sonst bleibt es bei *Kein Mikrochip gefunden* (von [WeichEi04](https://github.com/floppyFK/kittyhack/pull/193))
+- **Ereignisse ohne Chip**: Im Modus *Nur Chip* zeigt die Liste *Unbekannte Katze*, wenn kein Chip gelesen wurde. Eine erkannte Person erscheint als *Person*. Sonst bleibt es bei *Kein Mikrochip gefunden* (von [WeichEi04](https://github.com/floppyFK/kittyhack/pull/193))
+- **Chip + Kamera**: Neben den Ereignissen schaltest du zwischen *Chip + Kamera* und *Nur Chip*. Ohne erkannten Chip kommt der Name aus den Bildern des Ereignisses, oder es zählt nur der Chip.
 
 ## Bugfixes
 

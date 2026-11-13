@@ -561,8 +561,23 @@
         });
     }
 
+    function initEventSubjectModeToggle() {
+        // One listener for both copies of the button. A rebuilt button keeps
+        // the same class, so the click still reaches Shiny after the label changes.
+        if (!onceFlag(window, '__khEventSubjectModeToggle')) return;
+        document.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            var btn = t.closest('.kh-event-subject-btn');
+            if (!btn) return;
+            if (!(window.Shiny && typeof window.Shiny.setInputValue === 'function')) return;
+            window.Shiny.setInputValue('event_subject_mode_clicked', Date.now(), { priority: 'event' });
+        });
+    }
+
     function initAll(scope) {
         initCollapseAriaExpanded();
+        initEventSubjectModeToggle();
         initTooltipWrappers(scope);
         initInfoPopovers();
         // These run opportunistically when the corresponding UI is present.

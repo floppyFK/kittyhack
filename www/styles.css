@@ -593,6 +593,35 @@ html[data-bs-theme="dark"] .spinner {
     gap: 0.4rem;
 }
 
+.kh-events-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.kh-events-card-title {
+    margin: 0;
+    min-width: 0;
+}
+
+.kh-event-subject-toggle {
+    flex: 0 0 auto;
+    max-width: 100%;
+}
+
+.kh-event-subject-toggle .shiny-input-container,
+.kh-event-subject-toggle .form-group {
+    margin: 0;
+    width: auto;
+}
+
+.kh-event-subject-btn {
+    white-space: nowrap;
+}
+
 .kh-photo-filter-group-label {
     font-size: 0.8125rem;
     font-weight: 600;

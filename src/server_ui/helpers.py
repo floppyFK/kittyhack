@@ -1,8 +1,17 @@
 """Small UI tag helpers shared across configuration and other tabs."""
 
+import time
+
+from faicons import icon_svg
 from shiny import ui
 
-from src.baseconfig import CONFIG, set_language
+from src.baseconfig import (
+    CONFIG,
+    normalize_event_subject_mode,
+    set_language,
+    update_single_config_parameter,
+)
+from src.server_ui.state import event_subject_mode_revision
 
 _ = set_language(CONFIG["LANGUAGE"])
 
@@ -145,6 +154,93 @@ MODEL_SELECTION_KEYS = ("YOLO_MODEL", "TFLITE_MODEL_VERSION", "INFERENCE_DEVICE"
 def snapshot_model_selection(config) -> dict:
     """Remember the current model and inference device before the form overwrites them."""
     return {key: config.get(key) for key in MODEL_SELECTION_KEYS}
+
+
+def event_subject_mode_label(mode: str) -> str:
+    """Button text for the mode that is currently shown."""
+    if normalize_event_subject_mode(mode) == "chip":
+        return _("Chip only")
+    return _("Chip + camera")
+
+
+def event_subject_mode_tip(mode: str) -> str:
+    """Tooltip for the current mode. Clicking the button switches to the other one."""
+    if normalize_event_subject_mode(mode) == "chip":
+        return _(
+            "This toggles how events show a recognized cat: only a stored microchip is shown. "
+            "Click to also use the name from the camera."
+        )
+    return _(
+        "This toggles how events show a recognized cat: when no microchip was recognized, "
+        "the cat is identified from the pictures stored for this event. "
+        "Click to show the microchip only."
+    )
+
+
+def event_subject_mode_button(input_id: str):
+    """Toggle for how event tables name a cat. Both copies share one setting.
+
+    A plain button, not a Shiny action input. Rebuilding it (so the tooltip
+    matches the current mode) would otherwise reset Shiny's click count.
+    ``www/server-ui.js`` reports each click as a timestamp.
+    """
+    mode = normalize_event_subject_mode(CONFIG.get("EVENT_SUBJECT_MODE"))
+    return ui.div(
+        ui.tooltip(
+            ui.tags.button(
+                icon_svg("magnifying-glass"),
+                " ",
+                event_subject_mode_label(mode),
+                id=input_id,
+                type="button",
+                class_="btn btn-default btn-sm kh-event-subject-btn",
+            ),
+            event_subject_mode_tip(mode),
+            id=f"{input_id}_tip",
+            options={"trigger": "hover"},
+            placement="bottom",
+        ),
+        class_="kh-event-subject-toggle",
+    )
+
+
+# A click's timestamp has to arrive while the click is still recent. A value
+# restored after a reconnect is older than this and must not switch the mode.
+_SUBJECT_MODE_CLICK_FRESH_MS = 15_000
+
+
+def subject_mode_click_advanced(previous, clicks, now_ms=None):
+    """Return whether this timestamp is a new click, and the value to remember.
+
+    Zero, a missing value, and a leftover dropdown string are not clicks.
+    The same timestamp twice is one click. A timestamp from a previous
+    session is kept in mind but does not switch the mode.
+    """
+    if isinstance(clicks, bool) or not isinstance(clicks, (int, float)):
+        return False, previous
+    if clicks <= 0:
+        return False, previous
+    if (
+        isinstance(previous, (int, float))
+        and not isinstance(previous, bool)
+        and clicks <= previous
+    ):
+        return False, previous
+    if now_ms is None:
+        now_ms = time.time() * 1000
+    if abs(now_ms - clicks) > _SUBJECT_MODE_CLICK_FRESH_MS:
+        return False, clicks
+    return True, clicks
+
+
+def toggle_event_subject_mode() -> str:
+    """Switch between chip-only and camera naming. Both buttons rebuild from this."""
+    current = normalize_event_subject_mode(CONFIG.get("EVENT_SUBJECT_MODE"))
+    mode = "chip" if current == "camera" else "camera"
+    CONFIG["EVENT_SUBJECT_MODE"] = mode
+    update_single_config_parameter("EVENT_SUBJECT_MODE")
+    event_subject_mode_revision.set(event_subject_mode_revision.get() + 1)
+    return mode
 
 
 def restore_model_selection(config, snapshot: dict) -> None:

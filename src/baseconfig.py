@@ -71,6 +71,14 @@ def _S(key, default, kind="str", **kwargs) -> Setting:
     return Setting(key=key, default=default, kind=kind, **kwargs)
 
 
+def normalize_event_subject_mode(value) -> str:
+    """Return ``chip`` or ``camera``. Anything else is the camera default."""
+    mode = str(value or "").strip().lower()
+    if mode in {"chip", "camera"}:
+        return mode
+    return "camera"
+
+
 SETTINGS_SCHEMA: list[Setting] = [
     _S("TIMEZONE", "Europe/Berlin"),
     _S("LANGUAGE", "en"),
@@ -151,6 +159,8 @@ SETTINGS_SCHEMA: list[Setting] = [
     _S("MQTT_IMAGE_PUBLISH_INTERVAL", 5.0, "float"),
     _S("SHOW_CATS_ONLY", False, "bool"),
     _S("SHOW_MICE_ONLY", False, "bool"),
+    # How event tables name a cat: "camera" (chip, else camera) or "chip" (stored chip only).
+    _S("EVENT_SUBJECT_MODE", "camera"),
     _S("RESTART_IP_CAMERA_STREAM_ON_FAILURE", True, "bool"),
     _S("WLAN_WATCHDOG_ENABLED", True, "bool"),
     _S("DISABLE_RFID_READER", False, "bool"),

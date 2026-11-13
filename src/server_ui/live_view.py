@@ -12,6 +12,7 @@ import hashlib
 from src.baseconfig import (
     CONFIG,
     AllowedToEnter,
+    normalize_event_subject_mode,
     set_language,
     update_single_config_parameter,
 )
@@ -33,8 +34,17 @@ from src.event_timeline import (
 )
 from src.mode import is_remote_mode
 from src.backend import backend_main, update_mqtt_config, manual_door_override
-from src.server_ui.state import reload_trigger_photos, reload_trigger_config
+from src.server_ui.state import (
+    event_subject_mode_revision,
+    reload_trigger_photos,
+    reload_trigger_config,
+)
 from src.server_ui.context import SessionContext
+from src.server_ui.helpers import (
+    event_subject_mode_button,
+    subject_mode_click_advanced,
+    toggle_event_subject_mode,
+)
 
 _ = set_language(CONFIG["LANGUAGE"])
 
@@ -77,12 +87,14 @@ def resolve_event_subject(
     cat_label_names,
     name_to_rfid: dict,
     min_threshold: float,
+    mode: str = "camera",
 ) -> tuple[str, str | None]:
     """Choose who a last-events row names when the chip column may be empty.
 
-    A chip on the event wins. Otherwise the strongest camera class at or above
-    ``min_threshold`` is used: a registered cat name maps to that cat's RFID,
-    a generic ``cat`` class is unknown, and a person is a person.
+    A chip on the event wins in both modes. ``chip`` then keeps the previous
+    labels: a registered cat class is "unknown", a person is a person, and a
+    generic ``cat`` class is ignored. ``camera`` maps that registered class to
+    the cat's RFID when it is at least as strong as a person and a generic cat.
 
     Returns ``("chip"|"camera", rfid)`` or ``("unknown"|"person"|"none", None)``.
     """
@@ -97,8 +109,14 @@ def resolve_event_subject(
     ]
     best_name, cat_prob = max(cat_hits, key=lambda item: item[1]) if cat_hits else ("", 0.0)
     person_prob = float(seen.get("person", 0.0) or 0.0)
-    generic_cat = float(seen.get("cat", 0.0) or 0.0)
     threshold = float(min_threshold or 0.0)
+    if normalize_event_subject_mode(mode) == "chip":
+        if cat_prob >= threshold and cat_prob > 0.0 and cat_prob >= person_prob:
+            return "unknown", None
+        if person_prob >= threshold and person_prob > 0.0:
+            return "person", None
+        return "none", None
+    generic_cat = float(seen.get("cat", 0.0) or 0.0)
     if (
         cat_prob >= threshold
         and cat_prob > 0.0
@@ -632,7 +650,13 @@ def register_live_view(input, output, session, ctx: SessionContext):
             ui.div(
                 ui.output_ui("ui_cat_locations"),
                 ui.card(
-                    ui.card_header(ui.h5(_("Recent events"))),
+                    ui.card_header(
+                        ui.div(
+                            ui.h5(_("Recent events"), class_="kh-events-card-title"),
+                            ui.output_ui("ui_event_subject_mode_live"),
+                            class_="kh-events-card-header",
+                        )
+                    ),
                     ui.output_ui("ui_last_events_table"),
                     full_screen=False,
                     class_="generic-container",
@@ -643,8 +667,37 @@ def register_live_view(input, output, session, ctx: SessionContext):
             )
         )
 
+    _subject_mode_click = {"previous": None}
+
+    @output
+    @render.ui
+    def ui_event_subject_mode_live():
+        event_subject_mode_revision.get()
+        return event_subject_mode_button("event_subject_mode_live")
+
+    @output
+    @render.ui
+    def ui_event_subject_mode_photos():
+        event_subject_mode_revision.get()
+        return event_subject_mode_button("event_subject_mode_photos")
+
+    @reactive.Effect
+    @reactive.event(input.event_subject_mode_clicked)
+    def _toggle_event_subject_mode():
+        previous = _subject_mode_click["previous"]
+        toggled, _subject_mode_click["previous"] = subject_mode_click_advanced(
+            previous, input.event_subject_mode_clicked()
+        )
+        if toggled:
+            toggle_event_subject_mode()
+
     @render.text
-    @reactive.event(reload_trigger_photos, last_events_ready, ignore_none=True)
+    @reactive.event(
+        reload_trigger_photos,
+        last_events_ready,
+        event_subject_mode_revision,
+        ignore_none=True,
+    )
     def ui_last_events_table():
         # Show a loading spinner until the delayed flag is set
         if not last_events_ready.get():
@@ -669,6 +722,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
         input.button_cat_only,
         input.button_mouse_only,
         reload_trigger_photos,
+        event_subject_mode_revision,
         ignore_none=True,
     )
     def ui_events_by_date_table():
@@ -798,25 +852,44 @@ def register_live_view(input, output, session, ctx: SessionContext):
                 for rfid_tag, name in cat_name_dict.items()
                 if name
             }
+            subject_mode = normalize_event_subject_mode(
+                CONFIG.get("EVENT_SUBJECT_MODE")
+            )
+            # Chip mode does not ask for the generic "cat" class. A registered
+            # cat that happens to be named "cat" is already in cat_label_names.
+            object_names = cat_label_names + ["person"]
+            if subject_mode == "camera":
+                object_names.append("cat")
             block_object_max = EventsRepo.db_get_block_object_max(
                 CONFIG["KITTYHACK_DATABASE_PATH"],
                 block_ids,
-                cat_label_names + ["person", "cat"],
+                object_names,
             )
             min_threshold = float(CONFIG.get("MIN_THRESHOLD", 0.0) or 0.0)
+            camera_name_title = html_module.escape(
+                _(
+                    "Recognized by the camera. No microchip was stored for this event."
+                ),
+                quote=True,
+            )
 
             def event_subject(row):
-                # A chip on the event names that cat. Without a chip, a camera
-                # class that matches a registered cat keeps that name. "Unknown
-                # cat" is only a cat the camera could not assign.
+                # A stored chip names that cat. In camera mode, a class that
+                # matches a registered cat keeps that name when no chip was stored.
                 kind, subject_rfid = resolve_event_subject(
                     row["rfid"],
                     block_object_max.get(int(row["block_id"]), {}),
                     cat_label_names,
                     name_to_rfid,
                     min_threshold,
+                    subject_mode,
                 )
-                if kind in ("chip", "camera") and subject_rfid:
+                if kind == "camera" and subject_rfid:
+                    return (
+                        f'<span class="kh-event-subject-camera" title="{camera_name_title}">'
+                        f"{cat_name_with_icon(subject_rfid)}</span>"
+                    )
+                if kind == "chip" and subject_rfid:
                     return cat_name_with_icon(subject_rfid)
                 if kind == "unknown":
                     label = _("Unknown cat")

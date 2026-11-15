@@ -97,7 +97,7 @@
         // Input/change delegation
         container.addEventListener('change', function (ev) {
             var t = ev.target;
-            if (!t) return;
+            if (!t || closest(t, '.kh-no-unsaved')) return;
             // Range slider hidden input
             if (t.matches && t.matches(opts.sliderSelector || 'input.js-range-slider')) {
                 markSliderUnsaved(t);
@@ -110,7 +110,7 @@
 
         container.addEventListener('input', function (ev) {
             var t = ev.target;
-            if (!t) return;
+            if (!t || closest(t, '.kh-no-unsaved')) return;
             if (t.matches && t.matches(opts.sliderSelector || 'input.js-range-slider')) {
                 markSliderUnsaved(t);
                 return;
@@ -150,6 +150,54 @@
         }, true);
     }
 
+    function configHasUnsavedChanges() {
+        var container = q('#config_tab_container');
+        var saveBtn = q('#bSaveKittyhackConfig');
+        if (!container || !saveBtn) return false;
+        if (saveBtn.classList.contains('save-button-highlight')) return true;
+        return !!q('.unsaved-input', container);
+    }
+
+    function initConfigTabLeaveConfirm() {
+        if (!onceFlag(window, '__khConfigTabLeaveConfirm')) return;
+        // Bootstrap already starts the tab change on click before a nested
+        // window.confirm() returns, so Cancel cannot stop a click handler.
+        // show.bs.tab is cancelable and fires before the pane switches.
+        var allowingTabChange = false;
+        document.addEventListener('show.bs.tab', function (ev) {
+            var link = ev.target;
+            if (!link || !link.getAttribute) return;
+            var dest = link.getAttribute('data-value');
+            if (dest === 'configuration') return;
+            var from = ev.relatedTarget;
+            var fromVal = (from && from.getAttribute) ? from.getAttribute('data-value') : '';
+            if (fromVal && fromVal !== 'configuration') return;
+            if (allowingTabChange) {
+                allowingTabChange = false;
+                return;
+            }
+            if (!configHasUnsavedChanges()) return;
+
+            ev.preventDefault();
+
+            var msgEl = q('#kh_config_leave_i18n');
+            var msg = (msgEl && msgEl.getAttribute('data-msg')) ||
+                'Your settings have unsaved changes. Leave without saving?';
+            if (!window.confirm(msg)) return;
+
+            allowingTabChange = true;
+            try {
+                if (window.bootstrap && window.bootstrap.Tab) {
+                    window.bootstrap.Tab.getOrCreateInstance(link).show();
+                } else {
+                    link.click();
+                }
+            } catch (err) {
+                allowingTabChange = false;
+            }
+        });
+    }
+
     function initIpCameraUrlToggle() {
         // Toggle IP camera specific inputs visibility based on #camera_source
         // Expects containers: #ip_camera_url_container, #ip_camera_warning, #ip_camera_pipeline_settings
@@ -175,7 +223,7 @@
     }
 
     function initUpdateRepoToggle() {
-        // Toggle custom repository input / custom-format help / beta warning
+        // Toggle custom repository input / help texts / beta warning
         // based on #update_repository_mode.
         // Expects: #update_repository_container, #update_repository_help,
         //          #update_repository_custom_help, #update_repository_beta_warning
@@ -194,9 +242,9 @@
             try { mode = String(sel.value || ''); } catch (e) {}
             var isCustom = (mode === 'custom');
             var isBeta = (mode === 'beta');
+            var isStandard = (mode === 'standard');
             if (urlWrap) urlWrap.style.display = isCustom ? '' : 'none';
-            // General Standard/Beta/Custom help stays visible for all modes.
-            if (helpWrap) helpWrap.style.display = '';
+            if (helpWrap) helpWrap.style.display = isStandard ? '' : 'none';
             // owner/repo format details only when Custom is selected.
             if (customHelpWrap) customHelpWrap.style.display = isCustom ? '' : 'none';
             if (betaWarn) betaWarn.style.display = isBeta ? '' : 'none';
@@ -206,6 +254,88 @@
         sel.addEventListener('change', apply, true);
     }
 
+    function initModelServerToggle() {
+        // Show the public-server note, custom host/port, and the name/email
+        // fields that match #model_server_mode. Name and email are public only.
+        var sel = q('#model_server_mode');
+        if (!sel) return;
+        if (sel.getAttribute('data-kh-modelserver-bound') === '1') return;
+        sel.setAttribute('data-kh-modelserver-bound', '1');
+
+        function apply() {
+            var mode = '';
+            try { mode = String(sel.value || ''); } catch (e) {}
+            var publicNote = q('#model_server_public_note');
+            var customFields = q('#model_server_custom_fields');
+            var identity = q('#model_server_identity');
+            if (publicNote) publicNote.style.display = mode === 'public' ? '' : 'none';
+            if (customFields) customFields.style.display = mode === 'custom' ? '' : 'none';
+            if (identity) identity.style.display = mode === 'public' ? '' : 'none';
+        }
+
+        apply();
+        sel.addEventListener('change', apply, true);
+    }
+
+    function initOriginalModelWarning() {
+        // Show the v1/v2 warning only while an original Kittyflap model is selected.
+        var sel = q('#selectedModel');
+        var warn = q('#original_model_warning');
+        if (!sel || !warn) return;
+        if (sel.getAttribute('data-kh-modelwarn-bound') === '1') return;
+        sel.setAttribute('data-kh-modelwarn-bound', '1');
+
+        function apply() {
+            var value = '';
+            try { value = String(sel.value || ''); } catch (e) {}
+            warn.style.display = value.indexOf('tflite::') === 0 ? '' : 'none';
+        }
+
+        apply();
+        sel.addEventListener('change', apply, true);
+    }
+
+    function initRequirePirForCameraEntryToggle() {
+        // The outside-PIR switch only applies when camera cat detection or
+        // camera motion detection is on. Keep it visible, but disabled otherwise.
+        var catSw = q('#btnUseCameraForCatDetection');
+        var motionSw = q('#btnUseCameraForMotionDetection');
+        var wrap = q('#require_pir_for_camera_entry_container');
+        if (!wrap || (!catSw && !motionSw)) return;
+
+        if (wrap.getAttribute('data-kh-pir2fa-bound') === '1') return;
+        wrap.setAttribute('data-kh-pir2fa-bound', '1');
+
+        function isOn(el) {
+            if (!el) return false;
+            try {
+                if (el.type === 'checkbox') return !!el.checked;
+                return el.classList.contains('active') || el.getAttribute('aria-checked') === 'true';
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function apply() {
+            var cameraOn = isOn(catSw) || isOn(motionSw);
+            var sw = q('#btnRequireOutsidePirForCameraEntry');
+            var hint = q('#require_pir_for_camera_entry_disabled_hint');
+            if (sw) sw.disabled = !cameraOn;
+            wrap.classList.toggle('kh-control-disabled', !cameraOn);
+            if (hint) hint.style.display = cameraOn ? 'none' : '';
+        }
+
+        apply();
+        if (catSw) {
+            catSw.addEventListener('change', apply, true);
+            catSw.addEventListener('click', apply, true);
+        }
+        if (motionSw) {
+            motionSw.addEventListener('change', apply, true);
+            motionSw.addEventListener('click', apply, true);
+        }
+    }
+
     function initLogicToggles() {
         // Handles "Show decision logic" blocks for entry and exit.
         if (!onceFlag(window, '__khLogicToggleGlobal')) return;
@@ -213,7 +343,7 @@
         function toggleSection(btnId, sectionId, hintId) {
             var btn = document.getElementById(btnId);
             var section = document.getElementById(sectionId);
-            var hint = document.getElementById(hintId);
+            var hint = hintId ? document.getElementById(hintId) : null;
             if (!btn || !section) return;
             var span = btn.querySelector('span');
             var showLbl = btn.getAttribute('data-show-label') || '';
@@ -227,7 +357,7 @@
         function showLogic(containerId, mode) {
             var container = document.getElementById(containerId);
             if (!container) return;
-            qa('.logic-img-wrapper', container).forEach(function (el) {
+            qa('.kh-flow', container).forEach(function (el) {
                 try {
                     el.style.display = (el.getAttribute('data-mode') === mode) ? 'block' : 'none';
                 } catch (e) {}
@@ -241,13 +371,17 @@
             if (t.id === 'btn_toggle_entry_logic' || closest(t, '#btn_toggle_entry_logic')) {
                 toggleSection('btn_toggle_entry_logic', 'entry_logic_expand', 'entry_logic_hint');
                 var sel = document.getElementById('txtAllowedToEnter');
-                if (sel) showLogic('entry_logic_images', sel.value);
+                if (sel) showLogic('entry_logic_flows', sel.value);
             }
 
             if (t.id === 'btn_toggle_exit_logic' || closest(t, '#btn_toggle_exit_logic')) {
                 toggleSection('btn_toggle_exit_logic', 'exit_logic_expand', 'exit_logic_hint');
                 var sel2 = document.getElementById('btnAllowedToExit');
-                if (sel2) showLogic('exit_logic_images', sel2.value);
+                if (sel2) showLogic('exit_logic_flows', sel2.value);
+            }
+
+            if (t.id === 'btn_toggle_remote_diagrams' || closest(t, '#btn_toggle_remote_diagrams')) {
+                toggleSection('btn_toggle_remote_diagrams', 'remote_diagrams_expand', '');
             }
         }, true);
 
@@ -255,10 +389,10 @@
             var t = e.target;
             if (!t) return;
             if (t.id === 'txtAllowedToEnter') {
-                showLogic('entry_logic_images', t.value);
+                showLogic('entry_logic_flows', t.value);
             }
             if (t.id === 'btnAllowedToExit') {
-                showLogic('exit_logic_images', t.value);
+                showLogic('exit_logic_flows', t.value);
             }
         }, true);
     }
@@ -357,19 +491,110 @@
         }, 700);
     }
 
+    function initInfoPopovers() {
+        // Close an open setting explanation when tapping elsewhere, including on phones.
+        if (!onceFlag(window, '__khInfoPopoverGlobal')) return;
+
+        function hidePopover(pop) {
+            try {
+                var id = pop.getAttribute('id');
+                var trigger = id ? document.querySelector('[aria-describedby="' + id + '"]') : null;
+                if (trigger && window.bootstrap && window.bootstrap.Popover) {
+                    var inst = window.bootstrap.Popover.getInstance(trigger);
+                    if (inst) {
+                        inst.hide();
+                        return;
+                    }
+                }
+            } catch (e) {}
+            try { pop.classList.remove('show'); } catch (e2) {}
+        }
+
+        document.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            if (t.closest('.popover.kh-info-popover')) return;
+            var btn = t.closest('.kh-info-btn');
+            if (btn) {
+                // Let the icon toggle its own popover. Close any other one afterwards.
+                setTimeout(function () {
+                    qa('.popover.kh-info-popover.show').forEach(function (pop) {
+                        var id = pop.getAttribute('id');
+                        var trigger = id ? document.querySelector('[aria-describedby="' + id + '"]') : null;
+                        if (trigger && (trigger === btn || trigger.contains(btn) || btn.contains(trigger))) return;
+                        hidePopover(pop);
+                    });
+                }, 0);
+                return;
+            }
+            qa('.popover.kh-info-popover.show').forEach(hidePopover);
+        }, true);
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key !== 'Escape') return;
+            qa('.popover.kh-info-popover.show').forEach(hidePopover);
+        });
+    }
+
+    function initReleaseNotesFold() {
+        qa('.release-notes-fold').forEach(function (fold) {
+            if (fold.getAttribute('data-kh-fold-init') === '1') return;
+            var notes = q('.release_notes', fold);
+            var btn = q('.release-notes-fold-toggle', fold);
+            if (!notes || !btn) return;
+            fold.setAttribute('data-kh-fold-init', '1');
+
+            btn.addEventListener('click', function () {
+                var expanded = fold.classList.toggle('is-expanded');
+                btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+                var more = btn.getAttribute('data-label-more') || 'Show more';
+                var less = btn.getAttribute('data-label-less') || 'Show less';
+                btn.textContent = expanded ? less : more;
+            });
+
+            requestAnimationFrame(function () {
+                if (fold.classList.contains('is-expanded')) return;
+                if (notes.scrollHeight <= notes.clientHeight + 8) {
+                    fold.classList.add('is-short');
+                }
+            });
+        });
+    }
+
+    function initEventSubjectModeToggle() {
+        // One listener for both copies of the button. A rebuilt button keeps
+        // the same class, so the click still reaches Shiny after the label changes.
+        if (!onceFlag(window, '__khEventSubjectModeToggle')) return;
+        document.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            var btn = t.closest('.kh-event-subject-btn');
+            if (!btn) return;
+            if (!(window.Shiny && typeof window.Shiny.setInputValue === 'function')) return;
+            window.Shiny.setInputValue('event_subject_mode_clicked', Date.now(), { priority: 'event' });
+        });
+    }
+
     function initAll(scope) {
         initCollapseAriaExpanded();
+        initEventSubjectModeToggle();
         initTooltipWrappers(scope);
+        initInfoPopovers();
         // These run opportunistically when the corresponding UI is present.
         initIpCameraUrlToggle();
         initUpdateRepoToggle();
+        initModelServerToggle();
+        initOriginalModelWarning();
+        initRequirePirForCameraEntryToggle();
         initLogicToggles();
         initManageCatsRFIDValidation();
         initUpdateProgressModal();
+        initReleaseNotesFold();
 
         // Unsaved change markers
         initUnsavedChangesHighlighter({ containerId: 'config_tab_container', saveButtonId: 'bSaveKittyhackConfig', initDelayMs: 1000, sliderSelector: 'input.js-range-slider' });
         initUnsavedChangesHighlighter({ containerId: 'manage_cats_container', saveButtonId: 'mng_cat_save_changes', initDelayMs: 800 });
+        initConfigTabLeaveConfirm();
     }
 
     function installMutationInit() {
@@ -399,9 +624,212 @@
         }
     }
 
+    function escapeHtmlText(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function escapeHtmlAttr(value) {
+        return escapeHtmlText(value).replace(/"/g, '&quot;');
+    }
+
+    function formatLocationElapsed(sinceMs, strip) {
+        var sec = Math.max(0, (Date.now() - sinceMs) / 1000);
+        if (sec < 60) return strip.getAttribute('data-just-now') || 'Just now';
+        var total = Math.round(sec);
+        var days = Math.floor(total / 86400);
+        var hours = Math.floor((total % 86400) / 3600);
+        var minutes = Math.floor((total % 3600) / 60);
+        var parts = [];
+        if (days) parts.push(String(days) + (strip.getAttribute('data-unit-d') || 'd'));
+        if (hours) parts.push(String(hours) + (strip.getAttribute('data-unit-h') || 'h'));
+        if (minutes || !parts.length) parts.push(String(minutes) + (strip.getAttribute('data-unit-m') || 'm'));
+        return parts.join(' ');
+    }
+
+    function tickLocationTimes() {
+        qa('.kh-cat-loc-time[data-since]').forEach(function (el) {
+            var strip = el.closest('.kh-cat-loc-strip');
+            var since = Number(el.getAttribute('data-since'));
+            if (!strip || !since) return;
+            el.textContent = formatLocationElapsed(since, strip);
+        });
+    }
+
+    function paintLocationChip(chip, direction) {
+        var strip = chip.closest('.kh-cat-loc-strip');
+        if (!strip || (direction !== 'in' && direction !== 'out')) return;
+        var avatar = chip.querySelector('.kh-cat-avatar');
+        var catBtn = chip.querySelector('[data-cat-id]');
+        var catId = catBtn ? catBtn.getAttribute('data-cat-id') : '';
+        var name = avatar ? (avatar.getAttribute('title') || '') : '';
+        var label = direction === 'in'
+            ? (strip.getAttribute('data-inside') || 'Inside')
+            : (strip.getAttribute('data-outside') || 'Outside');
+        var next = direction === 'in' ? 'out' : 'in';
+        var tone = direction === 'in' ? 'inside' : 'outside';
+        var ariaTpl = next === 'in'
+            ? (strip.getAttribute('data-aria-in') || '')
+            : (strip.getAttribute('data-aria-out') || '');
+        var aria = ariaTpl.replace('{name}', name);
+        var cycleTpl = strip.querySelector('.kh-cat-loc-cycle-tpl');
+        var cycle = cycleTpl ? cycleTpl.innerHTML : '';
+        chip.innerHTML =
+            (avatar ? avatar.outerHTML : '') +
+            '<button type="button" class="kh-cat-loc-btn kh-cat-loc-btn--' + tone + ' is-pressed" ' +
+            'data-cat-id="' + escapeHtmlAttr(catId) + '" data-direction="' + next + '" ' +
+            'aria-label="' + escapeHtmlAttr(aria) + '">' +
+            '<span class="kh-cat-loc-copy">' +
+            '<span class="kh-cat-loc-label">' + escapeHtmlText(label) + '</span>' +
+            '<span class="kh-cat-loc-time" data-since="' + Date.now() + '">' +
+            escapeHtmlText(strip.getAttribute('data-just-now') || 'Just now') +
+            '</span></span>' + cycle + '</button>';
+    }
+
+    function installCatLocationClicks() {
+        if (!onceFlag(window, '__khCatLocationClicks')) return;
+        document.addEventListener('pointerdown', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            var btn = t.closest('.kh-cat-loc-btn');
+            if (!btn) return;
+            btn.classList.add('is-pressed');
+        }, true);
+        document.addEventListener('pointercancel', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            var btn = t.closest('.kh-cat-loc-btn');
+            if (btn) btn.classList.remove('is-pressed');
+        }, true);
+        document.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            var btn = t.closest('.kh-cat-loc-btn');
+            if (!btn) return;
+            e.preventDefault();
+            var catId = btn.getAttribute('data-cat-id');
+            var direction = btn.getAttribute('data-direction');
+            if (!catId || (direction !== 'in' && direction !== 'out')) return;
+            var chip = btn.closest('.kh-cat-loc');
+            if (chip) paintLocationChip(chip, direction);
+            if (!(window.Shiny && typeof window.Shiny.setInputValue === 'function')) return;
+            window.Shiny.setInputValue('cat_location_set', {
+                cat_id: catId,
+                direction: direction,
+                nonce: Date.now()
+            }, { priority: 'event' });
+        });
+        setInterval(tickLocationTimes, 15000);
+        tickLocationTimes();
+    }
+
+    function installCatLocationResync() {
+        if (!onceFlag(window, '__khCatLocationResync')) return;
+
+        function requestResync(delayMs) {
+            setTimeout(function () {
+                if (!(window.Shiny && typeof window.Shiny.setInputValue === 'function')) return;
+                window.Shiny.setInputValue('cat_location_resync', Date.now(), {
+                    priority: 'event'
+                });
+            }, delayMs || 0);
+        }
+
+        document.addEventListener('shiny:connected', function () {
+            requestResync(0);
+        });
+        window.addEventListener('pageshow', function (e) {
+            if (e.persisted) requestResync(250);
+        });
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') requestResync(250);
+        });
+    }
+
+    function installLogDownloadOverlay() {
+        if (!onceFlag(window, '__khLogDownloadOverlay')) return;
+
+        function hideOverlay() {
+            var el = document.getElementById('kh-log-download-overlay');
+            if (el) el.hidden = true;
+        }
+
+        function showOverlay(link) {
+            var title = link.getAttribute('data-kh-prepare-title') || 'Preparing download';
+            var body = link.getAttribute('data-kh-prepare-body') || 'Creating the log archive. This may take a moment.';
+            var el = document.getElementById('kh-log-download-overlay');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'kh-log-download-overlay';
+                el.className = 'kh-log-download-overlay';
+                el.hidden = true;
+                el.setAttribute('role', 'dialog');
+                el.setAttribute('aria-modal', 'true');
+                el.setAttribute('aria-labelledby', 'kh-log-download-title');
+                el.innerHTML =
+                    '<div class="kh-log-download-dialog">' +
+                    '<h4 id="kh-log-download-title"></h4>' +
+                    '<p id="kh-log-download-body"></p>' +
+                    '<div class="spinner-container"><div class="spinner"></div></div>' +
+                    '</div>';
+                document.body.appendChild(el);
+            }
+            var titleEl = document.getElementById('kh-log-download-title');
+            var bodyEl = document.getElementById('kh-log-download-body');
+            if (titleEl) titleEl.textContent = title;
+            if (bodyEl) bodyEl.textContent = body;
+            el.hidden = false;
+        }
+
+        document.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            var link = t.closest('a.shiny-download-link');
+            if (!link || !/download_logfile$/.test(link.id || '')) return;
+            if (link.classList.contains('disabled')) return;
+            var href = link.getAttribute('href') || '';
+            if (href.indexOf('/download/') === -1) return;
+            showOverlay(link);
+        }, true);
+
+        function registerHandler() {
+            if (window.__khLogDownloadHandler) return true;
+            if (!(window.Shiny && typeof window.Shiny.addCustomMessageHandler === 'function')) {
+                return false;
+            }
+            try {
+                // Shiny requires the handler to take exactly one argument.
+                window.Shiny.addCustomMessageHandler('log-download-finished', function (message) {
+                    hideOverlay();
+                    return message;
+                });
+            } catch (err) {
+                return false;
+            }
+            window.__khLogDownloadHandler = true;
+            return true;
+        }
+
+        if (!registerHandler()) {
+            document.addEventListener('shiny:connected', function () {
+                registerHandler();
+            });
+            var tries = 0;
+            var timer = setInterval(function () {
+                tries += 1;
+                if (registerHandler() || tries > 40) clearInterval(timer);
+            }, 250);
+        }
+    }
+
     window.kittyhackServerUI = window.kittyhackServerUI || {};
     window.kittyhackServerUI.initAll = initAll;
 
     // Auto-install
+    installCatLocationClicks();
+    installCatLocationResync();
+    installLogDownloadOverlay();
     installMutationInit();
 })();

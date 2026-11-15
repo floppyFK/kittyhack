@@ -5,8 +5,9 @@
 Allow a future Kittyhack release to change the required Python version (e.g. 3.11 → 3.13)
 without locking users out of the Web UI after an in-app update.
 
-v2.7.0 ships `setup/REQUIRED_PYTHON` = `3.11`. On all existing installs the new checks are a
-fast no-op; they establish the mechanism for a later bump.
+This tree targets `setup/REQUIRED_PYTHON` = `3.14` (the previous pin was `3.12`).
+The venv dual-path (`--prepare` / `--apply`) was introduced in v2.7.0 so devices can
+migrate without deleting the working `.venv` first.
 
 ## Why not “recreate .venv inside Shiny on first start”?
 
@@ -29,7 +30,9 @@ devices have no control supervisor, so a control-only fix is incomplete.
 
 1. **`--bootstrap`** — fresh install (`kittyhack-setup.sh`). Creates `.venv` in place.
 2. **`--prepare`** — during software update while the old process may still be alive.
-   On mismatch: build `.venv.new`, `pip install -r requirements.txt`, strict smoke test.
+   On mismatch: build `.venv.new`, `pip install -r` the host requirements file
+   (`requirements.txt` on the Kittyflap, `requirements_remote.txt` in remote mode),
+   strict smoke test.
    Never swaps; leaves `.venv` untouched. Sets `.runtime-update-pending`.
 3. **`--apply`** — `ExecStartPre` / after reboot. If work is needed, serves a non-technical
    status page on port 80 (“Update in progress… do not power off”), then either swaps
@@ -43,26 +46,39 @@ devices have no control supervisor, so a control-only fix is incomplete.
 3. Existing pip-into-`.venv` step is skipped when `.venv.new` was prepared (deps already there).
 4. Systemd unit files are refreshed (include `ExecStartPre`).
 5. UI asks for reboot (existing behaviour).
-6. On boot, `ExecStartPre --apply` shows the status page if needed, swaps `.venv.new` → `.venv`,
-   then the service starts and the normal UI comes back.
+6. On boot, `ExecStartPre --apply` shows the status page if needed, swaps `.venv.new` → `.venv`
+   (rewriting embedded shebang paths), then the service starts and the normal UI comes back.
+
+**Important:** systemd must start the app via `.venv/bin/python -m uvicorn …` (not `.venv/bin/uvicorn`).
+Console scripts embed absolute shebangs that break when `.venv.new` is renamed to `.venv`.
 
 ## Lockout rules
 
 - Never `rm -rf .venv` before a smoke-tested replacement exists.
 - Prefer side-by-side `.venv.new` + atomic rename.
-- Keep `.venv.old` for one generation after a successful swap (manual recovery via SSH).
-  On the *next* Python migration, `--prepare` deletes `.venv.old` **before** creating
-  `.venv.new`, so peak disk is `.venv` + `.venv.new` (not three full copies). After
-  reboot `--apply` swaps and recreates `.venv.old` from the previous live `.venv`.
-- `TimeoutStartSec=3600` so a cold torch download on a Pi does not get SIGKILL’d.
+- Keep `.venv.old` through the swap so a failed post-swap smoke test can restore
+  the previous tree. After `startup.run()` returns, the app deletes `.venv.old`
+  in the background. It is not needed once the new process is up, and leaving it
+  (~1 GB) can block the next Python migration on a 16 GB flap: the 2 GB check
+  runs before `--prepare`. If a leftover is still present when an update changes
+  `REQUIRED_PYTHON`, that check counts its size as free space, because
+  `--prepare` removes it **before** creating `.venv.new`. A requirements-only
+  update does not. Peak disk during the next migration stays `.venv` + `.venv.new`.
+- `TimeoutStartSec=3600` so a cold wheel download on a Pi does not get SIGKILL’d.
 - File lock (`.venv-ensure.lock`) so control + kittyhack `ExecStartPre` do not race.
 - Pip installs use `--no-cache-dir`; after a successful bootstrap / prepare / apply-swap
   (and after in-app updates), the pip download cache under `/root/.cache/pip` is purged.
 
-## Before raising `REQUIRED_PYTHON`
+## Before raising `REQUIRED_PYTHON` again
 
-1. Migrate `tflite-runtime` → `ai-edge-litert` (or another runtime with aarch64 wheels).
-2. Refresh `requirements.txt` for the target Python; validate on Pi 4 + Debian x64.
+1. Confirm aarch64 + x86_64 wheels exist for the packages this host installs
+   (`ai-edge-litert`/`ncnn` on the Kittyflap; plus torch/torchvision/ultralytics on remote).
+2. Refresh `requirements.txt` (target) and `requirements_remote.txt` (remote) as needed
+   and resolve pip conflicts on a Pi / remote host.
 3. Bump `setup/REQUIRED_PYTHON` in the same release that needs the new interpreter.
 4. Test: in-app update from previous tag → reboot → UI comes back; simulate failed pip and
    confirm old `.venv` remains bootable.
+
+For the 3.14 bump, native pins were raised only to the oldest minor that publishes
+`cp314` manylinux wheels for both aarch64 (Kittyflap) and x86_64 (remote-mode host).
+`ai-edge-litert==2.1.6` and `ncnn==1.0.20260526` already had those wheels and were kept.

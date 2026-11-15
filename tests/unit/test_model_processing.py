@@ -19,6 +19,10 @@ from src.model.camera_config import (
 from src.model.detection import _parse_yolo_detection_results
 from src.model.model_handler import ModelHandler
 from src.model.remote_trainer import RemoteModelTrainer
+from src.model.yolo_inference_worker import (
+    configure_worker_compute,
+    yolo_model_worker_process,
+)
 from src.model.yolo_model import YoloModel
 
 
@@ -240,6 +244,17 @@ def test_model_handler_device_and_labels(tmp_path, monkeypatch, tmp_kittyhack_db
     assert h.check_videostream_status() is False
 
 
+def test_get_model_threads_target_is_always_one_core(monkeypatch):
+    import src.backend.model_runtime as mr
+
+    monkeypatch.setattr(mr.multiprocessing, "cpu_count", lambda: 4)
+    monkeypatch.setattr(mr, "is_remote_mode", lambda: False)
+    assert mr._get_model_threads() == 1
+
+    monkeypatch.setattr(mr, "is_remote_mode", lambda: True)
+    assert mr._get_model_threads() == 4
+
+
 def test_parse_yolo_below_threshold_still_returns_objects():
     import numpy as np
 
@@ -357,6 +372,7 @@ def test_start_download_model_async_uses_repo_root_cwd(monkeypatch, tmp_path):
         captured["cwd"] = cwd
         return _Proc()
 
+    monkeypatch.setattr("src.model.remote_trainer.Versioning.get_git_version", lambda: "3.0.0-test")
     monkeypatch.setattr("src.model.remote_trainer.subprocess.Popen", fake_popen)
 
     assert RemoteModelTrainer.start_download_model_async("job", "rid", model_name="m") is True
@@ -375,6 +391,7 @@ def test_check_model_training_retries_worker_died(monkeypatch, tmp_path):
     state_path = str(tmp_path / "dl_state.json")
     monkeypatch.setattr("src.model.remote_trainer._MODEL_DL_STATE_PATH", state_path)
     monkeypatch.setitem(baseconfig.CONFIG, "MODEL_TRAINING", job_id)
+    monkeypatch.setitem(baseconfig.CONFIG, "MODEL_TRAINING_JOB_TOKEN", "")
 
     RemoteModelTrainer._write_model_download_state(
         {
@@ -399,3 +416,155 @@ def test_check_model_training_retries_worker_died(monkeypatch, tmp_path):
     )
     assert started == [(job_id, "rid-1")]
     assert status == "downloading"
+
+
+def test_yolo_worker_process_is_forking_picklable():
+    """Python 3.14 forkserver pickles Process.target; a nested worker would crash camera start."""
+    import io
+    from multiprocessing.reduction import ForkingPickler
+
+    assert "<locals>" not in yolo_model_worker_process.__qualname__
+    buf = io.BytesIO()
+    ForkingPickler(buf).dump(yolo_model_worker_process)
+    assert buf.tell() > 0
+
+
+def test_yolo_worker_module_has_no_heavy_toplevel_imports():
+    """OpenMP/NCNN must not initialize before configure_worker_compute() runs."""
+    import ast
+    from pathlib import Path
+
+    src = Path("src/model/yolo_inference_worker.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    imported: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            imported.extend(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.append(node.module.split(".")[0])
+    heavy = {"cv2", "numpy", "torch", "ultralytics", "ncnn", "psutil"}
+    assert not (set(imported) & heavy)
+
+
+def test_configure_worker_compute_sets_thread_env(monkeypatch):
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.delenv("OMP_THREAD_LIMIT", raising=False)
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3}, raising=False)
+    monkeypatch.setattr(os, "sched_setaffinity", lambda _pid, _mask: None, raising=False)
+    cores = configure_worker_compute(1)
+    assert os.environ["OMP_NUM_THREADS"] == "1"
+    assert os.environ["OMP_THREAD_LIMIT"] == "1"
+    assert os.environ["OMP_WAIT_POLICY"] == "PASSIVE"
+    assert cores == [0]
+
+
+def test_openvino_load_uses_venv_installer(tmp_path, monkeypatch, tmp_kittyhack_db):
+    from src.system import DependencyInstaller
+
+    baseconfig.CONFIG["KITTYHACK_DATABASE_PATH"] = tmp_kittyhack_db
+    baseconfig.CONFIG["INFERENCE_DEVICE"] = "intel:gpu"
+    monkeypatch.setattr("src.model.model_handler.is_remote_mode", lambda: True)
+
+    labels = tmp_path / "labels.txt"
+    labels.write_text("prey\n", encoding="utf-8")
+    h = ModelHandler(
+        model="yolo",
+        modeldir=str(tmp_path),
+        labelfile="labels.txt",
+        model_image_size=320,
+    )
+    h.inference_device = "intel:gpu"
+
+    called = {"n": 0}
+
+    def _fail_install():
+        called["n"] += 1
+        return False
+
+    monkeypatch.setattr(DependencyInstaller, "ensure_openvino_installed", staticmethod(_fail_install))
+    with pytest.raises(RuntimeError, match="virtualenv"):
+        h.load_model()
+    assert called["n"] == 1
+
+    spec = DependencyInstaller.OPENVINO_PIP_SPEC
+    requirements = Path(__file__).resolve().parents[2] / "requirements_remote.txt"
+    assert spec in requirements.read_text(encoding="utf-8")
+
+
+def test_openvino_load_skips_ultralytics(tmp_path, monkeypatch, tmp_kittyhack_db):
+    from src.system import DependencyInstaller
+
+    baseconfig.CONFIG["KITTYHACK_DATABASE_PATH"] = tmp_kittyhack_db
+    baseconfig.CONFIG["INFERENCE_DEVICE"] = "intel:gpu"
+    monkeypatch.setattr("src.model.model_handler.is_remote_mode", lambda: True)
+
+    labels = tmp_path / "labels.txt"
+    labels.write_text("prey\n", encoding="utf-8")
+    ir_dir = tmp_path / "model_openvino_model"
+    ir_dir.mkdir()
+    (ir_dir / "model.xml").write_text("<net/>", encoding="utf-8")
+
+    h = ModelHandler(
+        model="yolo",
+        modeldir=str(tmp_path),
+        labelfile="labels.txt",
+        model_image_size=320,
+    )
+    monkeypatch.setattr(DependencyInstaller, "ensure_openvino_installed", staticmethod(lambda: True))
+
+    created = {}
+
+    class _Detector:
+        def __init__(self, model_dir, inference_device, imgsz):
+            created["model_dir"] = model_dir
+            created["device"] = inference_device
+            created["imgsz"] = imgsz
+
+        def predict(self, frame, labels, cat_names, min_threshold, input_size=None):
+            return 0, 0, []
+
+    monkeypatch.setattr("src.model.openvino_detect.OpenVinoYoloDetector", _Detector)
+    import sys
+    monkeypatch.setitem(sys.modules, "ultralytics", None)
+
+    h.load_model()
+    assert created["device"] == "intel:gpu"
+    assert h._yolo is not None
+    assert h._model_worker is None
+
+
+def test_openvino_device_falls_back_to_auto():
+    from src.model.openvino_detect import openvino_device_name
+
+    assert openvino_device_name("intel:gpu", ["CPU", "GPU.0"]) == "GPU"
+    assert openvino_device_name("intel:gpu", ["CPU"]) == "AUTO"
+    assert openvino_device_name("intel:npu", ["NPU"]) == "NPU"
+    assert openvino_device_name("cuda:0", ["GPU"]) == "AUTO"
+
+
+def test_requirements_split_keeps_cuda_out_of_the_default_install():
+    root = Path(__file__).resolve().parents[2]
+    target = (root / "requirements.txt").read_text(encoding="utf-8")
+    remote = (root / "requirements_remote.txt").read_text(encoding="utf-8")
+    cuda = (root / "requirements_remote_cuda.txt").read_text(encoding="utf-8")
+    export = (root / "requirements_openvino_export.txt").read_text(encoding="utf-8")
+
+    for text in (target, remote):
+        assert "\ntorch==" not in "\n" + text
+        assert "DateTime==" not in text
+        assert "zope.interface==" not in text
+        assert "portalocker==" not in text
+        assert "configparser==" not in text
+        assert "opencv-python==" not in text
+        assert "opencv-python-headless==" in text
+        assert "scipy==" not in text
+        assert "matplotlib==" not in text
+
+    assert "openvino==2026.4.1" in remote
+    assert "torch==2.9.1\n" in cuda
+    assert "torch==2.9.1+cpu" not in cuda
+    assert "ultralytics==" in cuda
+    assert "opencv-python==" in cuda
+    assert "opencv-python-headless==" not in cuda
+    assert "torch==2.9.1+cpu" in export
+    assert "https://download.pytorch.org/whl/cpu" in export

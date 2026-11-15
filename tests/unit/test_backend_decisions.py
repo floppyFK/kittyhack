@@ -1,11 +1,16 @@
 """Backend decision helpers: exit, prey gating, unlock gates, event conclusion."""
 
-from src.baseconfig import AllowedToEnter, AllowedToExit
+from src.baseconfig import AllowedToEnter, AllowedToExit, UserNotifications
 from src.backend.decisions import (
     build_unlock_inside_conditions,
     compute_mouse_check,
     conclude_motion_event_type,
     no_prey_within_timeout,
+    pir_ok_for_camera_entry,
+    should_suggest_pir_second_factor,
+    sync_original_model_notice,
+    sync_pir_second_factor_suggestion,
+    uses_original_detection_model,
     resolve_per_cat_exit,
     resolve_prey_detection_enabled,
     time_in_exit_ranges,
@@ -90,6 +95,133 @@ def test_unlock_inside_ready_requires_all_gates():
     assert unlock_inside_ready(conds) is True
     conds["mouse_check"] = False
     assert unlock_inside_ready(conds) is False
+    conds["mouse_check"] = True
+    conds["not_held_after_max_unlock"] = False
+    assert unlock_inside_ready(conds) is False
+    conds["not_held_after_max_unlock"] = True
+    conds["not_in_safety_cooldown"] = False
+    assert unlock_inside_ready(conds) is False
+
+
+def test_pir_ok_for_camera_entry():
+    assert pir_ok_for_camera_entry(False, True, True, False) is True
+    assert pir_ok_for_camera_entry(True, False, False, False) is True
+    assert pir_ok_for_camera_entry(True, True, False, False) is False
+    assert pir_ok_for_camera_entry(True, True, False, True) is True
+    assert pir_ok_for_camera_entry(True, False, True, False) is False
+    assert pir_ok_for_camera_entry(True, False, True, True) is True
+
+
+def test_should_suggest_pir_second_factor():
+    assert should_suggest_pir_second_factor(False, True, False) is True
+    assert should_suggest_pir_second_factor(False, False, True) is True
+    assert should_suggest_pir_second_factor(False, True, True) is True
+    assert should_suggest_pir_second_factor(True, True, True) is False
+    assert should_suggest_pir_second_factor(False, False, False) is False
+
+
+def test_sync_pir_second_factor_suggestion_queues_and_clears(tmp_path, monkeypatch):
+    import src.baseconfig as baseconfig
+
+    monkeypatch.chdir(tmp_path)
+    UserNotifications.notifications = []
+    UserNotifications.muted_ids = []
+    baseconfig.CONFIG["USE_CAMERA_FOR_MOTION_DETECTION"] = True
+    baseconfig.CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = False
+    baseconfig.CONFIG["REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY"] = False
+    assert sync_pir_second_factor_suggestion() is True
+    nid = UserNotifications.ID_SUGGEST_PIR_SECOND_FACTOR
+    note = UserNotifications.get_by_id(nid)
+    assert note is not None
+    assert note.get("muteable") is True
+    assert sync_pir_second_factor_suggestion() is False
+    assert UserNotifications.get_by_id(nid) is not None
+
+    baseconfig.CONFIG["REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY"] = True
+    assert sync_pir_second_factor_suggestion() is False
+    assert UserNotifications.get_by_id(nid) is None
+
+
+def test_uses_original_detection_model():
+    assert uses_original_detection_model("original_kittyflap_model_v2") is True
+    assert uses_original_detection_model("original_kittyflap_model_v1") is True
+    assert uses_original_detection_model("") is False
+    assert uses_original_detection_model(None) is False
+
+
+def test_sync_original_model_notice_for_new_install(tmp_path, monkeypatch):
+    import src.baseconfig as baseconfig
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("src.backend.decisions._has_custom_yolo_model", lambda: False)
+    UserNotifications.notifications = []
+    UserNotifications.muted_ids = []
+    baseconfig.CONFIG["LANGUAGE"] = "en"
+    baseconfig.CONFIG["TFLITE_MODEL_VERSION"] = "original_kittyflap_model_v2"
+    baseconfig.CONFIG["YOLO_MODEL"] = ""
+    assert sync_original_model_notice() is True
+    nid = UserNotifications.ID_ORIGINAL_MODEL_ACCURACY
+    note = UserNotifications.get_by_id(nid)
+    assert note is not None
+    assert note.get("muteable") is True
+    assert "do not need to change anything right now" in note["message"]
+    assert "AI Training" in note["message"]
+    assert "pictures of your cats first" in note["message"]
+    assert "Train-own-AI" in note["message"]
+    assert "You already have a trained model" not in note["message"]
+    assert sync_original_model_notice() is False
+
+    baseconfig.CONFIG["TFLITE_MODEL_VERSION"] = ""
+    baseconfig.CONFIG["YOLO_MODEL"] = "custom-model"
+    assert sync_original_model_notice() is False
+    assert UserNotifications.get_by_id(nid) is None
+
+
+def test_sync_original_model_notice_points_at_existing_model(tmp_path, monkeypatch):
+    import src.baseconfig as baseconfig
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("src.backend.decisions._has_custom_yolo_model", lambda: True)
+    UserNotifications.notifications = []
+    UserNotifications.muted_ids = []
+    baseconfig.CONFIG["LANGUAGE"] = "en"
+    baseconfig.CONFIG["TFLITE_MODEL_VERSION"] = "original_kittyflap_model_v1"
+    assert sync_original_model_notice() is True
+    note = UserNotifications.get_by_id(UserNotifications.ID_ORIGINAL_MODEL_ACCURACY)
+    assert "You already have a trained model" in note["message"]
+    assert "Detection model" in note["message"]
+    assert "do not need to change anything right now" not in note["message"]
+    assert "Train-own-AI" not in note["message"]
+
+
+def test_sync_original_model_notice_respects_mute(tmp_path, monkeypatch):
+    import src.baseconfig as baseconfig
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("src.backend.decisions._has_custom_yolo_model", lambda: False)
+    UserNotifications.notifications = []
+    UserNotifications.muted_ids = []
+    nid = UserNotifications.ID_ORIGINAL_MODEL_ACCURACY
+    UserNotifications.mute(nid)
+    baseconfig.CONFIG["LANGUAGE"] = "en"
+    baseconfig.CONFIG["TFLITE_MODEL_VERSION"] = "original_kittyflap_model_v2"
+    assert sync_original_model_notice() is False
+    assert UserNotifications.get_by_id(nid) is None
+
+
+def test_sync_pir_second_factor_suggestion_respects_mute(tmp_path, monkeypatch):
+    import src.baseconfig as baseconfig
+
+    monkeypatch.chdir(tmp_path)
+    UserNotifications.notifications = []
+    UserNotifications.muted_ids = []
+    nid = UserNotifications.ID_SUGGEST_PIR_SECOND_FACTOR
+    UserNotifications.mute(nid)
+    baseconfig.CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = True
+    baseconfig.CONFIG["USE_CAMERA_FOR_MOTION_DETECTION"] = False
+    baseconfig.CONFIG["REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY"] = False
+    assert sync_pir_second_factor_suggestion() is False
+    assert UserNotifications.get_by_id(nid) is None
 
 
 def test_full_entry_path_with_fakes_and_gates():

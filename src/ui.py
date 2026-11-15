@@ -1,12 +1,13 @@
 from shiny import ui
 from faicons import icon_svg
 from pathlib import Path
-from src.mode import is_remote_mode
 from src.baseconfig import CONFIG, set_language
 
 js_file = Path(__file__).parent.parent / "www" / "app.js"
 server_ui_js_file = Path(__file__).parent.parent / "www" / "server-ui.js"
 event_modal_js_file = Path(__file__).parent.parent / "www" / "event-modal.js"
+chart_js_file = Path(__file__).parent.parent / "www" / "vendor" / "chart.umd.min.js"
+stats_js_file = Path(__file__).parent.parent / "www" / "stats.js"
 css_file = Path(__file__).parent.parent / "www" / "styles.css"
 
 try:
@@ -29,10 +30,20 @@ try:
 except Exception:
     _event_modal_js_version = "0"
 
+try:
+    _chart_js_version = str(int(chart_js_file.stat().st_mtime))
+except Exception:
+    _chart_js_version = "0"
+
+try:
+    _stats_js_version = str(int(stats_js_file.stat().st_mtime))
+except Exception:
+    _stats_js_version = "0"
+
 # Prepare gettext for translations
 _ = set_language(CONFIG['LANGUAGE'])
 
-# Build navigation panels (conditionally add WLAN config for target-mode)
+# Build navigation panels
 _nav_items = [
     ui.nav_panel(
         _("Live view"),
@@ -43,22 +54,26 @@ _nav_items = [
     ),
     ui.nav_panel(
         _("Pictures"),
-        ui.output_ui("ui_photos_date"),
-        ui.output_ui("ui_photos_events"),
-        ui.br(),
+        ui.div(
+            ui.output_ui("ui_photos_date"),
+            ui.div(
+                ui.output_ui("ui_photos_events"),
+                class_="kh-photos-body",
+            ),
+            class_="kh-photos-page",
+        ),
         value="pictures",
     ),
     ui.nav_panel(
-        _("Manage cats"),
+        _("Statistics"),
+        ui.output_ui("ui_statistics"),
+        value="statistics",
+    ),
+    ui.nav_panel(
+        _("Cats"),
         ui.output_ui("ui_manage_cats"),
         ui.br(),
         value="manage-cats",
-    ),
-    ui.nav_panel(
-        _("Add new cat"),
-        ui.output_ui("ui_add_new_cat"),
-        ui.br(),
-        value="add-new-cat",
     ),
     ui.nav_panel(
         _("AI Training"),
@@ -72,21 +87,11 @@ _nav_items = [
         value="system",
     ),
     ui.nav_panel(
-        _("Configuration"),
+        _("Settings"),
         ui.output_ui("ui_configuration"),
         value="configuration",
     ),
 ]
-
-if not is_remote_mode():
-    _nav_items.append(
-        ui.nav_panel(
-            _("WLAN Configuration"),
-            ui.output_ui("ui_wlan_configured_connections"),
-            ui.output_ui("ui_wlan_available_networks"),
-            value="wlan-configuration",
-        )
-    )
 
 _nav_items.append(
     ui.nav_panel(
@@ -98,7 +103,17 @@ _nav_items.append(
 
 # the main kittyhack ui
 app_ui = ui.page_fillable(
+    ui.tags.div(
+        {
+            "id": "kh_reconnect_i18n",
+            "style": "display:none;",
+            "data-message": _("Connection lost. Trying to reconnect…"),
+            "data-try-now": _("Try now"),
+        }
+    ),
     ui.tags.script(src=f"app.js?v={_js_version}", defer=True),
+    ui.tags.script(src=f"vendor/chart.umd.min.js?v={_chart_js_version}", defer=True),
+    ui.tags.script(src=f"stats.js?v={_stats_js_version}", defer=True),
     ui.tags.script(src=f"server-ui.js?v={_server_ui_js_version}", defer=True),
     ui.tags.script(src=f"event-modal.js?v={_event_modal_js_version}", defer=True),
     ui.tags.link(rel="stylesheet", href=f"styles.css?v={_asset_version}"),
@@ -132,14 +147,19 @@ app_ui = ui.page_fillable(
                         "id": "theme_toggle_button",
                         "type": "button",
                         "class": "btn btn-sm btn-outline-secondary theme-toggle-btn",
-                        "aria-label": _("Toggle theme"),
-                        "title": _("Toggle theme")
+                        "aria-label": _("Change appearance"),
+                        "title": _("Change appearance"),
+                        "data-label-prefix": _("Appearance"),
+                        "data-label-auto": _("Auto"),
+                        "data-label-dark": _("Dark"),
+                        "data-label-light": _("Light"),
                     },
-                    _("Theme: Auto")
+                    _("Appearance: Auto")
                 ),
             ),
         ),
         position="fixed-top",
         padding="3rem",
     ),
+    lang=CONFIG.get("LANGUAGE") or "en",
 )

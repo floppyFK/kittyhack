@@ -5,6 +5,38 @@ The German PO file is the editable translation source and should stay versioned 
 English uses gettext fallback to msgids (default source strings), so no `locales/en` catalog is required.
 The MO file is a compiled runtime artifact and does not need to be versioned.
 
+# UI Writing Style
+
+Kittyhack uses one warm, calm voice for the whole web UI. Write for anyone in
+the household and use plain language before technical terminology.
+
+- German addresses one person with **du**. English uses **you**.
+- Use sentence case. Navigation and section headings are short nouns.
+- Start button labels with a verb. Name the object only when the surrounding
+  screen does not make it clear: “Save”, “Save changes”, “Restart Kittyflap”.
+- Ask one direct question before destructive actions. Keep the action button
+  short: “Delete” / “Löschen”.
+- Keep success messages short and in the past tense. Errors say what happened
+  and, where useful, what to do next.
+- Use exclamation marks only when the content genuinely requires urgency. Use
+  the ellipsis character (`…`) for ongoing work.
+- Keep help text to one or two sentences: explain what Kittyhack does, then the
+  consequence of the choice. Avoid `NOTE:` / `HINWEIS:` labels.
+
+Use these product terms consistently:
+
+- **Kittyhack** is the software; **Kittyflap** is the physical device.
+- Use **flap / Klappe**, **unlock / entriegeln**, **lock / verriegeln**, and
+  **inside / innen**, **outside / außen**.
+- Use **prey / Beute** in household-facing text. Use **mouse / Maus** only when
+  the detector specifically means a mouse, such as in AI Training.
+- Event summaries are complete sentences. Timeline entries are short facts.
+
+Technical terms such as YOLO, TFLite, Label Studio, MQTT, and SSID are
+appropriate in Training, API, WLAN, Home Assistant, Advanced, and remote-mode
+content. Keep them out of everyday screens and flap settings where plain
+language is sufficient.
+
 At startup, kittyhack performs a locale refresh check and regenerates catalogs only when needed:
 
 1. Check if gettext tools are available (`xgettext`, `msgmerge`, `msgfmt`).

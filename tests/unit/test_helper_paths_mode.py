@@ -115,12 +115,65 @@ def test_parse_repo_spec():
     assert owner == "floppyFK" and repo == "kittyhack" and ref == "v2.6.3_beta_1"
 
 
+def test_branch_display_version_is_not_a_checkout_ref():
+    """``branch@sha`` is a UI label. Git must be given the branch, not that string."""
+    label = "python3.14_statistics@e991f8f"
+    assert Versioning.split_branch_display_version(label) == (
+        "python3.14_statistics",
+        "e991f8f",
+    )
+    assert Versioning.split_branch_display_version("v3.0.0") is None
+    assert Versioning.split_branch_display_version("python3.14_statistics@not-a-sha") is None
+
+    assert Versioning.git_checkout_command(None, "v3.0.0") == [
+        "/bin/git",
+        "checkout",
+        "v3.0.0",
+    ]
+    assert Versioning.git_checkout_command("python3.14_statistics", label) == [
+        "/bin/git",
+        "checkout",
+        "-B",
+        "python3.14_statistics",
+        "origin/python3.14_statistics",
+    ]
+    # Flap config still on standard: the label alone must not be checked out.
+    assert Versioning.git_checkout_command(None, label) == [
+        "/bin/git",
+        "checkout",
+        "-B",
+        "python3.14_statistics",
+        "origin/python3.14_statistics",
+    ]
+    assert "python3.14_statistics@e991f8f" not in Versioning.git_checkout_command(None, label)
+
+
+def test_explicit_update_source_from_controller():
+    assert Versioning.explicit_update_source(
+        "floppyFK", "kittyhack", "python3.14_statistics"
+    ) == ("floppyFK", "kittyhack", "python3.14_statistics")
+    assert Versioning.explicit_update_source("floppyFK", "kittyhack", "") == (
+        "floppyFK",
+        "kittyhack",
+        None,
+    )
+    assert Versioning.explicit_update_source("floppyFK", "kittyhack", None) == (
+        "floppyFK",
+        "kittyhack",
+        None,
+    )
+    assert Versioning.explicit_update_source("../etc", "kittyhack", "main") is None
+    assert Versioning.explicit_update_source("floppyFK", "kittyhack", "-evil") is None
+    assert Versioning.explicit_update_source("", "kittyhack", "main") is None
+
+
 def test_update_changes_runtime_files(monkeypatch):
-    """Heavy-update detection compares REQUIRED_PYTHON and requirements.txt."""
+    """Heavy-update detection compares REQUIRED_PYTHON and this host's requirements file."""
     import src.baseconfig as baseconfig
 
     monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY_MODE", "standard")
     monkeypatch.setitem(baseconfig.CONFIG, "UPDATE_REPOSITORY", "")
+    monkeypatch.setattr("src.mode.is_remote_mode", lambda: False)
 
     monkeypatch.setattr(Versioning, "resolve_update_checkout_ref", lambda _v=None: "v9.9.9")
     monkeypatch.setattr(
@@ -138,14 +191,16 @@ def test_update_changes_runtime_files(monkeypatch):
     monkeypatch.setattr(
         Versioning,
         "_read_repo_file_at_ref_via_github",
-        lambda owner, repo, ref, rel, timeout=8: (True, "3.12\n")
+        lambda owner, repo, ref, rel, timeout=8: (True, "3.14\n")
         if rel.endswith("REQUIRED_PYTHON")
         else (True, "pkg==1\n"),
     )
     assert Versioning.update_changes_runtime_files("v9.9.9") is True
     assert Versioning.update_changes_required_python("v9.9.9") is True
-    assert Versioning.get_runtime_file_changes("v9.9.9")["setup/REQUIRED_PYTHON"] is True
-    assert Versioning.get_runtime_file_changes("v9.9.9")["requirements.txt"] is False
+    changes = Versioning.get_runtime_file_changes("v9.9.9")
+    assert changes["setup/REQUIRED_PYTHON"] is True
+    assert changes["requirements.txt"] is False
+    assert "requirements_remote.txt" not in changes
 
     monkeypatch.setattr(
         Versioning,
@@ -166,6 +221,31 @@ def test_update_changes_runtime_files(monkeypatch):
     )
     assert Versioning.update_changes_runtime_files("v9.9.9") is False
     assert Versioning.update_changes_required_python("v9.9.9") is False
+
+
+def test_heavy_update_repo_files_remote_uses_remote_requirements(monkeypatch):
+    """Remote hosts watch requirements_remote.txt, not the Kittyflap file."""
+    from src.baseconfig import CONFIG
+    from src.helper import heavy_update_repo_files
+
+    previous = CONFIG.get("INFERENCE_DEVICE")
+    CONFIG["INFERENCE_DEVICE"] = "cpu"
+    try:
+        monkeypatch.setattr("src.mode.is_remote_mode", lambda: False)
+        assert heavy_update_repo_files() == ("setup/REQUIRED_PYTHON", "requirements.txt")
+
+        monkeypatch.setattr("src.mode.is_remote_mode", lambda: True)
+        assert heavy_update_repo_files() == (
+            "setup/REQUIRED_PYTHON",
+            "requirements_remote.txt",
+        )
+        CONFIG["INFERENCE_DEVICE"] = "cuda:0"
+        assert heavy_update_repo_files() == (
+            "setup/REQUIRED_PYTHON",
+            "requirements_remote_cuda.txt",
+        )
+    finally:
+        CONFIG["INFERENCE_DEVICE"] = previous
 
 
 def test_read_latest_kittyhack_version_beta_channel(monkeypatch):

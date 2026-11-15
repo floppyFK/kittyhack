@@ -41,6 +41,11 @@ def models_yolo_root() -> str:
     return os.path.join(install_base(), "models", "yolo")
 
 
+def model_server_root() -> str:
+    """Install directory of the optional local model server, beside Kittyhack."""
+    return os.path.join(install_base(), "kittyhack-model-server")
+
+
 def labelstudio_root() -> str:
     """Directory for Label Studio data/install."""
     return os.path.join(install_base(), "labelstudio")

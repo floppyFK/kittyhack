@@ -12,26 +12,32 @@
 #   - --apply is intended when this unit is not yet ExecStart'ed; on target boot,
 #     kittyhack_control runs first (kittyhack is stopped), so a swap is safe.
 #
-# Required version is read from setup/REQUIRED_PYTHON (e.g. "3.11").
+# Required version is read from setup/REQUIRED_PYTHON (e.g. "3.14").
 set -euo pipefail
 
 MODE="--apply"
 ROOT=""
 SKIP_PIP=0
 SMOKE_STRICT=0
+USE_CUDA=0
+REQUIREMENTS_EXPLICIT=0
 REQUIREMENTS_FILE=""
 
 usage() {
     cat <<'EOF'
-Usage: ensure_venv.sh [--bootstrap|--prepare|--apply] [--root DIR] [--requirements FILE] [--skip-pip] [--smoke-strict]
+Usage: ensure_venv.sh [--bootstrap|--prepare|--apply] [--root DIR] [--requirements FILE] [--cuda] [--skip-pip] [--smoke-strict]
 
   --bootstrap       Create .venv in place (fresh install / recovery with services stopped).
   --prepare         Build .venv.new if the active .venv Python mismatches REQUIRED_PYTHON.
   --apply           Swap .venv.new into place if present; otherwise repair on mismatch.
   --root DIR        Kittyhack install root (default: parent of setup/).
-  --requirements F  requirements file (default: <root>/requirements.txt).
-  --skip-pip        Skip pip install -r requirements.txt (bootstrap/testing only).
-  --smoke-strict    Fail smoke test if torch/tflite_runtime cannot be imported.
+  --requirements F  requirements file (default: requirements.txt, or
+                    requirements_remote.txt when this host is in remote mode).
+  --cuda            Remote only: install requirements_remote_cuda.txt (PyPI CUDA
+                    torch). Also selected when the stored inference_device is cuda:*.
+                    Ignored when --requirements is set.
+  --skip-pip        Skip pip install -r <requirements> (bootstrap/testing only).
+  --smoke-strict    Fail smoke test if listed ML packages cannot be imported.
 EOF
 }
 
@@ -39,7 +45,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --bootstrap|--prepare|--apply) MODE="$1"; shift ;;
         --root) ROOT="${2:-}"; shift 2 ;;
-        --requirements) REQUIREMENTS_FILE="${2:-}"; shift 2 ;;
+        --requirements) REQUIREMENTS_FILE="${2:-}"; REQUIREMENTS_EXPLICIT=1; shift 2 ;;
+        --cuda) USE_CUDA=1; shift ;;
         --skip-pip) SKIP_PIP=1; shift ;;
         --smoke-strict) SMOKE_STRICT=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -53,8 +60,67 @@ if [[ -z "$ROOT" ]]; then
 fi
 
 REQUIRED_FILE="${SCRIPT_DIR}/REQUIRED_PYTHON"
+
+is_remote_host() {
+    local mode
+    mode="$(echo "${KITTYHACK_MODE:-}" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$mode" == "remote" || "$mode" == "remote-mode" ]]; then
+        return 0
+    fi
+    if [[ "$mode" == "target" || "$mode" == "target-mode" ]]; then
+        return 1
+    fi
+    [[ -f "${ROOT}/.remote-mode" ]]
+}
+
+config_wants_cuda() {
+    local db="${ROOT}/kittyhack.db"
+    local device=""
+    if [[ -f "$db" ]]; then
+        device="$(python3 - "$db" << 'PY'
+import json
+import sqlite3
+import sys
+
+db = sys.argv[1]
+try:
+    conn = sqlite3.connect(db, timeout=5)
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'INFERENCE_DEVICE'"
+    ).fetchone()
+    conn.close()
+except Exception:
+    sys.exit(0)
+if not row or row[0] is None:
+    sys.exit(0)
+try:
+    value = json.loads(row[0])
+except Exception:
+    value = row[0]
+print(str(value).strip().lower())
+PY
+)"
+        if [[ "$device" == cuda* ]]; then
+            return 0
+        fi
+        if [[ -n "$device" ]]; then
+            return 1
+        fi
+    fi
+    # Before the first start migrates config.ini into the database.
+    local cfg="${ROOT}/config.ini"
+    [[ -f "$cfg" ]] || return 1
+    grep -Eiq '^[[:space:]]*inference_device[[:space:]]*=[[:space:]]*cuda' "$cfg"
+}
+
 if [[ -z "$REQUIREMENTS_FILE" ]]; then
-    REQUIREMENTS_FILE="${ROOT}/requirements.txt"
+    if is_remote_host && { [[ "$USE_CUDA" -eq 1 ]] || config_wants_cuda; }; then
+        REQUIREMENTS_FILE="${ROOT}/requirements_remote_cuda.txt"
+    elif is_remote_host; then
+        REQUIREMENTS_FILE="${ROOT}/requirements_remote.txt"
+    else
+        REQUIREMENTS_FILE="${ROOT}/requirements.txt"
+    fi
 fi
 VENV="${ROOT}/.venv"
 VENV_NEW="${ROOT}/.venv.new"
@@ -238,16 +304,80 @@ pip_install_requirements() {
         return 0
     fi
     [[ -f "$REQUIREMENTS_FILE" ]] || die "Missing ${REQUIREMENTS_FILE}"
+    log "Installing $(basename "$REQUIREMENTS_FILE") into ${venv_dir}"
 
-    # Avoid piwheels / extra indexes breaking hashed or pinned installs.
-    unset PIP_EXTRA_INDEX_URL || true
-    export PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.org/simple}"
+    # Force PyPI only. Raspberry Pi OS often enables piwheels via pip.conf /
+    # PIP_EXTRA_INDEX_URL, which can mix incompatible wheels with pinned deps.
+    export PIP_CONFIG_FILE=/dev/null
+    export PIP_EXTRA_INDEX_URL=
+    export PIP_INDEX_URL="https://pypi.org/simple"
 
     # shellcheck disable=SC1091
     source "${venv_dir}/bin/activate"
-    pip install --timeout 120 --retries 10 --no-cache-dir -U pip setuptools wheel
-    pip install --timeout 120 --retries 10 --no-cache-dir -r "$REQUIREMENTS_FILE"
+    pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 --no-cache-dir -U pip setuptools wheel
+    pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 --no-cache-dir -r "$REQUIREMENTS_FILE"
+    uninstall_unlisted_torch_stack "$venv_dir"
+    uninstall_other_opencv "$venv_dir"
     deactivate || true
+}
+
+requirements_lists_pkg() {
+    local pkg="$1"
+    [[ -f "$REQUIREMENTS_FILE" ]] || return 1
+    grep -qE "^${pkg}(==|>=|<=|~=|===|>|<|!=|[[:space:]])" "$REQUIREMENTS_FILE"
+}
+
+uninstall_unlisted_torch_stack() {
+    # pip install -r does not remove dropped pins. Older venvs still contain the
+    # CUDA torch stack after requirements_remote.txt stopped listing it.
+    if requirements_lists_pkg torch; then
+        return 0
+    fi
+    log "Removing leftover torch/ultralytics (not listed in $(basename "$REQUIREMENTS_FILE"))"
+    local pip_bin="${venv_dir}/bin/pip"
+    if [[ ! -x "$pip_bin" ]]; then
+        pip_bin="pip"
+    fi
+    "$pip_bin" uninstall -y torch torchvision ultralytics ultralytics-thop >/dev/null 2>&1 || true
+    # The PyPI torch wheel depends on nvidia-* and triton. Uninstalling torch
+    # leaves those multi-GB packages installed.
+    local extras
+    extras="$("$pip_bin" freeze 2>/dev/null | awk -F'==' 'tolower($1) ~ /^(nvidia-|triton$)/ {print $1}')"
+    if [[ -n "$extras" ]]; then
+        # shellcheck disable=SC2086
+        "$pip_bin" uninstall -y $extras >/dev/null 2>&1 || true
+    fi
+}
+
+uninstall_other_opencv() {
+    # opencv-python and opencv-python-headless both own the cv2 directory.
+    # ncnn depends on opencv-python, so a requirements file that pins only the
+    # headless build still ends up with both. Uninstalling one deletes the
+    # shared files while the other's pip record remains, and `import cv2` still
+    # succeeds as an empty namespace. Reinstall the build we keep afterwards.
+    local pip_bin="${venv_dir}/bin/pip"
+    [[ -x "$pip_bin" ]] || pip_bin="pip"
+    local keep="" drop=""
+    if requirements_lists_pkg opencv-python-headless && ! requirements_lists_pkg opencv-python; then
+        keep="opencv-python-headless"
+        drop="opencv-python"
+    elif requirements_lists_pkg opencv-python && ! requirements_lists_pkg opencv-python-headless; then
+        keep="opencv-python"
+        drop="opencv-python-headless"
+    else
+        return 0
+    fi
+    if ! "$pip_bin" show "$drop" >/dev/null 2>&1; then
+        return 0
+    fi
+    log "Removing ${drop}; it shares the cv2 directory with ${keep}"
+    "$pip_bin" uninstall -y "$drop" >/dev/null 2>&1 || true
+    local spec
+    spec="$(grep -E "^${keep}(==|>=|<=|~=|===|>|<|!=)" "$REQUIREMENTS_FILE" | head -1 || true)"
+    [[ -n "$spec" ]] || spec="$keep"
+    log "Restoring ${spec}"
+    "$pip_bin" install --index-url https://pypi.org/simple --timeout 120 --retries 10 \
+        --no-cache-dir --force-reinstall --no-deps "$spec"
 }
 
 purge_pip_cache() {
@@ -273,29 +403,77 @@ smoke_test_venv() {
     [[ -x "$py" ]] || return 1
 
     # Always require the app entry stack.
-    if ! "$py" -c 'import shiny, starlette, uvicorn, cv2, numpy' >/dev/null 2>&1; then
+    # Attribute check: a gutted cv2 directory still imports as a namespace package.
+    if ! "$py" -c 'import shiny, starlette, uvicorn, numpy, cv2; cv2.imdecode' >/dev/null 2>&1; then
         warn "Smoke test failed: core imports (shiny/starlette/uvicorn/cv2/numpy)"
         return 1
     fi
-
-    # ML stack is large; soft by default so a transient wheel glitch does not brick boot
-    # after a successful core install. Use --smoke-strict for update-time prepare.
-    if ! "$py" -c 'import torch' >/dev/null 2>&1; then
+    if ! "$py" -c 'import ncnn' >/dev/null 2>&1; then
         if [[ "$SMOKE_STRICT" -eq 1 ]]; then
-            warn "Smoke test failed: torch"
+            warn "Smoke test failed: ncnn"
             return 1
         fi
-        warn "torch import failed (non-strict); continuing"
+        warn "ncnn import failed (non-strict); continuing"
     fi
-    if ! "$py" -c 'import tflite_runtime' >/dev/null 2>&1 \
-        && ! "$py" -c 'import ai_edge_litert' >/dev/null 2>&1; then
+
+    # ML extras are large; soft by default so a transient wheel glitch does not brick
+    # boot after a successful core install. Use --smoke-strict for update-time prepare.
+    # torch is remote-only; do not require it when installing the Kittyflap file.
+    if requirements_lists_pkg torch; then
+        if ! "$py" -c 'import torch' >/dev/null 2>&1; then
+            if [[ "$SMOKE_STRICT" -eq 1 ]]; then
+                warn "Smoke test failed: torch"
+                return 1
+            fi
+            warn "torch import failed (non-strict); continuing"
+        fi
+    fi
+    if ! "$py" -c 'import ai_edge_litert' >/dev/null 2>&1; then
         if [[ "$SMOKE_STRICT" -eq 1 ]]; then
-            warn "Smoke test failed: tflite_runtime / ai_edge_litert"
+            warn "Smoke test failed: ai_edge_litert"
             return 1
         fi
-        warn "tflite/litert import failed (non-strict); continuing"
+        warn "ai_edge_litert import failed (non-strict); continuing"
     fi
     return 0
+}
+
+rewrite_venv_paths_after_rename() {
+    # venv console scripts embed absolute shebangs (e.g. #!/.../.venv.new/bin/python).
+    # After `mv .venv.new .venv`, those shebangs break with systemd 203/EXEC
+    # ("No such file or directory") even though `python -m …` still works.
+    local venv_dir="$1"
+    local old_prefix="$2"
+    local new_prefix="$3"
+    local bin_dir="${venv_dir}/bin"
+    local rewritten=0
+
+    [[ -d "$bin_dir" ]] || return 0
+    [[ -n "$old_prefix" && -n "$new_prefix" && "$old_prefix" != "$new_prefix" ]] || return 0
+
+    local f
+    for f in "$bin_dir"/*; do
+        [[ -e "$f" ]] || continue
+        # Skip binaries / symlinks; only rewrite text entry-point scripts.
+        if [[ -L "$f" || ! -f "$f" ]]; then
+            continue
+        fi
+        if ! head -c 2 "$f" 2>/dev/null | grep -q '#!'; then
+            continue
+        fi
+        if grep -Fq "$old_prefix" "$f" 2>/dev/null; then
+            sed -i "s|${old_prefix}|${new_prefix}|g" "$f"
+            rewritten=$((rewritten + 1))
+        fi
+    done
+
+    if [[ -f "${venv_dir}/pyvenv.cfg" ]] && grep -Fq "$old_prefix" "${venv_dir}/pyvenv.cfg" 2>/dev/null; then
+        sed -i "s|${old_prefix}|${new_prefix}|g" "${venv_dir}/pyvenv.cfg"
+    fi
+
+    if [[ "$rewritten" -gt 0 ]]; then
+        log "Rewrote ${rewritten} venv script path(s) after rename (${old_prefix} -> ${new_prefix})"
+    fi
 }
 
 atomic_swap_new_to_current() {
@@ -308,15 +486,22 @@ atomic_swap_new_to_current() {
         mv "$VENV" "$VENV_OLD"
     fi
     mv "$VENV_NEW" "$VENV"
+    rewrite_venv_paths_after_rename "$VENV" "$VENV_NEW" "$VENV"
 
-    # Keep one previous venv for manual recovery; prune only if smoke of new current fails
-    # (should not happen after tests above).
+    # Keep .venv.old across this swap so a failed post-swap smoke test can restore it.
+    # The app removes it after startup.run() succeeds (discard_previous_venv).
     if ! smoke_test_venv "$VENV"; then
         warn "Post-swap smoke failed; restoring ${VENV_OLD}"
         rm -rf "$VENV"
         mv "$VENV_OLD" "$VENV"
         die "Restored previous venv after failed post-swap smoke test"
     fi
+
+    # Catch broken console-script shebangs early (systemd ExecStart used to call bin/uvicorn).
+    if ! "${VENV}/bin/python" -m uvicorn --help >/dev/null 2>&1; then
+        die "Post-swap check failed: python -m uvicorn does not run"
+    fi
+
     log "Swap complete. Active Python: $(venv_python_mm "$VENV")"
 }
 

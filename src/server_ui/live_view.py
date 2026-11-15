@@ -12,6 +12,7 @@ import hashlib
 from src.baseconfig import (
     CONFIG,
     AllowedToEnter,
+    normalize_event_subject_mode,
     set_language,
     update_single_config_parameter,
 )
@@ -23,7 +24,9 @@ from src.database import (
     CatsRepo,
     EventsRepo,
     ReturnDataCatDB,
+    VisitStatsRepo,
 )
+from src.statistics import apply_manual_location, format_duration, parse_utc_datetime
 from src.event_timeline import (
     timeline_entries_to_html,
     timeline_fallback_from_event_type,
@@ -31,8 +34,17 @@ from src.event_timeline import (
 )
 from src.mode import is_remote_mode
 from src.backend import backend_main, update_mqtt_config, manual_door_override
-from src.server_ui.state import reload_trigger_photos, reload_trigger_config
+from src.server_ui.state import (
+    event_subject_mode_revision,
+    reload_trigger_photos,
+    reload_trigger_config,
+)
 from src.server_ui.context import SessionContext
+from src.server_ui.helpers import (
+    event_subject_mode_button,
+    subject_mode_click_advanced,
+    toggle_event_subject_mode,
+)
 
 _ = set_language(CONFIG["LANGUAGE"])
 
@@ -43,6 +55,266 @@ else:
     from src.pir import Pir
 
 from src.server_ui.event_modal import btn_show_event, show_event_server
+
+
+def _clean_cell(value) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        pass
+    return str(value).strip()
+
+
+def _cat_initial(name: str) -> str:
+    text = str(name or "").strip()
+    if not text:
+        return "?"
+    return text[0].upper()
+
+
+def _is_jpeg_b64(value: str) -> bool:
+    if not value or len(value) > 200_000:
+        return False
+    return all(ch.isalnum() or ch in "+/=" for ch in value)
+
+
+def resolve_event_subject(
+    rfid,
+    seen: dict | None,
+    cat_label_names,
+    name_to_rfid: dict,
+    min_threshold: float,
+    mode: str = "camera",
+) -> tuple[str, str | None]:
+    """Choose who a last-events row names when the chip column may be empty.
+
+    A chip on the event wins in both modes. ``chip`` then keeps the previous
+    labels: a registered cat class is "unknown", a person is a person, and a
+    generic ``cat`` class is ignored. ``camera`` maps that registered class to
+    the cat's RFID when it is at least as strong as a person and a generic cat.
+
+    Returns ``("chip"|"camera", rfid)`` or ``("unknown"|"person"|"none", None)``.
+    """
+    if rfid:
+        return "chip", str(rfid)
+    seen = seen or {}
+    labels = {str(name).lower() for name in cat_label_names}
+    cat_hits = [
+        (str(name), float(prob or 0.0))
+        for name, prob in seen.items()
+        if str(name).lower() in labels
+    ]
+    best_name, cat_prob = max(cat_hits, key=lambda item: item[1]) if cat_hits else ("", 0.0)
+    person_prob = float(seen.get("person", 0.0) or 0.0)
+    threshold = float(min_threshold or 0.0)
+    if normalize_event_subject_mode(mode) == "chip":
+        if cat_prob >= threshold and cat_prob > 0.0 and cat_prob >= person_prob:
+            return "unknown", None
+        if person_prob >= threshold and person_prob > 0.0:
+            return "person", None
+        return "none", None
+    generic_cat = float(seen.get("cat", 0.0) or 0.0)
+    if (
+        cat_prob >= threshold
+        and cat_prob > 0.0
+        and cat_prob >= person_prob
+        and cat_prob >= generic_cat
+    ):
+        matched = name_to_rfid.get(str(best_name).lower())
+        if matched:
+            return "camera", matched
+        return "unknown", None
+    if generic_cat >= threshold and generic_cat > 0.0 and generic_cat >= person_prob:
+        return "unknown", None
+    if person_prob >= threshold and person_prob > 0.0:
+        return "person", None
+    return "none", None
+
+
+def _cat_avatar_html(name: str, thumb_b64: str | None) -> str:
+    """Round photo, or the first letter of the name when there is no photo."""
+    safe_title = html_module.escape(name or "", quote=True)
+    if thumb_b64 and _is_jpeg_b64(thumb_b64):
+        return (
+            f'<img class="kh-cat-avatar" alt="" title="{safe_title}" '
+            f'src="data:image/jpeg;base64,{thumb_b64}">'
+        )
+    letter = html_module.escape(_cat_initial(name), quote=True)
+    return (
+        f'<span class="kh-cat-avatar kh-cat-avatar--letter" title="{safe_title}" '
+        f'aria-hidden="true">{letter}</span>'
+    )
+
+
+def _configured_cats() -> list[dict]:
+    """Configured cats as ``{id, name, rfid}``, RFID or lowercased name."""
+    try:
+        df = CatsRepo.db_get_cats(
+            CONFIG["KITTYHACK_DATABASE_PATH"], ReturnDataCatDB.all_except_photos
+        )
+    except Exception as e:
+        logging.error(f"[SERVER] Failed to read cats for the location strip: {e}")
+        return []
+    if df is None or df.empty:
+        return []
+    cats = []
+    for __, row in df.iterrows():
+        name = _clean_cell(row.get("name"))
+        rfid = _clean_cell(row.get("rfid"))
+        key = rfid or name.lower()
+        if not key:
+            continue
+        try:
+            cat_id = int(row["id"])
+        except (TypeError, ValueError):
+            continue
+        try:
+            if not bool(int(row.get("show_location", 1))):
+                continue
+        except (TypeError, ValueError):
+            pass
+        cats.append({"id": cat_id, "name": name or key, "rfid": key})
+    cats.sort(key=lambda cat: cat["name"].casefold())
+    return cats
+
+
+def _format_elapsed(created_at) -> tuple[str, int | None]:
+    """Visible time-since label and the passage time as unix milliseconds."""
+    dt = parse_utc_datetime(created_at)
+    if dt is None:
+        return "", None
+    seconds = (datetime.now(ZoneInfo("UTC")) - dt.astimezone(ZoneInfo("UTC"))).total_seconds()
+    if seconds < 60:
+        text = _("Just now")
+    else:
+        text = format_duration(max(seconds, 0), d=_("d"), h=_("h"), m=_("m"))
+    return text, int(dt.timestamp() * 1000)
+
+
+def _location_state_label(direction: str) -> str:
+    """Short place name for a cat: indoors or outdoors."""
+    return _("Indoors") if direction == "in" else _("Outdoors")
+
+
+def _location_cycle_icon() -> str:
+    """Hover hint that a click switches the cat's place."""
+    return (
+        '<span class="kh-cat-loc-cycle" aria-hidden="true">'
+        + str(icon_svg("rotate", margin_left="0", margin_right="0", width="1em", height="1em"))
+        + "</span>"
+    )
+
+
+def _location_button(
+    cat_id: int,
+    name: str,
+    direction: str,
+    *,
+    current: bool,
+    time_html: str = "",
+) -> str:
+    """State button. ``direction`` is the direction this click will store.
+
+    A current state shows that state and stores the opposite. An unknown
+    choice shows the direction it will store.
+    """
+    if current:
+        label = _location_state_label("in" if direction == "out" else "out")
+        tone = " kh-cat-loc-btn--inside" if direction == "out" else " kh-cat-loc-btn--outside"
+    else:
+        label = _location_state_label(direction)
+        tone = ""
+    aria_template = (
+        _("Mark {name} as indoors") if direction == "in" else _("Mark {name} as outdoors")
+    )
+    aria = aria_template.format(name=name)
+    return (
+        f'<button type="button" class="kh-cat-loc-btn{tone}" '
+        f'data-cat-id="{int(cat_id)}" data-direction="{direction}" '
+        f'aria-label="{html_module.escape(aria, quote=True)}">'
+        f'<span class="kh-cat-loc-copy">'
+        f'<span class="kh-cat-loc-label">{html_module.escape(label)}</span>'
+        f"{time_html}</span>"
+        f"{_location_cycle_icon()}</button>"
+    )
+
+
+def _cat_locations_html() -> str:
+    cats = _configured_cats()
+    if not cats:
+        return ""
+    database = CONFIG["KITTYHACK_DATABASE_PATH"]
+    chips = []
+    for cat in cats:
+        try:
+            last = VisitStatsRepo.get_last_passed(database, cat["rfid"])
+        except Exception as e:
+            logging.error(f"[SERVER] Failed to read location for {cat['rfid']}: {e}")
+            last = None
+        try:
+            thumb = CatsRepo.get_cat_thumbnail(database, cat["id"])
+        except Exception:
+            thumb = None
+        direction = (last or {}).get("direction")
+        avatar = _cat_avatar_html(cat["name"], thumb)
+        if direction in ("in", "out"):
+            target = "out" if direction == "in" else "in"
+            elapsed, since_ms = _format_elapsed((last or {}).get("created_at"))
+            time_html = ""
+            if elapsed and since_ms is not None:
+                time_html = (
+                    f'<span class="kh-cat-loc-time" data-since="{since_ms}">'
+                    f"{html_module.escape(elapsed)}</span>"
+                )
+            state = _location_button(
+                cat["id"], cat["name"], target, current=True, time_html=time_html
+            )
+        else:
+            state = (
+                '<div class="kh-cat-loc-actions">'
+                + _location_button(cat["id"], cat["name"], "in", current=False)
+                + _location_button(cat["id"], cat["name"], "out", current=False)
+                + "</div>"
+            )
+        chips.append(f'<div class="kh-cat-loc">{avatar}{state}</div>')
+    strip_i18n = (
+        f'data-inside="{html_module.escape(_("Indoors"), quote=True)}" '
+        f'data-outside="{html_module.escape(_("Outdoors"), quote=True)}" '
+        f'data-just-now="{html_module.escape(_("Just now"), quote=True)}" '
+        f'data-unit-d="{html_module.escape(_("d"), quote=True)}" '
+        f'data-unit-h="{html_module.escape(_("h"), quote=True)}" '
+        f'data-unit-m="{html_module.escape(_("m"), quote=True)}" '
+        f'data-aria-in="{html_module.escape(_("Mark {name} as indoors"), quote=True)}" '
+        f'data-aria-out="{html_module.escape(_("Mark {name} as outdoors"), quote=True)}"'
+    )
+    return (
+        f'<div class="kh-cat-loc-strip" {strip_i18n}>'
+        f'<template class="kh-cat-loc-cycle-tpl">{_location_cycle_icon()}</template>'
+        + "".join(chips)
+        + "</div>"
+    )
+
+
+def _parse_cat_location_input(payload) -> tuple[int | None, str | None]:
+    if not isinstance(payload, dict):
+        return None, None
+    raw_id = payload.get("cat_id")
+    raw_dir = payload.get("direction")
+    if isinstance(raw_id, list):
+        raw_id = raw_id[0] if raw_id else None
+    if isinstance(raw_dir, list):
+        raw_dir = raw_dir[0] if raw_dir else None
+    try:
+        cat_id = int(raw_id)
+    except (TypeError, ValueError):
+        return None, None
+    direction = str(raw_dir or "").strip()
+    if direction not in ("in", "out"):
+        return None, None
+    return cat_id, direction
 
 
 def register_live_view(input, output, session, ctx: SessionContext):
@@ -98,18 +370,18 @@ def register_live_view(input, output, session, ctx: SessionContext):
                         6,
                         ui.input_select(
                             id="quick_allowed_to_enter",
-                            label=_("Inside direction:"),
+                            label=_("Entry through the flap"),
                             choices={
                                 AllowedToEnter.ALL.value: _(
-                                    "All cats (unlock on every detected motion)"
+                                    "All cats (unlock when motion is detected)"
                                 ),
                                 AllowedToEnter.ALL_RFIDS.value: _(
-                                    "All cats with a RFID chip"
+                                    "All cats with a microchip"
                                 ),
                                 AllowedToEnter.KNOWN.value: _("Only registered cats"),
                                 AllowedToEnter.NONE.value: _("No cats"),
                                 AllowedToEnter.CONFIGURE_PER_CAT.value: _(
-                                    "Individual configuration per cat"
+                                    "Set rules for each cat"
                                 ),
                             },
                             selected=str(CONFIG["ALLOWED_TO_ENTER"].value),
@@ -120,12 +392,12 @@ def register_live_view(input, output, session, ctx: SessionContext):
                         6,
                         ui.input_select(
                             id="quick_allowed_to_exit",
-                            label=_("Outside direction:"),
+                            label=_("Exit through the flap"),
                             choices={
                                 "allow": _("Allow exit"),
-                                "deny": _("Do not allow exit"),
+                                "deny": _("Block exit"),
                                 "configure_per_cat": _(
-                                    "Individual configuration per cat"
+                                    "Set rules for each cat"
                                 ),
                             },
                             selected=str(CONFIG["ALLOWED_TO_EXIT"].value),
@@ -139,7 +411,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
                             "circle-info", margin_left="-0.1em", margin_right="auto"
                         ),
                         _(
-                            "The individual configuration per cat can be set in the CATS section."
+                            "You can set rules for each cat in the Cats section."
                         ),
                         id="tooltip_configure_per_cat_quick",
                         options={"trigger": "hover click"},
@@ -152,7 +424,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
             ui.card(
                 ui.input_action_button(
                     id="bManualOverride",
-                    label=_("Manual unlock not yet initialized..."),
+                    label=_("Unlock inside"),
                     icon=icon_svg("unlock"),
                     disabled=True,
                 ),
@@ -162,7 +434,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
             ui.card(
                 ui.input_action_button(
                     id="bResetPreyCooldown",
-                    label=_("Reset prey cooldown now"),
+                    label=_("Resume prey detection"),
                     icon=icon_svg("clock-rotate-left"),
                     disabled=True,
                 ),
@@ -171,25 +443,104 @@ def register_live_view(input, output, session, ctx: SessionContext):
             ),
         )
 
+    pending_lock_enter = reactive.Value(None)
+    pending_lock_exit = reactive.Value(None)
+
+    def _apply_allowed_to_enter(value: str):
+        CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter(value)
+        update_single_config_parameter("ALLOWED_TO_ENTER")
+        update_mqtt_config("ALLOWED_TO_ENTER")
+        reload_trigger_config.set(reload_trigger_config.get() + 1)
+
+    def _apply_allowed_to_exit(value: str):
+        from src.baseconfig import AllowedToExit as ATE
+
+        CONFIG["ALLOWED_TO_EXIT"] = ATE(value)
+        update_single_config_parameter("ALLOWED_TO_EXIT")
+        update_mqtt_config("ALLOWED_TO_EXIT")
+        reload_trigger_config.set(reload_trigger_config.get() + 1)
+
     @reactive.Effect
     @reactive.event(input.quick_allowed_to_enter)
     def quick_update_allowed_to_enter():
-        CONFIG["ALLOWED_TO_ENTER"] = AllowedToEnter(input.quick_allowed_to_enter())
-        update_single_config_parameter("ALLOWED_TO_ENTER")
-        update_mqtt_config("ALLOWED_TO_ENTER")
-        # Sync config page input
-        reload_trigger_config.set(reload_trigger_config.get() + 1)
+        new = str(input.quick_allowed_to_enter() or "")
+        old = str(CONFIG["ALLOWED_TO_ENTER"].value)
+        if new == old:
+            return
+        if new == AllowedToEnter.NONE.value:
+            pending_lock_enter.set(new)
+            ui.update_select("quick_allowed_to_enter", selected=old)
+            ui.modal_show(
+                ui.modal(
+                    _("Block all cats from entering?"),
+                    title=_("Change entry settings"),
+                    easy_close=False,
+                    footer=ui.div(
+                        ui.input_action_button(
+                            "btn_modal_confirm_lock_enter_ok", _("Block entry")
+                        ),
+                        ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                    ),
+                )
+            )
+            return
+        _apply_allowed_to_enter(new)
 
     @reactive.Effect
     @reactive.event(input.quick_allowed_to_exit)
     def quick_update_allowed_to_exit():
         from src.baseconfig import AllowedToExit as ATE
 
-        CONFIG["ALLOWED_TO_EXIT"] = ATE(input.quick_allowed_to_exit())
-        update_single_config_parameter("ALLOWED_TO_EXIT")
-        update_mqtt_config("ALLOWED_TO_EXIT")
-        # Sync config page input
-        reload_trigger_config.set(reload_trigger_config.get() + 1)
+        new = str(input.quick_allowed_to_exit() or "")
+        old = str(CONFIG["ALLOWED_TO_EXIT"].value)
+        if new == old:
+            return
+        if new == ATE.DENY.value:
+            pending_lock_exit.set(new)
+            ui.update_select("quick_allowed_to_exit", selected=old)
+            ui.modal_show(
+                ui.modal(
+                    _("Block all cats from exiting?"),
+                    title=_("Change exit settings"),
+                    easy_close=False,
+                    footer=ui.div(
+                        ui.input_action_button(
+                            "btn_modal_confirm_lock_exit_ok", _("Block exit")
+                        ),
+                        ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                    ),
+                )
+            )
+            return
+        _apply_allowed_to_exit(new)
+
+    @reactive.Effect
+    @reactive.event(input.btn_modal_confirm_lock_enter_ok)
+    def on_confirm_lock_enter():
+        value = pending_lock_enter.get()
+        pending_lock_enter.set(None)
+        ui.modal_remove()
+        if not value:
+            return
+        _apply_allowed_to_enter(value)
+        ui.update_select("quick_allowed_to_enter", selected=value)
+
+    @reactive.Effect
+    @reactive.event(input.btn_modal_confirm_lock_exit_ok)
+    def on_confirm_lock_exit():
+        value = pending_lock_exit.get()
+        pending_lock_exit.set(None)
+        ui.modal_remove()
+        if not value:
+            return
+        _apply_allowed_to_exit(value)
+        ui.update_select("quick_allowed_to_exit", selected=value)
+
+    @reactive.Effect
+    @reactive.event(input.btn_modal_cancel)
+    def on_cancel_lock_mode():
+        pending_lock_enter.set(None)
+        pending_lock_exit.set(None)
 
     @reactive.Effect
     @reactive.event(input.bManualOverride)
@@ -221,6 +572,12 @@ def register_live_view(input, output, session, ctx: SessionContext):
         # Add a delayed-load flag for the Last Events table
 
     last_events_ready = reactive.Value(False)
+    cat_location_refresh = reactive.Value(0)
+
+    def refresh_cat_locations() -> None:
+        with reactive.isolate():
+            revision = cat_location_refresh.get()
+        cat_location_refresh.set(revision + 1)
 
     @reactive.Effect
     def init_last_events_delay():
@@ -235,14 +592,71 @@ def register_live_view(input, output, session, ctx: SessionContext):
                 return
                 # Second run (after 1s): mark ready
             last_events_ready.set(True)
+            # The location output can be sent before a restored mobile page has
+            # rebound its nested Shiny output. Send it again once the surrounding
+            # recent-events UI is ready.
+            refresh_cat_locations()
+
+    @output
+    @render.ui
+    def ui_cat_locations():
+        reload_trigger_photos.get()
+        cat_location_refresh.get()
+        return ui.HTML(_cat_locations_html())
+
+    @reactive.Effect
+    @reactive.event(input.cat_location_resync, ignore_none=True)
+    def on_cat_location_resync():
+        refresh_cat_locations()
+
+    @reactive.Effect
+    @reactive.event(input.cat_location_set, ignore_none=True)
+    def on_cat_location_set():
+        cat_id, direction = _parse_cat_location_input(input.cat_location_set())
+        if cat_id is None or direction is None:
+            return
+        match = next((cat for cat in _configured_cats() if cat["id"] == cat_id), None)
+        if match is None:
+            return
+        created_at = DateTimeUtil.get_utc_date_string(
+            datetime.now(ZoneInfo("UTC")).timestamp()
+        )
+        result = apply_manual_location(
+            CONFIG["KITTYHACK_DATABASE_PATH"],
+            cat_rfid=match["rfid"],
+            cat_name=match["name"],
+            direction=direction,
+            created_at=created_at,
+        )
+        if not result.success:
+            logging.error(
+                "[SERVER] Manual location failed for cat %s: %s",
+                cat_id,
+                result.message,
+            )
+            ui.notification_show(
+                _("The location could not be saved. Try again."),
+                duration=5,
+                type="error",
+            )
+            return
+        if result.message != "unchanged":
+            reload_trigger_photos.set(reload_trigger_photos.get() + 1)
 
     @output
     @render.ui
     def ui_last_events():
         return ui.layout_column_wrap(
             ui.div(
+                ui.output_ui("ui_cat_locations"),
                 ui.card(
-                    ui.card_header(ui.h5(_("Last events"))),
+                    ui.card_header(
+                        ui.div(
+                            ui.h5(_("Recent events"), class_="kh-events-card-title"),
+                            ui.output_ui("ui_event_subject_mode_live"),
+                            class_="kh-events-card-header",
+                        )
+                    ),
                     ui.output_ui("ui_last_events_table"),
                     full_screen=False,
                     class_="generic-container",
@@ -253,39 +667,62 @@ def register_live_view(input, output, session, ctx: SessionContext):
             )
         )
 
+    _subject_mode_click = {"previous": None}
+
+    @output
+    @render.ui
+    def ui_event_subject_mode_live():
+        event_subject_mode_revision.get()
+        return event_subject_mode_button("event_subject_mode_live")
+
+    @output
+    @render.ui
+    def ui_event_subject_mode_photos():
+        event_subject_mode_revision.get()
+        return event_subject_mode_button("event_subject_mode_photos")
+
+    @reactive.Effect
+    @reactive.event(input.event_subject_mode_clicked)
+    def _toggle_event_subject_mode():
+        previous = _subject_mode_click["previous"]
+        toggled, _subject_mode_click["previous"] = subject_mode_click_advanced(
+            previous, input.event_subject_mode_clicked()
+        )
+        if toggled:
+            toggle_event_subject_mode()
+
     @render.text
-    @reactive.event(reload_trigger_photos, last_events_ready, ignore_none=True)
+    @reactive.event(
+        reload_trigger_photos,
+        last_events_ready,
+        event_subject_mode_revision,
+        ignore_none=True,
+    )
     def ui_last_events_table():
         # Show a loading spinner until the delayed flag is set
         if not last_events_ready.get():
             return ui.HTML(
                 '<div class="spinner-container"><div class="spinner"></div></div>'
             )
-        return get_events_table_html(block_count=25)
+        return get_events_table_html(block_count=25, panel_prefix="last")
 
     @output
     @render.ui
     def ui_events_by_date():
-        return ui.layout_column_wrap(
-            ui.div(
-                ui.card(
-                    ui.output_ui("ui_events_by_date_table"),
-                    full_screen=False,
-                    class_="generic-container",
-                    style_="margin-bottom: 40px;",
-                    min_height="150px",
-                ),
-                width="400px",
-            )
+        return ui.card(
+            ui.output_ui("ui_events_by_date_table"),
+            full_screen=False,
+            class_="generic-container kh-photos-grouped-card",
+            min_height="150px",
         )
 
     @render.text
     @reactive.event(
-        input.button_reload,
         input.date_selector,
         input.button_cat_only,
         input.button_mouse_only,
         reload_trigger_photos,
+        event_subject_mode_revision,
         ignore_none=True,
     )
     def ui_events_by_date_table():
@@ -314,6 +751,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
             input.button_cat_only(),
             input.button_mouse_only(),
             CONFIG["MOUSE_THRESHOLD"],
+            panel_prefix="photos",
         )
 
     def get_events_table_html(
@@ -323,6 +761,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
         cats_only=False,
         mouse_only=False,
         mouse_probability=0.0,
+        panel_prefix="last",
     ):
         try:
             logging.info(
@@ -341,7 +780,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
             if df_events.empty:
                 return ui.HTML(
                     '<table class="dataframe shiny-table table w-auto">'
-                    "<tbody><tr><td>" + _("No events found.") + "</td></tr></tbody>"
+                    "<tbody><tr><td>" + _("No events yet.") + "</td></tr></tbody>"
                     "</table>"
                 )
 
@@ -397,17 +836,71 @@ def register_live_view(input, output, session, ctx: SessionContext):
             def cat_name_with_icon(rfid):
                 name = cat_name_dict.get(
                     rfid,
-                    _("Unknown RFID") + f": {rfid}" if rfid else _("No RFID found"),
+                    _("Unknown microchip") + f": {rfid}"
+                    if rfid
+                    else _("No microchip found"),
                 )
                 thumb = cat_thumbnails.get(rfid)
-                if thumb:
-                    return f'<img src="data:image/jpeg;base64,{thumb}" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:6px;"> {name}'
-                else:
-                    return name
-
-            df_events["cat_name"] = df_events["rfid"].apply(cat_name_with_icon)
+                return (
+                    f"{_cat_avatar_html(name, thumb)} {html_module.escape(name)}"
+                )
 
             block_ids = [int(b) for b in df_events["block_id"].tolist()]
+            cat_label_names = [str(n).lower() for n in cat_name_dict.values()]
+            name_to_rfid = {
+                str(name).lower(): rfid_tag
+                for rfid_tag, name in cat_name_dict.items()
+                if name
+            }
+            subject_mode = normalize_event_subject_mode(
+                CONFIG.get("EVENT_SUBJECT_MODE")
+            )
+            # Chip mode does not ask for the generic "cat" class. A registered
+            # cat that happens to be named "cat" is already in cat_label_names.
+            object_names = cat_label_names + ["person"]
+            if subject_mode == "camera":
+                object_names.append("cat")
+            block_object_max = EventsRepo.db_get_block_object_max(
+                CONFIG["KITTYHACK_DATABASE_PATH"],
+                block_ids,
+                object_names,
+            )
+            min_threshold = float(CONFIG.get("MIN_THRESHOLD", 0.0) or 0.0)
+            camera_name_title = html_module.escape(
+                _(
+                    "Recognized by the camera. No microchip was stored for this event."
+                ),
+                quote=True,
+            )
+
+            def event_subject(row):
+                # A stored chip names that cat. In camera mode, a class that
+                # matches a registered cat keeps that name when no chip was stored.
+                kind, subject_rfid = resolve_event_subject(
+                    row["rfid"],
+                    block_object_max.get(int(row["block_id"]), {}),
+                    cat_label_names,
+                    name_to_rfid,
+                    min_threshold,
+                    subject_mode,
+                )
+                if kind == "camera" and subject_rfid:
+                    return (
+                        f'<span class="kh-event-subject-camera" title="{camera_name_title}">'
+                        f"{cat_name_with_icon(subject_rfid)}</span>"
+                    )
+                if kind == "chip" and subject_rfid:
+                    return cat_name_with_icon(subject_rfid)
+                if kind == "unknown":
+                    label = _("Unknown cat")
+                elif kind == "person":
+                    label = _("Person")
+                else:
+                    return cat_name_with_icon(row["rfid"])
+                return f"{_cat_avatar_html(label, None)} {html_module.escape(label)}"
+
+            df_events["cat_name"] = df_events.apply(event_subject, axis=1)
+
             timelines_by_block = EventsRepo.db_get_motion_timelines(
                 CONFIG["KITTYHACK_DATABASE_PATH"], block_ids
             )
@@ -455,7 +948,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
 
                 event_info = event_icons[idx]
                 block_id = int(row["block_id"])
-                panel_id = f"event-timeline-{block_id}"
+                panel_id = f"event-timeline-{panel_prefix}-{block_id}"
                 timeline_entries = timelines_by_block.get(block_id)
                 if not timeline_entries:
                     timeline_entries = timeline_fallback_from_event_type(
@@ -497,7 +990,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
             return ui.HTML(
                 '<table class="dataframe shiny-table table w-auto">'
                 '<tbody><tr><td class="error">'
-                + _("Failed to read events from the database.")
+                + _("Events could not be loaded. Try again.")
                 + "</td></tr></tbody>"
                 "</table>"
             )

@@ -17,8 +17,10 @@ from shiny import ui
 from src.baseconfig import CONFIG, set_language, update_single_config_parameter, UserNotifications
 from src.helper import (
     DateTimeUtil,
+    Versioning,
     is_valid_uuid4,
 )
+from src.model.model_server_api import model_server_headers, resolved_model_server_base_url
 from src.paths import kittyhack_root, models_yolo_root
 
 from .json_util import (
@@ -32,11 +34,61 @@ from .yolo_model import YoloModel
 _ = set_language(CONFIG["LANGUAGE"])
 
 _MODEL_DL_STATE_PATH = "/tmp/kittyhack_model_download_state.json"
+_MAX_SERVER_DETAIL_CHARS = 300
+
+
+def plain_server_detail(payload: Any) -> str:
+    """Return a short plain-text server message, or "" when it should not be shown.
+
+    Accepts a parsed JSON object, or a raw response body. ``detail`` may be a
+    string or an object with a ``message`` field. HTML and over-long text are
+    dropped so a proxy error page is not shown in the UI.
+    """
+    if isinstance(payload, (bytes, bytearray)):
+        try:
+            payload = payload.decode("utf-8")
+        except Exception:
+            return ""
+    if isinstance(payload, str):
+        stripped = payload.strip()
+        if not stripped:
+            return ""
+        try:
+            payload = json.loads(stripped)
+        except Exception:
+            return ""
+    if not isinstance(payload, dict):
+        return ""
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        detail = detail.get("message") or ""
+    if not isinstance(detail, str):
+        return ""
+    text = " ".join(detail.split())
+    if not text or len(text) > _MAX_SERVER_DETAIL_CHARS or "<" in text:
+        return ""
+    return text
 
 class RemoteModelTrainer:
     """Remote training API client and local download/install orchestration."""
 
-    BASE_URL = "https://kittyhack-models.fk-cloud.de"
+    @staticmethod
+    def base_url() -> str:
+        return resolved_model_server_base_url()
+
+    @staticmethod
+    def _headers(job_token: str | None = None) -> dict[str, str]:
+        return model_server_headers(
+            job_token=job_token or CONFIG.get("MODEL_TRAINING_JOB_TOKEN") or None,
+            version=Versioning.get_git_version() or "3.0.0",
+        )
+
+    @staticmethod
+    def _clear_training_job() -> None:
+        CONFIG["MODEL_TRAINING"] = ""
+        CONFIG["MODEL_TRAINING_JOB_TOKEN"] = ""
+        update_single_config_parameter("MODEL_TRAINING")
+        update_single_config_parameter("MODEL_TRAINING_JOB_TOKEN")
 
     @staticmethod
     def get_model_download_state() -> dict[str, Any]:
@@ -88,16 +140,18 @@ class RemoteModelTrainer:
             "-m",
             "src.model_download_worker",
             "--base-url",
-            RemoteModelTrainer.BASE_URL,
+            RemoteModelTrainer.base_url(),
             "--result-id",
             result_id,
             "--model-name",
             model_name or "",
             "--state-path",
             _MODEL_DL_STATE_PATH,
+            "--token",
+            token or CONFIG.get("MODEL_TRAINING_JOB_TOKEN") or "",
+            "--version",
+            Versioning.get_git_version() or "3.0.0",
         ]
-        if token:
-            args += ["--token", token]
 
         # Initialize state before starting (worker will update as it runs)
         init_state = _default_download_state()
@@ -162,11 +216,14 @@ class RemoteModelTrainer:
         return True
 
     @staticmethod
-    def get_server_status():
+    def get_server_status(timeout: float | tuple = 5):
         """Return `{maintenance, message}` from the training server, or None on error."""
-        url = f"{RemoteModelTrainer.BASE_URL}/server_status"
+        base = RemoteModelTrainer.base_url()
+        if not base:
+            return None
+        url = f"{base}/server_status"
         try:
-            response = requests.get(url, verify=True, timeout=5)
+            response = requests.get(url, headers=RemoteModelTrainer._headers(), verify=True, timeout=timeout)
             response.raise_for_status()
             data = response.json()
             # Normalize keys and defaults
@@ -186,8 +243,16 @@ class RemoteModelTrainer:
         yolo_model_variant: str = "n",
         image_size: int = 320,
     ):
-        """Upload a training zip; return job_id or an error status string."""
-        url = f"{RemoteModelTrainer.BASE_URL}/upload"
+        """Upload a training zip.
+
+        Returns ``("ok", job_id)`` on success, or ``(error_code, server_message)``.
+        ``server_message`` is set for HTTP 413 when the body contains a short
+        plain-text ``detail``.
+        """
+        base = RemoteModelTrainer.base_url()
+        if not base:
+            return "destination_unreachable", ""
+        url = f"{base}/upload"
         files = {'file': open(zip_file_path, 'rb')}
         variant = str(yolo_model_variant or "n").strip().lower()
         if variant not in {"n", "s", "m", "l", "x"}:
@@ -207,40 +272,63 @@ class RemoteModelTrainer:
             # Backward/compat key used by some training pipelines
             'imgsz': str(image_size_int),
         }
+        response = None
         try:
-            response = requests.post(url, files=files, data=data, verify=True)
+            response = requests.post(
+                url,
+                files=files,
+                data=data,
+                headers=RemoteModelTrainer._headers(),
+                verify=True,
+            )
             response.raise_for_status()
             response_json = response.json()
-            return response_json.get("job_id")
+            job_token = response_json.get("job_token")
+            if job_token:
+                CONFIG["MODEL_TRAINING_JOB_TOKEN"] = job_token
+                update_single_config_parameter("MODEL_TRAINING_JOB_TOKEN")
+            return "ok", response_json.get("job_id") or ""
         except Exception as e:
             # FIXME: If the http return code is 400, we should return "invalid_file" instead of None. If the destination is not reachable, we should return "destination_unreachable"
-            if response.status_code == 400:
+            status = getattr(response, "status_code", None)
+            if status == 400:
                 logging.error(f"[MODEL_TRAINING] Invalid file: {e}")
-                return "invalid_file"
-            elif response.status_code == 503:
+                return "invalid_file", ""
+            elif status in (401, 403):
+                logging.error(f"[MODEL_TRAINING] Client outdated or unauthorized: {e}")
+                return "client_outdated", ""
+            elif status == 503:
                 logging.error(f"[MODEL_TRAINING] Destination unreachable: {e}")
-                return "destination_unreachable"
-            elif response.status_code == 413:
+                return "destination_unreachable", ""
+            elif status == 413:
                 logging.error(f"[MODEL_TRAINING] File too large: {e}")
-                return "file_too_large"
-            elif response.status_code == 500:
+                detail = ""
+                try:
+                    detail = plain_server_detail(getattr(response, "content", b"") or b"")
+                except Exception:
+                    detail = ""
+                return "file_too_large", detail
+            elif status == 409:
+                logging.error(f"[MODEL_TRAINING] Server busy: {e}")
+                return "server_busy", ""
+            elif status == 500:
                 logging.error(f"[MODEL_TRAINING] Internal server error: {e}")
-                return "internal_server_error"
-            elif response.status_code == 404:
+                return "internal_server_error", ""
+            elif status == 404:
                 logging.error(f"[MODEL_TRAINING] Destination not found: {e}")
-                return "destination_not_found"
+                return "destination_not_found", ""
             else:
                 logging.error(f"[MODEL_TRAINING] Unknown error: {e}")
-                return "unknown_error"
+                return "unknown_error", ""
         finally:
             files['file'].close()
 
     @staticmethod
     def get_model_training_status(job_id):
         """Fetch remote training status JSON for `job_id`, or None on error."""
-        url = f"{RemoteModelTrainer.BASE_URL}/status/{job_id}"
+        url = f"{RemoteModelTrainer.base_url()}/status/{job_id}"
         try:
-            response = requests.get(url, verify=True, timeout=5)
+            response = requests.get(url, headers=RemoteModelTrainer._headers(), verify=True, timeout=5)
             if response.status_code == 404:
                 logging.error(f"[MODEL_TRAINING] Job {job_id} not found.")
                 return None
@@ -253,9 +341,9 @@ class RemoteModelTrainer:
     @staticmethod
     def cancel_model_training(job_id):
         """Cancel a pending remote training job; return True on success."""
-        url = f"{RemoteModelTrainer.BASE_URL}/cancel/{job_id}"
+        url = f"{RemoteModelTrainer.base_url()}/cancel/{job_id}"
         try:
-            response = requests.post(url, verify=True)
+            response = requests.post(url, headers=RemoteModelTrainer._headers(), verify=True)
             if response.status_code == 404:
                 logging.error(f"[MODEL_TRAINING] Job {job_id} not found for cancellation.")
                 return False
@@ -303,10 +391,8 @@ class RemoteModelTrainer:
     @staticmethod
     def _download_model_zip_to_tempfile(result_id: str, token: str | None = None) -> str:
         """Download the model zip for `result_id` to `/tmp` and return its path."""
-        url = f"{RemoteModelTrainer.BASE_URL}/download/{result_id}"
-        headers: dict[str, str] = {}
-        if token:
-            headers["token"] = token
+        url = f"{RemoteModelTrainer.base_url()}/download/{result_id}"
+        headers = RemoteModelTrainer._headers(job_token=token)
 
         tmp_path = os.path.join("/tmp", f"kittyhack_model_{result_id}.zip")
         # Ensure a clean slate
@@ -351,9 +437,9 @@ class RemoteModelTrainer:
                 raise RuntimeError("sha256_mismatch")
 
             if delete_token:
-                ack_url = f"{RemoteModelTrainer.BASE_URL}/download/{result_id}/ack"
+                ack_url = f"{RemoteModelTrainer.base_url()}/download/{result_id}/ack"
                 payload = {"delete_token": delete_token, "sha256": sha, "size_bytes": size_bytes}
-                ack_resp = requests.post(ack_url, json=payload, verify=True, timeout=(5, 30))
+                ack_resp = requests.post(ack_url, json=payload, headers=headers, verify=True, timeout=(5, 30))
                 if ack_resp.status_code != 200:
                     logging.warning(f"[MODEL_TRAINING] Download ack failed ({ack_resp.status_code}): {ack_resp.text}")
         except Exception as e:
@@ -478,6 +564,7 @@ class RemoteModelTrainer:
                     RemoteModelTrainer.start_download_model_async(
                         job_id,
                         str(dl_state.get("result_id")),
+                        token=CONFIG.get("MODEL_TRAINING_JOB_TOKEN") or None,
                     )
                     training_status = "downloading"
                 else:
@@ -486,7 +573,7 @@ class RemoteModelTrainer:
                             UserNotifications.add(
                                 header=_("Model download failed"),
                                 message=_(
-                                    "Model training completed, but the model could not be downloaded. Please retry later."
+                                    "Training finished, but Kittyhack could not download the model. Check the connection and try again later."
                                 ),
                                 type="error",
                                 id=f"model_download_error_{dl_state.get('result_id')}",
@@ -506,15 +593,14 @@ class RemoteModelTrainer:
                 # Finalize (clear config + add persistent notification) in the main process.
                 if not bool(dl_state.get("finalized")):
                     try:
-                        CONFIG["MODEL_TRAINING"] = ""
-                        update_single_config_parameter("MODEL_TRAINING")
+                        RemoteModelTrainer._clear_training_job()
                     except Exception as e:
                         logging.warning(f"[MODEL_TRAINING] Failed to clear MODEL_TRAINING after download: {e}")
                     try:
                         UserNotifications.add(
-                            header=_("Model downloaded"),
+                            header=_("Model ready"),
                             message=_(
-                                "Model training completed and the new model was downloaded successfully. You can select it now in the 'Configuration' section."
+                                "The new model is ready. You can select it in Settings."
                             ),
                             type="message",
                             id=f"model_download_success_{dl_state.get('result_id')}",
@@ -546,7 +632,11 @@ class RemoteModelTrainer:
                 if training_status == "completed":
                     # Start the download worker and switch UI to download progress.
                     if training_result_id:
-                        RemoteModelTrainer.start_download_model_async(job_id, training_result_id)
+                        RemoteModelTrainer.start_download_model_async(
+                            job_id,
+                            training_result_id,
+                            token=CONFIG.get("MODEL_TRAINING_JOB_TOKEN") or None,
+                        )
                     dl_state = RemoteModelTrainer.get_model_download_state()
                     dl_status = dl_state.get("status")
                     if dl_status in ("downloading", "extracting"):
@@ -557,14 +647,13 @@ class RemoteModelTrainer:
                         training_status = "download_error"
                 elif training_status == "aborted":
                     # Abort on client side as well
-                    CONFIG["MODEL_TRAINING"] = ""
-                    update_single_config_parameter("MODEL_TRAINING")
+                    RemoteModelTrainer._clear_training_job()
                     # Show user notification
                     UserNotifications.add(
-                        header=_("Model Training Aborted"),
+                        header=_("Model training stopped"),
                         message=_(
-                            "The model training was aborted. This can happen if the provided training data was not correct. "
-                            "Please ensure you have exported the data from Label Studio as **'YOLO with Images'** and that your labels are set correctly in the images."
+                            "The training data could not be used. Export it from Label Studio as **'YOLO with Images'**, "
+                            "check the image labels, then try again."
                         ),
                         type="error",
                         id="model_training_aborted",
@@ -572,22 +661,23 @@ class RemoteModelTrainer:
                     )
                 else:
                     if show_notification and show_in_progress:
-                        ui.notification_show(_("Model training is in progress. Please check back later."), duration=5, type="default")
+                        ui.notification_show(_("Model training is in progress… Check again later."), duration=5, type="default")
         else:
             training_status = "not_in_progress"
         
         # Map statuses to user-friendly messages
         pretty_status_messages = {
-            "pending": _("The training is pending and will start soon."),
-            "queued": _("The training is queued and waiting for resources."),
-            "completed": _("The training has been successfully completed."),
-            "downloading": _("Training completed. Downloading the model…"),
-            "extracting": _("Training completed. Installing the model…"),
-            "downloaded": _("Training completed. Model downloaded and installed."),
-            "download_error": _("Training completed, but the model download failed."),
-            "aborted": _("The training was aborted. Please try again."),
-            "unknown": _("The training status is unknown. Please check back later."),
-            "not_in_progress": _("No model training is in progress."),
+            "pending": _("Training will start soon…"),
+            "queued": _("Training is waiting for resources…"),
+            "training": _("Training is running…"),
+            "completed": _("Training complete."),
+            "downloading": _("Training complete. Downloading the model…"),
+            "extracting": _("Training complete. Installing the model…"),
+            "downloaded": _("Model ready."),
+            "download_error": _("Could not download the trained model. Check the connection and try again later."),
+            "aborted": _("Training stopped. Check the training data, then try again."),
+            "unknown": _("Training status unavailable. Check again later."),
+            "not_in_progress": _("No model training in progress."),
         }
 
         if return_pretty_status:

@@ -85,20 +85,22 @@ class EventType:
     def to_pretty_string(event_type):
         """Return a translated human-readable label for an event type."""
         return {
-            EventType.MOTION_OUTSIDE_ONLY: _("Motion outside only"),
-            EventType.MOTION_OUTSIDE_WITH_MOUSE: _("Motion outside with mouse"),
-            EventType.CAT_WENT_INSIDE: _("Cat went inside"),
-            EventType.CAT_WENT_PROBABLY_INSIDE: _("Cat went probably inside (no motion inside detected, but the flap was unlocked)"),
-            EventType.CAT_WENT_INSIDE_WITH_MOUSE: _("Cat went inside with mouse"),
-            EventType.CAT_WENT_OUTSIDE: _("Cat went outside"),
-            EventType.MANUALLY_UNLOCKED: _("Manually unlocked flap"),
-            EventType.MANUALLY_LOCKED: _("Manually locked flap"),
-            EventType.MAX_UNLOCK_TIME_EXCEEDED: _("Maximum unlock time exceeded"),
-            EventType.PER_CAT_PREY_DISABLED: _("Per-cat mode: prey detection disabled for this cat"),
-            EventType.ENTRY_PER_CAT_ALLOWED: _("Per-cat mode: entry allowed for this cat"),
-            EventType.ENTRY_PER_CAT_DENIED: _("Per-cat mode: entry denied for this cat"),
-            EventType.EXIT_PER_CAT_ALLOWED: _("Per-cat mode: exit allowed for this cat"),
-            EventType.EXIT_PER_CAT_DENIED: _("Per-cat mode: exit denied for this cat"),
+            EventType.MOTION_OUTSIDE_ONLY: _("There was movement outside."),
+            EventType.MOTION_OUTSIDE_WITH_MOUSE: _("Prey was detected outside."),
+            EventType.CAT_WENT_INSIDE: _("Your cat went inside."),
+            EventType.CAT_WENT_PROBABLY_INSIDE: _(
+                "Your cat probably went inside. No movement was detected inside, but the flap was unlocked."
+            ),
+            EventType.CAT_WENT_INSIDE_WITH_MOUSE: _("Your cat went inside with prey."),
+            EventType.CAT_WENT_OUTSIDE: _("Your cat went outside."),
+            EventType.MANUALLY_UNLOCKED: _("The flap was unlocked manually."),
+            EventType.MANUALLY_LOCKED: _("The flap was locked manually."),
+            EventType.MAX_UNLOCK_TIME_EXCEEDED: _("The maximum unlock time was reached."),
+            EventType.PER_CAT_PREY_DISABLED: _("Prey detection is disabled for this cat."),
+            EventType.ENTRY_PER_CAT_ALLOWED: _("This cat may enter."),
+            EventType.ENTRY_PER_CAT_DENIED: _("This cat may not enter."),
+            EventType.EXIT_PER_CAT_ALLOWED: _("This cat may go outside."),
+            EventType.EXIT_PER_CAT_DENIED: _("This cat may not go outside."),
         }.get(event_type, _("Unknown event"))
 
     @staticmethod
@@ -242,9 +244,245 @@ _BETA_SORT_RE = re.compile(r"(?i)^v?(\d+)\.(\d+)\.(\d+)_beta_(\d+)$")
 # Non-beta release tags: e.g. v2.6.3 / 2.6.3 (rejects branch names like "main").
 _STABLE_TAG_RE = re.compile(r"(?i)^v?\d+(?:\.\d+)+$")
 
-# Files whose change implies a heavy update (venv rebuild and/or full pip reinstall).
+# Target-mode default. Prefer ``heavy_update_repo_files()`` so remote hosts
+# watch ``requirements_remote.txt`` instead of the Kittyflap file.
 HEAVY_UPDATE_REPO_FILES = ("setup/REQUIRED_PYTHON", "requirements.txt")
 MIN_HEAVY_UPDATE_FREE_DISK_MB = 2048
+
+# Previous runtime left by ensure_venv.sh --apply. Removed after a successful
+# startup; --prepare also deletes it before building the next .venv.new.
+_PREVIOUS_VENV_DIR = ".venv.old"
+_previous_venv_size_cache: dict[str, tuple[tuple[int, int], float]] = {}
+
+
+def _install_root(root: str | None) -> str:
+    if root is None:
+        from src.paths import kittyhack_root
+
+        return kittyhack_root()
+    return os.path.abspath(root)
+
+
+def _read_required_python(root: str) -> str:
+    path = os.path.join(root, "setup", "REQUIRED_PYTHON")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            version = handle.read().strip()
+    except OSError:
+        return ""
+    if not re.fullmatch(r"[0-9]+\.[0-9]+", version):
+        return ""
+    return version
+
+
+def venv_python_mm(venv_dir: str) -> str:
+    """Return ``major.minor`` for ``venv_dir/bin/python``, or ``""`` on failure."""
+    python = os.path.join(venv_dir, "bin", "python")
+    # bin/python is a symlink in a normal venv; follow it. Only .venv.old itself
+    # is rejected when it is a symlink (see previous_venv_discard_block_reason).
+    if not os.path.isfile(python) or not os.access(python, os.X_OK):
+        return ""
+    try:
+        completed = subprocess.run(
+            [
+                python,
+                "-c",
+                'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")',
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if completed.returncode != 0:
+        return ""
+    version = (completed.stdout or "").strip()
+    if not re.fullmatch(r"[0-9]+\.[0-9]+", version):
+        return ""
+    return version
+
+
+def active_venv_matches_required(root: str | None = None) -> bool:
+    """True when ``.venv`` reports the same Python as ``setup/REQUIRED_PYTHON``."""
+    root = _install_root(root)
+    required = _read_required_python(root)
+    if not required:
+        return False
+    return venv_python_mm(os.path.join(root, ".venv")) == required
+
+
+def _directory_size_mb(path: str) -> float:
+    """Sum regular-file sizes under ``path`` in MB. Symlinks are not followed."""
+    total = 0
+    try:
+        for dirpath, _dirnames, filenames in os.walk(path, followlinks=False):
+            for name in filenames:
+                file_path = os.path.join(dirpath, name)
+                if os.path.islink(file_path):
+                    continue
+                try:
+                    total += os.path.getsize(file_path)
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return total / (1024 * 1024)
+
+
+def previous_venv_size_mb(root: str | None = None) -> float:
+    """Size of a real ``.venv.old`` directory in MB, otherwise 0.
+
+    The result is cached until the directory's inode or mtime changes. A missing
+    directory returns 0 without walking the tree.
+    """
+    root = _install_root(root)
+    path = os.path.join(root, _PREVIOUS_VENV_DIR)
+    if os.path.islink(path) or not os.path.isdir(path):
+        return 0.0
+    try:
+        stat_result = os.stat(path)
+        cache_key = os.path.realpath(path)
+    except OSError:
+        return 0.0
+    stamp = (stat_result.st_mtime_ns, stat_result.st_ino)
+    cached = _previous_venv_size_cache.get(cache_key)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    size_mb = _directory_size_mb(path)
+    if os.path.islink(path) or not os.path.isdir(path):
+        return 0.0
+    _previous_venv_size_cache[cache_key] = (stamp, size_mb)
+    return size_mb
+
+
+def free_disk_mb_for_heavy_update(
+    free_mb: float,
+    runtime_changes: dict | None,
+    root: str | None = None,
+) -> float:
+    """Free MB for the 2 GB update gate.
+
+    ``--prepare`` deletes ``.venv.old`` before it creates ``.venv.new`` when
+    ``setup/REQUIRED_PYTHON`` changes, so that directory counts as free space.
+    A requirements-only update leaves ``.venv.old`` in place.
+    """
+    if not runtime_changes or not runtime_changes.get("setup/REQUIRED_PYTHON"):
+        return float(free_mb)
+    credit_mb = previous_venv_size_mb(root)
+    if credit_mb <= 0:
+        return float(free_mb)
+    logging.info(
+        "[UPDATE] Counting %.1f MB from .venv.old toward the Python-runtime disk check",
+        credit_mb,
+    )
+    return float(free_mb) + credit_mb
+
+
+def previous_venv_discard_block_reason(root: str | None = None) -> str | None:
+    """Why ``.venv.old`` must be kept, or None when it may be removed.
+
+    ``"missing"`` means there is nothing to delete. Any other string means the
+    directory is still needed for recovery.
+    """
+    root = _install_root(root)
+    old = os.path.join(root, _PREVIOUS_VENV_DIR)
+    if not os.path.lexists(old):
+        return "missing"
+    if os.path.islink(old) or not os.path.isdir(old):
+        return "not a real directory"
+    try:
+        old_real = os.path.realpath(old)
+        root_real = os.path.realpath(root)
+    except OSError:
+        return "path resolution failed"
+    if os.path.basename(old_real) != _PREVIOUS_VENV_DIR or os.path.dirname(old_real) != root_real:
+        return "path escaped install root"
+    if os.path.lexists(os.path.join(root, ".venv.new")):
+        return ".venv.new still present"
+    if os.path.lexists(os.path.join(root, ".runtime-update-pending")):
+        return "runtime update still pending"
+    if not active_venv_matches_required(root):
+        return "active .venv does not match REQUIRED_PYTHON"
+    return None
+
+
+def discard_previous_venv(root: str | None = None, *, background: bool = True) -> bool:
+    """Remove ``.venv.old`` after a successful startup.
+
+    Best-effort: failures are logged and never raised. With ``background=True``
+    (the startup path) the delete runs on a daemon thread so a large tree does
+    not delay the UI. Returns True when a delete was started or completed.
+    """
+    try:
+        root = _install_root(root)
+        reason = previous_venv_discard_block_reason(root)
+        if reason:
+            if reason != "missing":
+                logging.info("[VENV] Keeping .venv.old: %s", reason)
+            return False
+        old = os.path.join(root, _PREVIOUS_VENV_DIR)
+
+        def _remove() -> bool:
+            if os.path.islink(old) or not os.path.isdir(old):
+                logging.info("[VENV] Keeping .venv.old: it is no longer a real directory")
+                return False
+            try:
+                cache_key = os.path.realpath(old)
+            except OSError:
+                cache_key = ""
+            try:
+                logging.info("[VENV] Removing previous runtime at .venv.old after successful startup")
+                shutil.rmtree(old)
+                if cache_key:
+                    _previous_venv_size_cache.pop(cache_key, None)
+                logging.info("[VENV] Removed .venv.old")
+                return True
+            except Exception as exc:
+                logging.warning("[VENV] Failed to remove .venv.old: %s", exc)
+                return False
+
+        if background:
+            threading.Thread(target=_remove, name="discard-venv-old", daemon=True).start()
+            return True
+        return _remove()
+    except Exception as exc:
+        logging.warning("[VENV] Failed to schedule removal of .venv.old: %s", exc)
+        return False
+
+
+def active_requirements_filename() -> str:
+    """Requirements file this host should pip-install.
+
+    Kittyflap: ``requirements.txt``. Remote default: ``requirements_remote.txt``
+    (OpenVINO, no PyTorch). Remote with ``INFERENCE_DEVICE`` ``cuda:*``:
+    ``requirements_remote_cuda.txt`` (PyPI CUDA torch).
+    """
+    from src.mode import is_remote_mode
+
+    if not is_remote_mode():
+        return "requirements.txt"
+    device = ""
+    try:
+        from src.baseconfig import CONFIG
+
+        device = str(CONFIG.get("INFERENCE_DEVICE", "") or "").strip().lower()
+    except Exception:
+        device = ""
+    if device.startswith("cuda"):
+        return "requirements_remote_cuda.txt"
+    return "requirements_remote.txt"
+
+
+def heavy_update_repo_files() -> tuple[str, ...]:
+    """Runtime files whose change implies a venv rebuild and/or full pip reinstall.
+
+    Kittyflap installs ``requirements.txt`` (no torch). Remote hosts install
+    ``requirements_remote.txt``, or ``requirements_remote_cuda.txt`` when the
+    configured inference device is CUDA.
+    """
+    return ("setup/REQUIRED_PYTHON", active_requirements_filename())
 
 class Versioning:
     """Git/version comparison, update-repo resolution, changelogs, release notes."""
@@ -639,9 +877,67 @@ class Versioning:
             return "unknown"
 
     @staticmethod
-    def resolve_update_checkout_ref(target_version: str | None = None) -> str | None:
-        """Return the git ref for an update target (tag, branch, or short SHA)."""
-        _owner, _repo, update_ref, _git_url, _mode = Versioning.resolved_update_repo()
+    def split_branch_display_version(version: str | None) -> tuple[str, str] | None:
+        """Split a branch-channel label ``ref@sha`` into ``(branch, sha)``.
+
+        Tag names never use this form. The ``@sha`` suffix is only how the UI
+        compares an installed commit with a moving branch; it is not a git ref.
+        """
+        ver = str(version or "").strip()
+        if "@" not in ver:
+            return None
+        branch, _, sha = ver.rpartition("@")
+        branch = branch.strip()
+        sha = sha.strip()
+        if not branch or not sha:
+            return None
+        if branch.startswith("-") or sha.startswith("-"):
+            return None
+        if not re.fullmatch(r"[\w./\-]+", branch):
+            return None
+        if not re.fullmatch(r"[0-9a-fA-F]{7,40}", sha):
+            return None
+        return branch, sha
+
+    @staticmethod
+    def explicit_update_source(
+        owner: str | None, repo: str | None, ref: str | None
+    ) -> tuple[str, str, str | None] | None:
+        """Validate a controller-supplied ``(owner, repo, ref)`` update source.
+
+        ``ref`` is None for tag mode (standard, beta, or custom without ``@ref``).
+        Returns None when the names are not safe to pass to git.
+        """
+        owner_s = str(owner or "").strip()
+        repo_s = str(repo or "").strip()
+        if not re.fullmatch(r"[\w.-]+", owner_s) or not re.fullmatch(r"[\w.-]+", repo_s):
+            return None
+        ref_s = str(ref or "").strip()
+        if not ref_s:
+            return owner_s, repo_s, None
+        if ref_s.startswith("-") or not re.fullmatch(r"[\w./\-]+", ref_s):
+            return None
+        return owner_s, repo_s, ref_s
+
+    @staticmethod
+    def git_checkout_command(update_ref: str | None, latest_version: str | None) -> list[str]:
+        """Argv for the update checkout.
+
+        Branch mode resets a local branch to ``origin/<ref>``. A ``ref@sha``
+        label is never passed to git; it is turned back into that branch.
+        Anything else is checked out as a tag or commit name.
+        """
+        if update_ref:
+            return ["/bin/git", "checkout", "-B", update_ref, f"origin/{update_ref}"]
+        display = Versioning.split_branch_display_version(latest_version)
+        if display:
+            branch, _sha = display
+            return ["/bin/git", "checkout", "-B", branch, f"origin/{branch}"]
+        return ["/bin/git", "checkout", str(latest_version or "").strip()]
+
+    @staticmethod
+    def _object_ref_for_version(target_version: str | None, update_ref: str | None) -> str | None:
+        """Git object name for file compares (tag, branch, or the sha from ``ref@sha``)."""
         if update_ref is not None:
             ver = str(target_version or "").strip()
             if "@" in ver:
@@ -652,7 +948,16 @@ class Versioning:
         ver = str(target_version or "").strip()
         if not ver or ver == "unknown":
             return None
+        display = Versioning.split_branch_display_version(ver)
+        if display:
+            return display[1]
         return ver
+
+    @staticmethod
+    def resolve_update_checkout_ref(target_version: str | None = None) -> str | None:
+        """Return the git ref for an update target (tag, branch, or short SHA)."""
+        _owner, _repo, update_ref, _git_url, _mode = Versioning.resolved_update_repo()
+        return Versioning._object_ref_for_version(target_version, update_ref)
 
     @staticmethod
     def _normalize_repo_file_for_compare(rel_path: str, text: str | None) -> str | None:
@@ -755,25 +1060,36 @@ class Versioning:
 
     @staticmethod
     def get_runtime_file_changes(
-        target_version: str | None = None, *, use_git_show: bool = False
+        target_version: str | None = None,
+        *,
+        use_git_show: bool = False,
+        update_source: tuple[str, str, str | None] | None = None,
     ) -> dict[str, bool]:
         """Return which heavy-update files differ from the target ref.
 
-        Keys are paths from ``HEAVY_UPDATE_REPO_FILES``. A path is omitted (or
+        Keys are paths from ``heavy_update_repo_files()``. A path is omitted (or
         False) when it could not be resolved — transient failures must not look
         like a change.
+
+        ``update_source`` is ``(owner, repo, ref_or_none)`` when the caller
+        already resolved the update target (remote-driven flap updates). None
+        uses this device's configured update repository.
         """
-        changes = {path: False for path in HEAVY_UPDATE_REPO_FILES}
-        ref = Versioning.resolve_update_checkout_ref(target_version)
+        tracked = heavy_update_repo_files()
+        changes = {path: False for path in tracked}
+        if update_source is not None:
+            owner, repo, update_ref = update_source
+            ref = Versioning._object_ref_for_version(target_version, update_ref)
+        else:
+            ref = Versioning.resolve_update_checkout_ref(target_version)
+            owner, repo, update_ref, _git_url, _mode = Versioning.resolved_update_repo()
         if not ref:
             return changes
-
-        owner, repo, update_ref, _git_url, _mode = Versioning.resolved_update_repo()
         github_refs = [ref]
         if update_ref and update_ref not in github_refs:
             github_refs.append(update_ref)
 
-        for rel_path in HEAVY_UPDATE_REPO_FILES:
+        for rel_path in tracked:
             local = Versioning._normalize_repo_file_for_compare(
                 rel_path, Versioning._read_local_repo_file(rel_path)
             )
@@ -817,11 +1133,14 @@ class Versioning:
 
     @staticmethod
     def update_changes_runtime_files(
-        target_version: str | None = None, *, use_git_show: bool = False
+        target_version: str | None = None,
+        *,
+        use_git_show: bool = False,
+        update_source: tuple[str, str, str | None] | None = None,
     ) -> bool:
-        """True if target differs from local in REQUIRED_PYTHON or requirements.txt."""
+        """True if target differs from local in REQUIRED_PYTHON or this host's requirements file."""
         changes = Versioning.get_runtime_file_changes(
-            target_version, use_git_show=use_git_show
+            target_version, use_git_show=use_git_show, update_source=update_source
         )
         return any(changes.values())
 
@@ -1022,6 +1341,10 @@ class Versioning:
 class SystemInfo:
     """Disk/RAM/DB size, IP/port checks, and system information logging."""
 
+    # Info-tab folder sizes are refreshed often; avoid walking large trees each time.
+    _dir_size_cache: dict[str, tuple[float, float]] = {}
+    _DIR_SIZE_TTL_S = 60.0
+
     @staticmethod
     def get_free_disk_space():
         """Return free root filesystem space in MB (0 on error)."""
@@ -1086,6 +1409,33 @@ class SystemInfo:
         except Exception as e:
             logging.error(f"Failed to get the size of the Kittyhack database: {e}")
             return 0
+
+    @staticmethod
+    def get_directory_size_mb(path: str) -> float:
+        """Return the total size of files under ``path`` in MB.
+
+        Missing directories count as 0. The result is cached for one minute so
+        the Info tab can refresh without walking large picture folders each time.
+        """
+        now = tm.monotonic()
+        cached = SystemInfo._dir_size_cache.get(path)
+        if cached is not None and (now - cached[0]) < SystemInfo._DIR_SIZE_TTL_S:
+            return cached[1]
+        total = 0
+        try:
+            if os.path.isdir(path):
+                for root, _dirs, files in os.walk(path):
+                    for name in files:
+                        try:
+                            total += os.path.getsize(os.path.join(root, name))
+                        except OSError:
+                            continue
+        except Exception as e:
+            logging.error(f"Failed to get the size of directory '{path}': {e}")
+            total = 0
+        size_mb = total / (1024 * 1024)
+        SystemInfo._dir_size_cache[path] = (now, size_mb)
+        return size_mb
 
     @staticmethod
     def get_file_size(file_path):

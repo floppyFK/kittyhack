@@ -19,6 +19,7 @@ from src.camera import (
     VideoStream,
     encode_frame_jpg,
     image_buffer,
+    redact_camera_url,
     videostream,
 )
 from src.mode import is_remote_mode
@@ -28,12 +29,14 @@ from .camera_config import (
     _is_remote_internal_proxy_stream,
 )
 from .detection import _parse_yolo_detection_results
+from .yolo_inference_worker import yolo_model_worker_process
 
 if TYPE_CHECKING:
-    from tflite_runtime.interpreter import Interpreter
+    from ai_edge_litert.interpreter import Interpreter
+
 
 class ModelHandler:
-    """Runs TFLite or YOLO inference on the live camera videostream."""
+    """Runs TFLite/LiteRT or YOLO inference on the live camera videostream."""
 
     def __init__(self, 
                  model = "tflite",  # Can be instance of TfLite or Yolo
@@ -103,39 +106,18 @@ class ModelHandler:
             return "intel:gpu"
         return device or "cpu"
 
-    def _ensure_openvino_model_export(self) -> None:
-        """Export model.pt to OpenVINO IR on demand and verify the output exists."""
-        if not self._uses_openvino_backend():
-            return
-
+    def _require_openvino_ir(self) -> None:
+        """Require an already exported OpenVINO IR. Export is a separate one-shot tool."""
         xml_exists = os.path.isdir(self.modeldir) and any(
             name.endswith(".xml") for name in os.listdir(self.modeldir)
         )
         if xml_exists:
             return
-
-        pt_model_path = os.path.join(self._model_rootdir, "model.pt")
-        if not os.path.exists(pt_model_path):
-            raise FileNotFoundError(f"OpenVINO export requires '{pt_model_path}'")
-
-        logging.info(f"[MODEL] OpenVINO export missing. Exporting '{pt_model_path}' to '{self.modeldir}'...")
-
-        from ultralytics import YOLO
-
-        export_model = YOLO(pt_model_path, task="detect", verbose=False)
-        export_result = export_model.export(
-            format="openvino",
-            imgsz=self.input_size,
+        raise FileNotFoundError(
+            "OpenVINO model is missing (.xml). Export it once with tools/export_openvino.py "
+            "after installing requirements_openvino_export.txt (CPU PyTorch wheels, not the "
+            f"CUDA stack). Expected the IR in {self.modeldir}"
         )
-
-        if isinstance(export_result, str) and export_result.strip():
-            self.modeldir = export_result
-
-        xml_exists = os.path.isdir(self.modeldir) and any(
-            name.endswith(".xml") for name in os.listdir(self.modeldir)
-        )
-        if not xml_exists:
-            raise RuntimeError(f"OpenVINO export did not produce a valid model directory: {self.modeldir}")
 
     def _load_labels(self) -> None:
         """Load class labels from `self.labelfile` into `self.labels`."""
@@ -164,151 +146,117 @@ class ModelHandler:
     def load_model(self):
         """Load the TFLite interpreter or YOLO model (direct or worker process)."""
         if self.model == "tflite":
-            from tflite_runtime.interpreter import Interpreter
+            # LiteRT is the maintained successor of tflite-runtime (required for Python >= 3.12).
+            from ai_edge_litert.interpreter import Interpreter
             self._Interpreter = Interpreter
             self._yolo = None
             self._model_worker = None
 
         elif self.model == "yolo":
-            from ultralytics import YOLO
-            import multiprocessing
-            from multiprocessing import Queue
-            import os
-            from src.baseconfig import configure_logging
-
             if self._uses_openvino_backend():
-                self._ensure_openvino_model_export()
+                from src.system import DependencyInstaller
+                if not DependencyInstaller.ensure_openvino_installed():
+                    raise RuntimeError(
+                        "OpenVINO is required for this inference device and could not "
+                        "be installed into the Kittyhack virtualenv."
+                    )
+                self._require_openvino_ir()
+                from .openvino_detect import OpenVinoYoloDetector
+
+                detector = OpenVinoYoloDetector(
+                    self.modeldir,
+                    self._resolved_inference_device(),
+                    self.input_size,
+                )
+
+                def openvino_inference(frame, input_size):
+                    return detector.predict(
+                        frame,
+                        self.labels,
+                        self.cat_names,
+                        CONFIG.get("MIN_THRESHOLD", 0),
+                        input_size,
+                    )
+
+                self._yolo = openvino_inference
+                self._yolo_model = None
+                self._model_worker = None
+                self._Interpreter = None
+                return
 
             resolved_inference_device = self._resolved_inference_device()
+            is_cuda = resolved_inference_device.startswith("cuda")
 
-            # Check if we're using all available cores
             all_cores = multiprocessing.cpu_count()
-            # GPU devices always use the direct inference path (GPU handles its own parallelism)
-            using_all_cores = self.num_threads >= all_cores or self.inference_device.lower() != 'cpu'
+            # On Kittyflap hardware never use all cores — that undervolts the Pi.
+            # Remote CPU may use every core in-process. CUDA stays on Ultralytics.
+            if not is_remote_mode():
+                using_all_cores = False
+            else:
+                using_all_cores = self.num_threads >= all_cores
 
-            # If using all cores (or GPU), run the model directly for better performance
-            if using_all_cores:
-                if self.inference_device.lower() == 'cpu':
-                    _device_label = 'cpu (NCNN)'
-                elif self._uses_openvino_backend():
-                    _device_label = f'{self.inference_device} via OpenVINO AUTO'
-                else:
-                    _device_label = self.inference_device
-                logging.info(f"[MODEL] Loading YOLO model directly in main process (device={_device_label})")
+            if is_cuda:
+                from src.baseconfig import configure_logging
+                from ultralytics import YOLO
+
+                logging.info(
+                    f"[MODEL] Loading YOLO model directly in main process (device={resolved_inference_device})"
+                )
                 logging.getLogger("ultralytics").setLevel(logging.WARNING)
                 logging.getLogger("ultralytics.yolo.engine.model").setLevel(logging.WARNING)
                 self._yolo_model = YOLO(self.modeldir, task="detect", verbose=False)
-                # Re-Configure logging to silence the model's output
                 configure_logging(CONFIG['LOGLEVEL'])
 
-                # Capture device info for the closure
                 _inference_device = resolved_inference_device
-                _is_openvino = self._uses_openvino_backend()
 
-                # Create a wrapper function to match the expected interface
                 def direct_inference(frame, input_size):
-                    # Run inference directly. Ultralytics handles letterboxing internally.
-                    # For OpenVINO models, do NOT pass device: Ultralytics hardcodes
-                    # device_name="AUTO" internally, and select_device() does not
-                    # understand Intel GPU strings (it only knows CUDA/CPU/MPS).
-                    # OpenVINO AUTO mode automatically selects the best available
-                    # device (GPU if available, CPU as fallback).
-                    # For CUDA, pass the device explicitly as usual.
-                    _predict_kwargs: dict = dict(stream=True, imgsz=input_size, verbose=False)
-                    if _inference_device != 'cpu' and not _is_openvino:
-                        _predict_kwargs['device'] = _inference_device
-                    results = self._yolo_model(frame, **_predict_kwargs)
+                    results = self._yolo_model(
+                        frame,
+                        stream=True,
+                        imgsz=input_size,
+                        verbose=False,
+                        device=_inference_device,
+                    )
                     return _parse_yolo_detection_results(
                         results,
                         self.labels,
                         self.cat_names,
                         CONFIG.get('MIN_THRESHOLD', 0),
                     )
-                
+
                 self._yolo = direct_inference
                 self._model_worker = None
+            elif using_all_cores:
+                from .ncnn_detect import NcnnYoloDetector
+
+                detector = NcnnYoloDetector(self.modeldir, self.num_threads, self.input_size)
+
+                def ncnn_inference(frame, input_size):
+                    return detector.predict(
+                        frame,
+                        self.labels,
+                        self.cat_names,
+                        CONFIG.get("MIN_THRESHOLD", 0),
+                        input_size,
+                    )
+
+                self._yolo = ncnn_inference
+                self._yolo_model = None
+                self._model_worker = None
+                self._Interpreter = None
             else:
-                # Use the multiprocessing approach for limited CPU cores
-                def model_worker_process(model_path, input_queue, output_queue, num_threads=1, inference_device='cpu'):
-                    try:
-                        # Set CPU affinity for this process based on num_threads
-                        import psutil
-                        process = psutil.Process()
-
-                        # Calculate which cores to use (0..num_threads-1) but respect cpuset/container limits.
-                        requested = list(range(int(num_threads) if num_threads else 1))
-                        try:
-                            allowed = process.cpu_affinity()  # type: ignore[call-arg]
-                        except Exception:
-                            allowed = []
-
-                        cores_to_use = requested
-                        if allowed:
-                            cores_to_use = [c for c in requested if c in allowed]
-                            if not cores_to_use:
-                                # Fallback: use whatever the OS allows.
-                                cores_to_use = list(allowed)
-
-                        # Best-effort pinning: may fail on some kernels/containers (e.g. Errno 22).
-                        try:
-                            if cores_to_use:
-                                process.cpu_affinity(cores_to_use)
-                                logging.info(f"[MODEL] Worker process running on CPU cores {cores_to_use}")
-                            else:
-                                logging.info("[MODEL] Worker process running without CPU affinity (no cores resolved)")
-                        except OSError as e:
-                            logging.warning(f"[MODEL] CPU affinity not supported/allowed here; continuing without pinning: {e}")
-                        except Exception as e:
-                            logging.warning(f"[MODEL] Failed to set CPU affinity; continuing without pinning: {e}")
-                        
-                        # Load the YOLO model in this process
-                        logging.getLogger("ultralytics").setLevel(logging.WARNING)
-                        logging.getLogger("ultralytics.yolo.engine.model").setLevel(logging.WARNING)
-                        model = YOLO(model_path, task="detect", verbose=False)
-                        # Re-Configure logging to silence the model's output
-                        configure_logging(CONFIG['LOGLEVEL'])
-                        
-                        while True:
-                            # Get input from queue
-                            job = input_queue.get()
-                            if job is None:  # None is our signal to exit
-                                break
-                                
-                            job_id, frame, input_size, labels, cat_names, min_threshold = job
-
-                            _worker_kwargs: dict = dict(stream=True, imgsz=input_size)
-                            if inference_device != 'cpu':
-                                _worker_kwargs['device'] = inference_device
-                            results = model(frame, **_worker_kwargs)
-
-                            mouse_probability, own_cat_probability, detected_objects = _parse_yolo_detection_results(
-                                results,
-                                labels,
-                                cat_names,
-                                min_threshold,
-                            )
-
-                            output_queue.put((job_id, mouse_probability, own_cat_probability, detected_objects))
-                            
-                    except Exception as e:
-                        logging.error(f"[MODEL] Worker process error: {e}")
-                        import traceback
-                        logging.error(traceback.format_exc())
-                    finally:
-                        logging.info("[MODEL] Worker process exiting")
-
-                # Create the queues for communication
-                self._input_queue = Queue()
-                self._output_queue = Queue()
-                
-                # Start the worker process with the specified number of threads
-                self._model_worker = multiprocessing.Process(
-                    target=model_worker_process,
-                    args=(self.modeldir, self._input_queue, self._output_queue, self.num_threads, resolved_inference_device)
+                # Limited-core path: NCNN in a child process (no PyTorch).
+                # Python 3.14's default start method on Linux is forkserver.
+                ctx = multiprocessing.get_context()
+                self._input_queue = ctx.Queue()
+                self._output_queue = ctx.Queue()
+                self._model_worker = ctx.Process(
+                    target=yolo_model_worker_process,
+                    args=(self.modeldir, self._input_queue, self._output_queue, self.num_threads, resolved_inference_device),
                 )
                 self._model_worker.daemon = True
                 self._model_worker.start()
-                logging.info(f"[MODEL] Started YOLO worker process using {self.num_threads} CPU cores")
+                logging.info(f"[MODEL] Started NCNN worker process using {self.num_threads} CPU cores")
 
                 self._yolo = self._send_to_worker
                 self._Interpreter = None
@@ -326,7 +274,7 @@ class ModelHandler:
         ))
         return job_id
     
-    def _get_result(self, job_id, timeout=1.0):
+    def _get_result(self, job_id, timeout=15.0):
         """Wait for and return the YOLO worker result for `job_id`, or None."""
         try:
             # Check if we've received the result
@@ -338,6 +286,9 @@ class ModelHandler:
                 try:
                     result_job_id, mouse_prob, cat_prob, objects = self._output_queue.get(timeout=timeout)
                 except Exception:
+                    logging.warning(
+                        f"[MODEL] Timed out waiting {timeout:.1f}s for YOLO worker result (job_id={job_id})"
+                    )
                     return None
 
                 # Drop results that arrived later than expected for an already-abandoned job_id.
@@ -368,8 +319,6 @@ class ModelHandler:
         resW, resH = self.resolution.split('x')
         imW, imH = int(resW), int(resH)
 
-        self.load_model()
-
         # Store the last used effective camera config to detect changes
         last_camera_source, last_ip_camera_url = _effective_camera_stream_config()
         last_enable_ip_camera_decode_scale_pipeline = CONFIG.get('ENABLE_IP_CAMERA_DECODE_SCALE_PIPELINE', False)
@@ -377,42 +326,44 @@ class ModelHandler:
         last_ip_camera_pipeline_fps_limit = int(CONFIG.get('IP_CAMERA_PIPELINE_FPS_LIMIT', 10) or 10)
         last_ip_camera_hw_decode = str(CONFIG.get('IP_CAMERA_HW_DECODE', 'auto') or 'auto')
 
-        # Check if the model is a YOLO model
-        if self.model == "tflite":
-            # ------------- TFLite Model -------------
-            # Path to .tflite file, which contains the model that is used for object detection
-            PATH_TO_TFLITE = os.path.join(self.modeldir, self.graph)
+        interpreter = None
+        model_ready = False
+        try:
+            self.load_model()
 
-            logging.info(f"[MODEL] Preparing to run TFLite model {PATH_TO_TFLITE} on video stream with resolution {imW}x{imH} @ {self.framerate}fps and quality {self.jpeg_quality}%")
+            if self.model == "tflite":
+                # ------------- TFLite Model -------------
+                PATH_TO_TFLITE = os.path.join(self.modeldir, self.graph)
 
-            # Load the Tensorflow Lite model.
-            interpreter = self._Interpreter(model_path=PATH_TO_TFLITE, num_threads=self.num_threads)
-            interpreter.allocate_tensors()
+                logging.info(f"[MODEL] Preparing to run TFLite model {PATH_TO_TFLITE} on video stream with resolution {imW}x{imH} @ {self.framerate}fps and quality {self.jpeg_quality}%")
 
-            # Get model details
-            self.tf_input_details = interpreter.get_input_details()
-            self.tf_output_details = interpreter.get_output_details()
-            self.tf_height = self.tf_input_details[0]['shape'][1]
-            self.tf_width = self.tf_input_details[0]['shape'][2]
+                interpreter = self._Interpreter(model_path=PATH_TO_TFLITE, num_threads=self.num_threads)
+                interpreter.allocate_tensors()
 
-            self.input_size = max(self.tf_height, self.tf_width)
+                self.tf_input_details = interpreter.get_input_details()
+                self.tf_output_details = interpreter.get_output_details()
+                self.tf_height = self.tf_input_details[0]['shape'][1]
+                self.tf_width = self.tf_input_details[0]['shape'][2]
 
-            self.tf_floating_model = (self.tf_input_details[0]['dtype'] == np.float32)
-            logging.info(f"[MODEL] Floating model: {self.tf_floating_model}")
-            logging.info(f"[MODEL] Input details: {self.tf_input_details} (model shape: {self.tf_height}x{self.tf_width} --> {self.input_size})")
+                self.input_size = max(self.tf_height, self.tf_width)
 
-            # Check output layer name to determine if this model was created with TF2 or TF1,
-            # because outputs are ordered differently for TF2 and TF1 models
-            self.tf_outname = self.tf_output_details[0]['name']
-        
-        elif self.model == "yolo":
-            # ------------- YOLO Model -------------
-            logging.info(f"[MODEL] Preparing to run YOLO model {self.modeldir} on video stream with resolution {imW}x{imH} @ {self.framerate}fps and quality {self.jpeg_quality}%")
-            # No need to initialize YOLO here - it's already running in the worker process
+                self.tf_floating_model = (self.tf_input_details[0]['dtype'] == np.float32)
+                logging.info(f"[MODEL] Floating model: {self.tf_floating_model}")
+                logging.info(f"[MODEL] Input details: {self.tf_input_details} (model shape: {self.tf_height}x{self.tf_width} --> {self.input_size})")
 
-        else:
-            logging.error(f"[MODEL] Unknown model type: {self.model}. Failed to start inference.") 
-            return
+                self.tf_outname = self.tf_output_details[0]['name']
+                model_ready = True
+
+            elif self.model == "yolo":
+                logging.info(f"[MODEL] Preparing to run YOLO model {self.modeldir} on video stream with resolution {imW}x{imH} @ {self.framerate}fps and quality {self.jpeg_quality}%")
+                model_ready = True
+
+            else:
+                logging.error(f"[MODEL] Unknown model type: {self.model}. Failed to start inference.")
+        except Exception as e:
+            logging.error(f"[MODEL] Failed to load model; starting camera without inference: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
         
         # Register task in the sigterm_monitor object
         sigterm_monitor.register_task()
@@ -427,7 +378,7 @@ class ModelHandler:
             effective_camera_source, effective_ip_camera_url = _effective_camera_stream_config()
             if is_remote_mode() and str(CONFIG.get('CAMERA_SOURCE') or '').strip().lower() == 'internal':
                 if effective_camera_source == 'ip_camera' and effective_ip_camera_url:
-                    logging.info(f"[CAMERA] Remote-mode implicit internal camera mapping active: {effective_ip_camera_url}")
+                    logging.info(f"[CAMERA] Remote-mode implicit internal camera mapping active: {redact_camera_url(effective_ip_camera_url)}")
                 elif effective_camera_source == 'disconnected':
                     logging.info("[CAMERA] Remote control disconnected. IP camera stream remains closed until reconnect.")
                 else:
@@ -455,8 +406,8 @@ class ModelHandler:
             stream_start_time = tm.time()
             while frame is None and not sigterm_monitor.stop_now and not self._stop_requested.is_set():
                 frame = videostream.read_oldest()
-                if tm.time() - stream_start_time > 10:
-                    logging.error("[CAMERA] Camera stream failed to start within 10 seconds!")
+                if tm.time() - stream_start_time > 15:
+                    logging.error("[CAMERA] Camera stream failed to start within 15 seconds!")
                     break
                 else:
                     tm.sleep(0.1)
@@ -505,18 +456,27 @@ class ModelHandler:
                     last_ip_camera_target_resolution = current_ip_camera_target_resolution
                     last_ip_camera_pipeline_fps_limit = current_ip_camera_pipeline_fps_limit
                     last_ip_camera_hw_decode = current_ip_camera_hw_decode
+                    # Previous camera's frames must not trip the no-frame watchdog.
+                    last_good_frame_ts = tm.time()
+                    last_no_frame_reinit_ts = tm.time()
+                    no_frame_since_ts = 0.0
+                    try:
+                        last_seen_camera_frame_id = int(videostream.get_latest_frame_id()) if videostream is not None else 0
+                    except Exception:
+                        last_seen_camera_frame_id = 0
                     # Wait for the new stream to warm up
                     frame = None
                     stream_start_time = tm.time()
                     while frame is None and not sigterm_monitor.stop_now and not self._stop_requested.is_set():
                         frame = videostream.read_oldest()
-                        if tm.time() - stream_start_time > 10:
-                            logging.error("[CAMERA] Camera stream failed to start within 10 seconds after reinit!")
+                        if tm.time() - stream_start_time > 15:
+                            logging.error("[CAMERA] Camera stream failed to start within 15 seconds after reinit!")
                             break
                         else:
                             tm.sleep(0.1)
                     if frame is not None:
                         logging.info("[CAMERA] Camera stream re-initialized successfully.")
+                        last_good_frame_ts = tm.time()
 
                 # Start timer (for calculating frame rate)
                 t1 = cv2.getTickCount()
@@ -551,10 +511,15 @@ class ModelHandler:
                     except Exception:
                         timestamp_mono = None
 
-                    if self.model == "tflite":
+                    mouse_probability = 0
+                    no_mouse_probability = 0
+                    own_cat_probability = 0
+                    detected_objects = []
+
+                    if model_ready and self.model == "tflite" and interpreter is not None:
                         own_cat_probability = 0 # Not supported in the original Kittyflap TFLite models
                         mouse_probability, no_mouse_probability, detected_objects = self._process_frame_tflite(frame, interpreter)
-                    elif self.model == "yolo":
+                    elif model_ready and self.model == "yolo" and getattr(self, "_yolo", None):
                         if hasattr(self, '_model_worker') and self._model_worker:
                             job_id = self._yolo(frame, self.input_size)
                             result = self._get_result(job_id)
@@ -689,9 +654,17 @@ class ModelHandler:
                         try:
                             self.reinit_videostream()
                             last_no_frame_reinit_ts = current_time
+                            last_good_frame_ts = tm.time()
+                            no_frame_since_ts = 0.0
+                            try:
+                                last_seen_camera_frame_id = (
+                                    int(videostream.get_latest_frame_id()) if videostream is not None else 0
+                                )
+                            except Exception:
+                                last_seen_camera_frame_id = 0
 
                             # Warm-up probe after reinit
-                            probe_deadline = tm.time() + 10.0
+                            probe_deadline = tm.time() + 15.0
                             probe_frame = None
                             while (
                                 probe_frame is None
@@ -830,13 +803,13 @@ class ModelHandler:
             ip_camera_hw_decode=str(CONFIG.get('IP_CAMERA_HW_DECODE', 'auto') or 'auto'),
         ).start()
         if is_remote_mode() and str(CONFIG.get('CAMERA_SOURCE') or '').strip().lower() == 'internal' and effective_camera_source == 'ip_camera':
-            logging.info(f"[MODEL] Re-initialized videostream with implicit remote MJPEG relay source: {effective_ip_camera_url}.")
+            logging.info(f"[MODEL] Re-initialized videostream with implicit remote MJPEG relay source: {redact_camera_url(effective_ip_camera_url)}.")
         elif effective_camera_source == 'disconnected':
             logging.info("[MODEL] Re-initialized videostream in disconnected mode (IP camera stream closed).")
         elif CONFIG['CAMERA_SOURCE'] == "internal":
             logging.info(f"[MODEL] Re-initialized videostream with internal camera source.")
         else:
-            logging.info(f"[MODEL] Re-initialized videostream with external camera source: {effective_ip_camera_url}.")
+            logging.info(f"[MODEL] Re-initialized videostream with external camera source: {redact_camera_url(effective_ip_camera_url)}.")
 
     def set_videostream_buffer_size(self, new_size: int):
         """Set the videostream frame buffer size, if a stream is active."""

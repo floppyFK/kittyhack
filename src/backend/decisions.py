@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from src.baseconfig import AllowedToExit
 from src.helper import EventType
 
@@ -103,6 +105,159 @@ def unlock_inside_ready(conditions: dict) -> bool:
     return all(bool(v) for v in conditions.values())
 
 
+def pir_ok_for_camera_entry(
+    require_pir: bool,
+    use_camera_for_motion: bool,
+    use_camera_for_cat_detection: bool,
+    pir_outside_active: bool,
+) -> bool:
+    """Whether optional PIR second-factor for camera-based entry is satisfied.
+
+    When the setting is off, or neither camera option is enabled, this is True.
+    """
+    if not require_pir:
+        return True
+    if not (use_camera_for_motion or use_camera_for_cat_detection):
+        return True
+    return bool(pir_outside_active)
+
+
+def should_suggest_pir_second_factor(
+    require_pir: bool,
+    use_camera_for_motion: bool,
+    use_camera_for_cat_detection: bool,
+) -> bool:
+    """True when camera-based entry is on and PIR 2FA is still optional/off."""
+    if require_pir:
+        return False
+    return bool(use_camera_for_motion or use_camera_for_cat_detection)
+
+
+def sync_pir_second_factor_suggestion() -> bool:
+    """Queue or drop the muteable PIR-2FA tip from the current CONFIG.
+
+    Returns True if a new notification was added.
+    """
+    from src.baseconfig import CONFIG, UserNotifications, set_language
+
+    _ = set_language(CONFIG.get("LANGUAGE", "en"))
+    nid = UserNotifications.ID_SUGGEST_PIR_SECOND_FACTOR
+    should = should_suggest_pir_second_factor(
+        bool(CONFIG.get("REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY", False)),
+        bool(CONFIG.get("USE_CAMERA_FOR_MOTION_DETECTION", False)),
+        bool(CONFIG.get("USE_CAMERA_FOR_CAT_DETECTION", False)),
+    )
+    if not should:
+        if UserNotifications.get_by_id(nid):
+            UserNotifications.remove(nid)
+        return False
+    added = UserNotifications.add(
+        header=_("Second factor for opening inward"),
+        message=(
+            _("You are using the camera to detect cats.")
+            + "\n\n"
+            + _("To cut down on false detections, for example from sunlight reflections, you can "
+                "require the outside motion sensor as a second factor. The flap then opens inward "
+                "only when the camera sees a cat and the motion sensor triggers at the same time. "
+                "Every other condition still has to be met.")
+            + "\n\n"
+            + _("Turn it on under **Settings**, in the **Flap** section: "
+                "**Additionally require the outside PIR for camera-based entry**.")
+        ),
+        type="warning",
+        id=nid,
+        skip_if_id_exists=True,
+        muteable=True,
+    )
+    return added == nid
+
+
+def uses_original_detection_model(tflite_version) -> bool:
+    """True when a bundled Kittyflap TFLite model is the active detector."""
+    return bool(str(tflite_version or "").strip())
+
+
+def _has_custom_yolo_model() -> bool:
+    try:
+        from src.model import YoloModel
+
+        return any(
+            (model.get("unique_id") or "").strip()
+            for model in YoloModel.get_model_list()
+        )
+    except Exception as e:
+        logging.debug(f"[USR_NOTIFICATIONS] Could not list custom models: {e}")
+        return False
+
+
+def _model_training_guide_url(language: str | None) -> str:
+    if str(language or "").strip().lower().startswith("de"):
+        return (
+            "https://github.com/floppyFK/kittyhack/wiki/"
+            "%5BDE%5D-Kittyhack-v2.0-%E2%80%90-Eigene-KI%E2%80%90Modelle-trainieren"
+        )
+    return (
+        "https://github.com/floppyFK/kittyhack/wiki/"
+        "%5BEN%5D-Kittyhack-v2.0-%E2%80%90-Train-own-AI%E2%80%90Models"
+    )
+
+
+def _original_model_notice_message(has_custom_model: bool) -> str:
+    from src.baseconfig import CONFIG, set_language
+
+    language = CONFIG.get("LANGUAGE", "en")
+    _ = set_language(language)
+    intro = _("Kittyhack is using currently the model that came with the Kittyflap (v1 or v2).")
+    problem = _(
+        "This model is extremely inaccurate, because it was not trained for your cats. "
+        "Not all Kittyhack features work with it. The camera cannot identify your cat "
+        "with this model, for example."
+    )
+    if has_custom_model:
+        action = _(
+            "You already have a trained model. It is much more accurate. Select it under "
+            "**Settings**, in the **Flap** section, as the **Detection model**."
+        )
+        return f"{intro}\n\n{problem}\n\n{action}"
+    later = _(
+        "The flap still works with the microchip reader. You do not need to change anything right now."
+    )
+    guide = _("model training guide")
+    train = _(
+        "However, a model you train yourself is much more accurate. Kittyhack needs pictures of your cats first. "
+        "You can create that model later under **AI Training**. "
+        "The steps are explained in the [{guide}]({url})."
+    ).format(guide=guide, url=_model_training_guide_url(language))
+    return f"{intro}\n\n{problem}\n\n{later}\n\n{train}"
+
+
+def sync_original_model_notice() -> bool:
+    """Queue or drop the muteable original-model hint from the current CONFIG.
+
+    New installations ship without a trained model, so the text explains that
+    the flap still works and training can wait.
+
+    Returns True if a new notification was added.
+    """
+    from src.baseconfig import CONFIG, UserNotifications, set_language
+
+    _ = set_language(CONFIG.get("LANGUAGE", "en"))
+    nid = UserNotifications.ID_ORIGINAL_MODEL_ACCURACY
+    if not uses_original_detection_model(CONFIG.get("TFLITE_MODEL_VERSION")):
+        if UserNotifications.get_by_id(nid):
+            UserNotifications.remove(nid)
+        return False
+    added = UserNotifications.add(
+        header=_("Original detection model"),
+        message=_original_model_notice_message(_has_custom_yolo_model()),
+        type="warning",
+        id=nid,
+        skip_if_id_exists=True,
+        muteable=True,
+    )
+    return added == nid
+
+
 def build_unlock_inside_conditions(
     *,
     motion_outside: bool,
@@ -113,6 +268,9 @@ def build_unlock_inside_conditions(
     no_unlock_queued: bool,
     no_prey_within_timeout_effective: bool,
     not_manually_locked: bool,
+    not_held_after_max_unlock: bool = True,
+    not_in_safety_cooldown: bool = True,
+    pir_ok_for_camera_entry: bool = True,
 ) -> dict:
     """Named gates for logging / MQTT (same keys as the live loop)."""
     return {
@@ -124,6 +282,9 @@ def build_unlock_inside_conditions(
         "no_unlock_queued": bool(no_unlock_queued),
         "no_prey_within_timeout": bool(no_prey_within_timeout_effective),
         "not_manually_locked": bool(not_manually_locked),
+        "not_held_after_max_unlock": bool(not_held_after_max_unlock),
+        "not_in_safety_cooldown": bool(not_in_safety_cooldown),
+        "pir_ok_for_camera_entry": bool(pir_ok_for_camera_entry),
     }
 
 

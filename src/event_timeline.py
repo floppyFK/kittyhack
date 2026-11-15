@@ -46,6 +46,80 @@ class TimelineAction:
     INSIDE_CLOSED_FAST_IN_OUT = "inside_closed_fast_in_out"
     OUTSIDE_CLOSED_FAST_IN_OUT = "outside_closed_fast_in_out"
 
+
+_DOOR_ACTION_KINDS = {
+    TimelineAction.INSIDE_OPENED: "inside-open",
+    TimelineAction.INSIDE_OPENED_MANUAL: "inside-open",
+    TimelineAction.INSIDE_CLOSED: "inside-close",
+    TimelineAction.INSIDE_CLOSED_PREY: "inside-close",
+    TimelineAction.INSIDE_CLOSED_ENTRY_DENIED: "inside-close",
+    TimelineAction.INSIDE_CLOSED_MOTION_END: "inside-close",
+    TimelineAction.INSIDE_CLOSED_MAX_TIME: "inside-close",
+    TimelineAction.INSIDE_CLOSED_MANUAL: "inside-close",
+    TimelineAction.INSIDE_CLOSED_FAST_IN_OUT: "inside-close",
+    TimelineAction.OUTSIDE_OPENED: "outside-open",
+    TimelineAction.OUTSIDE_CLOSED: "outside-close",
+    TimelineAction.OUTSIDE_CLOSED_FAST_IN_OUT: "outside-close",
+}
+
+
+def timeline_door_action_kind(action: str) -> str | None:
+    """Return the visual marker kind for a door action, if it is one."""
+    return _DOOR_ACTION_KINDS.get(action)
+
+
+def timeline_parse_timestamp(at_value) -> float | None:
+    """Parse a stored timeline/event timestamp to Unix seconds."""
+    try:
+        if isinstance(at_value, (int, float)):
+            return float(at_value)
+        raw = str(at_value).strip()
+        if not raw:
+            return None
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        if len(raw) >= 5 and raw[-5] in "+-" and ":" not in raw[-5:]:
+            raw = raw[:-2] + ":" + raw[-2:]
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
+def timeline_door_markers(entries: list, frame_timestamps: list) -> list:
+    """Return positioned door-action markers for an event player timeline."""
+    parsed_frames = [timeline_parse_timestamp(value) for value in frame_timestamps]
+    valid_frames = [value for value in parsed_frames if value is not None]
+    if not valid_frames:
+        return []
+    start = min(valid_frames)
+    end = max(valid_frames)
+    span = max(0.0, end - start)
+    markers = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        kind = timeline_door_action_kind(entry.get("action"))
+        at = timeline_parse_timestamp(entry.get("at"))
+        if not kind or at is None:
+            continue
+        position = 0.0 if span == 0 else max(0.0, min(1.0, (at - start) / span))
+        nearest_idx = min(
+            range(len(parsed_frames)),
+            key=lambda idx: abs((parsed_frames[idx] if parsed_frames[idx] is not None else start) - at),
+        )
+        markers.append(
+            {
+                "position": position,
+                "frame": nearest_idx,
+                "kind": kind,
+                "label": timeline_format_message(entry),
+            }
+        )
+    return markers
+
 def timeline_append(entries: list, action: str, **detail) -> None:
     """Append one timeline entry (UTC timestamp, second precision)."""
     entry = {"action": action, "at": DateTimeUtil.get_utc_date_string(wall_time())}
@@ -95,20 +169,20 @@ def timeline_format_message(entry: dict) -> str:
         TimelineAction.PREY_DETECTED: _("Prey detected"),
         TimelineAction.NO_PREY_DETECTED: _("No prey detected"),
         TimelineAction.PER_CAT_PREY_DISABLED: _("Prey detection disabled for {cat}").format(cat=cat),
-        TimelineAction.INSIDE_OPENED: _("Inside opened"),
-        TimelineAction.INSIDE_OPENED_MANUAL: _("Inside opened (manual)"),
-        TimelineAction.INSIDE_CLOSED: _("Inside closed"),
-        TimelineAction.INSIDE_CLOSED_PREY: _("Inside closed (prey detected)"),
-        TimelineAction.INSIDE_CLOSED_ENTRY_DENIED: _("Inside closed (entry denied)"),
-        TimelineAction.INSIDE_CLOSED_MOTION_END: _("Inside closed (motion ended)"),
-        TimelineAction.INSIDE_CLOSED_MAX_TIME: _("Inside closed (maximum unlock time exceeded)"),
-        TimelineAction.INSIDE_CLOSED_MANUAL: _("Inside closed (manual)"),
-        TimelineAction.OUTSIDE_OPENED: _("Outside opened"),
-        TimelineAction.OUTSIDE_CLOSED: _("Outside closed"),
+        TimelineAction.INSIDE_OPENED: _("Inside unlocked"),
+        TimelineAction.INSIDE_OPENED_MANUAL: _("Inside unlocked manually"),
+        TimelineAction.INSIDE_CLOSED: _("Inside locked"),
+        TimelineAction.INSIDE_CLOSED_PREY: _("Inside locked after detecting prey"),
+        TimelineAction.INSIDE_CLOSED_ENTRY_DENIED: _("Inside locked because entry was denied"),
+        TimelineAction.INSIDE_CLOSED_MOTION_END: _("Inside locked after movement ended"),
+        TimelineAction.INSIDE_CLOSED_MAX_TIME: _("Inside locked after the maximum unlock time"),
+        TimelineAction.INSIDE_CLOSED_MANUAL: _("Inside locked manually"),
+        TimelineAction.OUTSIDE_OPENED: _("Outside unlocked"),
+        TimelineAction.OUTSIDE_CLOSED: _("Outside locked"),
         TimelineAction.EXIT_SKIPPED_ENTRY: _("Entry decision skipped (exit in progress)"),
         TimelineAction.FAST_IN_OUT_CROSSING: _("Cat crossed the flap"),
-        TimelineAction.INSIDE_CLOSED_FAST_IN_OUT: _("Inside locked (after passage)"),
-        TimelineAction.OUTSIDE_CLOSED_FAST_IN_OUT: _("Outside locked (after passage)"),
+        TimelineAction.INSIDE_CLOSED_FAST_IN_OUT: _("Inside locked after passage"),
+        TimelineAction.OUTSIDE_CLOSED_FAST_IN_OUT: _("Outside locked after passage"),
     }
 
     if action == TimelineAction.EVENT_CONCLUSION and conclusion:

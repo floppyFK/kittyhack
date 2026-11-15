@@ -20,7 +20,7 @@ from typing import Any
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-from src.baseconfig import CONFIG, CONFIGFILE, configure_logging, load_config, set_language
+from src.baseconfig import CONFIG, configure_logging, load_config, set_language, settings_revision
 from src.helper import (
     Versioning,
     sigterm_monitor,
@@ -96,38 +96,38 @@ _internal_cam_last_error: str = ""
 _internal_cam_stream_source: str = ""
 _internal_cam_stream_url: str = ""
 
-# Track config.ini mtime so runtime setting changes can be applied without
+# Track the settings-table revision so runtime changes apply without
 # restarting kittyhack_control.service.
-_configfile_last_mtime: float | None = None
+_config_revision: str | None = None
 
 def _reload_runtime_config_if_changed() -> None:
-    """Reload config.ini only when the file changed on disk.
+    """Reload settings when the database revision changes.
 
-    The WLAN watchdog reads CONFIG values every loop tick. Without a config
-    reload, changes saved by server.py stay invisible in this process until a
-    service restart. This lightweight mtime gate keeps overhead low.
+    The WLAN watchdog reads CONFIG values every loop tick. Without a reload,
+    changes saved by the web UI stay invisible in this process until a service
+    restart.
     """
-    global _configfile_last_mtime
+    global _config_revision
 
     try:
-        mtime = os.path.getmtime(CONFIGFILE)
+        revision = settings_revision()
     except Exception:
         return
 
     # First observation initializes the cache without forcing a reload.
-    if _configfile_last_mtime is None:
-        _configfile_last_mtime = mtime
+    if _config_revision is None:
+        _config_revision = revision
         return
 
-    if mtime == _configfile_last_mtime:
+    if revision == _config_revision:
         return
 
     try:
         load_config()
-        _configfile_last_mtime = mtime
-        logging.info("[CONTROL] Reloaded config.ini after on-disk changes.")
+        _config_revision = settings_revision()
+        logging.info("[CONTROL] Reloaded settings after database changes.")
     except Exception as e:
-        logging.warning(f"[CONTROL] Failed to reload changed config.ini: {e}")
+        logging.warning(f"[CONTROL] Failed to reload changed settings: {e}")
 
 def _ensure_internal_camera_stream() -> tuple[bool, str]:
     """Start (if needed) the target camera stream for MJPEG relay.
@@ -301,7 +301,7 @@ def _remote_ui_url() -> str | None:
 def _ui_language() -> str:
     """Return UI language for the standalone info pages.
 
-    Driven by config.ini [Settings] language via CONFIG['LANGUAGE'].
+    Driven by the stored language via CONFIG['LANGUAGE'].
     Supported: de/en. Fallback: en.
     """
     lang = str(CONFIG.get("LANGUAGE") or "en").strip().lower()
@@ -324,8 +324,8 @@ def _page_text() -> dict[str, str]:
             "remote_ui": "Remote UI",
             "remote_ui_unknown": "unknown (controller IP not available yet)",
             "p_remote": (
-                "This device is currently controlled remotely. "
-                "The normal Kittyhack UI on this device is stopped while control is active."
+                "This Kittyflap is currently controlled remotely. "
+                "The normal Kittyhack UI on the Kittyflap is stopped while control is active."
             ),
             "p_wait": "This Kittyflap is configured to wait for a remote-control connection after reboot.",
             "autostart_in": "Autostart Kittyhack in",
@@ -335,16 +335,16 @@ def _page_text() -> dict[str, str]:
             "no": "NO",
             "st_remote_active": "remote control active",
             "st_remote_connected": "A remote controller is connected.",
-            "st_starting": "starting...",
+            "st_starting": "starting…",
             "st_starting_msg": "Kittyhack is starting.",
             "st_remote_attempt": "remote attempt detected",
-            "st_remote_attempt_msg": "Remote control attempt detected. Waiting for controller...",
+            "st_remote_attempt_msg": "Remote control attempt detected. Waiting for controller…",
             "seconds_suffix": " s",
             "pending_start": "Autostart Kittyhack in",
-            "btn_reboot": "Reboot device",
+            "btn_reboot": "Restart Kittyflap",
             "pending_msg": "Remote controller disconnected. Waiting for timeout before local Kittyhack starts.",
             "pending_idle": "No pending timeout.",
-            "rebooting": "Rebooting...",
+            "rebooting": "Rebooting…",
         },
         "de": {
             "title_remote": "Kittyhack Fernsteuerung",
@@ -355,8 +355,8 @@ def _page_text() -> dict[str, str]:
             "remote_ui": "Remote-UI",
             "remote_ui_unknown": "unbekannt (Controller-IP noch nicht verfügbar)",
             "p_remote": (
-                "Dieses Gerät wird aktuell ferngesteuert. "
-                "Die normale Kittyhack-UI auf diesem Gerät ist während der Fernsteuerung gestoppt."
+                "Diese Kittyflap wird aktuell ferngesteuert. "
+                "Die normale Kittyhack-UI auf der Kittyflap ist während der Fernsteuerung gestoppt."
             ),
             "p_wait": "Diese Kittyflap ist so konfiguriert, dass sie nach einem Neustart auf eine Fernsteuerungsverbindung wartet.",
             "autostart_in": "Kittyhack automatisch starten in",
@@ -366,16 +366,16 @@ def _page_text() -> dict[str, str]:
             "no": "NEIN",
             "st_remote_active": "Fernsteuerung aktiv",
             "st_remote_connected": "Ein Remote-Controller ist verbunden.",
-            "st_starting": "wird gestartet...",
+            "st_starting": "wird gestartet…",
             "st_starting_msg": "Kittyhack startet.",
             "st_remote_attempt": "Remote-Versuch erkannt",
-            "st_remote_attempt_msg": "Fernsteuerungsversuch erkannt. Warte auf Controller...",
+            "st_remote_attempt_msg": "Fernsteuerungsversuch erkannt. Warten auf Controller…",
             "seconds_suffix": " s",
             "pending_start": "Kittyhack automatisch starten in",
-            "btn_reboot": "Gerät neu starten",
-            "pending_msg": "Remote-Controller getrennt. Warte auf Timeout, bevor lokales Kittyhack startet.",
+            "btn_reboot": "Kittyflap neu starten",
+            "pending_msg": "Remote-Controller getrennt. Warten auf Timeout, bevor lokales Kittyhack startet.",
             "pending_idle": "Kein ausstehender Timeout.",
-            "rebooting": "Neustart...",
+            "rebooting": "Neustart…",
         },
     }
     return texts.get(lang, texts["en"])
@@ -571,7 +571,7 @@ def _build_boot_wait_page_html() -> str:
         f"    <h1>{t['h_wait']}</h1>\n"
         "    <div class=\"card\">\n"
         f"      <p>{t['p_wait']}</p>\n"
-        f"      <p><strong>{t['autostart_in']}:</strong> <span class=\"mono\" id=\"countdown\">...</span></p>\n"
+        f"      <p><strong>{t['autostart_in']}:</strong> <span class=\"mono\" id=\"countdown\">…</span></p>\n"
         "      <p class=\"muted\" id=\"status\" aria-live=\"polite\"></p>\n"
         "      <div class=\"row\">\n"
         f"        <button class=\"primary\" id=\"btnSkip\">{t['btn_skip']}</button>\n"
@@ -1076,8 +1076,8 @@ async def _handle_sync_request(ws: WebSocketServerProtocol, include_labelstudio:
 
     items: list[tuple[str, str]] = []
 
-    # kittyhack.db + config.ini from repo root
-    for name in ("kittyhack.db", "config.ini"):
+    # kittyhack.db (settings live in this file) from repo root
+    for name in ("kittyhack.db",):
         src = os.path.join(kittyhack_root(), name)
         if os.path.exists(src):
             arc = os.path.relpath(src, base)
@@ -1178,7 +1178,17 @@ async def _handle_sync_request(ws: WebSocketServerProtocol, include_labelstudio:
     finally:
         STATE.sync_in_progress = False
 
-async def _handle_update_request(ws: WebSocketServerProtocol, latest_version: str = "", current_version: str = ""):
+async def _handle_update_request(
+    ws: WebSocketServerProtocol,
+    latest_version: str = "",
+    current_version: str = "",
+    *,
+    update_owner: str = "",
+    update_repo: str = "",
+    update_ref: str = "",
+    update_mode: str = "",
+    use_remote_update_source: bool = False,
+):
     """Run kittyhack update on target device and report begin/end status."""
     STATE.sync_in_progress = True
     try:
@@ -1195,6 +1205,11 @@ async def _handle_update_request(ws: WebSocketServerProtocol, latest_version: st
                 current_version or None,
                 halt_backend_first=False,
                 defer_service_updates=True,
+                update_owner=update_owner or None,
+                update_repo=update_repo or None,
+                update_ref_override=update_ref or None,
+                update_mode_override=update_mode or None,
+                use_remote_update_source=use_remote_update_source,
             )
         )
         if bool(ok):
@@ -1363,7 +1378,19 @@ async def _handler(ws: WebSocketServerProtocol):
             if t == "update_request":
                 latest_version = str(data.get("latest_version") or "")
                 current_version = str(data.get("current_version") or "")
-                await _handle_update_request(ws, latest_version=latest_version, current_version=current_version)
+                # Present only when the controller knows its update repository.
+                # Older controllers omit these keys; the flap then uses its own config.
+                use_remote_update_source = "update_owner" in data or "update_repo" in data
+                await _handle_update_request(
+                    ws,
+                    latest_version=latest_version,
+                    current_version=current_version,
+                    update_owner=str(data.get("update_owner") or ""),
+                    update_repo=str(data.get("update_repo") or ""),
+                    update_ref=str(data.get("update_ref") or ""),
+                    update_mode=str(data.get("update_mode") or ""),
+                    use_remote_update_source=use_remote_update_source,
+                )
                 continue
 
             if t == "reboot_request":

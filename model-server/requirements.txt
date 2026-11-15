@@ -1,0 +1,9 @@
+# API and training packages. Install a torch wheel first (CPU or CUDA) so
+# pip does not pull the other build while resolving ultralytics.
+fastapi==0.115.6
+uvicorn==0.34.2
+python-multipart==0.0.20
+ultralytics==8.3.119
+ultralytics-thop==2.0.14
+ncnn==1.0.20260526
+PyYAML==6.0.3

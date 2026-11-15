@@ -24,15 +24,17 @@ def _force_simulate_env(request, monkeypatch):
 
 @pytest.fixture
 def tmp_config_ini(tmp_path, monkeypatch):
-    """Point baseconfig CONFIGFILE at a fresh temp ini and reload defaults."""
+    """Point settings storage at a fresh temp database and reload defaults."""
     import src.baseconfig as baseconfig
 
-    cfg = tmp_path / "config.ini"
-    monkeypatch.setattr(baseconfig, "CONFIGFILE", str(cfg))
+    db = tmp_path / "kittyhack.db"
+    monkeypatch.setenv("KITTYHACK_DATABASE_PATH", str(db))
+    monkeypatch.setattr(baseconfig, "CONFIGFILE", str(tmp_path / "config.ini"))
+    monkeypatch.setenv("KITTYHACK_REMOTE_CONFIGFILE", str(tmp_path / "config.remote.ini"))
     monkeypatch.chdir(tmp_path)
     baseconfig.create_default_config()
     baseconfig.load_config()
-    return cfg
+    return db
 
 
 @pytest.fixture
@@ -55,4 +57,5 @@ def tmp_kittyhack_db(tmp_path):
     DbMigrations.create_kittyhack_cats_table(db)
     DbMigrations.create_kittyhack_events_table(db)
     DbMigrations.create_motion_timeline_table(db)
+    DbMigrations.create_visit_stats_tables(db)
     return db

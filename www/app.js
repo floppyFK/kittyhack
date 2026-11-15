@@ -19,6 +19,7 @@ document.addEventListener("DOMContentLoaded", function() {
     // --- Theme (auto/dark/light) ---
     // Uses Bootstrap 5.3 color modes if available (data-bs-theme), with a safe fallback.
     const THEME_PREF_KEY = 'kittyhack_theme_pref_v1'; // 'auto' | 'dark' | 'light'
+    const KH_LANG_KEY = 'kittyhack_lang_v1';
     const themeToggleButton = document.getElementById('theme_toggle_button');
     const themeColorMeta = document.querySelector('meta[name="theme-color"]');
     const prefersDarkQuery = (window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null);
@@ -40,14 +41,19 @@ document.addEventListener("DOMContentLoaded", function() {
     function setThemeColorMeta(effectiveTheme) {
         if (!themeColorMeta) return;
         // Pick colors that look reasonable in browser UI chrome.
-        const color = (effectiveTheme === 'dark') ? '#111827' : '#FFFFFF';
+        const color = (effectiveTheme === 'dark') ? '#0e1218' : '#e8eef6';
         themeColorMeta.setAttribute('content', color);
     }
 
     function updateThemeToggleLabel(pref, effective) {
         if (!themeToggleButton) return;
-        const prefLabel = (pref === 'auto') ? 'Auto' : (pref === 'dark' ? 'Dark' : 'Light');
-        themeToggleButton.textContent = `Theme: ${prefLabel}`;
+        const labelPrefix = themeToggleButton.dataset.labelPrefix || 'Appearance';
+        const prefLabel = (pref === 'auto')
+            ? (themeToggleButton.dataset.labelAuto || 'Auto')
+            : (pref === 'dark')
+                ? (themeToggleButton.dataset.labelDark || 'Dark')
+                : (themeToggleButton.dataset.labelLight || 'Light');
+        themeToggleButton.textContent = `${labelPrefix}: ${prefLabel}`;
         themeToggleButton.setAttribute('data-theme-pref', pref);
         themeToggleButton.setAttribute('data-theme-effective', effective);
     }
@@ -68,6 +74,11 @@ document.addEventListener("DOMContentLoaded", function() {
 
     let themePref = safeGetThemePref();
     applyTheme(themePref);
+
+    try {
+        const pageLang = (document.documentElement.getAttribute('lang') || '').toLowerCase().split('-')[0];
+        if (pageLang) localStorage.setItem(KH_LANG_KEY, pageLang);
+    } catch (e) {}
 
     if (themeToggleButton) {
         themeToggleButton.addEventListener('click', function() {
@@ -317,7 +328,11 @@ document.addEventListener("DOMContentLoaded", function() {
         const panelId = row.getAttribute('data-kh-panel-id');
         if (!panelId) return;
 
-        const panel = document.getElementById(panelId);
+        const table = row.closest('table');
+        const escapedId = (window.CSS && CSS.escape) ? CSS.escape(panelId) : panelId;
+        const panel = table
+            ? table.querySelector('#' + escapedId)
+            : document.getElementById(panelId);
         if (!panel) return;
 
         const isShown = panel.classList.contains('show');
@@ -597,6 +612,291 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
+    // --- Shiny session keep-alive (mobile background / brief disconnects) ---
+    // Mobile browsers freeze or close the WebSocket after a few seconds in the
+    // background. Prefer Shiny's in-page reconnect (keeps DOM + input values)
+    // over a full reload, which wipes unsaved form edits.
+    const KH_FORM_SNAPSHOT_KEY = 'kittyhack_form_snapshot_v1';
+    const KH_RESTORE_FLAG_KEY = 'kittyhack_restore_form_v1';
+    const KH_SNAPSHOT_TTL_MS = 10 * 60 * 1000;
+    const KH_RELOAD_FALLBACK_MS = 45000;
+    const KH_RECONNECT_DIM_MS = 8000;
+    const KH_VISIBILITY_FLICKER_MS = 750;
+    const KH_ZOMBIE_PROBE_MS = 2000;
+
+    function getShinyApp() {
+        try {
+            return (window.Shiny && window.Shiny.shinyapp) ? window.Shiny.shinyapp : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // A confirmed reboot/shutdown leaves this tab open. Shiny then reconnects
+    // in place and would resend the click that opened "Restart Kittyflap".
+    const KH_POWER_ACTION_KEY = 'kittyhack_power_action_v1';
+    const KH_POWER_CONFIRM_IDS = {
+        btn_modal_reboot_ok: true,
+        btn_modal_reboot_local_ok: true,
+        btn_modal_shutdown_ok: true,
+        btn_modal_shutdown_local_ok: true
+    };
+    function armPowerAction() {
+        try { sessionStorage.setItem(KH_POWER_ACTION_KEY, '1'); } catch (e) {}
+        // Remember Live view before the tab is torn down, so a full reload
+        // during the reboot does not restore System.
+        if (typeof window.__kh_openTab === 'function') {
+            window.__kh_openTab('live-view');
+        }
+    }
+
+    function powerActionIsArmed() {
+        try { return sessionStorage.getItem(KH_POWER_ACTION_KEY) === '1'; } catch (e) { return false; }
+    }
+
+    function modalIsOpen() {
+        return !!(
+            document.body.classList.contains('modal-open') ||
+            document.querySelector('.modal.show')
+        );
+    }
+
+    // Bootstrap's modal scrollbar lock writes overflow:hidden on body and
+    // restores whatever value was current when the dialog opened. A restart
+    // dialog that is removed during reconnect therefore puts the lock back.
+    function releaseModalScrollLock() {
+        if (modalIsOpen()) return;
+        const body = document.body;
+        if (!body) return;
+        if (body.style.overflow === 'hidden') body.style.overflow = '';
+        if (body.style.overflowY === 'hidden') body.style.overflowY = '';
+        if (body.style.paddingRight) body.style.paddingRight = '';
+        document.querySelectorAll('.modal-backdrop').forEach(function(el) {
+            el.remove();
+        });
+    }
+
+    function dismissShinyModal() {
+        const $ = window.jQuery;
+        if (!$) return;
+        try {
+            const $wrap = $('#shiny-modal-wrapper');
+            $wrap.off('keydown.shinymodal');
+            $wrap.remove();
+            $('.modal-backdrop').remove();
+            $(document.body).removeClass('modal-open').css('padding-right', '');
+            releaseModalScrollLock();
+        } catch (e) {}
+    }
+
+    document.addEventListener('hidden.bs.modal', function() {
+        releaseModalScrollLock();
+    });
+
+    function recoverAfterPowerAction() {
+        if (!powerActionIsArmed()) return;
+        try { sessionStorage.removeItem(KH_POWER_ACTION_KEY); } catch (e) {}
+        dismissShinyModal();
+        if (typeof window.__kh_openTab === 'function') {
+            window.__kh_openTab('live-view');
+        }
+    }
+
+    document.addEventListener('click', function(ev) {
+        const btn = ev.target && ev.target.closest ? ev.target.closest('button, a') : null;
+        if (!btn || !btn.id || !KH_POWER_CONFIRM_IDS[btn.id]) return;
+        armPowerAction();
+    }, true);
+
+    function enableShinyReconnect() {
+        const app = getShinyApp();
+        if (!app) return;
+        // "force": reconnect even when not hosted on Shiny Server / Posit Connect.
+        app.$allowReconnect = 'force';
+    }
+
+    function shinySocketIsOpen() {
+        const app = getShinyApp();
+        const sock = app && app.$socket;
+        return !!(sock && sock.readyState === WebSocket.OPEN);
+    }
+
+    function snapshotUnsavedInputs() {
+        const data = {};
+        const nodes = document.querySelectorAll('input, select, textarea');
+        for (let i = 0; i < nodes.length; i++) {
+            const el = nodes[i];
+            if (!el.id) continue;
+            const type = (el.type || '').toLowerCase();
+            if (type === 'button' || type === 'submit' || type === 'reset' || type === 'file' || type === 'image') continue;
+            if (type === 'checkbox' || type === 'radio') {
+                data[el.id] = { t: type, v: !!el.checked };
+            } else {
+                data[el.id] = { t: type || el.tagName.toLowerCase(), v: el.value };
+            }
+        }
+        try {
+            sessionStorage.setItem(KH_FORM_SNAPSHOT_KEY, JSON.stringify({ ts: Date.now(), data: data }));
+        } catch (e) {}
+    }
+
+    function loadFormSnapshot() {
+        try {
+            const raw = sessionStorage.getItem(KH_FORM_SNAPSHOT_KEY);
+            if (!raw) return null;
+            const snap = JSON.parse(raw);
+            if (!snap || !snap.data || !snap.ts) return null;
+            if ((Date.now() - snap.ts) > KH_SNAPSHOT_TTL_MS) return null;
+            return snap;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function applyFormSnapshot(snap) {
+        if (!snap || !snap.data) return 0;
+        let restored = 0;
+        Object.keys(snap.data).forEach(function(id) {
+            const item = snap.data[id];
+            const el = document.getElementById(id);
+            if (!el || !item) return;
+            const desired = item.v;
+            if (item.t === 'checkbox' || item.t === 'radio') {
+                if (el.checked === !!desired) return;
+                el.checked = !!desired;
+            } else {
+                if (String(el.value) === String(desired)) return;
+                el.value = desired;
+                try {
+                    if (window.jQuery) {
+                        const sel = window.jQuery(el).data('selectize');
+                        if (sel && typeof sel.setValue === 'function') {
+                            sel.setValue(desired, true);
+                        }
+                    }
+                } catch (e) {}
+            }
+            try {
+                if (window.Shiny && typeof window.Shiny.setInputValue === 'function') {
+                    window.Shiny.setInputValue(id, desired, { priority: 'event' });
+                }
+            } catch (e) {}
+            try {
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            } catch (e) {}
+            restored++;
+        });
+        return restored;
+    }
+
+    let restorePollTimer = null;
+    function scheduleFormRestore(reason) {
+        const snap = loadFormSnapshot();
+        if (!snap) return;
+        console.log('Scheduling form restore after', reason);
+        if (restorePollTimer) clearInterval(restorePollTimer);
+        let attempts = 0;
+        restorePollTimer = setInterval(function() {
+            attempts++;
+            const current = loadFormSnapshot();
+            if (!current) {
+                clearInterval(restorePollTimer);
+                restorePollTimer = null;
+                return;
+            }
+            applyFormSnapshot(current);
+            if (attempts >= 40) {
+                clearInterval(restorePollTimer);
+                restorePollTimer = null;
+            }
+        }, 250);
+    }
+
+    let lastReconnectAttemptMs = 0;
+    function tryShinyReconnect(reason) {
+        enableShinyReconnect();
+        const app = getShinyApp();
+        if (!app) return false;
+        if (shinySocketIsOpen()) return true;
+        try {
+            if (app.$socket && app.$socket.readyState === WebSocket.CLOSED) {
+                if (typeof app.$removeSocket === 'function') app.$removeSocket();
+            }
+            if (app.$socket && (app.$socket.readyState === WebSocket.CONNECTING || app.$socket.readyState === WebSocket.CLOSING)) {
+                return true;
+            }
+            if (!app.isConnected()) {
+                const now = Date.now();
+                if (now - lastReconnectAttemptMs < 800) return true;
+                lastReconnectAttemptMs = now;
+                console.log('Shiny reconnect:', reason);
+                app.reconnect();
+                scheduleFormRestore(reason);
+                return true;
+            }
+        } catch (e) {
+            console.warn('Shiny reconnect failed:', e);
+        }
+        return false;
+    }
+
+    function probeShinySocket(reason) {
+        enableShinyReconnect();
+        const app = getShinyApp();
+        if (!app) return;
+        if (!shinySocketIsOpen()) {
+            tryShinyReconnect(reason);
+            return;
+        }
+        // Socket may look OPEN after backgrounding while the OS already dropped it.
+        try {
+            app.$socket.send(JSON.stringify({ method: 'update', data: {} }));
+        } catch (e) {
+            console.warn('Shiny socket probe failed, reconnecting:', e);
+            try {
+                if (typeof app.$removeSocket === 'function') app.$removeSocket();
+            } catch (e2) {}
+            tryShinyReconnect(reason + ' (probe failed)');
+        }
+    }
+
+    enableShinyReconnect();
+    (function pollEnableReconnect() {
+        let tries = 0;
+        const timer = setInterval(function() {
+            tries++;
+            enableShinyReconnect();
+            if (getShinyApp() || tries >= 40) clearInterval(timer);
+        }, 100);
+    })();
+    if (window.jQuery) {
+        window.jQuery(document).on('shiny:connected', function() {
+            enableShinyReconnect();
+            recoverAfterPowerAction();
+            releaseModalScrollLock();
+            setTimeout(releaseModalScrollLock, 0);
+            setTimeout(releaseModalScrollLock, 400);
+            setTimeout(releaseModalScrollLock, 1500);
+            try {
+                if (sessionStorage.getItem(KH_RESTORE_FLAG_KEY) === '1') {
+                    sessionStorage.removeItem(KH_RESTORE_FLAG_KEY);
+                    scheduleFormRestore('shiny:connected (reload)');
+                }
+            } catch (e) {}
+        });
+        window.jQuery(document).on('shiny:disconnected', function() {
+            snapshotUnsavedInputs();
+            enableShinyReconnect();
+        });
+        window.jQuery(document).on('shiny:idle', function() {
+            if (restorePollTimer) {
+                const snap = loadFormSnapshot();
+                if (snap) applyFormSnapshot(snap);
+            }
+        });
+    }
+
     function attemptReload(reason, opts) {
         const options = opts || {};
         const entry = {
@@ -620,6 +920,8 @@ document.addEventListener("DOMContentLoaded", function() {
             console.warn('[ReloadDebug] suppressed (page hidden)');
             return;
         }
+        snapshotUnsavedInputs();
+        try { sessionStorage.setItem(KH_RESTORE_FLAG_KEY, '1'); } catch (e) {}
         // Persist the active tab so the reload lands on the same view.
         if (typeof window.__kh_saveActiveTab === 'function') {
             try { window.__kh_saveActiveTab(); } catch (e) {}
@@ -659,11 +961,124 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
-    // --- Add functionality to reload on shiny-disconnected-overlay ---
+    function probeServerReachable() {
+        return new Promise(function(resolve) {
+            let settled = false;
+            function finish(value) {
+                if (settled) return;
+                settled = true;
+                resolve(!!value);
+            }
+            const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+            const timer = setTimeout(function() {
+                if (controller) {
+                    try { controller.abort(); } catch (e) {}
+                }
+                finish(false);
+            }, 3000);
+            const opts = { cache: 'no-store', method: 'HEAD' };
+            if (controller) opts.signal = controller.signal;
+            fetch('/', opts).then(function() {
+                clearTimeout(timer);
+                finish(true);
+            }).catch(function() {
+                clearTimeout(timer);
+                finish(false);
+            });
+        });
+    }
+
+    function serviceWorkerIsActive() {
+        return new Promise(function(resolve) {
+            if (!('serviceWorker' in navigator)) {
+                resolve(false);
+                return;
+            }
+            if (navigator.serviceWorker.controller) {
+                resolve(true);
+                return;
+            }
+            let settled = false;
+            function finish(value) {
+                if (settled) return;
+                settled = true;
+                resolve(!!value);
+            }
+            const timer = setTimeout(function() { finish(false); }, 1500);
+            navigator.serviceWorker.getRegistration('/').then(function(reg) {
+                clearTimeout(timer);
+                finish(!!(reg && (reg.active || reg.waiting || reg.installing)));
+            }).catch(function() {
+                clearTimeout(timer);
+                finish(false);
+            });
+        });
+    }
+
+    function goToOfflinePage() {
+        if (typeof window.__kh_saveActiveTab === 'function') {
+            try { window.__kh_saveActiveTab(); } catch (e) {}
+        }
+        window.location.href = '/offline.html';
+    }
+
+    // --- Disconnect overlay: reconnect in-place; reload only as a last resort ---
     (function() {
         let reloadInterval = null;
         let reloadedOnce = false;
         let pendingReloadTimeout = null;
+        let probeInFlight = false;
+        let disconnectGeneration = 0;
+        let reconnectDimTimer = null;
+
+        function clearReconnectDimTimer() {
+            if (reconnectDimTimer) {
+                clearTimeout(reconnectDimTimer);
+                reconnectDimTimer = null;
+            }
+        }
+
+        function reconnectCopy() {
+            const el = document.getElementById('kh_reconnect_i18n');
+            return {
+                message: (el && el.getAttribute('data-message')) || 'Connection lost. Trying to reconnect…',
+                tryNow: (el && el.getAttribute('data-try-now')) || 'Try now',
+            };
+        }
+
+        function ensureReconnectCard(overlay) {
+            let card = overlay.querySelector('.kh-reconnect-card');
+            if (!card) {
+                const copy = reconnectCopy();
+                card = document.createElement('div');
+                card.className = 'kh-reconnect-card';
+                card.setAttribute('role', 'status');
+                const msg = document.createElement('p');
+                msg.className = 'kh-reconnect-message';
+                msg.textContent = copy.message;
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'kh-reconnect-try';
+                btn.textContent = copy.tryNow;
+                btn.addEventListener('click', function(ev) {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    tryShinyReconnect('reconnect-card');
+                });
+                card.appendChild(msg);
+                card.appendChild(btn);
+                overlay.appendChild(card);
+            }
+            if (!overlay.dataset.khDimArmed) {
+                overlay.dataset.khDimArmed = '1';
+                clearReconnectDimTimer();
+                reconnectDimTimer = setTimeout(function() {
+                    reconnectDimTimer = null;
+                    const current = document.getElementById('shiny-disconnected-overlay');
+                    if (current) current.classList.add('kh-reconnect-dimmed');
+                }, KH_RECONNECT_DIM_MS);
+            }
+        }
 
         function clearReloadTimers() {
             if (pendingReloadTimeout) {
@@ -676,32 +1091,76 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         }
 
-        function scheduleReload(reason) {
-            // Defer reload so transient disconnects (e.g. brief tab-switch on mobile)
-            // have a chance to resolve before we force a full page reload.
-            if (pendingReloadTimeout || reloadedOnce) return;
+        function scheduleReloadFallback(reason) {
+            // Full reload wipes unsaved edits. Wait long enough for Shiny reconnect
+            // (and a brief mobile background) to recover the existing page first.
+            if (pendingReloadTimeout || reloadedOnce || probeInFlight) return;
             if (isNavigatingAway || isPageHidden) return;
+            const generation = disconnectGeneration;
             pendingReloadTimeout = setTimeout(() => {
                 pendingReloadTimeout = null;
+                if (generation !== disconnectGeneration) return;
                 if (isNavigatingAway || isPageHidden) return;
                 const stillOverlay = document.getElementById("shiny-disconnected-overlay");
                 if (!stillOverlay) return;
-                reloadedOnce = true;
-                attemptReload(reason);
-            }, 1000);
+                probeInFlight = true;
+                probeServerReachable().then(function(reachable) {
+                    if (generation !== disconnectGeneration) {
+                        probeInFlight = false;
+                        return;
+                    }
+                    const overlayNow = document.getElementById("shiny-disconnected-overlay");
+                    if (!overlayNow) {
+                        probeInFlight = false;
+                        return;
+                    }
+                    if (reachable) {
+                        probeInFlight = false;
+                        reloadedOnce = true;
+                        attemptReload(reason);
+                        return null;
+                    }
+                    return serviceWorkerIsActive().then(function(hasWorker) {
+                        probeInFlight = false;
+                        if (generation !== disconnectGeneration) return;
+                        if (!document.getElementById("shiny-disconnected-overlay")) return;
+                        if (isNavigatingAway) return;
+                        if (hasWorker) {
+                            reloadedOnce = true;
+                            try {
+                                goToOfflinePage();
+                            } catch (e) {
+                                attemptReload(reason);
+                            }
+                            return;
+                        }
+                        console.log('Server unreachable without a service worker; staying on the reconnect notice');
+                        scheduleReloadFallback(reason);
+                    });
+                }).catch(function() {
+                    probeInFlight = false;
+                    if (generation !== disconnectGeneration) return;
+                    if (document.getElementById("shiny-disconnected-overlay")) {
+                        scheduleReloadFallback(reason);
+                    }
+                });
+            }, KH_RELOAD_FALLBACK_MS);
         }
 
         // Listen for navigation attempts
         window.addEventListener('beforeunload', function() {
+            snapshotUnsavedInputs();
             isNavigatingAway = true;
-            // Stop any pending forced reload loops when user navigates away
             clearReloadTimers();
         });
 
-        // Mobile browsers are more reliable with pagehide/unload than beforeunload.
-        window.addEventListener('pagehide', function() {
-            isNavigatingAway = true;
-            clearReloadTimers();
+        // Mobile browsers fire pagehide when backgrounding (bfcache) as well as on leave.
+        window.addEventListener('pagehide', function(e) {
+            snapshotUnsavedInputs();
+            if (!e.persisted) {
+                isNavigatingAway = true;
+                clearReloadTimers();
+            }
         });
         window.addEventListener('unload', function() {
             isNavigatingAway = true;
@@ -709,13 +1168,16 @@ document.addEventListener("DOMContentLoaded", function() {
         });
 
         // Reset flags when page is shown from bfcache or app switch
-        window.addEventListener('pageshow', function() {
+        window.addEventListener('pageshow', function(e) {
             isNavigatingAway = false;
             isPageHidden = (document.visibilityState !== 'visible');
+            if (e.persisted) {
+                probeShinySocket('pageshow-bfcache');
+            }
             // Attempt service worker update on HTTPS
             if (navigator.serviceWorker && navigator.serviceWorker.ready) {
                 navigator.serviceWorker.ready.then(reg => {
-                    try { reg.update(); } catch (e) {}
+                    try { reg.update(); } catch (e2) {}
                 });
             }
         });
@@ -725,32 +1187,40 @@ document.addEventListener("DOMContentLoaded", function() {
             // When coming back to foreground, allow reconnect/reload attempts again.
             if (!isPageHidden) {
                 isNavigatingAway = false;
+                if (document.getElementById('shiny-disconnected-overlay')) {
+                    scheduleReloadFallback('Detected disconnection overlay. Reloading...');
+                }
             }
         });
 
+        document.addEventListener('freeze', function() {
+            snapshotUnsavedInputs();
+        });
+        document.addEventListener('resume', function() {
+            probeShinySocket('resume');
+        });
+
+        let overlayReconnectStarted = false;
         function checkForDisconnectOverlay() {
             const overlay = document.getElementById("shiny-disconnected-overlay");
 
             if (overlay) {
-                scheduleReload("Detected disconnection overlay. Reloading...");
-
-                if (!reloadInterval) {
-                    reloadInterval = setInterval(() => {
-                        const stillOverlay = document.getElementById("shiny-disconnected-overlay");
-                        if (isNavigatingAway || isPageHidden) {
-                            // User is leaving; stop reload attempts
-                            clearReloadTimers();
-                            return;
-                        }
-                        if (stillOverlay) {
-                            console.log("Still disconnected. Reloading again...");
-                            attemptReload('Still disconnected. Reloading again...');
-                        } else {
-                            clearReloadTimers();
-                            reloadedOnce = false;
-                        }
-                    }, 5000);
+                ensureReconnectCard(overlay);
+                enableShinyReconnect();
+                if (!isNavigatingAway && !isPageHidden) {
+                    if (!overlayReconnectStarted) {
+                        overlayReconnectStarted = true;
+                        tryShinyReconnect('disconnect-overlay');
+                    }
+                    scheduleReloadFallback("Detected disconnection overlay. Reloading...");
                 }
+            } else {
+                if (overlayReconnectStarted) disconnectGeneration++;
+                overlayReconnectStarted = false;
+                probeInFlight = false;
+                clearReconnectDimTimer();
+                clearReloadTimers();
+                reloadedOnce = false;
             }
         }
 
@@ -833,12 +1303,11 @@ document.addEventListener("DOMContentLoaded", function() {
         var TAB_ROUTES = {
             'live-view':           '/live-view/',
             'pictures':            '/pictures/',
+            'statistics':          '/statistics/',
             'manage-cats':         '/manage-cats/',
-            'add-new-cat':         '/add-new-cat/',
             'ai-training':         '/ai-training/',
             'system':              '/system/',
             'configuration':       '/configuration/',
-            'wlan-configuration':  '/wlan-configuration/',
             'info':                '/info/'
         };
 
@@ -850,6 +1319,17 @@ document.addEventListener("DOMContentLoaded", function() {
             PATH_TO_TAB[p] = tab;
             PATH_TO_TAB[p.replace(/\/$/, '')] = tab;
         }
+        // Retired top-level tabs: keep old URLs working.
+        PATH_TO_TAB['/add-new-cat/'] = 'manage-cats';
+        PATH_TO_TAB['/add-new-cat'] = 'manage-cats';
+        PATH_TO_TAB['/wlan-configuration/'] = 'system';
+        PATH_TO_TAB['/wlan-configuration'] = 'system';
+
+        function resolveTabAlias(tabValue) {
+            if (tabValue === 'add-new-cat') return 'manage-cats';
+            if (tabValue === 'wlan-configuration') return 'system';
+            return tabValue;
+        }
 
         function getActiveTabValue() {
             try {
@@ -860,6 +1340,17 @@ document.addEventListener("DOMContentLoaded", function() {
 
         function saveTabToSession(value) {
             try { sessionStorage.setItem(TAB_SESSION_KEY, value || ''); } catch (e) {}
+        }
+
+        function tabToPersist() {
+            // A manual reboot should come back on Live view, even if System
+            // was still the visible tab when the browser saved state.
+            try {
+                if (sessionStorage.getItem('kittyhack_power_action_v1') === '1') {
+                    return 'live-view';
+                }
+            } catch (e) {}
+            return getActiveTabValue();
         }
 
         function loadTabFromSession() {
@@ -891,8 +1382,8 @@ document.addEventListener("DOMContentLoaded", function() {
 
         // On page load: determine which tab to show from URL → sessionStorage → default.
         function initTabFromUrl() {
-            var urlTab = tabFromUrl();
-            var sessionTab = loadTabFromSession();
+            var urlTab = resolveTabAlias(tabFromUrl());
+            var sessionTab = resolveTabAlias(loadTabFromSession());
             var target = urlTab || sessionTab || null;
 
             if (target) {
@@ -906,17 +1397,25 @@ document.addEventListener("DOMContentLoaded", function() {
                         }
                     }, 100);
                 }
-                // If we used the sessionStorage fallback on "/", push the correct path.
-                if (!urlTab && target && TAB_ROUTES[target]) {
-                    try {
-                        history.replaceState({ tab: target }, '', TAB_ROUTES[target]);
-                    } catch (e) {}
+                // Canonicalize aliased or session-restored URLs to the live tab path.
+                if (target && TAB_ROUTES[target]) {
+                    var desired = TAB_ROUTES[target];
+                    var cur = window.location.pathname;
+                    if (cur !== desired && cur !== desired.replace(/\/$/, '')) {
+                        try {
+                            history.replaceState({ tab: target }, '', desired);
+                        } catch (e) {}
+                    }
                 }
             }
         }
 
         // When a Bootstrap tab is shown, update the URL bar.
         document.addEventListener('shown.bs.tab', function(event) {
+            if (restorePollTimer) {
+                var snap = loadFormSnapshot();
+                if (snap) applyFormSnapshot(snap);
+            }
             var link = event.target;
             if (!link || !link.getAttribute) return;
             var value = link.getAttribute('data-value');
@@ -935,7 +1434,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
         // Handle browser back / forward buttons.
         window.addEventListener('popstate', function() {
-            var tab = tabFromUrl();
+            var tab = resolveTabAlias(tabFromUrl());
             if (tab) {
                 activateTab(tab);
                 saveTabToSession(tab);
@@ -944,14 +1443,30 @@ document.addEventListener("DOMContentLoaded", function() {
 
         // Persist active tab before any reload / navigation.
         window.addEventListener('beforeunload', function() {
-            var cur = getActiveTabValue();
+            var cur = tabToPersist();
             if (cur) saveTabToSession(cur);
         });
 
         // Expose helper for other code (e.g. attemptReload) to save tab eagerly.
         window.__kh_saveActiveTab = function() {
-            var cur = getActiveTabValue();
+            var cur = tabToPersist();
             if (cur) saveTabToSession(cur);
+        };
+
+        // Switch to a tab and keep the URL on that tab. replaceState avoids a
+        // history entry when recovering from a reboot.
+        window.__kh_openTab = function(tabValue) {
+            tabValue = resolveTabAlias(tabValue);
+            if (!tabValue || !TAB_ROUTES[tabValue]) return false;
+            saveTabToSession(tabValue);
+            var desired = TAB_ROUTES[tabValue];
+            try {
+                var cur = window.location.pathname;
+                if (cur !== desired && cur !== desired.replace(/\/$/, '')) {
+                    history.replaceState({ tab: tabValue }, '', desired);
+                }
+            } catch (e) {}
+            return activateTab(tabValue);
         };
 
         // Activate on load.
@@ -1079,42 +1594,49 @@ document.addEventListener("DOMContentLoaded", function() {
     function tryReconnect(opts) {
         const options = opts || {};
         const source = options.source || 'unknown';
-        const allowOverlayReload = (options.allowOverlayReload === true);
+        const probeZombieSocket = (options.probeZombieSocket === true);
 
-        // If Shiny overlay exists, optionally reload.
-        // NOTE: The overlay may already be present when returning from background, and
-        // the MutationObserver won't fire again; in that case we need an explicit check.
+        if (isNavigatingAway || document.visibilityState !== 'visible') return;
+
+        enableShinyReconnect();
+
         const overlay = document.getElementById("shiny-disconnected-overlay");
-        if (overlay) {
-            if (allowOverlayReload && !isNavigatingAway && document.visibilityState === 'visible') {
-                attemptReload(`Reconnect(${source}): overlay present`);
-            } else {
-                console.log(`Reconnect(${source}): overlay present (no reload)`);
-            }
+        if (overlay || !shinySocketIsOpen()) {
+            tryShinyReconnect(`Reconnect(${source})`);
             return;
         }
-        // Lightweight ping to check reachability
-        fetch('/', { cache: 'no-store', method: 'HEAD' })
-            .then(() => {
-                // If reachable, optionally trigger a Shiny input to reinitialize
+
+        if (probeZombieSocket) {
+            probeShinySocket(`Reconnect(${source})`);
+            return;
+        }
+
+        // Lightweight ping to check reachability when the socket still looks open.
+        probeServerReachable().then(function(reachable) {
+            if (reachable) {
                 console.log("Reconnect: server reachable");
-            })
-            .catch(() => {
-                console.log("Reconnect: server not reachable, showing offline page...");
-                // Persist the active tab so we can restore it when coming back online.
-                if (typeof window.__kh_saveActiveTab === 'function') {
-                    try { window.__kh_saveActiveTab(); } catch (e) {}
-                }
-                // Prefer offline page to avoid blank screen when SW is present
-                if (!isNavigatingAway) {
+                return;
+            }
+            console.log("Reconnect: server not reachable");
+            if (isNavigatingAway || document.visibilityState !== 'visible') return;
+            serviceWorkerIsActive().then(function(hasWorker) {
+                if (isNavigatingAway || document.visibilityState !== 'visible') return;
+                if (hasWorker) {
                     try {
-                        window.location.href = '/offline.html';
+                        goToOfflinePage();
                     } catch (e) {
-                        // Fallback to reload if redirect fails
                         attemptReload('Reconnect: offline redirect failed');
                     }
+                    return;
+                }
+                console.log("Reconnect: no service worker; staying on this page");
+                if (shinySocketIsOpen()) {
+                    probeShinySocket('Reconnect(server unreachable)');
+                } else {
+                    tryShinyReconnect('Reconnect(server unreachable)');
                 }
             });
+        });
     }
 
     document.addEventListener('visibilitychange', function() {
@@ -1125,6 +1647,7 @@ document.addEventListener("DOMContentLoaded", function() {
         if (nowState === 'hidden') {
             lastVisibilityState = 'hidden';
             lastHiddenAtMs = Date.now();
+            snapshotUnsavedInputs();
             return;
         }
 
@@ -1133,51 +1656,58 @@ document.addEventListener("DOMContentLoaded", function() {
             lastHiddenAtMs = null;
             lastVisibilityState = 'visible';
 
-            // Only treat this as a real "return to foreground" if we were hidden long enough.
-            // This avoids address-bar / UI flicker on Android Firefox triggering reconnect logic.
-            if (hiddenDurationMs >= 750) {
-                // Only auto-reload when overlay is present if we were hidden long enough that
-                // a websocket idle timeout is plausible. This avoids rare bounce-backs.
-                const allowOverlayReload = (hiddenDurationMs >= 2500);
-                tryReconnect({ source: `visibility/${hiddenDurationMs}ms`, allowOverlayReload });
+            // Ignore address-bar / UI flicker on Android Firefox.
+            if (hiddenDurationMs >= KH_VISIBILITY_FLICKER_MS) {
+                tryReconnect({
+                    source: `visibility/${hiddenDurationMs}ms`,
+                    probeZombieSocket: (hiddenDurationMs >= KH_ZOMBIE_PROBE_MS)
+                });
             } else {
                 console.log('Visibility returned quickly; skip reconnect (ms):', hiddenDurationMs);
             }
         }
     });
 
-    window.addEventListener('online', () => tryReconnect({ source: 'online', allowOverlayReload: true }));
+    window.addEventListener('online', () => tryReconnect({ source: 'online', probeZombieSocket: true }));
 
     // ---- Instant photo-card removal on delete (un-grouped pictures view) ----
     (function initPhotoDeleteHandler() {
         document.addEventListener('click', function(e) {
             const btn = e.target.closest('[id^="photo_delete_"]');
             if (!btn) return;
+            if (btn.getAttribute('data-kh-delete-confirmed') !== '1') {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                var msgEl = document.getElementById('kh_photo_delete_i18n');
+                var msg = (msgEl && msgEl.getAttribute('data-msg')) || 'Delete this picture?';
+                if (window.confirm(msg)) {
+                    btn.setAttribute('data-kh-delete-confirmed', '1');
+                    btn.click();
+                }
+                return;
+            }
+            btn.removeAttribute('data-kh-delete-confirmed');
             const card = btn.closest('.kh-photo-card');
             if (!card) return;
             // Animate card out instantly
             card.classList.add('kh-removing');
             setTimeout(function() {
                 card.remove();
-                // Update the photo count in pagination
-                var countEl = document.querySelector('.photos-count');
-                if (countEl) {
-                    var m = countEl.textContent.match(/(\d+)/);
+                var statusEl = document.getElementById('photos_infinite_status');
+                if (statusEl) {
+                    var m = statusEl.textContent.match(/(\d+)\s*\/\s*(\d+)/);
                     if (m) {
-                        var newCount = Math.max(0, parseInt(m[1], 10) - 1);
-                        countEl.textContent = countEl.textContent.replace(/\d+/, newCount);
-                        // Update total pages display
-                        var grid = document.getElementById('photos_grid');
-                        var totalEl = document.querySelector('.photos-page-total');
-                        if (grid && totalEl) {
-                            var perPage = parseInt(grid.getAttribute('data-per-page'), 10) || 1;
-                            var newTotal = Math.max(1, Math.ceil(newCount / perPage));
-                            totalEl.textContent = totalEl.textContent.replace(/\d+/, newTotal);
-                        }
+                        var shown = Math.max(0, parseInt(m[1], 10) - 1);
+                        var total = Math.max(0, parseInt(m[2], 10) - 1);
+                        statusEl.textContent = statusEl.textContent.replace(
+                            /\d+\s*\/\s*\d+/,
+                            shown + ' / ' + total
+                        );
                     }
                 }
             }, 300);
-        });
+        }, true);
     })();
 
     // ---- Photo lightbox modal (un-grouped pictures view) ----
@@ -1234,5 +1764,359 @@ document.addEventListener("DOMContentLoaded", function() {
             e.preventDefault();
             openLightbox(thumb.getAttribute('data-orig-src'));
         });
+    })();
+
+    /* Publish the height of the fixed navbar so sticky bars can park right
+       below it on every breakpoint. The expanded mobile menu is ignored to
+       keep the offset stable while it is open. */
+    (function initNavbarHeightVar() {
+        var navbar = document.querySelector('nav.navbar');
+        if (!navbar) return;
+
+        function sync() {
+            var collapse = navbar.querySelector('.navbar-collapse');
+            if (collapse && collapse.classList.contains('show')) return;
+            var height = Math.round(navbar.getBoundingClientRect().height);
+            if (height > 0) {
+                document.documentElement.style.setProperty('--kh-nav-h', height + 'px');
+            }
+        }
+
+        window.addEventListener('resize', sync);
+        window.addEventListener('orientationchange', sync);
+        if (typeof ResizeObserver === 'function') {
+            new ResizeObserver(sync).observe(navbar);
+        }
+        sync();
+    })();
+
+    /* Bottom edge of the pictures filter dock, so its frosted scrim can run
+       from the navbar to just past the controls without a side or top gap. */
+    (function initPhotosScrimHeight() {
+        var observed = null;
+        var ro = (typeof ResizeObserver === 'function') ? new ResizeObserver(sync) : null;
+
+        function sync() {
+            var dock = document.querySelector('.kh-photos-filter-dock');
+            if (!dock) return;
+            if (ro && observed !== dock) {
+                if (observed) ro.unobserve(observed);
+                ro.observe(dock);
+                observed = dock;
+            }
+            var rect = dock.getBoundingClientRect();
+            if (rect.height < 8) return;
+            document.documentElement.style.setProperty(
+                '--kh-photos-scrim-h',
+                Math.ceil(rect.bottom + 28) + 'px'
+            );
+        }
+
+        window.addEventListener('resize', sync);
+        window.addEventListener('orientationchange', sync);
+        document.addEventListener('shown.bs.tab', sync);
+        var host = document.getElementById('ui_photos_date');
+        if (host && typeof MutationObserver === 'function') {
+            new MutationObserver(sync).observe(host, {childList: true, subtree: true});
+        }
+        sync();
+    })();
+
+    // Lazy-load for the Pictures grid. The document is the only scrollport, so
+    // every decision is derived from where the sentinel sits in the viewport.
+    (function initPhotosInfiniteScroll() {
+        var TRIGGER_PX = 320;    // load once the end comes this close
+        var REARM_PX = 200;      // extra scrolling required before the next batch
+        var PREFILL_LIMIT = 12;  // safety cap while filling the first viewport
+
+        var state = 'reset'; // reset | prefill | waiting | loading | done
+        var generation = null;
+        var inflightGeneration = null;
+        var loadReason = null;
+        var completionTimer = null;
+        var requestedShown = null;
+        var evaluateQueued = false;
+        var scrollQueued = false;
+        var prefillCount = 0;
+        var armed = false;
+        var armAnchor = null;
+
+        function modalOpen() {
+            return !!(
+                document.querySelector('.kh-photo-modal-backdrop') ||
+                document.querySelector('.modal.show')
+            );
+        }
+
+        function cardsRoot() {
+            return document.getElementById('photos_cards_root');
+        }
+
+        function footer() {
+            return document.getElementById('photos_infinite_wrap');
+        }
+
+        function sentinel() {
+            var sentinel = document.getElementById('photos_infinite_sentinel');
+            if (!sentinel || sentinel.classList.contains('d-none')) return null;
+            if (sentinel.getAttribute('data-has-more') !== '1') return null;
+            return sentinel;
+        }
+
+        function currentGeneration() {
+            var root = cardsRoot();
+            var foot = footer();
+            return (root && root.getAttribute('data-generation')) ||
+                (foot && foot.getAttribute('data-generation')) || '';
+        }
+
+        /* Distance in px between the end of the gallery and the bottom edge of
+           the viewport. Negative means the end is already on screen. Returns
+           null while the tab is hidden, where all measurements are zero. */
+        function distanceToEnd() {
+            var marker = sentinel();
+            if (!marker) return null;
+            var rect = marker.getBoundingClientRect();
+            if (rect.width <= 0 && rect.height <= 0) return null;
+            return rect.top - window.innerHeight;
+        }
+
+        /* How many px of scrolling the page still offers. Below ~0 the gallery
+           does not even fill one viewport, so the reader has no way to ask for
+           more and we have to top it up ourselves. */
+        function scrollableSlack() {
+            var doc = document.documentElement;
+            var height = Math.max(
+                doc.scrollHeight,
+                document.body ? document.body.scrollHeight : 0
+            );
+            return height - (doc.clientHeight || window.innerHeight);
+        }
+
+        function clearCompletionTimer() {
+            if (completionTimer !== null) {
+                window.clearTimeout(completionTimer);
+                completionTimer = null;
+            }
+        }
+
+        function requestMore(reason) {
+            if (state === 'loading' || modalOpen()) return false;
+            var marker = sentinel();
+            if (!marker) {
+                state = 'done';
+                return false;
+            }
+            var btn = document.getElementById('photos_load_more');
+            state = 'loading';
+            loadReason = reason;
+            inflightGeneration = generation;
+            var currentFooter = footer();
+            requestedShown = currentFooter
+                ? parseInt(currentFooter.getAttribute('data-shown') || '0', 10)
+                : 0;
+            if (reason === 'scroll') armed = false;
+            marker.classList.add('is-loading');
+            if (btn && typeof btn.click === 'function') {
+                btn.click();
+            } else if (window.Shiny && typeof window.Shiny.setInputValue === 'function') {
+                window.Shiny.setInputValue('photos_load_more', Date.now(), { priority: 'event' });
+            } else {
+                state = 'waiting';
+                inflightGeneration = null;
+                requestedShown = null;
+                marker.classList.remove('is-loading');
+                return false;
+            }
+            clearCompletionTimer();
+            completionTimer = window.setTimeout(function() {
+                if (state !== 'loading') return;
+                state = 'waiting';
+                inflightGeneration = null;
+                requestedShown = null;
+                loadReason = null;
+                armed = true;
+                armAnchor = null;
+                var current = sentinel();
+                if (current) current.classList.remove('is-loading');
+            }, 20000);
+            return true;
+        }
+
+        function scheduleEvaluation() {
+            if (evaluateQueued) return;
+            evaluateQueued = true;
+            window.requestAnimationFrame(function() {
+                window.requestAnimationFrame(function() {
+                    evaluateQueued = false;
+                    evaluate();
+                });
+            });
+        }
+
+        function resetController(nextGeneration, resetScroll) {
+            clearCompletionTimer();
+            generation = nextGeneration;
+            inflightGeneration = null;
+            requestedShown = null;
+            loadReason = null;
+            prefillCount = 0;
+            armed = false;
+            armAnchor = null;
+            state = sentinel() ? 'prefill' : 'done';
+            if (resetScroll && distanceToEnd() !== null) {
+                window.scrollTo(0, 0);
+            }
+            scheduleEvaluation();
+        }
+
+        function completeBatch() {
+            if (state !== 'loading') {
+                scheduleEvaluation();
+                return;
+            }
+            if (inflightGeneration !== generation) return;
+            var currentFooter = footer();
+            var completedShown = currentFooter
+                ? parseInt(currentFooter.getAttribute('data-shown') || '0', 10)
+                : 0;
+            if (
+                sentinel() &&
+                requestedShown !== null &&
+                completedShown <= requestedShown
+            ) {
+                return;
+            }
+            clearCompletionTimer();
+            inflightGeneration = null;
+            requestedShown = null;
+            var reason = loadReason;
+            loadReason = null;
+
+            if (!sentinel()) {
+                state = 'done';
+                return;
+            }
+            if (reason === 'prefill') {
+                state = 'prefill';
+                scheduleEvaluation();
+                return;
+            }
+            /* A scroll-triggered batch stays disarmed until the reader moves on
+               by REARM_PX, so one gesture can never chain several requests. */
+            state = 'waiting';
+            armed = false;
+            armAnchor = distanceToEnd();
+            scheduleEvaluation();
+        }
+
+        function evaluate() {
+            if (modalOpen()) return;
+            var rootNode = cardsRoot();
+            if (!rootNode) {
+                state = 'done';
+                return;
+            }
+            var nextGeneration = currentGeneration();
+            if (generation !== nextGeneration) {
+                resetController(nextGeneration, true);
+                return;
+            }
+            if (state === 'loading') return;
+
+            if (distanceToEnd() === null) {
+                // No sentinel (everything shown) or the tab is hidden.
+                if (!sentinel()) state = 'done';
+                return;
+            }
+            if (state === 'reset') state = 'prefill';
+
+            if (state === 'prefill') {
+                if (scrollableSlack() < 96 && prefillCount < PREFILL_LIMIT) {
+                    prefillCount += 1;
+                    requestMore('prefill');
+                } else {
+                    state = 'waiting';
+                    armed = true;
+                    armAnchor = null;
+                }
+                return;
+            }
+            /* Resizing the window or deleting pictures can leave the page
+               unscrollable again; top it up, otherwise wait for a scroll. */
+            if (
+                state === 'waiting' &&
+                scrollableSlack() < 96 &&
+                prefillCount < PREFILL_LIMIT
+            ) {
+                state = 'prefill';
+                scheduleEvaluation();
+            }
+        }
+
+        function onScroll() {
+            if (state === 'done' || state === 'loading') return;
+            var distance = distanceToEnd();
+            if (distance === null) return;
+            if (!armed) {
+                if (
+                    distance > TRIGGER_PX ||
+                    (armAnchor !== null && armAnchor - distance > REARM_PX)
+                ) {
+                    armed = true;
+                    armAnchor = null;
+                }
+                return;
+            }
+            if (state === 'waiting' && distance < TRIGGER_PX) {
+                requestMore('scroll');
+            }
+        }
+
+        var mutationObserver = new MutationObserver(function(mutations) {
+            for (var i = 0; i < mutations.length; i++) {
+                var nodes = mutations[i].addedNodes;
+                for (var j = 0; j < nodes.length; j++) {
+                    var node = nodes[j];
+                    if (!node || node.nodeType !== 1) continue;
+                    if (
+                        node.id === 'photos_cards_root' ||
+                        (node.querySelector && node.querySelector('#photos_cards_root'))
+                    ) {
+                        var nextGeneration = currentGeneration();
+                        if (generation !== nextGeneration) {
+                            resetController(nextGeneration, true);
+                        } else {
+                            scheduleEvaluation();
+                        }
+                    }
+                    if (
+                        node.id === 'photos_infinite_wrap' ||
+                        (node.querySelector && node.querySelector('#photos_infinite_wrap'))
+                    ) {
+                        completeBatch();
+                    }
+                }
+            }
+        });
+        mutationObserver.observe(document.body, { childList: true, subtree: true });
+
+        /* Capture phase so the handler also sees scrolls from nested scrollers. */
+        document.addEventListener('scroll', function() {
+            if (scrollQueued) return;
+            scrollQueued = true;
+            window.requestAnimationFrame(function() {
+                scrollQueued = false;
+                onScroll();
+            });
+        }, { passive: true, capture: true });
+
+        window.addEventListener('resize', scheduleEvaluation);
+        window.addEventListener('orientationchange', scheduleEvaluation);
+        document.addEventListener('shown.bs.tab', scheduleEvaluation, true);
+        if (window.jQuery) {
+            window.jQuery(document).on('shiny:idle shown.bs.tab', scheduleEvaluation);
+        }
+        scheduleEvaluation();
     })();
 });

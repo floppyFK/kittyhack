@@ -207,6 +207,7 @@ def _apply_default_door_config() -> None:
     baseconfig.CONFIG["MQTT_ENABLED"] = False
     baseconfig.CONFIG["USE_CAMERA_FOR_MOTION_DETECTION"] = False
     baseconfig.CONFIG["USE_CAMERA_FOR_CAT_DETECTION"] = False
+    baseconfig.CONFIG["REQUIRE_OUTSIDE_PIR_FOR_CAMERA_ENTRY"] = False
     baseconfig.CONFIG["MOUSE_CHECK_ENABLED"] = False
     baseconfig.CONFIG["MIN_SECONDS_TO_ANALYZE"] = 0.0
     baseconfig.CONFIG["IMMEDIATE_LOCK_AFTER_PASSAGE"] = False

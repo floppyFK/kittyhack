@@ -34,20 +34,18 @@ def _make_model_zip(path: Path, *, with_required: bool = True, model_name: str =
 
 
 def _patch_tmp_and_models(monkeypatch, tmp_path: Path):
-    """Redirect /tmp zip path and models_yolo_root into tmp_path."""
+    """Redirect temp zip path and models_yolo_root into tmp_path.
+
+    Patch tempfile.gettempdir() rather than os.path.join("/tmp", ...): on
+    Python 3.14 pathlib rebuilds absolute paths via os.path.join starting
+    at "/tmp", so a global join rewrite doubles pytest tmp_path.
+    """
     tmp_dir = tmp_path / "tmp"
     models_dir = tmp_path / "models"
     tmp_dir.mkdir()
     models_dir.mkdir()
 
-    real_join = worker.os.path.join
-
-    def join(a, *rest):
-        if a == "/tmp":
-            return real_join(str(tmp_dir), *rest)
-        return real_join(a, *rest)
-
-    monkeypatch.setattr(worker.os.path, "join", join)
+    monkeypatch.setattr(worker.tempfile, "gettempdir", lambda: str(tmp_dir))
     monkeypatch.setattr(worker, "models_yolo_root", lambda: str(models_dir))
     return tmp_dir, models_dir
 
@@ -121,9 +119,10 @@ def test_sha256_file(tmp_path):
 def test_acknowledge_download_ok_and_errors(monkeypatch):
     calls = {}
 
-    def fake_post(url, json=None, verify=True, timeout=None):
+    def fake_post(url, json=None, verify=True, timeout=None, **kwargs):
         calls["url"] = url
         calls["json"] = json
+        calls["headers"] = kwargs.get("headers")
         return SimpleNamespace(status_code=200, text="acked")
 
     monkeypatch.setattr(worker.requests, "post", fake_post)

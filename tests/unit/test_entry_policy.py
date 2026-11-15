@@ -3,6 +3,7 @@
 from src.baseconfig import AllowedToEnter
 from src.backend.entry_policy import (
     _compute_tag_id_valid_for_entry,
+    _entry_decision_follows_video,
     _identified_tag_for_entry,
     _set_per_cat_entry_verdict_flag,
 )
@@ -81,6 +82,22 @@ def test_identified_tag_returns_none_when_nothing_matches():
     tag, source = _identified_tag_for_entry(None, "unknown_video", KNOWN)
     assert tag is None
     assert source is None
+
+
+def test_entry_decision_follows_video_only_without_reader_tag():
+    assert _entry_decision_follows_video(AllowedToEnter.KNOWN, None, "tag_a", KNOWN) is True
+    assert _entry_decision_follows_video(
+        AllowedToEnter.CONFIGURE_PER_CAT, None, "tag_b", KNOWN
+    ) is True
+    assert _entry_decision_follows_video(AllowedToEnter.KNOWN, "tag_a", "tag_b", KNOWN) is False
+    assert _entry_decision_follows_video(
+        AllowedToEnter.CONFIGURE_PER_CAT, "stranger", "tag_a", KNOWN
+    ) is False
+    assert _entry_decision_follows_video(AllowedToEnter.KNOWN, None, "unknown_video", KNOWN) is False
+    assert _entry_decision_follows_video(AllowedToEnter.KNOWN, None, None, KNOWN) is False
+    assert _entry_decision_follows_video(AllowedToEnter.ALL, None, "tag_a", KNOWN) is False
+    assert _entry_decision_follows_video(AllowedToEnter.NONE, None, "tag_a", KNOWN) is False
+    assert _entry_decision_follows_video(AllowedToEnter.ALL_RFIDS, None, "tag_a", KNOWN) is False
 
 
 def test_per_cat_verdict_flag_denied():

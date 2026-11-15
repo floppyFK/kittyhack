@@ -1,0 +1,8 @@
+# Linux x86_64 ROCm build. The RX 7900 XTX (gfx1100) is covered by PyTorch 2.9
+# on ROCm 6.4. The wheel ships its own ROCm libraries and still needs /dev/kfd.
+# PyTorch reports the AMD GPU through torch.cuda, so device=auto uses it.
+# Pin the +rocm6.4 versions so pip does not take the PyPI CUDA wheel instead.
+--index-url https://download.pytorch.org/whl/rocm6.4
+--extra-index-url https://pypi.org/simple
+torch==2.9.1+rocm6.4
+torchvision==0.24.1+rocm6.4

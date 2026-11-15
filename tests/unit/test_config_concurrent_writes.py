@@ -1,71 +1,58 @@
-"""Regression: concurrent config.ini writes must not wipe settings.
+"""Regression: concurrent settings writes must not wipe other keys.
 
 After a database restore the UI forces a reboot. During that reboot both
 kittyhack.service and kittyhack_control.service write STARTUP_SHUTDOWN_FLAG.
-Previously those used in-place open(..., "w") which truncates first; one process
-could read a near-empty file and persist it, so the next boot silently loaded
-all defaults (see _logs_config_reset_after_dbrestore).
+Those writes share kittyhack.db and must not drop the rest of the settings.
 """
 
 from __future__ import annotations
 
-import configparser
+import json
 import multiprocessing as mp
-from pathlib import Path
-
-import pytest
-
-try:
-    import fcntl
-except Exception:
-    fcntl = None
-
-pytestmark = pytest.mark.skipif(
-    fcntl is None,
-    reason="fcntl flock required (Linux target runtime)",
-)
+import os
+import sqlite3
 
 
-def _toggle_shutdown_flag(config_path: str, iterations: int) -> None:
+def _toggle_shutdown_flag(db_path: str, iterations: int) -> None:
     """Child process: repeatedly update STARTUP_SHUTDOWN_FLAG like a service stop."""
+    os.environ["KITTYHACK_DATABASE_PATH"] = db_path
     import src.baseconfig as baseconfig
 
-    baseconfig.CONFIGFILE = config_path
     baseconfig.load_config()
     for i in range(iterations):
         baseconfig.CONFIG["STARTUP_SHUTDOWN_FLAG"] = bool(i % 2)
         baseconfig.update_single_config_parameter("STARTUP_SHUTDOWN_FLAG")
 
 
-def _writer_elements_per_page(config_path: str, iterations: int) -> None:
+def _writer_elements_per_page(db_path: str, iterations: int) -> None:
+    os.environ["KITTYHACK_DATABASE_PATH"] = db_path
     import src.baseconfig as baseconfig
 
-    baseconfig.CONFIGFILE = config_path
     baseconfig.load_config()
     for i in range(iterations):
         baseconfig.CONFIG["ELEMENTS_PER_PAGE"] = 10 + (i % 5)
         baseconfig.update_single_config_parameter("ELEMENTS_PER_PAGE")
 
 
-def _reader_reject_empty_or_corrupt(config_path: str, observed_bad, iterations: int) -> None:
+def _reader_reject_missing_settings(db_path: str, observed_bad, iterations: int) -> None:
     for _ in range(iterations):
         try:
-            raw = Path(config_path).read_text(encoding="utf-8")
-        except FileNotFoundError:
-            continue
-        except OSError:
-            continue
-        if not raw.strip() or "[Settings]" not in raw:
-            observed_bad.append(raw)
+            conn = sqlite3.connect(db_path, timeout=30)
+            try:
+                rows = dict(conn.execute("SELECT key, value FROM settings"))
+            finally:
+                conn.close()
+        except Exception as exc:
+            observed_bad.append(str(exc))
             return
-        parser = configparser.ConfigParser()
+        if "TIMEZONE" not in rows or "ELEMENTS_PER_PAGE" not in rows:
+            observed_bad.append("missing keys")
+            return
         try:
-            parser.read_string(raw)
-        except Exception:
-            observed_bad.append(raw)
-            return
-        if not parser.has_section("Settings"):
-            observed_bad.append(raw)
+            json.loads(rows["ELEMENTS_PER_PAGE"])
+            json.loads(rows["TIMEZONE"])
+        except Exception as exc:
+            observed_bad.append(str(exc))
             return
 
 
@@ -81,22 +68,17 @@ def test_concurrent_shutdown_flag_writes_preserve_settings(tmp_config_ini):
     baseconfig.CONFIG["MQTT_DEVICE_ID"] = "kittyhack_keepme"
     assert baseconfig.save_config()
 
-    cfg_path = str(tmp_config_ini)
+    db_path = str(tmp_config_ini)
     ctx = mp.get_context("spawn")
     procs = [
-        ctx.Process(target=_toggle_shutdown_flag, args=(cfg_path, 40)),
-        ctx.Process(target=_toggle_shutdown_flag, args=(cfg_path, 40)),
+        ctx.Process(target=_toggle_shutdown_flag, args=(db_path, 40)),
+        ctx.Process(target=_toggle_shutdown_flag, args=(db_path, 40)),
     ]
-    for p in procs:
-        p.start()
-    for p in procs:
-        p.join(timeout=60)
-        assert p.exitcode == 0, f"worker exited with {p.exitcode}"
-
-    # File must still be a full Settings section, not a single-key remnant.
-    text = Path(cfg_path).read_text(encoding="utf-8")
-    assert "[Settings]" in text
-    assert "camera_source" in text.lower()
+    for proc in procs:
+        proc.start()
+    for proc in procs:
+        proc.join(timeout=60)
+        assert proc.exitcode == 0, f"worker exited with {proc.exitcode}"
 
     baseconfig.CONFIG.clear()
     baseconfig.load_config()
@@ -108,21 +90,21 @@ def test_concurrent_shutdown_flag_writes_preserve_settings(tmp_config_ini):
     assert baseconfig.CONFIG["MQTT_DEVICE_ID"] == "kittyhack_keepme"
 
 
-def test_atomic_config_write_never_exposes_empty_file(tmp_config_ini):
-    """Readers must not observe a truncated config.ini mid-write."""
-    cfg_path = str(tmp_config_ini)
+def test_concurrent_settings_writes_never_drop_rows(tmp_config_ini):
+    """Readers must keep seeing a complete settings table during writes."""
+    db_path = str(tmp_config_ini)
     ctx = mp.get_context("spawn")
     with ctx.Manager() as manager:
         observed_bad = manager.list()
-        w = ctx.Process(target=_writer_elements_per_page, args=(cfg_path, 80))
-        r = ctx.Process(
-            target=_reader_reject_empty_or_corrupt,
-            args=(cfg_path, observed_bad, 200),
+        writer = ctx.Process(target=_writer_elements_per_page, args=(db_path, 80))
+        reader = ctx.Process(
+            target=_reader_reject_missing_settings,
+            args=(db_path, observed_bad, 200),
         )
-        w.start()
-        r.start()
-        w.join(timeout=60)
-        r.join(timeout=60)
-        assert w.exitcode == 0
-        assert r.exitcode == 0
+        writer.start()
+        reader.start()
+        writer.join(timeout=60)
+        reader.join(timeout=60)
+        assert writer.exitcode == 0
+        assert reader.exitcode == 0
         assert list(observed_bad) == []

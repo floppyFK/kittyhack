@@ -20,7 +20,7 @@ All endpoints require a token. Pick whichever method matches your client:
 
 ### Managing tokens
 
-Tokens are stored hashed (SHA-256) in `api_tokens.json` next to `config.ini`.
+Tokens are stored hashed (SHA-256) in `api_tokens.json` next to `kittyhack.db`.
 The clear-text value is only shown once — at creation.
 
 **Primary path — the web UI:**

@@ -51,9 +51,66 @@ def test_shiny_input_ids_have_no_dots():
     assert not bad, "Invalid Shiny input id(s):\n" + "\n".join(bad)
 
 
+def test_restore_database_button_is_wired():
+    """Info-tab restore must keep database and legacy-config handlers."""
+    info = (SERVER_UI / "info.py").read_text(encoding="utf-8")
+    assert '"restore_kittyhack_db"' in info
+    assert "@reactive.event(input.upload_kittyhack_db)" in info
+    assert "@reactive.event(input.restore_kittyhack_db)" in info
+    assert "def on_restore_kittyhack_db" in info
+    assert "replace_database_file" in info
+    assert '"restore_legacy_config"' in info
+    assert "@reactive.event(input.upload_legacy_config)" in info
+    assert "@reactive.event(input.restore_legacy_config)" in info
+    assert "def on_restore_legacy_config" in info
+    assert "import_legacy_config_ini" in info
+
+
 def test_update_kittyhack_button_id_is_valid_shiny_id():
     """Info tab update button must use id 'update_kittyhack' (matches reactive.event)."""
     info = (SERVER_UI / "info.py").read_text(encoding="utf-8")
     button_ids = re.findall(r'input_task_button\(\s*"([^"]+)"', info)
     assert "update_kittyhack" in button_ids
     assert all("." not in button_id for button_id in button_ids)
+
+
+def test_labelstudio_actions_ignore_restored_clicks():
+    """A reconnect must not repeat install, update, remove, start, or stop."""
+    text = (SERVER_UI / "ai_training.py").read_text(encoding="utf-8")
+    for event in (
+        "input.btn_labelstudio_install, ignore_init=True",
+        "input.btn_labelstudio_update, ignore_init=True",
+        "input.btn_labelstudio_remove_ok, ignore_init=True",
+        "input.btn_labelstudio_stop, ignore_init=True",
+        "input.btn_labelstudio_start, ignore_init=True",
+    ):
+        assert event in text
+    assert "await asyncio.sleep(0.4)" in text
+    assert "threading.Thread(" in text
+
+
+def test_labelstudio_job_is_single_flight():
+    from src.server_ui import ai_training as training
+
+    assert training._try_begin_labelstudio_job() is True
+    try:
+        assert training._labelstudio_job_is_running() is True
+        assert training._try_begin_labelstudio_job() is False
+    finally:
+        training._end_labelstudio_job()
+    assert training._labelstudio_job_is_running() is False
+
+
+def test_statistics_tab_is_wired():
+    """Statistics tab must be registered in nav, routing, and register_all."""
+    init = (SERVER_UI / "__init__.py").read_text(encoding="utf-8")
+    assert "register_statistics" in init
+    ui_py = (ROOT / "src" / "ui.py").read_text(encoding="utf-8")
+    assert 'value="statistics"' in ui_py
+    app_py = (ROOT / "app.py").read_text(encoding="utf-8")
+    assert '"statistics"' in app_py
+    app_js = (ROOT / "www" / "app.js").read_text(encoding="utf-8")
+    assert "'statistics'" in app_js
+    assert (ROOT / "www" / "vendor" / "chart.umd.min.js").is_file()
+    assert (ROOT / "www" / "stats.js").is_file()
+    assert (SERVER_UI / "statistics.py").is_file()

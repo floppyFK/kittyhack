@@ -302,6 +302,11 @@ class DependencyInstaller:
             logging.error("[CAMERA] ffmpeg installation command finished, but ffmpeg is still unavailable.")
         return installed
 
+    # Pinned in requirements_remote.txt as well. Ultralytics auto-installs a missing
+    # OpenVINO via bare `pip`, which on Debian hits the externally managed system
+    # interpreter instead of this venv.
+    OPENVINO_PIP_SPEC = "openvino==2026.4.1"
+
     @staticmethod
     def ensure_openvino_installed() -> bool:
         """Ensure the openvino package is available. Try to install it via pip if missing."""
@@ -315,7 +320,7 @@ class DependencyInstaller:
         logging.warning("[MODEL] openvino package not found. Attempting to install via pip...")
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--no-cache-dir", "openvino"],
+                [sys.executable, "-m", "pip", "install", "--no-cache-dir", DependencyInstaller.OPENVINO_PIP_SPEC],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -337,6 +342,398 @@ class DependencyInstaller:
             return False
         except Exception:
             return False
+
+    CPU_TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
+
+    @staticmethod
+    def _pip_env() -> dict:
+        env = os.environ.copy()
+        env["PIP_CONFIG_FILE"] = "/dev/null"
+        env.pop("PIP_INDEX_URL", None)
+        env.pop("PIP_EXTRA_INDEX_URL", None)
+        return env
+
+    @staticmethod
+    def _run_streaming(cmd: list[str], timeout: int, progress=None, phase: str = "pip") -> tuple[int, str]:
+        """Run a command, log each output line, and report it to ``progress(phase, line)``."""
+        logging.info("[MODEL] " + " ".join(cmd))
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=DependencyInstaller._pip_env(),
+            )
+        except Exception as e:
+            logging.error(f"[MODEL] command failed to start: {e}")
+            return 1, str(e)
+
+        lines: list[str] = []
+
+        def _read() -> None:
+            if process.stdout is None:
+                return
+            for line in process.stdout:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                lines.append(stripped)
+                logging.info(f"[MODEL] {stripped}")
+                if progress is None:
+                    continue
+                try:
+                    progress(phase, stripped[:160])
+                except Exception:
+                    pass
+
+        reader = threading.Thread(target=_read, daemon=True)
+        reader.start()
+        try:
+            code = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=15)
+            code = 124
+        except Exception as e:
+            process.kill()
+            logging.error(f"[MODEL] command failed: {e}")
+            code = 1
+        reader.join(timeout=5)
+        return code, "\n".join(lines)
+
+    @staticmethod
+    def _pip_install(args: list[str], timeout: int, progress=None, phase: str = "pip") -> bool:
+        code, output = DependencyInstaller._run_streaming(
+            [sys.executable, "-m", "pip", "install", "--no-cache-dir", "--timeout", "120", *args],
+            timeout,
+            progress=progress,
+            phase=phase,
+        )
+        if code != 0:
+            logging.error(f"[MODEL] pip install exited {code}: {output[-2000:]}")
+            return False
+        import importlib
+        importlib.invalidate_caches()
+        return True
+
+    @staticmethod
+    def _pip_uninstall(names: list[str], progress=None, phase: str = "pip") -> None:
+        if not names:
+            return
+        DependencyInstaller._run_streaming(
+            [sys.executable, "-m", "pip", "uninstall", "-y", *names],
+            300,
+            progress=progress,
+            phase=phase,
+        )
+
+    @staticmethod
+    def _installed_pip_names() -> list[str]:
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "freeze"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=120,
+                check=False,
+                env=DependencyInstaller._pip_env(),
+            )
+        except Exception:
+            return []
+        names = []
+        for line in (result.stdout or "").splitlines():
+            name = line.split("==", 1)[0].strip()
+            if name:
+                names.append(name)
+        return names
+
+    @staticmethod
+    def _uninstall_torch_stack(progress=None) -> None:
+        """Drop PyTorch and the CUDA libraries it pulls in. Keep OpenVINO."""
+        if progress is not None:
+            progress("torch_cleanup", "")
+        DependencyInstaller._pip_uninstall(
+            ["torch", "torchvision", "ultralytics", "ultralytics-thop"],
+            progress=progress,
+            phase="torch_cleanup",
+        )
+        extras = [
+            name
+            for name in DependencyInstaller._installed_pip_names()
+            if name.lower().startswith("nvidia-") or name.lower() == "triton"
+        ]
+        DependencyInstaller._pip_uninstall(extras, progress=progress, phase="torch_cleanup")
+
+    @staticmethod
+    def _package_installed(name: str) -> bool:
+        import importlib.util
+        try:
+            return importlib.util.find_spec(name) is not None
+        except Exception:
+            return False
+
+    @staticmethod
+    def _cv2_importable() -> bool:
+        """True when a new interpreter can import cv2.
+
+        ``find_spec`` in this process stays true after the files are removed,
+        because the running service has already imported cv2.
+        """
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", "import cv2"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=60,
+                check=False,
+            )
+        except Exception:
+            return False
+        return result.returncode == 0
+
+    @staticmethod
+    def _install_opencv_distribution(spec: str, progress=None, phase: str = "opencv") -> bool:
+        """Replace every OpenCV build with ``spec`` and check that cv2 imports.
+
+        ``opencv-python`` and ``opencv-python-headless`` both own the ``cv2``
+        directory. Removing one deletes those files while the other's pip
+        record remains, and a later install then exits as "already satisfied".
+        """
+        if progress is not None:
+            progress(phase, "")
+        installed = {
+            name
+            for name in DependencyInstaller._installed_pip_names()
+            if name.lower().startswith("opencv-python")
+        }
+        DependencyInstaller._pip_uninstall(sorted(installed), progress=progress, phase=phase)
+        if not DependencyInstaller._pip_install(
+            ["--force-reinstall", "--no-deps", "--index-url", "https://pypi.org/simple", spec],
+            timeout=600,
+            progress=progress,
+            phase=phase,
+        ):
+            return False
+        return DependencyInstaller._cv2_importable()
+
+    @staticmethod
+    def _requirement_spec(filename: str, package: str) -> str:
+        path = os.path.join(kittyhack_root(), filename)
+        prefix = package + "=="
+        try:
+            with open(path, encoding="utf-8") as handle:
+                for line in handle:
+                    stripped = line.strip()
+                    if stripped.startswith(prefix):
+                        return stripped
+        except OSError:
+            pass
+        return package
+
+    @staticmethod
+    def _dir_has_file_suffix(path: str, suffix: str) -> bool:
+        if not os.path.isdir(path):
+            return False
+        return any(name.endswith(suffix) for name in os.listdir(path))
+
+    @staticmethod
+    def _relocate_export(root: str, expected_name: str, produced_names: list[str], suffix: str) -> bool:
+        expected = os.path.join(root, expected_name)
+        if DependencyInstaller._dir_has_file_suffix(expected, suffix):
+            return True
+        for name in produced_names:
+            produced = os.path.join(root, name)
+            if not DependencyInstaller._dir_has_file_suffix(produced, suffix):
+                continue
+            if os.path.isdir(expected):
+                shutil.rmtree(expected, ignore_errors=True)
+            os.rename(produced, expected)
+            return DependencyInstaller._dir_has_file_suffix(expected, suffix)
+        return False
+
+    @staticmethod
+    def _export_yolo(pt_path: str, export_format: str, imgsz: int, progress=None) -> bool:
+        script = os.path.join(kittyhack_root(), "tools", "export_openvino.py")
+        logging.info(f"[MODEL] Exporting {pt_path} to {export_format}")
+        if progress is not None:
+            progress("export", "")
+        code, output = DependencyInstaller._run_streaming(
+            [
+                sys.executable,
+                script,
+                pt_path,
+                "--format",
+                export_format,
+                "--imgsz",
+                str(int(imgsz)),
+            ],
+            1800,
+            progress=progress,
+            phase="export",
+        )
+        if code != 0:
+            logging.error(f"[MODEL] Model export exited {code}: {output[-2000:]}")
+            return False
+        return True
+
+    @staticmethod
+    def _ensure_export(model_root: str, export_format: str, imgsz: int, ready, progress=None) -> str | None:
+        """Return an error code, or None when the export is present.
+
+        ``ready`` is a zero-arg predicate. A missing ``model.pt`` is only an
+        error when the export itself is missing.
+        """
+        if ready():
+            return None
+        pt_path = os.path.join(model_root, "model.pt")
+        if not os.path.isfile(pt_path):
+            return "model_pt_missing"
+        had_ultralytics = DependencyInstaller._package_installed("ultralytics")
+        if not had_ultralytics:
+            req = os.path.join(kittyhack_root(), "requirements_openvino_export.txt")
+            if progress is not None:
+                progress("export", "")
+            installed = DependencyInstaller._pip_install(
+                [
+                    "--index-url",
+                    DependencyInstaller.CPU_TORCH_INDEX,
+                    "--extra-index-url",
+                    "https://pypi.org/simple",
+                    "-r",
+                    req,
+                ],
+                timeout=1800,
+                progress=progress,
+                phase="export",
+            )
+            if not installed:
+                return "export_failed"
+        if not DependencyInstaller._export_yolo(pt_path, export_format, imgsz, progress=progress) or not ready():
+            if not had_ultralytics:
+                DependencyInstaller._uninstall_torch_stack(progress=progress)
+                DependencyInstaller._ensure_headless_opencv(progress=progress)
+            return "export_failed"
+        return None
+
+    @staticmethod
+    def _ensure_headless_opencv(progress=None) -> bool:
+        names = {
+            name.lower()
+            for name in DependencyInstaller._installed_pip_names()
+            if name.lower().startswith("opencv-python")
+        }
+        if names == {"opencv-python-headless"} and DependencyInstaller._cv2_importable():
+            return True
+        spec = DependencyInstaller._requirement_spec(
+            "requirements_remote.txt", "opencv-python-headless"
+        )
+        return DependencyInstaller._install_opencv_distribution(spec, progress=progress, phase="opencv")
+
+    @staticmethod
+    def model_needs_export(device: str, model_root: str) -> bool:
+        """True when an OpenVINO device is selected but the model has no IR yet.
+
+        Server-trained models ship only ``best_ncnn_model``. Activating one on an
+        OpenVINO device without exporting it first starts the camera without inference.
+        """
+        selected = str(device or "").strip().lower()
+        if selected == "gpu":
+            selected = "intel:gpu"
+        if selected not in {"intel:gpu", "intel:cpu", "intel:npu"} or not model_root:
+            return False
+        return not DependencyInstaller._dir_has_file_suffix(
+            os.path.join(model_root, "model_openvino_model"), ".xml"
+        )
+
+    @staticmethod
+    def prepare_inference_device(device: str, model_root: str, imgsz: int, progress=None) -> tuple[bool, str]:
+        """Install the packages (and model export) the selected device needs.
+
+        Returns ``(ok, error_code)``. ``error_code`` is empty on success.
+        """
+        import importlib
+
+        selected = str(device or "cpu").strip().lower()
+        if selected == "gpu":
+            selected = "intel:gpu"
+        is_cuda = selected.startswith("cuda")
+        is_openvino = selected in {"intel:gpu", "intel:cpu", "intel:npu"}
+        root = str(model_root or "").strip()
+
+        if is_cuda:
+            if root and not os.path.isfile(os.path.join(root, "model.pt")):
+                return False, "model_pt_missing"
+            logging.info(f"[MODEL] Installing CUDA inference stack for {selected}")
+            if progress is not None:
+                progress("cuda", "")
+            # Drop both OpenCV builds first. They share the cv2 directory, so
+            # removing only the headless build can delete the files the CUDA
+            # package still believes it owns.
+            DependencyInstaller._pip_uninstall(
+                ["opencv-python", "opencv-python-headless"],
+                progress=progress,
+                phase="cuda",
+            )
+            req = os.path.join(kittyhack_root(), "requirements_remote_cuda.txt")
+            if not DependencyInstaller._pip_install(
+                ["--index-url", "https://pypi.org/simple", "-r", req],
+                timeout=3600,
+                progress=progress,
+                phase="cuda",
+            ):
+                return False, "cuda_install_failed"
+            if not DependencyInstaller._cv2_importable():
+                spec = DependencyInstaller._requirement_spec(
+                    "requirements_remote_cuda.txt", "opencv-python"
+                )
+                if not DependencyInstaller._install_opencv_distribution(
+                    spec, progress=progress, phase="cuda"
+                ):
+                    return False, "opencv_install_failed"
+            importlib.invalidate_caches()
+            return True, ""
+
+        if root and is_openvino:
+            def _openvino_ready() -> bool:
+                return DependencyInstaller._relocate_export(
+                    root,
+                    "model_openvino_model",
+                    ["model_openvino_model"],
+                    ".xml",
+                )
+
+            export_error = DependencyInstaller._ensure_export(
+                root, "openvino", imgsz, _openvino_ready, progress=progress
+            )
+            if export_error:
+                return False, export_error
+        elif root and not is_openvino:
+            def _ncnn_ready() -> bool:
+                return DependencyInstaller._relocate_export(
+                    root,
+                    "best_ncnn_model",
+                    ["best_ncnn_model", "model_ncnn_model"],
+                    ".param",
+                )
+
+            export_error = DependencyInstaller._ensure_export(
+                root, "ncnn", imgsz, _ncnn_ready, progress=progress
+            )
+            if export_error:
+                return False, export_error
+
+        DependencyInstaller._uninstall_torch_stack(progress=progress)
+        if is_openvino:
+            if progress is not None:
+                progress("openvino", "")
+            if not DependencyInstaller.ensure_openvino_installed():
+                return False, "openvino_install_failed"
+        if not DependencyInstaller._ensure_headless_opencv(progress=progress):
+            return False, "opencv_install_failed"
+        importlib.invalidate_caches()
+        return True, ""
 
 class ServiceOps:
     """systemctl/systemcmd wrappers and service status helpers."""
@@ -820,6 +1217,11 @@ class KittyhackUpdater:
         *,
         halt_backend_first: bool = True,
         defer_service_updates: bool = False,
+        update_owner: str | None = None,
+        update_repo: str | None = None,
+        update_ref_override: str | None = None,
+        update_mode_override: str | None = None,
+        use_remote_update_source: bool = False,
     ):
         """Git-fetch/checkout Kittyhack, refresh deps/units; return (ok, message)."""
 
@@ -863,6 +1265,17 @@ class KittyhackUpdater:
             with open(template_path, "r", encoding="utf-8") as f:
                 content = f.read()
             content = content.replace("/root/kittyhack", kittyhack_root())
+            try:
+                if is_remote_mode() and "--requirements" not in content:
+                    from src.helper import active_requirements_filename
+
+                    apply_root = f"--apply --root {kittyhack_root()}"
+                    req = os.path.join(kittyhack_root(), active_requirements_filename())
+                    content = content.replace(
+                        apply_root, f"{apply_root} --requirements {req}"
+                    )
+            except Exception:
+                pass
             with open(target_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
@@ -935,14 +1348,46 @@ class KittyhackUpdater:
             except Exception:
                 pass
 
-        requirements_path = os.path.join(kittyhack_root(), "requirements.txt")
+        try:
+            from src.helper import active_requirements_filename
+
+            _req_name = active_requirements_filename()
+        except Exception:
+            _req_name = "requirements.txt"
+        requirements_path = os.path.join(kittyhack_root(), _req_name)
         ensure_venv_script = os.path.join(kittyhack_root(), "setup", "ensure_venv.sh")
         venv_new_dir = os.path.join(kittyhack_root(), ".venv.new")
         venv_activate = os.path.join(kittyhack_root(), ".venv", "bin", "activate")
+        # pip install does not uninstall dropped pins. Strip leftover CUDA torch
+        # when the selected requirements file does not list it.
+        _uninstall_leftover_torch = (
+            f" && if ! grep -qE '^torch(==|>=|<=|~=|>|<|!=)' {requirements_path}; then "
+            "pip uninstall -y torch torchvision ultralytics ultralytics-thop || true; "
+            "extras=$(pip freeze | awk -F'==' 'tolower($1) ~ /^(nvidia-|triton$)/ {print $1}'); "
+            "if [ -n \"$extras\" ]; then pip uninstall -y $extras || true; fi; "
+            "fi"
+            # ncnn depends on opencv-python. Removing that build deletes the cv2
+            # files owned by opencv-python-headless, so put the pinned build back.
+            f" && if grep -qE '^opencv-python-headless(==|>=|<=|~=|>|<|!=)' {requirements_path}"
+            f" && ! grep -qE '^opencv-python(==|>=|<=|~=|>|<|!=)' {requirements_path}"
+            " && pip show opencv-python >/dev/null 2>&1; then "
+            "pip uninstall -y opencv-python || true; "
+            f"spec=$(grep -E '^opencv-python-headless(==|>=|<=|~=|>|<|!=)' {requirements_path} | head -1); "
+            "pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 "
+            "--no-cache-dir --force-reinstall --no-deps \"$spec\"; "
+            "fi"
+        )
         pip_install_cmd = [
             "/bin/bash",
             "-c",
-            f"source {venv_activate} && pip install --timeout 120 --retries 10 --no-cache-dir -r {requirements_path}",
+            (
+                f"export PIP_CONFIG_FILE=/dev/null PIP_EXTRA_INDEX_URL= "
+                f"PIP_INDEX_URL=https://pypi.org/simple; "
+                f"source {venv_activate} && "
+                f"pip install --index-url https://pypi.org/simple --timeout 120 --retries 10 "
+                f"--no-cache-dir -r {requirements_path}"
+                f"{_uninstall_leftover_torch}"
+            ),
         ]
         ensure_prepare_cmd = [
             "/bin/bash",
@@ -950,6 +1395,8 @@ class KittyhackUpdater:
             "--prepare",
             "--root",
             kittyhack_root(),
+            "--requirements",
+            requirements_path,
         ]
 
         req_hash_before: str | None = None
@@ -958,22 +1405,55 @@ class KittyhackUpdater:
         did_prepare_new_venv = False
 
         # Resolve the configured update source (standard vs custom repo / branch).
+        # A remote controller passes its own source: the flap's stored settings often
+        # still says "standard" and must not decide the checkout.
         versioning_cls = None
         update_git_url = None
         update_ref = None
         update_mode = "standard"
+        update_source: tuple[str, str, str | None] | None = None
         try:
             from src.helper import Versioning as versioning_cls
-            _owner, _repo, update_ref, update_git_url, update_mode = (
-                versioning_cls.resolved_update_repo()
-            )
         except Exception as e:
-            logging.debug(
-                f"[UPDATE] Versioning.resolved_update_repo not available ({e}); using existing origin"
+            logging.debug(f"[UPDATE] Versioning import failed ({e}); using existing origin")
+            versioning_cls = None
+
+        if use_remote_update_source and versioning_cls is not None:
+            parsed = versioning_cls.explicit_update_source(
+                update_owner, update_repo, update_ref_override
             )
-            update_git_url = None
-            update_ref = None
-            update_mode = "standard"
+            if parsed is not None:
+                owner, repo, update_ref = parsed
+                update_git_url = f"https://github.com/{owner}/{repo}.git"
+                mode_s = str(update_mode_override or "").strip().lower()
+                if mode_s in {"standard", "beta", "custom"}:
+                    update_mode = mode_s
+                else:
+                    update_mode = "custom" if update_ref else "standard"
+                update_source = (owner, repo, update_ref)
+                logging.info(
+                    "[UPDATE] Using update source from remote controller: "
+                    f"{owner}/{repo}" + (f"@{update_ref}" if update_ref else "")
+                )
+            else:
+                logging.warning(
+                    "[UPDATE] Remote controller sent an invalid update source; "
+                    "using this device's configured repository"
+                )
+
+        if update_source is None:
+            try:
+                if versioning_cls is not None:
+                    _owner, _repo, update_ref, update_git_url, update_mode = (
+                        versioning_cls.resolved_update_repo()
+                    )
+            except Exception as e:
+                logging.debug(
+                    f"[UPDATE] Versioning.resolved_update_repo not available ({e}); using existing origin"
+                )
+                update_git_url = None
+                update_ref = None
+                update_mode = "standard"
 
         try:
             # Point origin at the configured update source (best-effort) before fetch.
@@ -990,34 +1470,48 @@ class KittyhackUpdater:
                 except Exception as e:
                     logging.warning(f"[UPDATE] Failed to update origin URL to {update_git_url}: {e}")
 
-            # Fetch first so we can compare REQUIRED_PYTHON / requirements.txt before
+            # Fetch first so we can compare REQUIRED_PYTHON / requirements before
             # stopping the backend or wiping the working tree.
-            _run_step(3, f"Fetching latest version {latest_version}", ["/bin/git", "fetch", "--all", "--tags"])
+            _run_step(
+                3,
+                _("Fetching Kittyhack version {}…").format(latest_version),
+                ["/bin/git", "fetch", "--all", "--tags"],
+            )
 
             # 2 GB hard gate only when those runtime files change on the target ref.
+            # A Python-version change also reclaims .venv.old inside --prepare.
+            runtime_changes: dict = {}
             needs_heavy_disk = False
             if versioning_cls is not None:
                 try:
-                    needs_heavy_disk = bool(
-                        versioning_cls.update_changes_runtime_files(
-                            latest_version, use_git_show=True
+                    runtime_changes = dict(
+                        versioning_cls.get_runtime_file_changes(
+                            latest_version,
+                            use_git_show=True,
+                            update_source=update_source,
                         )
                     )
+                    needs_heavy_disk = any(runtime_changes.values())
                 except Exception as e:
                     logging.warning(f"[UPDATE] Heavy-update file compare failed: {e}")
                     needs_heavy_disk = False
             if needs_heavy_disk:
-                from src.helper import MIN_HEAVY_UPDATE_FREE_DISK_MB, SystemInfo
+                from src.helper import (
+                    MIN_HEAVY_UPDATE_FREE_DISK_MB,
+                    SystemInfo,
+                    free_disk_mb_for_heavy_update,
+                )
 
                 try:
                     free_mb = SystemInfo.get_free_disk_space()
                 except Exception as e:
                     logging.error(f"[UPDATE] Failed to check free disk space: {e}")
                     free_mb = 0.0
+                free_mb = free_disk_mb_for_heavy_update(free_mb, runtime_changes)
                 if free_mb < MIN_HEAVY_UPDATE_FREE_DISK_MB:
                     msg = _(
-                        "Update is disabled because less than 2 GB of free disk space is available ({:.1f} MB free). "
-                        "Free up space first (e.g. reduce the max amount of pictures in the database), then reload this page."
+                        "The update needs at least 2 GB of free space ({:.1f} MB available). "
+                        "Free some space, for example by reducing the maximum number of pictures, then reload this page."
                     ).format(free_mb)
                     logging.error(f"[UPDATE] {msg}")
                     return False, msg
@@ -1025,7 +1519,7 @@ class KittyhackUpdater:
             # Step 0: Stop backend process (only for local kittyhack.service updates).
             if halt_backend_first:
                 if progress_callback:
-                    progress_callback(0, "Stopping backend process", "")
+                    progress_callback(0, _("Stopping Kittyhack…"), "")
                 try:
                     from src.helper import sigterm_monitor
                     import time as tm
@@ -1035,23 +1529,34 @@ class KittyhackUpdater:
                     logging.error(f"Failed to stop backend process: {e}")
 
             # 1
-            _run_step(1, "Reverting local changes", ["/bin/git", "restore", "."])
+            _run_step(1, _("Reverting local changes…"), ["/bin/git", "restore", "."])
             # 2
-            _run_step(2, "Cleaning untracked files", ["/bin/git", "clean", "-fd"])
+            _run_step(2, _("Cleaning untracked files…"), ["/bin/git", "clean", "-fd"])
 
             # Hash current requirements after a clean tree, so the comparison is meaningful.
             req_hash_before = _sha256_file(requirements_path)
 
             # 4 — checkout either a tag (standard / custom+tag) or a branch (custom+branch).
-            if update_ref is not None:
-                # Branch mode: create/reset a local branch tracking origin/<ref> to HEAD.
-                _run_step(
-                    4,
-                    f"Checking out branch {update_ref}",
-                    ["/bin/git", "checkout", "-B", update_ref, f"origin/{update_ref}"],
-                )
+            # Never pass a branch-channel label (``ref@sha``) to git; that string is
+            # not a ref. The controller's update_ref, or the branch half of the label,
+            # is checked out from origin instead.
+            display_branch = None
+            if versioning_cls is not None:
+                checkout_cmd = versioning_cls.git_checkout_command(update_ref, latest_version)
+                parsed_display = versioning_cls.split_branch_display_version(latest_version)
+                if parsed_display:
+                    display_branch = parsed_display[0]
+            elif update_ref:
+                checkout_cmd = ["/bin/git", "checkout", "-B", update_ref, f"origin/{update_ref}"]
             else:
-                _run_step(4, f"Checking out {latest_version}", ["/bin/git", "checkout", latest_version])
+                checkout_cmd = ["/bin/git", "checkout", str(latest_version or "")]
+            if update_ref:
+                checkout_msg = _("Switching to branch {}…").format(update_ref)
+            elif display_branch:
+                checkout_msg = _("Switching to branch {}…").format(display_branch)
+            else:
+                checkout_msg = _("Switching to Kittyhack version {}…").format(latest_version)
+            _run_step(4, checkout_msg, checkout_cmd)
 
             req_hash_after = _sha256_file(requirements_path)
             requirements_unchanged = (
@@ -1062,7 +1567,7 @@ class KittyhackUpdater:
             # beside it (never swap while this process may still be using .venv).
             # ExecStartPre --apply performs the atomic swap on the next service start/reboot.
             if os.path.isfile(ensure_venv_script):
-                _run_step(5, "Ensuring required Python runtime", ensure_prepare_cmd)
+                _run_step(5, _("Preparing the required Python runtime…"), ensure_prepare_cmd)
                 # After a successful mismatch prepare, .venv.new remains for --apply.
                 # After a match, ensure_venv removes any stale .venv.new.
                 did_prepare_new_venv = os.path.isdir(venv_new_dir)
@@ -1074,27 +1579,26 @@ class KittyhackUpdater:
             # 5b — pip into the live .venv only when we are NOT migrating via .venv.new.
             # A prepared .venv.new already contains a full requirements install.
             if did_prepare_new_venv:
-                msg = (
-                    "Python runtime migration prepared (.venv.new); "
-                    "dependency install skipped for live .venv (swap on next start/reboot)"
+                msg = _(
+                    "Python runtime ready. It will be activated when Kittyhack next starts."
                 )
                 if progress_callback:
                     progress_callback(5, msg, "")
                 logging.info(msg)
             elif requirements_unchanged:
-                msg = "Python dependencies unchanged (requirements.txt); skipping reinstall"
+                msg = _("Python dependencies are up to date ({}).").format(_req_name)
                 if progress_callback:
                     progress_callback(5, msg, "")
                 logging.info(msg)
             else:
-                _run_step(5, "Updating python dependencies", pip_install_cmd)
+                _run_step(5, _("Updating Python dependencies…"), pip_install_cmd)
                 did_update_deps = True
 
             # 6-8 — Always refresh unit files on disk so ExecStartPre (ensure_venv --apply)
             # is present after reboot. When defer_service_updates is set (update run from
             # kittyhack_control), skip enable/start churn that could restart us mid-update.
             if progress_callback:
-                progress_callback(6, "Updating systemd service file", "")
+                progress_callback(6, _("Updating service configuration…"), "")
             logging.info("Updating systemd service file")
             _install_kittyhack_service_file()
             try:
@@ -1106,16 +1610,16 @@ class KittyhackUpdater:
             else:
                 _install_kittyhack_control_service_file()
             # 7
-            _run_step(7, "Reloading systemd daemon", ["/bin/systemctl", "daemon-reload"])
+            _run_step(7, _("Reloading services…"), ["/bin/systemctl", "daemon-reload"])
 
             # 8
             if defer_service_updates:
                 if progress_callback:
-                    progress_callback(8, "Deferring systemd enable/start until reboot", "")
+                    progress_callback(8, _("Service changes will apply after reboot."), "")
                 logging.info("Deferring systemd enable/start state until reboot (unit files already updated)")
             else:
                 if progress_callback:
-                    progress_callback(8, "Updating systemd enable/disable state", "")
+                    progress_callback(8, _("Updating service startup settings…"), "")
                 logging.info("Updating systemd enable/disable state")
                 _apply_target_boot_service_semantics()
         except Exception as e:
@@ -1150,9 +1654,42 @@ class KittyhackUpdater:
                         pass
                 except Exception as rollback_e:
                     logging.error(f"Rollback failed: {rollback_e}")
-            return False, str(e)
+            return False, _("Update failed. Check the logs, then try again: {}").format(e)
         KittyhackUpdater.purge_pip_cache()
-        return True, "Update completed"
+        try:
+            if progress_callback and os.path.isfile("/etc/systemd/system/kittyhack-model-server.service"):
+                progress_callback(8, _("Updating the model server…"), "")
+            KittyhackUpdater.refresh_installed_model_server()
+        except Exception as refresh_error:
+            logging.error(f"[UPDATE] Model server refresh failed: {refresh_error}")
+        return True, _("Update complete")
+
+    @staticmethod
+    def refresh_installed_model_server() -> None:
+        """Copy a newer model-server tree over an existing install and restart it.
+
+        Keeps config.ini and training data. Recreates the virtualenv only when
+        the requirements files changed. Does nothing when the service is absent.
+        """
+        unit = "/etc/systemd/system/kittyhack-model-server.service"
+        script = os.path.join(kittyhack_root(), "setup", "install_model_server.sh")
+        if not os.path.isfile(unit) or not os.path.isfile(script):
+            return
+        logging.info("[UPDATE] Refreshing the local model server")
+        try:
+            completed = subprocess.run(
+                ["/bin/bash", script, "refresh", "--sources", kittyhack_root(), "--noninteractive"],
+                check=False,
+                timeout=3600,
+            )
+        except Exception as exc:
+            logging.error(f"[UPDATE] Model server refresh failed: {exc}")
+            return
+        if completed.returncode != 0:
+            logging.error(
+                "[UPDATE] Model server refresh exited with code %s",
+                completed.returncode,
+            )
 
     @staticmethod
     def ensure_target_boot_service_semantics() -> None:
@@ -1574,7 +2111,7 @@ class LabelStudioInstall:
                 if ServiceOps.is_service_running("labelstudio"):
                     logging.info("[SYSTEM] Stopping existing Label Studio service...")
                     if progress_callback:
-                        progress_callback(0, _("Stopping existing Label Studio service..."), "")
+                        progress_callback(0, _("Stopping Label Studio…"), "")
                     ServiceOps.systemctl("stop", "labelstudio")
                 subprocess.run(["rm", "-f", service_file_path], check=True)
                 logging.info("[SYSTEM] Label Studio systemd service file removed.")
@@ -1585,14 +2122,14 @@ class LabelStudioInstall:
         if os.path.exists(LABELSTUDIO_PATH):
             logging.info("[SYSTEM] Removing existing Label Studio installation...")
             if progress_callback:
-                progress_callback(0, _("Removing existing Label Studio installation..."), "")
+                progress_callback(0, _("Removing the existing Label Studio installation…"), "")
             try:
                 subprocess.run(["rm", "-rf", LABELSTUDIO_PATH], check=True)
             except Exception as e:
                 logging.error(f"[SYSTEM] Error removing existing Label Studio installation: {e}")
 
         if progress_callback:
-            progress_callback(0, _("Starting Label Studio installation..."), _("This may take a few minutes..."))
+            progress_callback(0, _("Preparing the Label Studio installation…"), _("This may take a few minutes…"))
             logging.info("[SYSTEM] Starting Label Studio installation...")
 
         try:
@@ -1602,8 +2139,8 @@ class LabelStudioInstall:
                     ["python3", "-m", "venv", venv_path],
                     progress_callback,
                     1,
-                    _("Creating virtual environment..."),
-                    _("This may take a moment...")
+                    _("Creating the virtual environment…"),
+                    _("This may take a moment…")
                 )
                 if not ok:
                     logging.error("[SYSTEM] Virtual environment creation failed:\n" + output)
@@ -1612,15 +2149,15 @@ class LabelStudioInstall:
             else:
                 logging.info("[SYSTEM] Virtual environment already exists, skipping creation.")
                 if progress_callback:
-                    progress_callback(1, _("Virtual environment already exists"), _("Skipping creation..."))
+                    progress_callback(1, _("Virtual environment ready"), _("Using the existing environment."))
 
             # Step 2: Install pip and dependencies
             ok, pip_upgrade_output = ServiceOps.run_with_progress(
                 [venv_python, "-m", "pip", "install", "--no-cache-dir", "--upgrade", "pip"],
                 progress_callback,
                 2,
-                _("Upgrading pip..."),
-                _("This may take a few minutes...")
+                _("Updating pip…"),
+                _("This may take a few minutes…")
             )
             if not ok:
                 logging.error("[SYSTEM] Pip upgrade failed:\n" + pip_upgrade_output)
@@ -1632,8 +2169,8 @@ class LabelStudioInstall:
                 [venv_python, "-m", "pip", "install", "--no-cache-dir", "label-studio"],
                 progress_callback,
                 3,
-                _("Installing Label Studio..."),
-                _("This takes several minutes... Do not turn off the power or reload the page!")
+                _("Installing Label Studio…"),
+                _("This may take several minutes. Keep the device powered on and this page open.")
             )
             if not ok:
                 logging.error("[SYSTEM] Label Studio installation failed:\n" + pip_output)
@@ -1642,7 +2179,7 @@ class LabelStudioInstall:
 
             # Step 4: Create a systemd service file        
             if progress_callback:
-                progress_callback(4, _("Creating systemd service..."), _("Almost done..."))
+                progress_callback(4, _("Creating the Label Studio service…"), _("Almost done…"))
 
             if os.path.exists(service_template_path):
                 try:
@@ -1652,16 +2189,24 @@ class LabelStudioInstall:
                         service_file.write(service_content)
                     logging.info("[SYSTEM] Label Studio systemd service file created.")
                     if progress_callback:
-                        progress_callback(4, _("Creating systemd service..."), _("Service file created successfully."))
+                        progress_callback(4, _("Label Studio service ready"), _("Service file created."))
                 except Exception as e:
                     logging.error(f"[SYSTEM] Error creating systemd service file: {e}")
                     if progress_callback:
-                        progress_callback(4, _("Creating systemd service..."), f"Error: {str(e)}")
+                        progress_callback(
+                            4,
+                            _("Could not create the Label Studio service"),
+                            _("Check the logs, then try again: {}").format(e),
+                        )
                     return False
             else:
                 logging.error("[SYSTEM] Service template file not found.")
                 if progress_callback:
-                    progress_callback(4, _("Creating systemd service..."), _("Error: Template file not found."))
+                    progress_callback(
+                        4,
+                        _("Could not create the Label Studio service"),
+                        _("The service template is missing. Reinstall Kittyhack, then try again."),
+                    )
                 return False
 
             # Step 5: Reload systemd daemon
@@ -1669,8 +2214,8 @@ class LabelStudioInstall:
                 ["/usr/bin/systemctl", "daemon-reload"],
                 progress_callback,
                 5,
-                _("Reloading systemd services..."),
-                _("Almost done...")
+                _("Reloading services…"),
+                _("Almost done…")
             )
             if not ok:
                 logging.error("[SYSTEM] Systemd daemon reload failed:\n" + systemd_output)
@@ -1687,7 +2232,7 @@ class LabelStudioInstall:
     def update_labelstudio(progress_callback=None):
         """Stop Label Studio and pip-upgrade it in its venv."""
         if progress_callback:
-            progress_callback(0, _("Starting Label Studio update..."), _("This may take a few minutes..."))
+            progress_callback(0, _("Preparing the Label Studio update…"), _("This may take a few minutes…"))
 
         try:
             ServiceOps.systemctl("stop", "labelstudio")
@@ -1702,8 +2247,8 @@ class LabelStudioInstall:
                 [venv_python, "-m", "pip", "install", "--no-cache-dir", "--upgrade", "label-studio"],
                 progress_callback,
                 1,
-                _("Upgrading Label Studio..."),
-                _("This takes several minutes... Do not turn off the power or reload the page!")
+                _("Updating Label Studio…"),
+                _("This may take several minutes. Keep the device powered on and this page open.")
             )
             if not ok:
                 logging.error("[SYSTEM] Label Studio upgrade failed:\n" + pip_output)

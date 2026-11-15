@@ -23,6 +23,11 @@ from src.database import (
     THUMBNAIL_DIR,
 )
 from src.camera import DetectedObject
+from src.event_timeline import (
+    timeline_door_action_kind,
+    timeline_door_markers,
+    timeline_parse_timestamp,
+)
 from src.paths import pictures_original_dir
 from src.labelstudio_api import upload_image_to_labelstudio_project
 from src.server_ui.state import reload_trigger_photos
@@ -414,9 +419,140 @@ def show_event_server(input, output, session, block_id: int):
                     )
             frames_json.append(frame_obj)
 
+        timeline_entries = EventsRepo.db_get_motion_timelines(
+            CONFIG["KITTYHACK_DATABASE_PATH"], [block_id]
+        ).get(int(block_id), [])
+        captured_frames = EventsRepo.db_get_motion_frames(
+            CONFIG["KITTYHACK_DATABASE_PATH"], block_id
+        )
+
+        def _local_frame_timestamp(at_value):
+            try:
+                timestamp = pd.to_datetime(at_value, utc=True)
+                return timestamp.tz_convert(CONFIG["TIMEZONE"]).strftime(
+                    "%Y-%m-%d %H:%M:%S.%f"
+                )[:-3]
+            except Exception:
+                return ""
+
+        def _frame_epoch(frame):
+            return timeline_parse_timestamp(frame.get("_at") or frame.get("ts"))
+
+        # New events have an entry for every captured frame, including frames whose
+        # image was discarded by the configured per-event picture limit.
+        if captured_frames:
+            saved_frames = {
+                int(frame["pid"]): frame
+                for frame in frames_json
+                if frame.get("pid") is not None
+            }
+            complete_frames = []
+            complete_photo_ids = []
+            for captured in captured_frames:
+                if not isinstance(captured, dict):
+                    continue
+                at_value = captured.get("at", "")
+                try:
+                    pid = int(captured["pid"]) if captured.get("pid") is not None else None
+                except Exception:
+                    pid = None
+                if pid is not None and pid in saved_frames:
+                    frame_obj = dict(saved_frames[pid])
+                else:
+                    frame_obj = {
+                        "pid": None,
+                        "missing": True,
+                        "objects": captured.get("objects", []),
+                    }
+                frame_obj["ts"] = _format_event_modal_ts(_local_frame_timestamp(at_value))
+                frame_obj["_at"] = at_value
+                complete_frames.append(frame_obj)
+                complete_photo_ids.append(pid if pid in saved_frames else None)
+            if complete_frames:
+                frames_json = complete_frames
+                photo_ids[:] = complete_photo_ids
+        else:
+            # Legacy events only know saved frames. Extend their ends to door actions
+            # outside that range, using placeholder frames at the recorded interval.
+            for idx, frame in enumerate(frames_json):
+                try:
+                    local_ts = pd.Timestamp(timestamps[idx])
+                    if local_ts.tzinfo is None:
+                        local_ts = local_ts.tz_localize(CONFIG["TIMEZONE"])
+                    frame["_at"] = local_ts.timestamp()
+                except Exception:
+                    frame["_at"] = frame.get("ts")
+            frame_epochs = [value for value in (_frame_epoch(f) for f in frames_json) if value is not None]
+            action_epochs = [
+                value
+                for value in (
+                    timeline_parse_timestamp(entry.get("at"))
+                    for entry in timeline_entries
+                    if isinstance(entry, dict)
+                    and timeline_door_action_kind(entry.get("action"))
+                )
+                if value is not None
+            ]
+            if frame_epochs and action_epochs:
+                interval = 1.0 / max(0.1, float(event_effective_fps[0] or 4.0))
+                max_placeholders = 1000
+                prepend = min(
+                    max_placeholders,
+                    max(0, int((min(frame_epochs) - min(action_epochs)) / interval + 0.999)),
+                )
+                append = min(
+                    max_placeholders - prepend,
+                    max(0, int((max(action_epochs) - max(frame_epochs)) / interval + 0.999)),
+                )
+                first = min(frame_epochs)
+                last = max(frame_epochs)
+                prefix = [
+                    {
+                        "pid": None,
+                        "missing": True,
+                        "objects": [],
+                        "_at": first - interval * step,
+                    }
+                    for step in range(prepend, 0, -1)
+                ]
+                suffix = [
+                    {
+                        "pid": None,
+                        "missing": True,
+                        "objects": [],
+                        "_at": last + interval * step,
+                    }
+                    for step in range(1, append + 1)
+                ]
+                frames_json = prefix + frames_json + suffix
+                photo_ids[:] = [None] * prepend + list(photo_ids) + [None] * append
+                for frame in prefix + suffix:
+                    local_ts = pd.Timestamp(frame["_at"], unit="s", tz="UTC").tz_convert(
+                        CONFIG["TIMEZONE"]
+                    ).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                    frame["ts"] = _format_event_modal_ts(local_ts)
+
+        frame_times = [frame.get("_at") or frame.get("ts") for frame in frames_json]
+        door_markers = timeline_door_markers(timeline_entries, frame_times)
+        for frame in frames_json:
+            frame.pop("_at", None)
+
+        # Full captured timestamps give the actual playback cadence.
+        parsed_frame_times = [
+            value for value in (timeline_parse_timestamp(v) for v in frame_times) if value is not None
+        ]
+        if len(parsed_frame_times) >= 2:
+            span = max(parsed_frame_times) - min(parsed_frame_times)
+            if span > 0:
+                event_effective_fps[0] = max(
+                    0.1, min(30.0, (len(parsed_frame_times) - 1) / span)
+                )
+
         player_data = json.dumps(
             {
                 "frames": frames_json,
+                "doorMarkers": door_markers,
+                "missingPictureText": _("No picture stored"),
                 "mouseThreshold": float(CONFIG.get("MOUSE_THRESHOLD", 50)),
                 "overlayInitial": bool(
                     int(CONFIG.get("SHOW_IMAGES_WITH_OVERLAY", True))
@@ -425,6 +561,20 @@ def show_event_server(input, output, session, block_id: int):
                 "fps": float(event_effective_fps[0]) if event_effective_fps[0] else 4.0,
                 "fallbackMode": fallback_mode[0],
                 "blockId": block_id,
+                "doorStatus": {
+                    "inside": _("Inside"),
+                    "outside": _("Outside"),
+                    "insideUnlocked": _("Inside lock: Unlocked"),
+                    "insideLocked": _("Inside lock: Locked"),
+                    "outsideUnlocked": _("Outside lock: Unlocked"),
+                    "outsideLocked": _("Outside lock: Locked"),
+                    "iconUnlocked": str(
+                        icon_svg("lock-open", margin_left="0", margin_right="0")
+                    ),
+                    "iconLocked": str(
+                        icon_svg("lock", margin_left="0", margin_right="0")
+                    ),
+                },
             }
         )
 
@@ -452,16 +602,16 @@ def show_event_server(input, output, session, block_id: int):
         nav_html = f'''
         <div class="event-modal-toolbar-nav">
             <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
-                    data-action="prev" title="{_("Previous frame")}">
+                    data-action="prev" title="{_("Show previous frame")}">
                 {prev_icon_html}
             </button>
             <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
-                    data-action="play-pause" title="{_("Play/Pause")}">
-                <span class="kh-icon-play" {"" if len(pictures) <= 1 else 'style="display:none"'}>{play_icon_html}</span>
-                <span class="kh-icon-pause" {'style="display:none"' if len(pictures) <= 1 else ""}>{pause_icon_html}</span>
+                    data-action="play-pause" title="{_("Play or pause")}">
+                <span class="kh-icon-play" {"" if len(frames_json) <= 1 else 'style="display:none"'}>{play_icon_html}</span>
+                <span class="kh-icon-pause" {'style="display:none"' if len(frames_json) <= 1 else ""}>{pause_icon_html}</span>
             </button>
             <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
-                    data-action="next" title="{_("Next frame")}">
+                    data-action="next" title="{_("Show next frame")}">
                 {next_icon_html}
             </button>
         </div>
@@ -469,7 +619,7 @@ def show_event_server(input, output, session, block_id: int):
 
         overlay_btn_html = f'''
         <button type="button" class="btn btn-default btn-icon-square btn-outline-secondary action-button"
-                data-action="toggle-overlay" title="{_("Toggle overlay for detected objects")}"
+                data-action="toggle-overlay" title="{_("Show or hide detected objects")}"
                 {"disabled" if fallback_mode[0] else ""}
                 style="{"opacity:0.5" if fallback_mode[0] else ""}">
             <span class="kh-icon-overlay-on" {"" if initial_overlay else 'style="display:none"'}>{overlay_on_icon_html}</span>
@@ -509,7 +659,7 @@ def show_event_server(input, output, session, block_id: int):
                                         "role": "status",
                                     },
                                     ui.tags.span(
-                                        {"class": "visually-hidden"}, _("Loading...")
+                                        {"class": "visually-hidden"}, _("Loading…")
                                     ),
                                 ),
                             ),
@@ -539,7 +689,7 @@ def show_event_server(input, output, session, block_id: int):
                                             ),
                                             class_="btn-icon-square btn-outline-danger",
                                         ),
-                                        _("Delete all pictures of this event"),
+                                        _("Delete all event pictures"),
                                         id="tooltip_delete_event",
                                         options={"trigger": "hover"},
                                     ),
@@ -611,7 +761,7 @@ def show_event_server(input, output, session, block_id: int):
                                             ),
                                             class_="btn-icon-square btn-outline-secondary",
                                         ),
-                                        _("Download all pictures of this event (ZIP)"),
+                                        _("Download all event pictures"),
                                         id="tooltip_download_zip",
                                         options={"trigger": "hover"},
                                     ),
@@ -728,7 +878,7 @@ def show_event_server(input, output, session, block_id: int):
         if not project_id or not api_token:
             ui.notification_show(
                 _(
-                    "Label Studio is not configured. Please set an API token and select a project in the settings."
+                    "Label Studio is not set up. Add an API token and choose a project in Settings."
                 ),
                 type="warning",
                 duration=5,
@@ -737,7 +887,9 @@ def show_event_server(input, output, session, block_id: int):
 
         if not LabelStudioInstall.get_labelstudio_status():
             ui.notification_show(
-                _("Label Studio is not running."), type="warning", duration=5
+                _("Label Studio is not running. Start it and try again."),
+                type="warning",
+                duration=5,
             )
             return
 
@@ -775,7 +927,9 @@ def show_event_server(input, output, session, block_id: int):
 
             if not isinstance(img_bytes, (bytes, bytearray)) or len(img_bytes) == 0:
                 ui.notification_show(
-                    _("Could not load the image."), type="warning", duration=5
+                    _("The picture could not be loaded. Try again."),
+                    type="warning",
+                    duration=5,
                 )
                 return
 
@@ -784,7 +938,7 @@ def show_event_server(input, output, session, block_id: int):
                 ui.HTML(
                     '<div class="d-flex align-items-center gap-2">'
                     '<div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>'
-                    f"<span>{_('Sending picture to Label Studio...')}</span>"
+                    f"<span>{_('Sending picture to Label Studio…')}</span>"
                     "</div>"
                 ),
                 id="ls_upload_progress",
@@ -805,13 +959,13 @@ def show_event_server(input, output, session, block_id: int):
 
             if success:
                 ui.notification_show(
-                    _("Picture sent to Label Studio successfully."),
+                    _("Picture sent to Label Studio."),
                     type="message",
                     duration=3,
                 )
             else:
                 ui.notification_show(
-                    _("Failed to send picture to Label Studio."),
+                    _("Picture could not be sent to Label Studio. Try again."),
                     type="error",
                     duration=5,
                 )
@@ -820,13 +974,35 @@ def show_event_server(input, output, session, block_id: int):
             logging.warning(f"[LABELSTUDIO] Send to Label Studio failed: {e}")
             ui.notification_remove("ls_upload_progress")
             ui.notification_show(
-                _("Failed to send picture to Label Studio."), type="error", duration=5
+                _("Picture could not be sent to Label Studio. Try again."),
+                type="error",
+                duration=5,
             )
 
     # ---- Delete event ----
     @reactive.effect
     @reactive.event(input.btn_delete_event)
     def delete_event():
+        ui.modal_remove()
+        ui.modal_show(
+            ui.modal(
+                _("Delete this event and all its pictures?"),
+                title=_("Delete event"),
+                easy_close=False,
+                footer=ui.div(
+                    ui.input_action_button(
+                        "btn_modal_delete_event_ok",
+                        _("Delete"),
+                        class_="btn-danger",
+                    ),
+                    ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                ),
+            )
+        )
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_delete_event_ok)
+    def delete_event_confirmed():
         logging.info(f"Delete all pictures of event with block_id {block_id}")
         EventsRepo.delete_photos_by_block_id(
             CONFIG["KITTYHACK_DATABASE_PATH"], block_id

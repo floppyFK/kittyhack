@@ -38,7 +38,7 @@ def register_wlan(input, output, session, ctx: SessionContext):
         return ui.layout_column_wrap(
             ui.div(
                 ui.card(
-                    ui.card_header(ui.p(_("Configured WLANs"))),
+                    ui.card_header(ui.p(_("Configured WLAN connections"))),
                     ui.HTML(
                         '<div id="pleasewait_wlan_configured" class="spinner-container"><div class="spinner"></div></div>'
                     ),
@@ -46,7 +46,7 @@ def register_wlan(input, output, session, ctx: SessionContext):
                     ui.hr(),
                     ui.input_action_button(
                         id="btn_wlan_add",
-                        label=_("Add new WLAN"),
+                        label=_("Add WLAN"),
                         icon=icon_svg("plus"),
                     ),
                     full_screen=False,
@@ -85,13 +85,13 @@ def register_wlan(input, output, session, ctx: SessionContext):
                 wlan["actions"] = ui.div(
                     ui.tooltip(
                         btn_wlan_connect(f"btn_wlan_connect_{unique_id}"),
-                        _("Enforce connection to this WLAN"),
+                        _("Connect to this WLAN"),
                         id=f"tooltip_wlan_connect_{unique_id}",
                         options={"trigger": "hover"},
                     ),
                     ui.tooltip(
                         btn_wlan_modify(f"btn_wlan_modify_{unique_id}"),
-                        _("Modify this WLAN"),
+                        _("Edit this WLAN"),
                         id=f"tooltip_wlan_modify_{unique_id}",
                         options={"trigger": "hover"},
                     ),
@@ -114,7 +114,13 @@ def register_wlan(input, output, session, ctx: SessionContext):
         except Exception as e:
             logging.error(f"Failed to scan for available WLANs: {e}")
             # Return an empty DataFrame with an error message
-            return pd.DataFrame({"ERROR": [_("Failed to scan for available WLANs")]})
+            return pd.DataFrame(
+                {
+                    "ERROR": [
+                        _("Could not load configured WLANs. Try again.")
+                    ]
+                }
+            )
         finally:
             ui.remove_ui("#pleasewait_wlan_configured")
 
@@ -137,12 +143,12 @@ def register_wlan(input, output, session, ctx: SessionContext):
         ui.modal_remove()
         ui.modal_show(
             ui.modal(
-                _("The WLAN connection will be interrupted now!"),
+                _("The WLAN connection will be interrupted briefly."),
                 ui.br(),
                 _(
-                    "Please wait a few seconds. If the page does not reload automatically within 30 seconds, please reload it manually."
+                    "Please wait a moment. If this page does not reload within 30 seconds, reload it manually."
                 ),
-                title=_("Updating WLAN configuration..."),
+                title=_("Updating WLAN configuration…"),
                 footer=None,
             )
         )
@@ -152,14 +158,16 @@ def register_wlan(input, output, session, ctx: SessionContext):
             )
             if success:
                 ui.notification_show(
-                    _("WLAN configuration for {} updated successfully.").format(ssid),
+                    _("WLAN configuration for {} updated.").format(ssid),
                     duration=5,
                     type="message",
                 )
                 reload_trigger_wlan.set(reload_trigger_wlan.get() + 1)
             else:
                 ui.notification_show(
-                    _("Failed to update WLAN configuration for {}").format(ssid),
+                    _(
+                        "Could not update WLAN configuration for {}. Check the password and try again."
+                    ).format(ssid),
                     duration=10,
                     type="error",
                 )
@@ -173,7 +181,7 @@ def register_wlan(input, output, session, ctx: SessionContext):
         return ui.layout_column_wrap(
             ui.div(
                 ui.card(
-                    ui.card_header(ui.p(_("Available WLANs"))),
+                    ui.card_header(ui.p(_("Available WLAN networks"))),
                     ui.HTML(
                         '<div id="pleasewait_wlan_scan" class="spinner-container"><div class="spinner"></div></div>'
                     ),
@@ -237,6 +245,12 @@ def register_wlan(input, output, session, ctx: SessionContext):
         except Exception as e:
             logging.error(f"Failed to scan for available WLANs: {e}")
             # Return an empty DataFrame with an error message
-            return pd.DataFrame({"ERROR": [_("Failed to scan for available WLANs")]})
+            return pd.DataFrame(
+                {
+                    "ERROR": [
+                        _("Could not scan for WLAN networks. Try again.")
+                    ]
+                }
+            )
         finally:
             ui.remove_ui("#pleasewait_wlan_scan")

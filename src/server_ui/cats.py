@@ -12,7 +12,7 @@ from src.database import (
 )
 from src.mode import is_remote_mode
 from src.shiny_wrappers import uix
-from src.server_ui.state import reload_trigger_config
+from src.server_ui.state import reload_trigger_config, reload_trigger_photos
 from src.server_ui.context import SessionContext
 
 _ = set_language(CONFIG["LANGUAGE"])
@@ -22,6 +22,17 @@ if is_remote_mode():
 else:
     from src.magnets_rfid import Magnets
     from src.pir import Pir
+
+
+def _has_saved_cats() -> bool:
+    """True when at least one cat is stored."""
+    try:
+        df = CatsRepo.db_get_cats(
+            CONFIG["KITTYHACK_DATABASE_PATH"], ReturnDataCatDB.all_except_photos
+        )
+        return df is not None and not df.empty
+    except Exception:
+        return False
 
 
 def register_cats(input, output, session, ctx: SessionContext):
@@ -52,7 +63,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                     f'src="data:image/jpeg;base64,{decoded_picture}" /></div>'
                     if decoded_picture
                     else '<div class="placeholder-image"><strong>'
-                    + _("No picture found!")
+                    + _("No picture yet")
                     + "</strong></div>"
                 )
 
@@ -104,7 +115,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                             ui.div(
                                 ui.input_switch(
                                     id=f"mng_cat_prey_{data_row['id']}",
-                                    label=_("Enable Prey detection"),
+                                    label=_("Enable prey detection"),
                                     value=bool(
                                         int(data_row.get("enable_prey_detection", 1))
                                     ),
@@ -121,7 +132,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "**Disabled:** Global prey detection is turned off in the `CONFIGURATION` section. Enable `Detect prey` to use per-cat settings."
+                                        "Prey detection is turned off in Settings. Turn on `Detect prey` to set it for each cat."
                                     )
                                 ),
                                 style_="color: grey;",
@@ -153,7 +164,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "**Disabled:** This feature is only available in `Individual configuration per cat` mode for entry."
+                                        "To set entry for each cat, choose `Set rules for each cat` in the entry settings."
                                     )
                                 ),
                                 style_="color: grey;",
@@ -187,7 +198,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                 ui.markdown(
                                     f"{icon_svg('triangle-exclamation', margin_left='-0.1em')} "
                                     + _(
-                                        "This cat has no RFID configured. The individual exit per cat works only for cats with a RFID chip!"
+                                        "This cat has no microchip ID. Exit rules for each cat need a microchip ID."
                                     )
                                 ),
                                 style_="color:#b94a48;",
@@ -202,7 +213,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                 12,
                                 ui.markdown(
                                     _(
-                                        "**Disabled:** This feature is only available in `Individual configuration per cat` mode for exit."
+                                        "To set exit for each cat, choose `Set rules for each cat` in the exit settings."
                                     )
                                 ),
                                 style_="color: grey;",
@@ -210,6 +221,26 @@ def register_cats(input, output, session, ctx: SessionContext):
                             style_="padding-bottom: 20px;",
                         )
                     )
+
+                try:
+                    show_location = bool(int(data_row.get("show_location", 1)))
+                except (TypeError, ValueError):
+                    show_location = True
+                settings_rows.append(
+                    ui.row(
+                        ui.column(
+                            12,
+                            ui.div(
+                                ui.input_switch(
+                                    id=f"mng_cat_show_location_{data_row['id']}",
+                                    label=_("Show indoors/outdoors status in live-view tab"),
+                                    value=show_location,
+                                ),
+                                style_="padding-bottom: 20px;",
+                            ),
+                        )
+                    )
+                )
 
                 settings_section = ui.div(
                     ui.div(
@@ -238,7 +269,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.input_text(
                                         id=f"mng_cat_rfid_{data_row['id']}",
-                                        label=_("RFID"),
+                                        label=_("Microchip ID"),
                                         value=data_row["rfid"],
                                         width="100%",
                                     ),
@@ -254,7 +285,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.help_text(
                                         _(
-                                            "NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."
+                                            "Use the 16-character ID read by the Kittyflap, not the number in your vet booklet. It contains numbers 0–9 and letters A–F."
                                         )
                                     ),
                                 ),
@@ -262,7 +293,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                     12,
                                     ui.help_text(
                                         _(
-                                            "If you have entered the RFID correctly here, the name of the cat will be displayed in the [PICTURES] section."
+                                            "When the microchip ID matches, the cat's name appears with its pictures."
                                         )
                                     ),
                                 ),
@@ -273,7 +304,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                                     12,
                                     uix.input_file(
                                         id=f"mng_cat_pic_{data_row['id']}",
-                                        label=_("Change Picture"),
+                                        label=_("Change picture"),
                                         accept=[".jpg", ".png"],
                                         width="100%",
                                     ),
@@ -283,12 +314,11 @@ def register_cats(input, output, session, ctx: SessionContext):
                         ui.HTML(img_html),
                         ui.card_footer(
                             ui.div(
-                                ui.input_checkbox(
-                                    id=f"mng_cat_del_{data_row['id']}",
-                                    label=_("Delete {} from the database").format(
-                                        data_row["name"]
-                                    ),
-                                    value=False,
+                                ui.input_action_button(
+                                    id=f"mng_cat_del_btn_{data_row['id']}",
+                                    label=_("Delete {}").format(data_row["name"]),
+                                    icon=icon_svg("trash"),
+                                    class_="btn-outline-danger",
                                 ),
                                 style_="padding-top: 20px; display: flex; justify-content: center;",
                             )
@@ -303,14 +333,16 @@ def register_cats(input, output, session, ctx: SessionContext):
                         "id": "kh_manage_cats_i18n",
                         "style": "display:none;",
                         "data-msg-empty": _(
-                            "No RFID entered. Cat identification only via camera (if enabled). See CONFIGURATION section for details."
+                            "No microchip ID entered. Kittyhack will use the camera to identify this cat when camera identification is enabled."
                         ),
-                        "data-msg-valid": _("Valid RFID"),
+                        "data-msg-valid": _("Microchip ID is valid"),
                         "data-msg-invalid": _(
-                            "Invalid RFID. Must be exactly 16 hex characters (0-9, A-F)."
+                            "Enter a 16-character microchip ID using numbers 0–9 and letters A–F."
                         ),
                     }
                 ),
+                ui.output_ui("ui_add_new_cat"),
+                ui.br(),
                 ui.div(
                     *ui_cards,
                     id="manage_cats_container",
@@ -336,11 +368,13 @@ def register_cats(input, output, session, ctx: SessionContext):
             )
         else:
             return ui.div(
-                ui.help_text(
-                    _(
-                        "No cats found in the database. Please go to the [ADD NEW CAT] section to add a new cat."
-                    )
+                ui.div(
+                    ui.help_text(
+                        _("No cats yet. Add one below.")
+                    ),
+                    style_="text-align: center; margin-bottom: 1rem;",
                 ),
+                ui.output_ui("ui_add_new_cat"),
             )
 
     @reactive.Effect
@@ -358,6 +392,10 @@ def register_cats(input, output, session, ctx: SessionContext):
                 db_prey = bool(int(data_row.get("enable_prey_detection", 1)))
                 db_allow_entry = bool(int(data_row.get("allow_entry", 1)))
                 db_allow_exit = bool(int(data_row.get("allow_exit", 1)))
+                try:
+                    db_show_location = bool(int(data_row.get("show_location", 1)))
+                except (TypeError, ValueError):
+                    db_show_location = True
 
                 card_name = input[f"mng_cat_name_{db_id}"]()
                 card_rfid = input[f"mng_cat_rfid_{db_id}"]().strip().upper()
@@ -387,85 +425,65 @@ def register_cats(input, output, session, ctx: SessionContext):
                         card_allow_exit = bool(int(prev.get("allow_exit", 1)))
                     except Exception:
                         card_allow_exit = True
-                card_del = input[f"mng_cat_del_{db_id}"]()
+                try:
+                    card_show_location = bool(input[f"mng_cat_show_location_{db_id}"]())
+                except Exception:
+                    card_show_location = db_show_location
+                # Get image path, if a file was uploaded
+                card_pic: list[FileInfo] | None = input[f"mng_cat_pic_{db_id}"]()
+                if card_pic is not None:
+                    card_pic_path = card_pic[0]["datapath"]
+                else:
+                    card_pic_path = None
 
-                # Check if the cat should be deleted
-                if card_del:
+                    # Only update the cat data if the values have changed
+                if (
+                    (db_name != card_name)
+                    or (db_rfid != card_rfid)
+                    or (db_prey != card_prey)
+                    or (db_allow_entry != card_allow_entry)
+                    or (db_allow_exit != card_allow_exit)
+                    or (db_show_location != card_show_location)
+                    or (card_pic_path is not None)
+                ):
+                    # Add the ID to the list of updated cats
                     updated_cats.append(db_id)
-                    result = CatsRepo.db_delete_cat_by_id(
-                        CONFIG["KITTYHACK_DATABASE_PATH"], db_id
+
+                    result = CatsRepo.db_update_cat_data_by_id(
+                        CONFIG["KITTYHACK_DATABASE_PATH"],
+                        db_id,
+                        card_name,
+                        card_rfid,
+                        card_pic_path,
+                        card_prey,
+                        card_allow_entry,
+                        card_allow_exit,
+                        card_show_location,
                     )
                     if result.success:
                         ui.notification_show(
-                            _("{} deleted successfully from the database.").format(
-                                db_name
-                            ),
+                            _("Changes for {} saved.").format(card_name),
                             duration=5,
                             type="message",
                         )
                     else:
                         ui.notification_show(
-                            _("Failed to delete {} from the database: {}").format(
-                                db_name, result.message
+                            _("Changes for this cat could not be saved: {} Try again.").format(
+                                result.message
                             ),
                             duration=10,
                             type="error",
                         )
-                else:
-                    # Get image path, if a file was uploaded
-                    card_pic: list[FileInfo] | None = input[f"mng_cat_pic_{db_id}"]()
-                    if card_pic is not None:
-                        card_pic_path = card_pic[0]["datapath"]
-                    else:
-                        card_pic_path = None
-
-                        # Only update the cat data if the values have changed
-                    if (
-                        (db_name != card_name)
-                        or (db_rfid != card_rfid)
-                        or (db_prey != card_prey)
-                        or (db_allow_entry != card_allow_entry)
-                        or (db_allow_exit != card_allow_exit)
-                        or (card_pic_path is not None)
-                    ):
-                        # Add the ID to the list of updated cats
-                        updated_cats.append(db_id)
-
-                        result = CatsRepo.db_update_cat_data_by_id(
-                            CONFIG["KITTYHACK_DATABASE_PATH"],
-                            db_id,
-                            card_name,
-                            card_rfid,
-                            card_pic_path,
-                            card_prey,
-                            card_allow_entry,
-                            card_allow_exit,
-                        )
-                        if result.success:
-                            ui.notification_show(
-                                _("Data for {} updated successfully.").format(
-                                    card_name
-                                ),
-                                duration=5,
-                                type="message",
-                            )
-                        else:
-                            ui.notification_show(
-                                _("Failed to update cat details: {}").format(
-                                    result.message
-                                ),
-                                duration=10,
-                                type="error",
-                            )
 
             if not updated_cats:
                 ui.notification_show(
-                    _("No changes detected. Nothing to save."),
+                    _("No changes to save."),
                     duration=5,
                     type="message",
                 )
             else:
                 ctx.reload_trigger_cats.set(ctx.reload_trigger_cats.get() + 1)
+                reload_trigger_photos.set(reload_trigger_photos.get() + 1)
 
     @output
     @render.ui
@@ -509,7 +527,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                     12,
                     ui.div(
                         ui.input_switch(
-                            "add_new_cat_prey", _("Enable Prey detection"), True
+                            "add_new_cat_prey", _("Enable prey detection"), True
                         ),
                         style_=prey_style,
                     ),
@@ -523,7 +541,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                         12,
                         ui.markdown(
                             _(
-                                "**Disabled:** Global prey detection is turned off in the `CONFIGURATION` section. Enable `Detect prey` to use per-cat settings."
+                                "Prey detection is turned off in Settings. Turn on `Detect prey` to set it for each cat."
                             )
                         ),
                         style_="color: grey;",
@@ -551,7 +569,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                         12,
                         ui.markdown(
                             _(
-                                "**Disabled:** This feature is only available in `Individual configuration per cat` mode for entry."
+                                "To set entry for each cat, choose `Set rules for each cat` in the entry settings."
                             )
                         ),
                         style_="color: grey;",
@@ -579,7 +597,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                         12,
                         ui.markdown(
                             _(
-                                "**Disabled:** This feature is only available in `Individual configuration per cat` mode for exit."
+                                "To set exit for each cat, choose `Set rules for each cat` in the exit settings."
                             )
                         ),
                         style_="color: grey;",
@@ -587,6 +605,21 @@ def register_cats(input, output, session, ctx: SessionContext):
                     style_="padding-bottom: 20px;",
                 )
             )
+        settings_rows_new.append(
+            ui.row(
+                ui.column(
+                    12,
+                    ui.div(
+                        ui.input_switch(
+                            "add_new_cat_show_location",
+                            _("Show indoors/outdoors status in live-view tab"),
+                            True,
+                        ),
+                        style_="padding-bottom: 20px;",
+                    ),
+                )
+            )
+        )
 
         settings_rows_new.append(
             [
@@ -597,9 +630,8 @@ def register_cats(input, output, session, ctx: SessionContext):
                         ui.div(
                             ui.markdown(
                                 _(
-                                    "**Important:** Please read the notes about the prerequisites for the "
-                                    "individual entry/exit configuration in the `MANAGE CATS` section "
-                                    "if you want to use these features."
+                                    "Entry and exit switches apply only when the matching flap "
+                                    "setting is `Set rules for each cat`."
                                 )
                             ),
                             style_="text-align: center;",
@@ -636,7 +668,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                             12,
                             ui.input_text(
                                 "add_new_cat_rfid",
-                                label=_("RFID"),
+                                label=_("Microchip ID"),
                                 value="",
                                 width="100%",
                             ),
@@ -647,7 +679,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                             12,
                             ui.help_text(
                                 _(
-                                    "You can find the RFID in the [PICTURES] section, if the chip of your cat was recognized by the Kittyflap. To read the RFID, just set the entrance mode to 'All Cats' and let pass your cat through the Kittyflap."
+                                    "To find the microchip ID, set entry to `All cats` and let your cat pass through the Kittyflap. The ID will appear with the picture."
                                 )
                             ),
                         ),
@@ -655,7 +687,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                             12,
                             ui.help_text(
                                 _(
-                                    "NOTE: This is NOT the number which stands in the booklet of your vet! You must use the the ID, which is read by the Kittyflap. It is 16 characters long and consists of numbers (0-9) and letters (A-F)."
+                                    "Use the 16-character ID read by the Kittyflap, not the number in your vet booklet. It contains numbers 0–9 and letters A–F."
                                 )
                             ),
                         ),
@@ -666,7 +698,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                             12,
                             uix.input_file(
                                 "add_new_cat_pic",
-                                label=_("Upload Picture"),
+                                label=_("Upload picture"),
                                 accept=".jpg",
                                 width="100%",
                             ),
@@ -676,7 +708,7 @@ def register_cats(input, output, session, ctx: SessionContext):
                             12,
                             ui.input_action_button(
                                 "add_new_cat_save",
-                                label=_("Save"),
+                                label=_("Add cat"),
                                 icon=icon_svg("floppy-disk"),
                             ),
                         ),
@@ -686,7 +718,36 @@ def register_cats(input, output, session, ctx: SessionContext):
                 class_="image-container",
             )
         )
-        return (ui.layout_column_wrap(*ui_cards, width="400px"),)
+        form = ui.layout_column_wrap(*ui_cards, width="400px")
+        if not _has_saved_cats():
+            return (form,)
+        return (
+            ui.div(
+                ui.tags.button(
+                    ui.tags.span(
+                        "\u25b6",
+                        class_="kh-add-cat-chevron",
+                        aria_hidden="true",
+                    ),
+                    ui.tags.span(_("Add new cat")),
+                    id="btn_expand_add_cat",
+                    type="button",
+                    class_="btn btn-outline-secondary kh-add-cat-btn",
+                    **{
+                        "data-bs-toggle": "collapse",
+                        "data-bs-target": "#add_new_cat_body",
+                        "aria-expanded": "false",
+                        "aria-controls": "add_new_cat_body",
+                    },
+                ),
+                ui.div(
+                    form,
+                    id="add_new_cat_body",
+                    class_="collapse",
+                ),
+                class_="kh-add-cat",
+            ),
+        )
 
     @output
     @render.ui
@@ -695,14 +756,16 @@ def register_cats(input, output, session, ctx: SessionContext):
         if val == "":
             return ui.div(
                 _(
-                    "No RFID entered. Cat identification only via camera (if enabled). See CONFIGURATION section for details."
+                    "No microchip ID entered. Kittyhack will use the camera to identify this cat when camera identification is enabled."
                 ),
                 class_="rfid-status rfid-empty",
             )
         if re.fullmatch(r"[0-9A-Fa-f]{16}", val):
-            return ui.div(_("Valid RFID"), class_="rfid-status rfid-valid")
+            return ui.div(
+                _("Microchip ID is valid"), class_="rfid-status rfid-valid"
+            )
         return ui.div(
-            _("Invalid RFID. Must be exactly 16 hex characters (0-9, A-F)."),
+            _("Enter a 16-character microchip ID using numbers 0–9 and letters A–F."),
             class_="rfid-status rfid-invalid",
         )
 
@@ -721,6 +784,10 @@ def register_cats(input, output, session, ctx: SessionContext):
             cat_allow_exit = input.add_new_cat_allow_exit()
         else:
             cat_allow_exit = True
+        try:
+            cat_show_location = bool(input.add_new_cat_show_location())
+        except Exception:
+            cat_show_location = True
 
             # Get image path, if a file was uploaded
         if cat_pic is not None:
@@ -736,10 +803,11 @@ def register_cats(input, output, session, ctx: SessionContext):
             cat_prey,
             cat_allow_entry,
             cat_allow_exit,
+            cat_show_location,
         )
         if result.success:
             ui.notification_show(
-                _("New cat {} added successfully.").format(cat_name),
+                _("{} added.").format(cat_name),
                 duration=5,
                 type="message",
             )
@@ -748,11 +816,86 @@ def register_cats(input, output, session, ctx: SessionContext):
             ui.update_switch(id="add_new_cat_prey", value=True)
             ui.update_switch(id="add_new_cat_allow_entry", value=True)
             ui.update_switch(id="add_new_cat_allow_exit", value=True)
+            ui.update_switch(id="add_new_cat_show_location", value=True)
             ctx.reload_trigger_cats.set(ctx.reload_trigger_cats.get() + 1)
+            reload_trigger_photos.set(reload_trigger_photos.get() + 1)
         else:
             ui.notification_show(
-                _("An error occurred while adding the new cat: {}").format(
+                _("This cat could not be added: {} Check the details and try again.").format(
                     result.message
+                ),
+                duration=10,
+                type="error",
+            )
+
+    pending_cat_delete = reactive.Value(None)
+    _cat_delete_registered_ids = set()
+
+    def _register_cat_delete_button(db_id: int):
+        @reactive.effect
+        @reactive.event(input[f"mng_cat_del_btn_{db_id}"])
+        def _ask_delete_cat():
+            try:
+                name = (input[f"mng_cat_name_{db_id}"]() or "").strip() or str(db_id)
+            except Exception:
+                name = str(db_id)
+            pending_cat_delete.set({"id": int(db_id), "name": name})
+            ui.modal_show(
+                ui.modal(
+                    _("Delete {}?").format(name),
+                    title=_("Delete cat"),
+                    easy_close=False,
+                    footer=ui.div(
+                        ui.input_action_button(
+                            "btn_modal_delete_cat_ok",
+                            _("Delete"),
+                            class_="btn-danger",
+                        ),
+                        ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                    ),
+                )
+            )
+
+    @reactive.effect
+    def _ensure_cat_delete_handlers():
+        ctx.reload_trigger_cats.get()
+        df_cats = CatsRepo.db_get_cats(
+            CONFIG["KITTYHACK_DATABASE_PATH"], ReturnDataCatDB.all_except_photos
+        )
+        if df_cats.empty:
+            return
+        for db_id in df_cats["id"].tolist():
+            db_id = int(db_id)
+            if db_id in _cat_delete_registered_ids:
+                continue
+            _cat_delete_registered_ids.add(db_id)
+            _register_cat_delete_button(db_id)
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_delete_cat_ok)
+    def on_modal_delete_cat_ok():
+        pending = pending_cat_delete.get() or {}
+        ui.modal_remove()
+        pending_cat_delete.set(None)
+        db_id = pending.get("id")
+        db_name = pending.get("name") or str(db_id)
+        if not db_id:
+            return
+        result = CatsRepo.db_delete_cat_by_id(
+            CONFIG["KITTYHACK_DATABASE_PATH"], db_id
+        )
+        if result.success:
+            ui.notification_show(
+                _("{} deleted.").format(db_name),
+                duration=5,
+                type="message",
+            )
+            ctx.reload_trigger_cats.set(ctx.reload_trigger_cats.get() + 1)
+            reload_trigger_photos.set(reload_trigger_photos.get() + 1)
+        else:
+            ui.notification_show(
+                _("{} could not be deleted: {} Try again.").format(
+                    db_name, result.message
                 ),
                 duration=10,
                 type="error",

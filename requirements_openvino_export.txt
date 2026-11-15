@@ -1,0 +1,13 @@
+# One-shot OpenVINO export stack. Not installed into the Kittyhack service venv.
+# CPU wheels only: the +cpu versions exist on the PyTorch CPU index, so pip
+# will not take the multi-GB CUDA build from PyPI.
+#
+#   .venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu \
+#       --extra-index-url https://pypi.org/simple \
+#       -r requirements_openvino_export.txt
+#   .venv/bin/python tools/export_openvino.py /path/to/model.pt --imgsz 480
+#
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.9.1+cpu
+torchvision==0.24.1+cpu
+ultralytics==8.3.119

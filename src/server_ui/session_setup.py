@@ -1,7 +1,6 @@
 """Session preamble: remote sync, live view stream, shared effects."""
 
 import os
-import configparser
 from datetime import datetime
 import time as tm
 from src.clock import monotonic_time
@@ -30,7 +29,6 @@ from src.system import (
     ServiceOps,
 )
 from src.database import last_imgblock_ts
-from src.paths import kittyhack_root
 from src.mode import is_remote_mode
 from src.model import RemoteModelTrainer
 from src.backend import backend_main, model_handler
@@ -41,6 +39,7 @@ from src.server_ui.state import (
     reload_trigger_config,
     live_view_refresh_nonce,
     live_view_aspect,
+    update_dialog_is_open,
 )
 from src.server_ui.context import SessionContext
 
@@ -55,6 +54,14 @@ else:
 
 def register_session_setup(input, output, session, ctx: SessionContext):
     """Register session preamble: remote sync, live stream, shared effects."""
+
+    # Keep the browser session reconnectable after brief mobile backgrounding.
+    # Shiny for Python 1.2.1 has no session.allow_reconnect(); send the protocol
+    # message that shiny.js already understands ("force" = reconnect without Shiny Server).
+    try:
+        session._send_message_sync({"allowReconnect": "force"})
+    except Exception:
+        logging.debug("[SESSION] Could not enable Shiny client reconnect", exc_info=True)
 
     @reactive.effect
     def update_live_view_warning_html():
@@ -81,14 +88,12 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                                         margin_left="0",
                                         margin_right="0.2em",
                                     ),
-                                    _("Warning")
-                                    + ": "
-                                    + _(
-                                        "Your IP camera resolution is higher than recommended (max. 1280x720)."
+                                    _(
+                                        "The IP camera resolution is above the recommended maximum of 1280×720."
                                     )
                                     + " "
                                     + _(
-                                        "Current: {width}x{height}. This may have negative effects on performance."
+                                        "The current resolution is {width}×{height}, which may slow down the live view."
                                     ).format(width=width, height=height),
                                     class_="generic-container warning-container",
                                 ),
@@ -131,11 +136,14 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         ctx.live_view_warning_dismissed.set(True)
         ctx.live_view_warning_html.set("")
 
+    muteable_ids_in_current_modal = []
+
     def show_user_notifications():
         user_notifications = UserNotifications.get_all()
         if len(user_notifications) > 0:
             # Create a combined message from all notifications
             combined_message = ""
+            muteable_ids_in_current_modal.clear()
             for i, notification in enumerate(user_notifications):
                 combined_message += (
                     f"## {notification['header']}\n\n{notification['message']}"
@@ -143,9 +151,21 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                 # Add a separator between notifications, but not after the last one
                 if i < len(user_notifications) - 1:
                     combined_message += "\n\n---\n\n"
+                if notification.get("muteable") and notification.get("id"):
+                    muteable_ids_in_current_modal.append(notification["id"])
                 UserNotifications.remove(notification["id"])
 
-                # Show all notifications in a single modal
+            footer_items = [ui.input_action_button("btn_modal_cancel", _("Close"))]
+            if muteable_ids_in_current_modal:
+                footer_items.insert(
+                    0,
+                    ui.input_action_button(
+                        "btn_mute_user_notifications",
+                        _("Mute these notifications"),
+                        class_="btn-outline-secondary kh-wrap-btn",
+                    ),
+                )
+
             ui.modal_show(
                 ui.modal(
                     ui.div(
@@ -154,11 +174,17 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                     title=_("Notifications"),
                     easy_close=False,
                     size="lg",
-                    footer=ui.div(
-                        ui.input_action_button("btn_modal_cancel", _("Close")),
-                    ),
+                    footer=ui.div(*footer_items, class_="kh-notification-footer"),
                 )
             )
+
+    @reactive.Effect
+    @reactive.event(input.btn_mute_user_notifications)
+    def mute_shown_user_notifications():
+        for notification_id in list(muteable_ids_in_current_modal):
+            UserNotifications.mute(notification_id)
+        muteable_ids_in_current_modal.clear()
+        ui.modal_remove()
 
     @output
     @render.ui
@@ -174,7 +200,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
             badge = ui.tags.span(
                 {
                     "class": "badge rounded-pill text-bg-secondary",
-                    "title": _("Remote target host not configured"),
+                    "title": _("Kittyflap address is not configured"),
                 },
                 _("Remote: not configured"),
             )
@@ -184,7 +210,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
             badge = ui.tags.span(
                 {
                     "class": "badge rounded-pill text-bg-success",
-                    "title": _("Connected to Kittyflap") + f": {host}",
+                    "title": _("Connected to the Kittyflap") + f": {host}",
                 },
                 _("Remote: connected"),
             )
@@ -202,7 +228,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
             badge = ui.tags.span(
                 {
                     "class": "badge rounded-pill text-bg-secondary",
-                    "title": _("Disconnected from Kittyflap") + f": {host}",
+                    "title": _("Disconnected from the Kittyflap") + f": {host}",
                 },
                 _("Remote: disconnected"),
             )
@@ -220,7 +246,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         badge = ui.tags.span(
             {
                 "class": "badge rounded-pill text-bg-warning",
-                "title": _("Connecting to Kittyflap") + f": {host}",
+                "title": _("Connecting to the Kittyflap") + f": {host}",
             },
             ui.tags.span(
                 {
@@ -278,29 +304,29 @@ def register_session_setup(input, output, session, ctx: SessionContext):
             ui.modal(
                 ui.div(
                     ui.markdown(
-                        _("Remote-mode setup is required before Kittyhack can start.")
+                        _("Remote mode must be set up before Kittyhack can start.")
                         + "\n\n"
                         + _(
-                            "After saving, an initial sync can take several minutes (depending on pictures/models size)."
+                            "After you save, the first sync may take several minutes, depending on the size of your pictures and models."
                         )
                         + "\n"
                         + _(
-                            "Please keep this browser tab open and do not close or reload it until synchronization is finished."
+                            "Keep this browser tab open until the sync is complete."
                         )
                         + "\n"
                         + _(
-                            "Startup continues after a successful sync and service restart."
+                            "Kittyhack will finish starting after the sync and service restart."
                         )
                     ),
                     ui.input_text(
                         "remote_target_host",
-                        _("Kittyflap IP:"),
+                        _("Kittyflap IP address"),
                         value=values["remote_target_host"],
                         width="100%",
                     ),
                     ui.input_switch(
                         "remote_sync_on_first_connect",
-                        _("Sync on first connect"),
+                        _("Sync on first connection"),
                         values["remote_sync_on_first_connect"],
                     ),
                     ui.input_switch(
@@ -326,7 +352,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                         "class": "spinner-border text-primary",
                         "role": "status",
                     },
-                    ui.tags.span({"class": "visually-hidden"}, _("Loading...")),
+                    ui.tags.span({"class": "visually-hidden"}, _("Loading")),
                 ),
                 class_="d-flex align-items-center gap-3",
             ),
@@ -335,19 +361,19 @@ def register_session_setup(input, output, session, ctx: SessionContext):
 
         footer = ui.div(
             ui.input_action_button(
-                "btn_remote_sync_abort", _("Abort"), class_="btn-danger"
+                "btn_remote_sync_abort", _("Cancel sync"), class_="btn-danger"
             )
         )
         if error_reason:
             body = ui.div(
-                ui.markdown(_("Initial sync failed.")),
+                ui.markdown(_("The initial sync could not be completed.")),
                 ui.markdown(error_reason),
                 ui.div(ui.output_ui("remote_initial_sync_status_ui"), class_="mt-3"),
             )
             footer = ui.div(
-                ui.input_action_button("btn_remote_sync_failed_close", _("Back")),
+                ui.input_action_button("btn_remote_sync_failed_close", _("Edit settings")),
                 ui.input_action_button(
-                    "btn_remote_sync_abort", _("Abort"), class_="btn-danger"
+                    "btn_remote_sync_abort", _("Cancel sync"), class_="btn-danger"
                 ),
             )
 
@@ -369,7 +395,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                         _("Initial sync has completed.")
                         + "\n\n"
                         + _(
-                            "To fully apply all settings, the Kittyhack service must be restarted now."
+                            "Restart the Kittyhack service now to apply all settings."
                         )
                         + "\n"
                         + _(
@@ -394,9 +420,9 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         else:
             target_ui_url = f"http://{host}"
 
-        headline = _("Connection to Kittyflap is disconnected.")
+        headline = _("The connection to the Kittyflap was lost.")
         if manual_disconnect:
-            headline = _("Connection to Kittyflap has been disconnected manually.")
+            headline = _("Disconnected from the Kittyflap.")
 
         ui.modal_show(
             ui.modal(
@@ -405,12 +431,12 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                         headline
                         + "\n\n"
                         + _(
-                            "The Kittyflap can now be controlled directly in its web UI:"
+                            "You can control the Kittyflap directly from its web interface:"
                         )
                         + f"\n{target_ui_url}"
                     )
                 ),
-                title=_("Remote disconnected"),
+                title=_("Kittyflap disconnected"),
                 easy_close=False,
                 footer=ui.div(
                     ui.input_action_button("btn_remote_reconnect", _("Reconnect"))
@@ -423,7 +449,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         ui.modal_show(
             ui.modal(
                 ui.div(
-                    ui.markdown(_("Do you really want to disconnect from Kittyflap?"))
+                    ui.markdown(_("Disconnect from the Kittyflap now?"))
                 ),
                 title=_("Disconnect"),
                 easy_close=True,
@@ -463,6 +489,11 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         reactive.invalidate_later(0.5)
 
         if bool(ctx.remote_setup_active.get()):
+            return
+
+        # An update stops the control link on purpose. Keep the update / reboot
+        # dialog in front instead of covering it with "remote disconnected".
+        if update_dialog_is_open():
             return
 
         host, is_ready, manual_disconnect = ctx._remote_connection_state()
@@ -512,11 +543,13 @@ def register_session_setup(input, output, session, ctx: SessionContext):
             ctx.remote_connected_once.set(True)
             ui.modal_remove()
             ui.notification_show(
-                _("Disconnected from Kittyflap."), duration=4, type="message"
+                _("Disconnected from the Kittyflap."), duration=4, type="message"
             )
         except Exception as e:
             ui.notification_show(
-                _("Failed to disconnect from Kittyflap: {}.").format(e),
+                _(
+                    "The Kittyflap could not be disconnected. Check the connection, then try again: {}."
+                ).format(e),
                 duration=8,
                 type="error",
             )
@@ -535,13 +568,15 @@ def register_session_setup(input, output, session, ctx: SessionContext):
             ctx.remote_disconnect_modal_open.set(False)
             ui.modal_remove()
             ui.notification_show(
-                _("Reconnecting to Kittyflap, please wait..."),
+                _("Reconnecting to the Kittyflap."),
                 duration=15,
                 type="message",
             )
         except Exception as e:
             ui.notification_show(
-                _("Failed to reconnect to Kittyflap: {}.").format(e),
+                _(
+                    "The Kittyflap could not be reconnected. Check its address and network connection, then try again: {}."
+                ).format(e),
                 duration=8,
                 type="error",
             )
@@ -559,15 +594,15 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         items_count = len(items) if isinstance(items, list) else 0
 
         if not requested:
-            headline = _("Waiting for sync to start...")
+            headline = _("Waiting for sync to start")
         elif in_progress:
-            headline = _("Initial sync in progress...")
+            headline = _("Syncing with the Kittyflap")
         elif ok is True:
             headline = _("Initial sync completed.")
         elif ok is False:
-            headline = _("Initial sync failed.")
+            headline = _("The initial sync could not be completed.")
         else:
-            headline = _("Connecting to Kittyflap...")
+            headline = _("Connecting to the Kittyflap")
 
         detail = _("Transferred: {:.1f} MB").format(bytes_mb)
         if items_count:
@@ -577,7 +612,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
 
         extra = ""
         if requested and ok is False and reason:
-            extra = _("Reason: {} ").format(reason)
+            extra = _("Reason: {}").format(reason)
 
         return ui.div(
             ui.markdown(f"**{headline}**"),
@@ -665,7 +700,9 @@ def register_session_setup(input, output, session, ctx: SessionContext):
 
         if requested and ok is None and not in_progress and age > connect_timeout:
             show_remote_initial_sync_modal(
-                error_reason=_("Could not connect to the remote Kittyflap.")
+                error_reason=_(
+                    "The Kittyflap could not be reached. Check its address and network connection, then try again."
+                )
             )
             ctx.remote_sync_modal_open.set(True)
             reactive.invalidate_later(2.0)
@@ -677,7 +714,11 @@ def register_session_setup(input, output, session, ctx: SessionContext):
             and (in_progress or started_at)
             and sync_age > sync_timeout
         ):
-            show_remote_initial_sync_modal(error_reason=_("Initial sync timed out."))
+            show_remote_initial_sync_modal(
+                error_reason=_(
+                    "The initial sync took too long. Check the connection, then try again."
+                )
+            )
             ctx.remote_sync_modal_open.set(True)
             reactive.invalidate_later(2.0)
             return
@@ -691,12 +732,14 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         ):
             ctx.remote_sync_finalized.set(True)
 
-            # Sync may have replaced config.ini: reload it now so next startup uses the synced values.
+            # Sync replaced kittyhack.db. Reload so the UI uses the flap's settings.
             try:
                 load_config()
             except Exception as e:
                 ui.notification_show(
-                    _("Failed to reload synced config.ini: {}.").format(e),
+                    _(
+                        "The synced settings could not be loaded. Check the logs, then try the sync again: {}."
+                    ).format(e),
                     duration=12,
                     type="error",
                 )
@@ -729,7 +772,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
 
         if requested and not in_progress and ok is False:
             reason = (st.get("reason") or "").strip()
-            show_remote_initial_sync_modal(error_reason=reason or _("unknown error"))
+            show_remote_initial_sync_modal(error_reason=reason or _("Unknown error"))
             ctx.remote_sync_modal_open.set(True)
             reactive.invalidate_later(2.0)
             return
@@ -744,7 +787,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         host = (input.remote_target_host() or "").strip()
         if not host:
             ui.notification_show(
-                _("Remote target host must not be empty."), duration=8, type="error"
+                _("Enter the Kittyflap IP address."), duration=8, type="error"
             )
             return
         port = 8888
@@ -759,31 +802,32 @@ def register_session_setup(input, output, session, ctx: SessionContext):
 
         sync_first = bool(input.remote_sync_on_first_connect())
         sync_labelstudio = bool(input.remote_sync_labelstudio())
-        remote_cfg_path = os.path.join(kittyhack_root(), "config.remote.ini")
-        parser = configparser.ConfigParser()
-        parser["Settings"] = {
-            "remote_target_host": host,
-            "remote_control_port": str(port),
-            "remote_control_timeout": str(timeout),
-            "remote_sync_on_first_connect": str(sync_first),
-            "remote_sync_labelstudio": str(sync_labelstudio),
-        }
-        try:
-            with open(remote_cfg_path, "w", encoding="utf-8") as f:
-                parser.write(f)
-        except Exception as e:
-            ui.notification_show(
-                _("Failed to write config.remote.ini: {}").format(e),
-                duration=10,
-                type="error",
-            )
-            return
-
         CONFIG["REMOTE_TARGET_HOST"] = host
         CONFIG["REMOTE_CONTROL_PORT"] = port
         CONFIG["REMOTE_CONTROL_TIMEOUT"] = timeout
         CONFIG["REMOTE_SYNC_ON_FIRST_CONNECT"] = sync_first
         CONFIG["REMOTE_SYNC_LABELSTUDIO"] = sync_labelstudio
+        try:
+            saved = True
+            for key in (
+                "REMOTE_TARGET_HOST",
+                "REMOTE_CONTROL_PORT",
+                "REMOTE_CONTROL_TIMEOUT",
+                "REMOTE_SYNC_ON_FIRST_CONNECT",
+                "REMOTE_SYNC_LABELSTUDIO",
+            ):
+                saved = update_single_config_parameter(key) and saved
+            if not saved:
+                raise RuntimeError("settings write failed")
+        except Exception as e:
+            ui.notification_show(
+                _(
+                    "The remote settings could not be saved. Check file permissions, then try again: {}"
+                ).format(e),
+                duration=10,
+                type="error",
+            )
+            return
 
         if sync_first:
             # Start sync (non-blocking). Progress is shown in a non-closable modal and
@@ -797,7 +841,9 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                 ctx.remote_sync_status.set(client.get_sync_status())
             except Exception as e:
                 ui.notification_show(
-                    _("Failed to initialize remote control client: {}.").format(e),
+                    _(
+                        "Remote control could not be started. Check the Kittyflap address and logs, then try again: {}."
+                    ).format(e),
                     duration=12,
                     type="error",
                 )
@@ -812,7 +858,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         ctx.remote_setup_active.set(False)
         ui.modal_remove()
         ui.notification_show(
-            _("Remote-mode configuration saved. Starting services..."),
+            _("Remote settings saved. Services are starting."),
             duration=8,
             type="message",
         )
@@ -844,7 +890,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         except Exception:
             pass
 
-            # Clear target host and persist cleanup in config.remote.ini/config.ini.
+            # Clear the target host and persist that in the settings table.
         CONFIG["REMOTE_TARGET_HOST"] = ""
         try:
             update_single_config_parameter("REMOTE_TARGET_HOST")
@@ -870,7 +916,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
 
         ui.modal_remove()
         ui.notification_show(
-            _("Initial sync aborted. Remote target host has been cleared."),
+            _("Initial sync canceled. The Kittyflap address was cleared."),
             duration=8,
             type="message",
         )
@@ -889,7 +935,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
             pass
 
         ui.notification_show(
-            _("Restarting Kittyhack service..."), duration=10, type="message"
+            _("Restarting Kittyhack service."), duration=10, type="message"
         )
 
         def _do_restart():
@@ -914,7 +960,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
     ):
         ui.notification_show(
             _(
-                "A new version of Kittyhack is available: {}. Go to the [INFO] section for update instructions."
+                "Kittyhack {} is available. Open Info to review and install the update."
             ).format(CONFIG["LATEST_VERSION"]),
             duration=10,
             type="message",
@@ -925,13 +971,13 @@ def register_session_setup(input, output, session, ctx: SessionContext):
     if startup.free_disk_space < 500:
         if kittyflap_db_file_exists:
             additional_info = _(
-                " or consider deleting pictures from the original kittyflap database file. For more details, see the [INFO] section."
+                " You can also remove pictures from the original Kittyflap database. Open Info for details."
             )
         else:
             additional_info = ""
         ui.notification_show(
             _(
-                "Remaining disk space is low: {:.1f} MB. Please free up some space (e.g. reduce the max amount of pictures in the database{})."
+                "Only {:.1f} MB of disk space remains. Free some space by reducing the picture limit in the database.{}"
             ).format(startup.free_disk_space, additional_info),
             duration=20,
             type="warning",
@@ -995,7 +1041,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
             remaining_minutes = max(1, round(remaining_seconds / 60))
             ui.notification_show(
                 _(
-                    "Database migration in progress. Performance may be a bit slower until finished ({} pictures remaining, ~{} min)."
+                    "Database migration is in progress. Kittyhack may be slower until it finishes. {} pictures remain, about {} minutes."
                 ).format(len(startup.ids_with_original_blob), remaining_minutes),
                 duration=14,
                 type="warning",
@@ -1018,12 +1064,12 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         if ram_usage_percentage >= 90:
             if LabelStudioInstall.get_labelstudio_status() == True:
                 additional_text = " " + _(
-                    "LabelStudio is running. If you do not need it anymore to label images, please stop it in the [AI TRAINING] section."
+                    "Label Studio is running. If you are not labeling images, stop it in AI training to free memory."
                 )
             else:
                 additional_text = ""
             ui.notification_show(
-                _("Warning: RAM usage is at {:.1f}%!{}").format(
+                _("RAM usage is {:.1f}%.{}").format(
                     ram_usage_percentage, additional_text
                 ),
                 duration=20,
@@ -1075,7 +1121,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                     try:
                         ui.update_action_button(
                             "bManualOverride",
-                            label=_("Manual unlock not yet initialized..."),
+                            label=_("Unlock inside"),
                             icon=icon_svg("unlock"),
                             disabled=True,
                         )
@@ -1104,7 +1150,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                 try:
                     ui.update_action_button(
                         "bManualOverride",
-                        label=_("Manual unlock not yet initialized..."),
+                        label=_("Unlock inside"),
                         icon=icon_svg("unlock"),
                         disabled=True,
                     )
@@ -1170,14 +1216,14 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                 if inside_lock_state:
                     ui.update_action_button(
                         "bManualOverride",
-                        label=_("Close inside now"),
+                        label=_("Lock inside"),
                         icon=icon_svg("lock"),
                         disabled=False,
                     )
                 else:
                     ui.update_action_button(
                         "bManualOverride",
-                        label=_("Open inside now"),
+                        label=_("Unlock inside"),
                         icon=icon_svg("lock-open"),
                         disabled=False,
                     )
@@ -1305,11 +1351,11 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                             '<div class="placeholder-image" style="padding-top: 20px; padding-bottom: 20px;">'
                             "<div></div>"
                             "<div><strong>"
-                            + _("Connecting to the IP camera...")
+                            + _("Connecting to the IP camera")
                             + "</strong></div>"
                             "<div>"
                             + _(
-                                "Please wait a few seconds while the stream is initialized."
+                                "The stream may take a few seconds to start."
                             )
                             + "</div>"
                             + _spinner_html()
@@ -1326,7 +1372,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                             reconnect_hint = (
                                 "<div>"
                                 + _(
-                                    "If the stream does not recover, verify the URL, camera network connection, and camera credentials."
+                                "If the stream does not recover, check the URL, network connection, and camera credentials."
                                 )
                                 + "</div>"
                             )
@@ -1338,13 +1384,13 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                             + "</strong></div>"
                             "<div>"
                             + _(
-                                "Please check the stream URL and the network connection of your IP camera."
+                                "Check the stream URL and the IP camera's network connection."
                             )
                             + "</div>"
                             + _spinner_html()
                             + "<div>"
                             + _(
-                                "If you have just changed the camera settings, please wait a few seconds for the camera to reconnect."
+                                "If you just changed the camera settings, allow a few seconds for it to reconnect."
                             )
                             + "</div>"
                             "<div>"
@@ -1361,7 +1407,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                         extra_hint = (
                             "<div>"
                             + _(
-                                'If this message does not disappear within 60 seconds, please (re-)install the required camera drivers with the "Reinstall Camera Driver" button in the "System" section.'
+                                'If this message remains for 60 seconds, use "Reinstall camera driver" in System.'
                             )
                             + "</div>"
                         )
@@ -1372,7 +1418,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                         + _("Connection to the camera failed.")
                         + "</strong></div>"
                         "<div>"
-                        + _("Please wait...")
+                        + _("Waiting for the camera")
                         + "</div>"
                         + _spinner_html()
                         + extra_hint
@@ -1414,7 +1460,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                             + "</strong></div>"
                             "<div>"
                             + _(
-                                "Please check your external IP camera connection or network settings."
+                                "Check the external IP camera connection and network settings."
                             )
                             + "</div>"
                             + _spinner_html()
@@ -1459,7 +1505,9 @@ def register_session_setup(input, output, session, ctx: SessionContext):
             logging.error(f"Failed to fetch the live view image: {e}")
             result = ui.HTML(
                 '<div class="placeholder-image"><strong>'
-                + _("An error occured while fetching the live view image.")
+                + _(
+                    "The live view image could not be loaded. Check the camera connection, then try again."
+                )
                 + "</strong></div>"
             )
 
@@ -1518,20 +1566,20 @@ def register_session_setup(input, output, session, ctx: SessionContext):
             host, is_ready, manual_disconnect = ctx._remote_connection_state()
 
             remote_variant = "muted"
-            remote_title = _("Remote target host not configured")
+            remote_title = _("Kittyflap address is not configured")
             remote_aria = _("Remote: not configured")
 
             if host and is_ready:
                 remote_variant = "ok"
-                remote_title = _("Connected to Kittyflap") + f": {host}"
+                remote_title = _("Connected to the Kittyflap") + f": {host}"
                 remote_aria = _("Remote: connected")
             elif host and manual_disconnect:
                 remote_variant = "muted"
-                remote_title = _("Disconnected from Kittyflap") + f": {host}"
+                remote_title = _("Disconnected from the Kittyflap") + f": {host}"
                 remote_aria = _("Remote: disconnected")
             elif host:
                 remote_variant = "blocked"
-                remote_title = _("Connecting to Kittyflap") + f": {host}"
+                remote_title = _("Connecting to the Kittyflap") + f": {host}"
                 remote_aria = _("Remote: connecting")
 
             remote_indicator_html = (
@@ -1572,7 +1620,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                 prey_banner_html = (
                     '<div class="live-view-banner live-view-banner-warn live-view-overlay-banner" role="status">'
                     + _(
-                        "Prey detected {0:.0f}s ago. Inside lock remains closed for {1:.0f}s."
+                        "Prey detected {0:.0f} seconds ago. The inside lock stays locked for {1:.0f} more seconds."
                     ).format(
                         float(st.get("delta_to_last_prey_detection", 0.0)),
                         float(st.get("time_until_release", 0.0)),
@@ -1588,20 +1636,20 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                 + _pill_html(
                     inside_lock_icon,
                     inside_lock_variant,
-                    aria_label=_("Inside lock: Open")
+                    aria_label=_("Inside lock: Unlocked")
                     if inside_lock_is_open
-                    else _("Inside lock: Closed"),
-                    title=_("Inside lock: Open")
+                    else _("Inside lock: Locked"),
+                    title=_("Inside lock: Unlocked")
                     if inside_lock_is_open
-                    else _("Inside lock: Closed"),
+                    else _("Inside lock: Locked"),
                 )
                 + _pill_html(
                     inside_motion_icon,
                     inside_motion_variant,
-                    aria_label=_("Inside motion: Motion")
+                    aria_label=_("Inside motion: Detected")
                     if inside_motion
                     else _("Inside motion: No motion"),
-                    title=_("Inside motion: Motion")
+                    title=_("Inside motion: Detected")
                     if inside_motion
                     else _("Inside motion: No motion"),
                 )
@@ -1611,20 +1659,20 @@ def register_session_setup(input, output, session, ctx: SessionContext):
                 + _pill_html(
                     outside_lock_icon,
                     outside_lock_variant,
-                    aria_label=_("Outside lock: Open")
+                    aria_label=_("Outside lock: Unlocked")
                     if outside_lock_is_open
-                    else _("Outside lock: Closed"),
-                    title=_("Outside lock: Open")
+                    else _("Outside lock: Locked"),
+                    title=_("Outside lock: Unlocked")
                     if outside_lock_is_open
-                    else _("Outside lock: Closed"),
+                    else _("Outside lock: Locked"),
                 )
                 + _pill_html(
                     outside_motion_icon,
                     outside_motion_variant,
-                    aria_label=_("Outside motion: Motion")
+                    aria_label=_("Outside motion: Detected")
                     if outside_motion
                     else _("Outside motion: No motion"),
-                    title=_("Outside motion: Motion")
+                    title=_("Outside motion: Detected")
                     if outside_motion
                     else _("Outside motion: No motion"),
                 )
@@ -1637,7 +1685,7 @@ def register_session_setup(input, output, session, ctx: SessionContext):
         else:
             unavailable_text = status_unavailable_label
             if is_remote_mode() and bool(st.get("remote_waiting")):
-                unavailable_text = _("Remote control not connected")
+                unavailable_text = _("Remote control is not connected")
 
             status_html = (
                 '<div class="live-view-statusbar">'
@@ -1653,11 +1701,6 @@ def register_session_setup(input, output, session, ctx: SessionContext):
     @reactive.Effect
     def immediate_bg_task_site_load():
         startup.immediate_bg_task("site load")
-
-    @reactive.Effect
-    @reactive.event(input.button_reload)
-    def immediate_bg_task_reload_button():
-        startup.immediate_bg_task("reload button")
 
     @reactive.Effect
     @reactive.event(input.button_today)

@@ -41,10 +41,20 @@ dmesg > "${LOGPATH}/kernel.log"
 uname -r > "${LOGPATH}/kernel_version.log"
 systemctl list-units --type=service --all > "${LOGPATH}/systemd-services.log"
 
-# Get the current IP address
-CURRENT_IP=$(hostname -I | awk '{print $1}')
+# Get the current IP address. hostname -I is Debian-specific.
+primary_ipv4() {
+    local host=""
+    if host="$(hostname -I 2>/dev/null | awk '{print $1}')" && [[ -n "$host" ]]; then
+        printf '%s\n' "$host"
+        return
+    fi
+    host="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}' || true)"
+    printf '%s\n' "${host:-127.0.0.1}"
+}
+CURRENT_IP="$(primary_ipv4)"
 
 FAIL_COUNT=0
+MODEL_SERVER_DONE=0
 
 INSTALL_LEGACY_KITTYHACK=1
 
@@ -164,25 +174,56 @@ enable_service() {
     fi
 }
 
+upsert_db_setting() {
+    local db="$1"
+    local key="$2"
+    local json_value="$3"
+    python3 - "$db" "$key" "$json_value" << 'PY'
+import sqlite3
+import sys
+from datetime import datetime, timezone
+
+db, key, value = sys.argv[1], sys.argv[2], sys.argv[3]
+conn = sqlite3.connect(db, timeout=30, isolation_level=None)
+conn.execute("PRAGMA busy_timeout = 30000")
+conn.execute(
+    """CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )"""
+)
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+conn.execute("BEGIN IMMEDIATE")
+conn.execute(
+    "INSERT INTO settings(key, value, updated_at) VALUES (?, ?, ?) "
+    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+    (key, value, now),
+)
+conn.execute("COMMIT")
+conn.close()
+PY
+}
+
 set_config_language() {
-    local config_file="$1"
+    local install_dir="$1"
+    local config_file="${install_dir}/config.ini"
     local lang="en"
 
     if [[ "$LANGUAGE" == "de" ]]; then
         lang="de"
     fi
 
+    if upsert_db_setting "${install_dir}/kittyhack.db" "LANGUAGE" "\"${lang}\""; then
+        echo -e "${GREEN}Stored setup language in kittyhack.db: language = ${lang}${NC}"
+    else
+        ((FAIL_COUNT++))
+        echo -e "${RED}Failed to store language in kittyhack.db.${NC}"
+    fi
+
+    # A leftover config.ini is imported on the next start and would overwrite the
+    # database row. Keep the language in that file until the import deletes it.
     if [[ ! -f "$config_file" ]]; then
-        cat > "$config_file" << EOF
-[Settings]
-language = ${lang}
-EOF
-        if [[ $? -eq 0 ]]; then
-            echo -e "${GREEN}Created config.ini and set setup language: language = ${lang}${NC}"
-        else
-            ((FAIL_COUNT++))
-            echo -e "${RED}Failed to create ${config_file}.${NC}"
-        fi
         return 0
     fi
 
@@ -252,6 +293,7 @@ EOF
 
 # Full installation process
 install_full() {
+    INSTALL_CAMERA_DRIVERS=true
     echo -e "${CYAN}--- BASE INSTALL: Check internet connection ---${NC}"
     if ! ping -c 1 google.com &>/dev/null; then
         echo -e "${RED}No internet connection detected. Please check your connection and try again.${NC}"
@@ -430,11 +472,13 @@ install_full() {
         fi
     done
 
+    # The libcamera GStreamer plugin is installed later from the pinned debs in
+    # camera_dependencies.txt. The archive build depends on libcamera 0.5, which
+    # the Kittyflap apt pin on libcamera-ipa 0.2.0 will not allow.
     GSTREAMER_PACKAGES=(
         gstreamer1.0-tools
         gstreamer1.0-plugins-base
         gstreamer1.0-plugins-good
-        gstreamer1.0-libcamera
     )
     echo -e "${GREY}Installing all GStreamer packages...${NC}"
     # Wait for any existing package operations to complete
@@ -454,7 +498,7 @@ install_full() {
     done
 
     for pkg in "${GSTREAMER_PACKAGES[@]}"; do
-        if dpkg -l | grep -q "$pkg"; then
+        if dpkg-query -W -f '${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
             echo -e "${GREEN}$pkg installed successfully.${NC}"
         else
             ((FAIL_COUNT++))
@@ -631,12 +675,12 @@ install_remote_mode() {
         echo -e "  - Debian (oder Derivat, z.B. Ubuntu)"
         echo -e "  - Möglichst ein sauberes System oder eine VM"
         echo -e "  - AMD64 (normale 64-bit Intel/AMD PCs, nicht Raspberry Pi/ARM)"
-        echo -e "  - Mindestens 2GB RAM"
+        echo -e "  - Mindestens 4GB RAM"
         echo -e "Folgende Pakete werden installiert:"
         echo -e "  - python3, python3-venv, python3-pip, gettext"
         echo -e "  - rsync, git, curl, ca-certificates"
         echo -e "  - libgl1, libglib2.0-0"
-        echo -e "Zusatzlich: Es wird ein Python 3.11 Virtualenv erstellt und die Abhangigkeiten aus requirements_remote.txt installiert."
+        echo -e "Zusatzlich: Es wird ein Python 3.14 Virtualenv erstellt und die Abhangigkeiten aus requirements_remote.txt installiert."
         read -r -p "Mit diesen Installationen fortfahren? (y/N): " CONFIRM_REMOTE_MODE
     else
         echo -e "NOTE: The installation requires root rights. It is strongly recommended to install it on an separate system, which acts only as a kittyhack remote controller."
@@ -645,12 +689,12 @@ install_remote_mode() {
         echo -e "  - Debian (or derivative, e.g. Ubuntu)"
         echo -e "  - Ideally a clean system or VM"
         echo -e "  - AMD64 (regular 64-bit Intel/AMD PCs, not Raspberry Pi/ARM)"
-        echo -e "  - At least 2GB RAM"
+        echo -e "  - At least 4GB RAM"
         echo -e "The following packages will be installed:"
         echo -e "  - python3, python3-venv, python3-pip, gettext"
         echo -e "  - rsync, git, curl, ca-certificates"
         echo -e "  - libgl1, libglib2.0-0"
-        echo -e "Additionally: A Python 3.11 virtualenv will be created and dependencies from requirements_remote.txt will be installed."
+        echo -e "Additionally: A Python 3.14 virtualenv will be created and dependencies from requirements_remote.txt will be installed."
         read -r -p "Continue with these installations? (y/N): " CONFIRM_REMOTE_MODE
     fi
 
@@ -732,11 +776,12 @@ install_remote_mode() {
     # Create remote-mode marker file
     touch "${KITTYHACK_INSTALL_DIR}/.remote-mode"
 
-    # Configure config.ini (best-effort): camera source on remote nodes
+    # Camera source on remote nodes. A leftover config.ini is imported on first start.
     if [ -f "${KITTYHACK_INSTALL_DIR}/config.ini" ]; then
         sed -i "s/^camera_source\s*=\s*.*/camera_source = ip_camera/" "${KITTYHACK_INSTALL_DIR}/config.ini" || true
     fi
-    set_config_language "${KITTYHACK_INSTALL_DIR}/config.ini"
+    upsert_db_setting "${KITTYHACK_INSTALL_DIR}/kittyhack.db" "CAMERA_SOURCE" "\"ip_camera\"" || true
+    set_config_language "${KITTYHACK_INSTALL_DIR}"
 
     echo -e "${CYAN}--- REMOTE MODE INSTALL Step 4: Install/enable kittyhack.service ---${NC}"
     cat << EOF > /etc/systemd/system/kittyhack.service
@@ -750,7 +795,7 @@ Group=root
 WorkingDirectory=${KITTYHACK_INSTALL_DIR}
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${KITTYHACK_INSTALL_DIR}/.venv/bin"
 ExecStartPre=/bin/bash ${KITTYHACK_INSTALL_DIR}/setup/ensure_venv.sh --apply --root ${KITTYHACK_INSTALL_DIR}
-ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 80 --ws-ping-interval 30 --ws-ping-timeout 120
+ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 80 --ws-ping-interval 30 --ws-ping-timeout 300
 Restart=always
 RestartSec=5
 TimeoutStartSec=3600
@@ -777,6 +822,32 @@ EOF
     fi
 
     echo -e "${GREEN}Remote-mode installation complete.${NC}"
+
+    local model_answer=""
+    local model_arch
+    model_arch="$(uname -m)"
+    case "$model_arch" in
+        arm*|aarch64)
+            return 0
+            ;;
+    esac
+    if [[ -f /proc/device-tree/model ]] && tr -d '\0' < /proc/device-tree/model | grep -qi raspberry; then
+        return 0
+    fi
+    if [ "$LANGUAGE" == "de" ]; then
+        read -r -p "Modellserver auf diesem Computer ebenfalls installieren? (y/N): " model_answer || true
+    else
+        read -r -p "Also install the model server on this computer? (y/N): " model_answer || true
+    fi
+    case "${model_answer,,}" in
+        y|yes|j|ja)
+            if ! bash "${KITTYHACK_INSTALL_DIR}/setup/install_model_server.sh" install \
+                --sources "${KITTYHACK_INSTALL_DIR}" --lang "$LANGUAGE"; then
+                echo -e "${YELLOW}Model server installation failed. Kittyhack remote-mode is still installed.${NC}"
+                FAIL_COUNT=$((FAIL_COUNT + 1))
+            fi
+            ;;
+    esac
 }
 
 # Update Kittyhack only
@@ -900,8 +971,14 @@ install_kittyhack() {
         cp /tmp/kittyhack.db.bak "${KITTYHACK_INSTALL_DIR}/kittyhack.db" && rm -f /tmp/kittyhack.db.bak
     fi
 
-    # Set configured UI language in config.ini based on setup language.
-    set_config_language "${KITTYHACK_INSTALL_DIR}/config.ini"
+    # Set configured UI language based on the setup language.
+    set_config_language "${KITTYHACK_INSTALL_DIR}"
+
+    # First-time install only. camera_dependencies.txt exists only after checkout,
+    # and the driver debs must be in place before kittyhack_control starts the camera.
+    if [[ "${INSTALL_CAMERA_DRIVERS:-false}" == true ]]; then
+        reinstall_camera_drivers || ((FAIL_COUNT++))
+    fi
 
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 2: Set up Python virtual environment ---${NC}"
     if ! bash "${KITTYHACK_INSTALL_DIR}/setup/ensure_venv.sh" --bootstrap --root "${KITTYHACK_INSTALL_DIR}"; then
@@ -955,7 +1032,7 @@ Group=root
 WorkingDirectory=${KITTYHACK_INSTALL_DIR}
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${KITTYHACK_INSTALL_DIR}/.venv/bin"
 ExecStartPre=/bin/bash ${KITTYHACK_INSTALL_DIR}/setup/ensure_venv.sh --apply --root ${KITTYHACK_INSTALL_DIR}
-ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/uvicorn app:app --host 0.0.0.0 --port 80 --ws-ping-interval 30 --ws-ping-timeout 120
+ExecStart=${KITTYHACK_INSTALL_DIR}/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 80 --ws-ping-interval 30 --ws-ping-timeout 300
 Restart=always
 RestartSec=5
 TimeoutStartSec=3600
@@ -1034,6 +1111,32 @@ uninstall_kittyhack() {
         REMOVE_DIR="$wd"
     fi
 
+    local model_unit="/etc/systemd/system/kittyhack-model-server.service"
+    local model_script="${REMOVE_DIR}/setup/install_model_server.sh"
+    if [[ -f "$model_unit" ]]; then
+        if [[ -f "$model_script" ]]; then
+            bash "$model_script" uninstall --lang "$LANGUAGE" || true
+        else
+            local model_answer="" model_dir=""
+            model_dir="$(grep -E '^WorkingDirectory=' "$model_unit" | head -n1 | cut -d= -f2- || true)"
+            if [ "$LANGUAGE" == "de" ]; then
+                read -r -p "Modellserver und ${model_dir:-die Installationsdateien} entfernen? (y/N): " model_answer || true
+            else
+                read -r -p "Remove the model server and ${model_dir:-its files}? (y/N): " model_answer || true
+            fi
+            case "${model_answer,,}" in
+                y|yes|j|ja)
+                    systemctl disable --now kittyhack-model-server.service 2>/dev/null || true
+                    rm -f "$model_unit"
+                    systemctl daemon-reload || true
+                    if [[ -n "$model_dir" && "$model_dir" != "/" && "$model_dir" != "/root" && -d "$model_dir" ]]; then
+                        rm -rf "$model_dir"
+                    fi
+                    ;;
+            esac
+        fi
+    fi
+
     echo -e "${CYAN}--- UNINSTALL: Stop and disable services ---${NC}"
     systemctl stop kittyhack_control.service 2>/dev/null || true
     systemctl stop kittyhack.service 2>/dev/null || true
@@ -1108,40 +1211,82 @@ uninstall_kittyhack() {
     echo -e "${GREEN}Uninstall complete.${NC}"
 }
 
+# Same sequence as the System-tab "Reinstall camera driver" action:
+# drop libcamera SONAMEs newer than 0.3, then dpkg -i the pinned debs.
+# dpkg does not consult the Kittyflap apt pin, so this works on a first install
+# that already has libcamera-ipa 0.2.0 held, and on one that has no libcamera yet.
+remove_libcamera_packages_above_0_3() {
+    echo -e "${GREY}Uninstalling libcamera packages above version 0.3...${NC}"
+    local status pkg name major minor
+    local found=false
+    while read -r status pkg; do
+        [[ "$status" == ii* ]] || continue
+        name="${pkg%%:*}"
+        if [[ "$name" =~ ^libcamera([0-9]+)\.([0-9]+)$ ]]; then
+            major="${BASH_REMATCH[1]}"
+            minor="${BASH_REMATCH[2]}"
+            if (( major > 0 || minor > 3 )); then
+                found=true
+                echo -e "${GREY}Uninstalling ${name}...${NC}"
+                if ! apt-get remove -y "$name"; then
+                    echo -e "${YELLOW}Failed to remove ${name}. Continuing with the pinned driver install.${NC}"
+                fi
+            fi
+        fi
+    done < <(dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' 2>/dev/null || true)
+    if [[ "$found" == false ]]; then
+        echo -e "${GREY}No libcamera packages above version 0.3 installed.${NC}"
+    fi
+}
+
 reinstall_camera_drivers() {
     echo -e "${CYAN}--- CAMERA DRIVER REINSTALL ---${NC}"
-    # Download and install camera drivers
     local base_url="https://github.com/floppyFK/kittyhack-dependencies/raw/refs/heads/main/camera"
     local dependencies_file="${KITTYHACK_INSTALL_DIR}/camera_dependencies.txt"
     local download_dir="/tmp/camera_drivers"
+    local package
+    local -a deb_paths=()
 
-    mkdir -p "$download_dir"
-
-    if [[ -f "$dependencies_file" ]]; then
-        while IFS= read -r package; do
-            echo -e "${GREY}Downloading $package...${NC}"
-            curl -L -o "${download_dir}/${package}" "${base_url}/${package}"
-            if [[ $? -ne 0 ]]; then
-                ((FAIL_COUNT++))
-                echo -e "${RED}Failed to download $package.${NC}"
-                continue
-            fi
-        done < "$dependencies_file"
-    else
+    if [[ ! -f "$dependencies_file" ]]; then
         echo -e "${RED}Dependencies file $dependencies_file not found. Please report this in the GitHub repository.${NC}"
         return 1
     fi
 
-    echo -e "${GREY}Installing downloaded packages...${NC}"
-    dpkg -i ${download_dir}/*.deb
-    if [[ $? -ne 0 ]]; then
-        ((FAIL_COUNT++))
-        echo -e "${RED}Failed to install some packages.${NC}"
-    else
-        echo -e "${GREEN}All packages installed successfully.${NC}"
+    mkdir -p "$download_dir"
+    rm -f "${download_dir}"/*.deb
+
+    while IFS= read -r package || [[ -n "$package" ]]; do
+        package="${package%%$'\r'}"
+        package="${package#"${package%%[![:space:]]*}"}"
+        package="${package%"${package##*[![:space:]]}"}"
+        [[ -z "$package" || "$package" == \#* ]] && continue
+        echo -e "${GREY}Downloading $package...${NC}"
+        if ! curl -fsSL -o "${download_dir}/${package}" "${base_url}/${package}"; then
+            echo -e "${RED}Failed to download $package.${NC}"
+            rm -rf "$download_dir"
+            return 1
+        fi
+        deb_paths+=("${download_dir}/${package}")
+    done < "$dependencies_file"
+
+    if [[ ${#deb_paths[@]} -eq 0 ]]; then
+        echo -e "${RED}No camera packages listed in ${dependencies_file}.${NC}"
+        rm -rf "$download_dir"
+        return 1
     fi
 
+    remove_libcamera_packages_above_0_3
+
+    echo -e "${GREY}Installing downloaded packages...${NC}"
+    if ! dpkg -i "${deb_paths[@]}"; then
+        echo -e "${RED}Failed to install some packages.${NC}"
+        rm -rf "$download_dir"
+        return 1
+    fi
+
+    echo -e "${GREEN}All packages installed successfully.${NC}"
     rm -rf "$download_dir"
+    return 0
 }
 
 # Main script logic
@@ -1157,13 +1302,13 @@ fi
 # When true: do not clone from GitHub, use this repo folder as install source.
 USE_LOCAL_SOURCES=false
 
-# The directory where kittyhack will run from (venv, config.ini, kittyhack.db).
+# The directory where kittyhack will run from (venv, kittyhack.db).
 # Default is /root/kittyhack for backward compatibility.
 KITTYHACK_INSTALL_DIR="/root/kittyhack"
 
 print_usage() {
     cat << EOF
-Usage: $(basename "$0") [en|de] [--use-local-sources] [--sources-dir=/path] [--lang=en|de] [--version=<tag-or-commit>] [--uninstall]
+Usage: $(basename "$0") [en|de] [--use-local-sources] [--sources-dir=/path] [--lang=en|de] [--version=<tag-or-commit>] [--uninstall] [--model-server=cpu|cuda|rocm]
 
   --use-local-sources   Use the current repo folder (no git clone).
   --sources-dir=/path   Use a specific local repo folder (implies --use-local-sources).
@@ -1175,6 +1320,7 @@ EOF
 
 # Parse args (order independent)
 LANGUAGE="en"
+MODEL_SERVER_VARIANT=""
 for arg in "$@"; do
     case "$arg" in
         --uninstall)
@@ -1195,6 +1341,9 @@ for arg in "$@"; do
             ;;
         en|de)
             LANGUAGE="$arg"
+            ;;
+        --model-server=cpu|--model-server=cuda|--model-server=rocm)
+            MODEL_SERVER_VARIANT="${arg#*=}"
             ;;
         -h|--help)
             print_usage
@@ -1232,14 +1381,14 @@ ensure_uv_installed() {
     fi
 
     if ! command -v uv >/dev/null 2>&1; then
-        echo -e "${RED}Failed to install uv. Please install it manually (https://astral.sh/uv) or install python3.11 via apt.${NC}"
+        echo -e "${RED}Failed to install uv. Please install it manually (https://astral.sh/uv) or install python3.14 via apt.${NC}"
         return 1
     fi
 }
 
 ensure_python311_available() {
     # Back-compat wrapper: preferred path is setup/ensure_venv.sh reading REQUIRED_PYTHON.
-    local required="3.11"
+    local required="3.14"
     if [[ -f "$(dirname "${BASH_SOURCE[0]}")/REQUIRED_PYTHON" ]]; then
         required="$(tr -d '[:space:]' < "$(dirname "${BASH_SOURCE[0]}")/REQUIRED_PYTHON")"
     elif [[ -f "${KITTYHACK_INSTALL_DIR:-}/setup/REQUIRED_PYTHON" ]]; then
@@ -1279,7 +1428,7 @@ create_venv_py311() {
         return $?
     fi
 
-    local required="3.11"
+    local required="3.14"
     if [[ -f "${root}/setup/REQUIRED_PYTHON" ]]; then
         required="$(tr -d '[:space:]' < "${root}/setup/REQUIRED_PYTHON")"
     fi
@@ -1299,8 +1448,41 @@ if [ -n "$SCRIPT_LANG" ]; then
     LANGUAGE="$SCRIPT_LANG"
 fi
 
+install_model_server_menu() {
+    local sources="" tmp=""
+    if [[ -n "${KITTYHACK_ROOT:-}" && -f "${KITTYHACK_ROOT}/model-server/server.py" ]]; then
+        sources="$KITTYHACK_ROOT"
+    elif [[ -f /root/kittyhack/model-server/server.py ]]; then
+        sources="/root/kittyhack"
+    else
+        tmp="$(mktemp -d)"
+        echo -e "${CYAN}Downloading Kittyhack sources for the model server…${NC}"
+        if ! git clone --depth 1 https://github.com/floppyFK/kittyhack.git "${tmp}/kittyhack"; then
+            rm -rf "$tmp"
+            echo -e "${RED}Failed to download Kittyhack sources.${NC}"
+            return 1
+        fi
+        sources="${tmp}/kittyhack"
+    fi
+    local torch_args=()
+    case "${MODEL_SERVER_VARIANT:-}" in
+        cpu|cuda|rocm) torch_args=(--"$MODEL_SERVER_VARIANT") ;;
+    esac
+    bash "${sources}/setup/install_model_server.sh" install --sources "$sources" --lang "$LANGUAGE" "${torch_args[@]}"
+    local status=$?
+    if [[ -n "$tmp" ]]; then
+        rm -rf "$tmp"
+    fi
+    return "$status"
+}
+
 # Check for command-line arguments or prompt for a choice 
 ERRMSG=""
+
+if [[ -n "${MODEL_SERVER_VARIANT:-}" ]]; then
+    install_model_server_menu
+    exit $?
+fi
 
 while true; do
     # Clear the terminal
@@ -1363,6 +1545,7 @@ EOF
         echo -e ""
         echo -e "${GREY}--- Remote-Mode (beliebiger Linux-PC) ---${NC}"
         echo -e "(${BLUE}${FMTBOLD}4${FMTDEF}${NC}) Installation als Remote-Control (remote-mode) auf einem separaten System"
+        echo -e "(${BLUE}${FMTBOLD}6${FMTDEF}${NC}) Modellserver installieren"
         echo -e ""
         echo -e "${GREY}--- Sonstiges ---${NC}"
         echo -e "(${BLUE}${FMTBOLD}5${FMTDEF}${NC}) Kittyhack deinstallieren"
@@ -1376,6 +1559,7 @@ EOF
         echo -e ""
         echo -e "${GREY}--- Remote mode (any Linux PC) ---${NC}"
         echo -e "(${BLUE}${FMTBOLD}4${FMTDEF}${NC}) Install as remote-control (remote-mode) on a dedicated system"
+        echo -e "(${BLUE}${FMTBOLD}6${FMTDEF}${NC}) Install the model server"
         echo -e ""
         echo -e "${GREY}--- Other ---${NC}"
         echo -e "(${BLUE}${FMTBOLD}5${FMTDEF}${NC}) Uninstall Kittyhack"
@@ -1408,6 +1592,15 @@ EOF
             install_remote_mode || ((FAIL_COUNT++))
             break
             ;;
+        6)
+            echo -e "${CYAN}Installing the model server...${NC}"
+            if install_model_server_menu; then
+                MODEL_SERVER_DONE=1
+            else
+                ((FAIL_COUNT++))
+            fi
+            break
+            ;;
         5)
             echo -e "${CYAN}Uninstalling Kittyhack...${NC}"
             uninstall_kittyhack
@@ -1419,9 +1612,9 @@ EOF
             ;;
         *)
             if [ "$LANGUAGE" == "de" ]; then
-                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2', '3', '4', '5' oder 'b' eingeben.${NC}\n"
+                ERRMSG="${RED}Ungültige Eingabe. Bitte '1', '2', '3', '4', '5', '6' oder 'b' eingeben.${NC}\n"
             else
-                ERRMSG="${RED}Invalid choice. Please enter '1', '2', '3', '4', '5' or 'q'.${NC}\n"
+                ERRMSG="${RED}Invalid choice. Please enter '1', '2', '3', '4', '5', '6' or 'q'.${NC}\n"
             fi
             MODE=""
             ;;
@@ -1445,6 +1638,12 @@ if systemctl is-active --quiet kittyhack.service; then
             echo -e "\n${YELLOW}Setup complete with warnings. Please check the logs in ${LOGFILE} for more details.${NC}\n"
             echo -e "You could still try to open ${CYAN}http://${CURRENT_IP}${NC} in your browser to access your Kittyflap.\n"
         fi
+    fi
+elif [[ "$MODEL_SERVER_DONE" -eq 1 && $FAIL_COUNT -eq 0 ]]; then
+    if [ "$LANGUAGE" == "de" ]; then
+        echo -e "\n${GREEN}Modellserver-Setup abgeschlossen.${NC}\n"
+    else
+        echo -e "\n${GREEN}Model server setup complete.${NC}\n"
     fi
 else
     if [ "$LANGUAGE" == "de" ]; then

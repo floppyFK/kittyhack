@@ -1,4 +1,4 @@
-"""System tab, API tokens, reboot/shutdown."""
+"""System tab, reboot/shutdown, and API token handlers."""
 
 import os
 import time as tm
@@ -21,9 +21,70 @@ from src.server_ui.state import (
     set_update_progress,
     get_update_progress,
 )
+from src.paths import kittyhack_root
 from src.server_ui.context import SessionContext
 
 _ = set_language(CONFIG["LANGUAGE"])
+
+
+def _load_api_docs_markdown() -> str | None:
+    """Return the bundled REST API docs, or None if the file cannot be read."""
+    path = os.path.join(kittyhack_root(), "doc", "api.md")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except Exception as e:
+        logging.warning(f"[API] Failed to load API documentation '{path}': {e}")
+        return None
+    # Drop a leading H1 — the modal title already names the document.
+    lines = text.splitlines()
+    if lines and re.match(r"^\s*#\s+", lines[0]):
+        text = "\n".join(lines[1:]).lstrip("\n")
+    return text
+
+
+# Shiny reconnect keeps the open page, including action-button click counts.
+# A restored "Restart" click would open this dialog again and reboot once more.
+_POWER_ACTION_MARKER_NAME = ".power-action"
+_POWER_ACTION_MAX_AGE_S = 30 * 60
+
+
+def _power_action_marker_path() -> str:
+    return os.path.join(kittyhack_root(), _POWER_ACTION_MARKER_NAME)
+
+
+def arm_local_power_action() -> None:
+    """Remember that this device is about to reboot or shut down.
+
+    The next UI session closes the restart dialog that the previous page
+    still has open after Shiny reconnects.
+    """
+    path = _power_action_marker_path()
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(str(tm.time()))
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception as e:
+        logging.warning(f"[SYSTEM] Failed to write power-action marker '{path}': {e}")
+
+
+def consume_local_power_action(now: float | None = None) -> bool:
+    """Return True once when a recent local reboot or shutdown was requested."""
+    path = _power_action_marker_path()
+    if not os.path.isfile(path):
+        return False
+    current = tm.time() if now is None else now
+    try:
+        age = current - os.path.getmtime(path)
+    except OSError:
+        age = _POWER_ACTION_MAX_AGE_S + 1
+    try:
+        os.remove(path)
+    except OSError as e:
+        logging.warning(f"[SYSTEM] Failed to remove power-action marker '{path}': {e}")
+    return age <= _POWER_ACTION_MAX_AGE_S
+
 
 if is_remote_mode():
     from src.remote.hardware import Magnets, Pir  # type: ignore
@@ -33,7 +94,10 @@ else:
 
 
 def register_system_tab(input, output, session, ctx: SessionContext):
-    """Register System tab UI (API tokens, reboot/shutdown, updates)."""
+    """Register System tab UI and API token handlers."""
+    # Drop the "restarting" dialog left on the page by the pre-reboot session.
+    if consume_local_power_action():
+        ui.modal_remove()
 
     @output
     @render.ui
@@ -44,7 +108,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 ui.div(
                     ui.input_task_button(
                         "reinstall_camera_driver",
-                        _("Reinstall Camera Driver"),
+                        _("Reinstall camera driver"),
                         icon=icon_svg("rotate-right"),
                         class_="btn-default",
                     ),
@@ -64,10 +128,10 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         system_actions_body = None
         if is_remote_mode():
             system_actions_body = ui.div(
-                ui.markdown(_("Start tasks/actions on the devices")),
+                ui.markdown(_("Choose an action for each device.")),
                 ui.br(),
                 ui.h5(_("Kittyflap"), style_="text-align: center;"),
-                ui.markdown(_("Target device actions")),
+                ui.markdown(_("Kittyflap actions")),
                 ui.div(
                     ui.input_action_button(
                         "bTargetRebootKittyflap",
@@ -80,19 +144,19 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 ui.div(
                     ui.input_action_button(
                         "bTargetShutdownKittyflap",
-                        _("Shutdown Kittyflap"),
+                        _("Shut down Kittyflap"),
                         class_="btn-default",
                     ),
                     style_="text-align: center;",
                 ),
                 ui.help_text(
                     _(
-                        "To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again."
+                        "Shut down the Kittyflap before unplugging it to protect its data. Wait 30 seconds after shutdown, then unplug the power cable. To start it again, reconnect the power."
                     )
                 ),
                 ui.hr(),
                 ui.h5(_("This device"), style_="text-align: center;"),
-                ui.markdown(_("Remote-mode device actions")),
+                ui.markdown(_("Actions for this UI computer")),
                 ui.div(
                     ui.input_action_button(
                         "bRemoteReboot", _("Restart this device"), class_="btn-default"
@@ -103,21 +167,21 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 ui.div(
                     ui.input_action_button(
                         "bRemoteShutdown",
-                        _("Shutdown this device"),
+                        _("Shut down this device"),
                         class_="btn-default",
                     ),
                     style_="text-align: center;",
                 ),
                 ui.help_text(
                     _(
-                        "Shutting down this device will stop remote control and the web interface until it is started again."
+                        "Shutting down this device stops remote control and the web interface until the computer starts again."
                     )
                 ),
             )
         else:
             system_actions_body = ui.div(
                 ui.br(),
-                ui.markdown(_("Start tasks/actions on the Kittyflap")),
+                ui.markdown(_("Choose an action for the Kittyflap.")),
                 ui.br(),
                 ui.div(
                     ui.input_action_button(
@@ -131,70 +195,24 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 ui.div(
                     ui.input_action_button(
                         "bShutdownKittyflap",
-                        _("Shutdown Kittyflap"),
+                        _("Shut down Kittyflap"),
                         class_="btn-default",
                     ),
                     style_="text-align: center;",
                 ),
                 ui.help_text(
                     _(
-                        "To avoid data loss, always shut down the Kittyflap properly before unplugging the power cable. After a shutdown, wait 30 seconds before unplugging the power cable. To start the Kittyflap again, just plug in the power again."
+                        "Shut down the Kittyflap before unplugging it to protect its data. Wait 30 seconds after shutdown, then unplug the power cable. To start it again, reconnect the power."
                     )
                 ),
             )
-
-        api_tokens_card = ui.card(
-            ui.card_header(
-                ui.h4(_("API Tokens"), style_="text-align: center;"),
-            ),
-            ui.markdown(
-                _(
-                    "Tokens authenticate REST API calls (see **doc/api.md**). "
-                    "Each token is shown only once at creation — store it safely. "
-                    "Send it via `Authorization: Bearer <token>` header, or — for "
-                    "URL-only clients like Stream Deck — as a `?token=<token>` "
-                    "query parameter."
-                )
-            ),
-            ui.br(),
-            ui.output_ui("ui_api_tokens_table"),
-            ui.hr(),
-            ui.h5(_("Create new token"), style_="text-align: center;"),
-            ui.input_text(
-                "api_token_label", _("Label"), placeholder=_("e.g. stream-deck")
-            ),
-            ui.div(
-                ui.input_action_button(
-                    "btn_create_api_token",
-                    _("Create Token"),
-                    icon=icon_svg("plus"),
-                    class_="btn-default",
-                ),
-                style_="text-align: center;",
-            ),
-            ui.hr(),
-            ui.h5(_("Revoke token"), style_="text-align: center;"),
-            ui.output_ui("ui_api_tokens_revoke_select"),
-            ui.div(
-                ui.input_action_button(
-                    "btn_revoke_api_token",
-                    _("Revoke Selected"),
-                    icon=icon_svg("trash"),
-                    class_="btn-default",
-                ),
-                style_="text-align: center;",
-            ),
-            full_screen=False,
-            class_="generic-container",
-            style_="padding-left: 1rem !important; padding-right: 1rem !important;",
-        )
 
         return ui.div(
             ui.div(
                 ui.card(
                     ui.card_header(
                         ui.h4(
-                            _("Kittyflap System Actions"), style_="text-align: center;"
+                            _("System actions"), style_="text-align: center;"
                         ),
                     ),
                     system_actions_body,
@@ -205,8 +223,15 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 ),
                 width="400px",
             ),
-            ui.br(),
-            ui.div(api_tokens_card, width="400px"),
+            (
+                ui.div(
+                    ui.br(),
+                    ui.output_ui("ui_wlan_configured_connections"),
+                    ui.output_ui("ui_wlan_available_networks"),
+                )
+                if not is_remote_mode()
+                else ui.HTML("")
+            ),
             ui.br(),
             ui.br(),
         )
@@ -264,12 +289,12 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             return
         m = ui.modal(
             _(
-                "Do you really want to reinstall the camera driver? This operation can take several minutes."
+                "Reinstall the camera driver now? This can take several minutes."
             ),
-            title=_("Reinstall Camera Driver"),
+            title=_("Reinstall camera driver"),
             easy_close=False,
             footer=ui.div(
-                ui.input_task_button("btn_modal_reinstall_cam_ok", _("OK")),
+                ui.input_task_button("btn_modal_reinstall_cam_ok", _("Reinstall")),
                 ui.input_action_button("btn_modal_cancel", _("Cancel")),
             ),
         )
@@ -291,8 +316,8 @@ def register_system_tab(input, output, session, ctx: SessionContext):
 
         with ui.Progress(min=1, max=installation_steps) as p:
             p.set(
-                message=_("Reinstall Camera Driver in progress."),
-                detail=_("This may take a while..."),
+                message=_("Reinstalling camera driver"),
+                detail=_("This may take a while."),
             )
             i = 0
 
@@ -322,7 +347,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                         dependency_url = f"{dependencies_url}{dependency}"
                         dependency_path = os.path.join(download_path, dependency)
                         msg = f"Downloading {dependency}"
-                        msg_localized = _("Download") + " " + dependency
+                        msg_localized = _("Downloading") + " " + dependency
                         i += 1
                         p.set(i, message=msg_localized)
                         logging.info(msg)
@@ -394,7 +419,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 logging.error(f"An error occurred during the installation process: {e}")
                 ui.notification_show(
                     _(
-                        "An error occurred during the installation process. Please check the logs for details."
+                        "The camera driver could not be reinstalled. Check the logs for details, then try again."
                     ),
                     duration=None,
                     type="error",
@@ -406,12 +431,12 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 ui.modal_remove()
                 m = ui.modal(
                     _(
-                        "A restart is required to apply the update. Do you want to restart the Kittyflap now?"
+                        "The camera driver was reinstalled. Restart the Kittyflap now to apply the change?"
                     ),
                     title=_("Restart required"),
                     easy_close=False,
                     footer=ui.div(
-                        ui.input_action_button("btn_modal_reboot_ok", _("OK")),
+                        ui.input_action_button("btn_modal_reboot_ok", _("Restart")),
                         ui.input_action_button("btn_modal_cancel", _("Cancel")),
                     ),
                 )
@@ -421,13 +446,16 @@ def register_system_tab(input, output, session, ctx: SessionContext):
     @reactive.event(input.btn_modal_cancel)
     def modal_cancel():
         ui.modal_remove()
-        # Reset update progress result if the restart-required modal was open
+        # Reset update progress result if the restart-required modal was open.
+        # A connection failure is closable and must not stay queued for the next tick.
         state = get_update_progress()
-        if state["result"] == "ok" or state["result"] == "reboot_dialog":
-            set_update_progress(in_progress=False, result=None)
+        if state["result"] in ("ok", "reboot_dialog") or (
+            state["result"] == "error" and not state.get("reboot_required", True)
+        ):
+            set_update_progress(in_progress=False, result=None, reboot_required=True)
 
     @reactive.effect
-    @reactive.event(input.btn_modal_reboot_ok)
+    @reactive.event(input.btn_modal_reboot_ok, ignore_init=True)
     def modal_reboot():
         state = get_update_progress()
         if state["result"] == "ok" or state["result"] == "reboot_dialog":
@@ -476,20 +504,54 @@ def register_system_tab(input, output, session, ctx: SessionContext):
 
         ui.modal_remove()
         reboot_message = _(
-            "Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reload the page after the restart."
+            "Kittyflap is restarting. Wait 1–2 minutes, then reload this page."
         )
         if is_remote_mode():
             reboot_message = _(
-                "Both devices are rebooting now... This may take 1 or 2 minutes. Please reconnect and reload the page afterwards."
+                "The Kittyflap and this device are restarting. Wait 1–2 minutes, then reconnect and reload this page."
             )
         ui.modal_show(
             ui.modal(reboot_message, title=_("Restart Kittyflap"), footer=None)
         )
+        arm_local_power_action()
         ServiceOps.systemcmd(["/sbin/reboot"])
 
         # ------------------------------------------------------------------
-        # API token management (System tab)
+        # API token management (rendered on the Settings tab)
         # ------------------------------------------------------------------
+
+    @reactive.effect
+    @reactive.event(input.btn_api_docs)
+    def on_show_api_docs():
+        docs_md = _load_api_docs_markdown()
+        if docs_md is None:
+            body = ui.markdown(
+                _(
+                    "The API documentation could not be loaded. Check the installation and logs, then try again."
+                )
+            )
+        else:
+            parts = []
+            if str(CONFIG.get("LANGUAGE") or "en").strip().lower() == "de":
+                parts.append(
+                    ui.p(
+                        _("This documentation is currently available in English only."),
+                        class_="kh-api-docs-lang-note",
+                    )
+                )
+            parts.append(ui.markdown(docs_md))
+            body = ui.div(*parts, class_="kh-api-docs")
+        ui.modal_show(
+            ui.modal(
+                body,
+                title=_("REST API documentation"),
+                easy_close=True,
+                size="xl",
+                footer=ui.div(
+                    ui.input_action_button("btn_modal_cancel", _("Close")),
+                ),
+            )
+        )
 
     @output
     @render.ui
@@ -502,7 +564,10 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             tokens = list_tokens()
         except Exception as e:
             logging.exception("[API] failed to list tokens")
-            return ui.tags.em(_("Failed to load tokens: ") + str(e))
+            return ui.tags.em(
+                _("Tokens could not be loaded. Check the logs, then reload this page: ")
+                + str(e)
+            )
         if not tokens:
             return ui.tags.em(_("No tokens yet."))
         rows = []
@@ -528,7 +593,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
                 )
             ),
             ui.tags.tbody(*rows),
-            class_="dataframe shiny-table table w-auto",
+            class_="dataframe shiny-table table",
         )
 
     @output
@@ -541,12 +606,17 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             tokens = list_tokens()
         except Exception:
             tokens = []
-        choices = {"": _("— select a token —")}
+        choices = {"": _("Select a token")}
         for t in tokens:
             tid = t.get("id", "")
             label = t.get("label", "?")
             choices[tid] = f"{label} ({tid})"
-        return ui.input_select("api_token_revoke_id", None, choices=choices)
+        return ui.input_select(
+            "api_token_revoke_id",
+            _("Revoke token"),
+            choices=choices,
+            width="100%",
+        )
 
     @reactive.effect
     @reactive.event(input.btn_create_api_token)
@@ -554,7 +624,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         label = (input.api_token_label() or "").strip()
         if not label:
             ui.notification_show(
-                _("Please enter a label first."), duration=5, type="warning"
+                _("Enter a label for the token."), duration=5, type="warning"
             )
             return
         try:
@@ -564,14 +634,17 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         except Exception as e:
             logging.exception("[API] token create failed")
             ui.notification_show(
-                _("Failed to create token: ") + str(e), duration=10, type="error"
+                _("The token could not be created. Check the logs, then try again: ")
+                + str(e),
+                duration=10,
+                type="error",
             )
             return
-        logging.info(f"[API] Created new API token '{label}' via System tab")
+        logging.info(f"[API] Created new API token '{label}' via Settings tab")
         reload_trigger_api_tokens.set(reload_trigger_api_tokens.get() + 1)
         ui.update_text("api_token_label", value="")
         m = ui.modal(
-            ui.markdown(_("**Copy this token now — it will not be shown again.**")),
+            ui.markdown(_("**Copy this token now. It will not be shown again.**")),
             ui.tags.pre(
                 ui.tags.code(raw),
                 # Use Bootstrap theme tokens so the token box stays readable in
@@ -588,10 +661,11 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             ),
             ui.markdown(
                 _(
-                    "Use it as an `Authorization: Bearer <token>` header, or — for URL-only "
-                    "clients like Stream Deck — as a `?token=<token>` query parameter. "
-                    "URL-based tokens may appear in web-server access logs and browser "
-                    "history; prefer headers whenever possible."
+                    "Use it as an `Authorization: Bearer <token>` header. If a client "
+                    "can only open a URL (Stream Deck, bookmarks), you can pass it as "
+                    "a `?token=<token>` query parameter instead. Tokens in URLs may "
+                    "appear in web-server access logs and browser history — prefer a "
+                    "header whenever possible."
                 )
             ),
             title=_("Token created"),
@@ -606,12 +680,12 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         token_id = (input.api_token_revoke_id() or "").strip()
         if not token_id:
             ui.notification_show(
-                _("Please select a token to revoke."), duration=5, type="warning"
+                _("Select a token to revoke."), duration=5, type="warning"
             )
             return
         m = ui.modal(
             _(
-                "Revoke token '{}'? This cannot be undone. Any client using it will immediately lose access."
+                "Revoke token '{}'? Any client using it will lose access immediately."
             ).format(token_id),
             title=_("Revoke API token"),
             easy_close=False,
@@ -636,11 +710,14 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         except Exception as e:
             logging.exception("[API] token revoke failed")
             ui.notification_show(
-                _("Failed to revoke token: ") + str(e), duration=10, type="error"
+                _("The token could not be revoked. Check the logs, then try again: ")
+                + str(e),
+                duration=10,
+                type="error",
             )
             return
         if ok:
-            logging.info(f"[API] Revoked API token {token_id} via System tab")
+            logging.info(f"[API] Revoked API token {token_id} via Settings tab")
             ui.notification_show(_("Token revoked."), duration=5, type="message")
         else:
             ui.notification_show(
@@ -651,37 +728,37 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         reload_trigger_api_tokens.set(reload_trigger_api_tokens.get() + 1)
 
     @reactive.Effect
-    @reactive.event(input.bRestartKittyflap)
+    @reactive.event(input.bRestartKittyflap, ignore_init=True)
     def on_action_restart_system():
         m = ui.modal(
-            _("Do you really want to restart the Kittyflap?"),
+            _("Restart the Kittyflap now?"),
             title=_("Restart Kittyflap"),
             easy_close=True,
             footer=ui.div(
-                ui.input_action_button("btn_modal_reboot_ok", _("OK")),
+                ui.input_action_button("btn_modal_reboot_ok", _("Restart")),
                 ui.input_action_button("btn_modal_cancel", _("Cancel")),
             ),
         )
         ui.modal_show(m)
 
     @reactive.Effect
-    @reactive.event(input.bTargetRebootKittyflap)
+    @reactive.event(input.bTargetRebootKittyflap, ignore_init=True)
     def on_action_target_reboot_system():
         if not is_remote_mode():
             return
         m = ui.modal(
-            _("Do you really want to restart the Kittyflap?"),
+            _("Restart the Kittyflap now?"),
             title=_("Restart Kittyflap"),
             easy_close=True,
             footer=ui.div(
-                ui.input_action_button("btn_modal_reboot_target_ok", _("OK")),
+                ui.input_action_button("btn_modal_reboot_target_ok", _("Restart")),
                 ui.input_action_button("btn_modal_cancel", _("Cancel")),
             ),
         )
         ui.modal_show(m)
 
     @reactive.effect
-    @reactive.event(input.btn_modal_reboot_target_ok)
+    @reactive.event(input.btn_modal_reboot_target_ok, ignore_init=True)
     def modal_reboot_target_only():
         if not is_remote_mode():
             return
@@ -691,7 +768,7 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             ui.modal_show(
                 ui.modal(
                     _(
-                        "Kittyflap is rebooting now... This will take 1 or 2 minutes. Please reconnect and reload the page afterwards."
+                        "Kittyflap is restarting. Wait 1–2 minutes, then reconnect and reload this page."
                     ),
                     title=_("Restart Kittyflap"),
                     footer=None,
@@ -700,30 +777,30 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         else:
             ui.notification_show(
                 _(
-                    "Failed to trigger Kittyflap reboot. Check the remote connection and REMOTE_TARGET_HOST."
+                    "The Kittyflap could not be restarted. Check the remote connection and REMOTE_TARGET_HOST, then try again."
                 ),
                 duration=12,
                 type="error",
             )
 
     @reactive.Effect
-    @reactive.event(input.bRemoteReboot)
+    @reactive.event(input.bRemoteReboot, ignore_init=True)
     def on_action_local_reboot_system():
         if not is_remote_mode():
             return
         m = ui.modal(
-            _("Do you really want to restart this device?"),
+            _("Restart this device now?"),
             title=_("Restart this device"),
             easy_close=True,
             footer=ui.div(
-                ui.input_action_button("btn_modal_reboot_local_ok", _("OK")),
+                ui.input_action_button("btn_modal_reboot_local_ok", _("Restart")),
                 ui.input_action_button("btn_modal_cancel", _("Cancel")),
             ),
         )
         ui.modal_show(m)
 
     @reactive.effect
-    @reactive.event(input.btn_modal_reboot_local_ok)
+    @reactive.event(input.btn_modal_reboot_local_ok, ignore_init=True)
     def modal_reboot_local_only():
         if not is_remote_mode():
             return
@@ -731,61 +808,65 @@ def register_system_tab(input, output, session, ctx: SessionContext):
         ui.modal_show(
             ui.modal(
                 _(
-                    "This device is rebooting now... Please reconnect and reload the page afterwards."
+                    "This device is restarting. Reconnect and reload this page when it is available again."
                 ),
                 title=_("Restart this device"),
                 footer=None,
             )
         )
+        arm_local_power_action()
         ServiceOps.systemcmd(["/sbin/reboot"])
 
     @reactive.effect
-    @reactive.event(input.btn_modal_shutdown_ok)
+    @reactive.event(input.btn_modal_shutdown_ok, ignore_init=True)
     def modal_shutdown():
         ui.modal_remove()
         ui.modal_show(
             ui.modal(
                 _(
-                    "Kittyflap is shutting down now... Please wait 30 seconds before unplugging the power."
+                    "Kittyflap is shutting down. Wait 30 seconds before unplugging the power."
                 ),
-                title=_("Shutdown Kittyflap"),
+                title=_("Shut down Kittyflap"),
                 footer=None,
             )
         )
+        arm_local_power_action()
         ServiceOps.systemcmd(["/usr/sbin/shutdown", "-H", "now"])
 
     @reactive.Effect
-    @reactive.event(input.bShutdownKittyflap)
+    @reactive.event(input.bShutdownKittyflap, ignore_init=True)
     def on_action_shutdown_system():
         m = ui.modal(
-            _("Do you really want to shut down the Kittyflap?"),
-            title=_("Shutdown Kittyflap"),
+            _("Shut down the Kittyflap now?"),
+            title=_("Shut down Kittyflap"),
             easy_close=True,
             footer=ui.div(
-                ui.input_action_button("btn_modal_shutdown_ok", _("OK")),
+                ui.input_action_button("btn_modal_shutdown_ok", _("Shut down")),
                 ui.input_action_button("btn_modal_cancel", _("Cancel")),
             ),
         )
         ui.modal_show(m)
 
     @reactive.Effect
-    @reactive.event(input.bTargetShutdownKittyflap)
+    @reactive.event(input.bTargetShutdownKittyflap, ignore_init=True)
     def on_action_target_shutdown_system():
         if not is_remote_mode():
             return
         m = ui.modal(
-            _("Do you really want to shut down the Kittyflap?"),
-            title=_("Shutdown Kittyflap"),
+            _("Shut down the Kittyflap now?"),
+            title=_("Shut down Kittyflap"),
             easy_close=True,
             footer=ui.div(
-                ui.input_action_button("btn_modal_shutdown_target_ok", _("OK")),
+                ui.input_action_button(
+                    "btn_modal_shutdown_target_ok", _("Shut down")
+                ),
                 ui.input_action_button("btn_modal_cancel", _("Cancel")),
             ),
         )
         ui.modal_show(m)
 
     @reactive.effect
-    @reactive.event(input.btn_modal_shutdown_target_ok)
+    @reactive.event(input.btn_modal_shutdown_target_ok, ignore_init=True)
     def modal_shutdown_target_only():
         if not is_remote_mode():
             return
@@ -795,48 +876,51 @@ def register_system_tab(input, output, session, ctx: SessionContext):
             ui.modal_show(
                 ui.modal(
                     _(
-                        "Kittyflap is shutting down now... Please wait 30 seconds before unplugging the power."
+                        "Kittyflap is shutting down. Wait 30 seconds before unplugging the power."
                     ),
-                    title=_("Shutdown Kittyflap"),
+                    title=_("Shut down Kittyflap"),
                     footer=None,
                 )
             )
         else:
             ui.notification_show(
                 _(
-                    "Failed to trigger Kittyflap shutdown. Check the remote connection and REMOTE_TARGET_HOST."
+                    "The Kittyflap could not be shut down. Check the remote connection and REMOTE_TARGET_HOST, then try again."
                 ),
                 duration=12,
                 type="error",
             )
 
     @reactive.Effect
-    @reactive.event(input.bRemoteShutdown)
+    @reactive.event(input.bRemoteShutdown, ignore_init=True)
     def on_action_local_shutdown_system():
         if not is_remote_mode():
             return
         m = ui.modal(
-            _("Do you really want to shut down this device?"),
-            title=_("Shutdown this device"),
+            _("Shut down this device now?"),
+            title=_("Shut down this device"),
             easy_close=True,
             footer=ui.div(
-                ui.input_action_button("btn_modal_shutdown_local_ok", _("OK")),
+                ui.input_action_button(
+                    "btn_modal_shutdown_local_ok", _("Shut down")
+                ),
                 ui.input_action_button("btn_modal_cancel", _("Cancel")),
             ),
         )
         ui.modal_show(m)
 
     @reactive.effect
-    @reactive.event(input.btn_modal_shutdown_local_ok)
+    @reactive.event(input.btn_modal_shutdown_local_ok, ignore_init=True)
     def modal_shutdown_local_only():
         if not is_remote_mode():
             return
         ui.modal_remove()
         ui.modal_show(
             ui.modal(
-                _("This device is shutting down now..."),
-                title=_("Shutdown this device"),
+                _("This device is shutting down."),
+                title=_("Shut down this device"),
                 footer=None,
             )
         )
+        arm_local_power_action()
         ServiceOps.systemcmd(["/usr/sbin/shutdown", "-H", "now"])

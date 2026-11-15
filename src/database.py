@@ -254,7 +254,7 @@ class DatabaseCore:
             "CREATE INDEX IF NOT EXISTS idx_id ON events (id)",
             "CREATE INDEX IF NOT EXISTS idx_block_id_created_at ON events (block_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_events_block_id_deleted_created_at ON events (block_id, deleted, created_at)",
-            "CREATE INDEX IF NOT EXISTS idx_cats_rfid ON cats (rfid)"
+            "CREATE INDEX IF NOT EXISTS idx_cats_rfid ON cats (rfid)",
         ]
 
         for stmt in indexes:
@@ -429,6 +429,156 @@ class DatabaseCore:
         except Exception as e:
             logging.error(f"[DATABASE_BACKUP] Unexpected error: {e}")
             return Result(False, "backup_failed")
+
+    @staticmethod
+    def validate_kittyhack_database(database: str) -> Result:
+        """Return success when ``database`` is a readable Kittyhack SQLite file.
+
+        A Kittyhack database contains at least one of ``events``, ``photo``,
+        ``cats``, or ``settings``. ``Result.message`` is ``missing_source`` or
+        ``invalid_database`` on failure.
+        """
+        if not database or not os.path.isfile(database):
+            return Result(False, "missing_source")
+        try:
+            with open(database, "rb") as handle:
+                header = handle.read(16)
+            if header != b"SQLite format 3\x00":
+                logging.warning(f"[RESTORE_DB] Rejected '{database}': not a SQLite file")
+                return Result(False, "invalid_database")
+            conn = sqlite3.connect(database, timeout=30)
+            try:
+                conn.execute("PRAGMA query_only=ON")
+                integrity = conn.execute("PRAGMA integrity_check").fetchone()
+                if not integrity or integrity[0] != "ok":
+                    detail = integrity[0] if integrity else "empty"
+                    logging.warning(f"[RESTORE_DB] Rejected '{database}': integrity check {detail}")
+                    return Result(False, "invalid_database")
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+            finally:
+                conn.close()
+        except Exception as e:
+            logging.warning(f"[RESTORE_DB] Rejected '{database}': {e}")
+            return Result(False, "invalid_database")
+        if not tables.intersection({"events", "photo", "cats", "settings"}):
+            logging.warning(f"[RESTORE_DB] Rejected '{database}': no Kittyhack tables")
+            return Result(False, "invalid_database")
+        return Result(True, "")
+
+    @staticmethod
+    def _remove_sqlite_sidecars(database: str) -> None:
+        """Drop WAL/SHM/journal files so an old journal is not replayed."""
+        for suffix in ("-wal", "-shm", "-journal"):
+            sidecar = database + suffix
+            if not os.path.exists(sidecar):
+                continue
+            try:
+                os.remove(sidecar)
+            except OSError as e:
+                logging.warning(f"[RESTORE_DB] Failed to remove '{sidecar}': {e}")
+                raise
+
+    @staticmethod
+    def replace_database_file(source_path: str, destination_path: str) -> Result:
+        """Install ``source_path`` as the Kittyhack database at ``destination_path``.
+
+        Validates the source first and does not modify the destination when it
+        is not a Kittyhack database. An existing destination is copied to
+        ``kittyhack_backup_YYYYMMDD_HHMMSS.db`` in the same directory before
+        it is replaced. On failure after that point, the backup is copied back.
+        ``Result.message`` is the backup path on success, or an error code.
+        """
+        status = DatabaseCore.validate_kittyhack_database(source_path)
+        if not status.success:
+            return status
+        if not destination_path or not os.path.isdir(os.path.dirname(destination_path) or "."):
+            logging.error(f"[RESTORE_DB] Destination directory missing for '{destination_path}'")
+            return Result(False, "replace_failed")
+
+        lock_res = DatabaseCore.lock_database()
+        if not lock_res.success:
+            return Result(False, "database_locked")
+        incoming = destination_path + ".incoming"
+        backup_dest = ""
+        backup_ready = False
+        replaced = False
+        try:
+            if os.path.exists(destination_path):
+                backup_dir = os.path.dirname(destination_path) or "."
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_dest = os.path.join(backup_dir, f"kittyhack_backup_{stamp}.db")
+                suffix = 1
+                while os.path.exists(backup_dest):
+                    backup_dest = os.path.join(
+                        backup_dir, f"kittyhack_backup_{stamp}_{suffix}.db"
+                    )
+                    suffix += 1
+                try:
+                    src_conn = sqlite3.connect(destination_path, timeout=30)
+                    dst_conn = sqlite3.connect(backup_dest, timeout=30)
+                    try:
+                        src_conn.backup(dst_conn)
+                    finally:
+                        dst_conn.close()
+                        src_conn.close()
+                except Exception as backup_error:
+                    logging.warning(
+                        f"[RESTORE_DB] SQLite backup failed, copying the file instead: {backup_error}"
+                    )
+                    if os.path.exists(backup_dest):
+                        os.remove(backup_dest)
+                    shutil.copy2(destination_path, backup_dest)
+                logging.info(f"[RESTORE_DB] Backup created: {backup_dest}")
+                backup_ready = True
+
+            shutil.copy2(source_path, incoming)
+            os.replace(incoming, destination_path)
+            replaced = True
+            DatabaseCore._remove_sqlite_sidecars(destination_path)
+            installed = DatabaseCore.validate_kittyhack_database(destination_path)
+            if not installed.success:
+                raise RuntimeError(installed.message)
+            logging.info(
+                f"[RESTORE_DB] Replaced '{destination_path}' from '{source_path}'. "
+                f"Backup: {backup_dest or 'none'}"
+            )
+            return Result(True, backup_dest)
+        except Exception as e:
+            logging.error(f"[RESTORE_DB] Failed to replace '{destination_path}': {e}")
+            try:
+                if os.path.exists(incoming):
+                    os.remove(incoming)
+            except OSError:
+                pass
+            if replaced and backup_dest and os.path.exists(backup_dest):
+                try:
+                    shutil.copy2(backup_dest, incoming)
+                    os.replace(incoming, destination_path)
+                    DatabaseCore._remove_sqlite_sidecars(destination_path)
+                    logging.info(f"[RESTORE_DB] Rolled back to backup {backup_dest}")
+                except Exception as rollback_error:
+                    logging.error(f"[RESTORE_DB] Rollback failed: {rollback_error}")
+            elif replaced and not backup_dest:
+                try:
+                    os.remove(destination_path)
+                except OSError:
+                    pass
+            elif backup_dest and not backup_ready and os.path.exists(backup_dest):
+                # A half-written backup must not become the file startup restores.
+                try:
+                    os.remove(backup_dest)
+                except OSError:
+                    pass
+            if isinstance(e, RuntimeError) and str(e) in {"invalid_database", "missing_source"}:
+                return Result(False, str(e))
+            return Result(False, "replace_failed")
+        finally:
+            DatabaseCore.release_database()
 
 
 class EventsRepo:
@@ -624,7 +774,8 @@ class EventsRepo:
                       mouse_probability=0.0, 
                       page_index = 0, 
                       elements_per_page = sys.maxsize,
-                      ignore_deleted = True):
+                      ignore_deleted = True,
+                      offset: int | None = None):
         """Query events/photos with filters and optional paging (newest first)."""
         # Discover optional columns once to keep queries compatible across schema versions.
         columns_info = DatabaseCore.read_column_info_from_database(database, "events")
@@ -656,12 +807,12 @@ class EventsRepo:
         stmt = f"{stmt} ORDER BY id DESC"
 
         if elements_per_page != sys.maxsize:
-            # calculate the total number of pages
-            total_rows = DatabaseCore.read_df_from_database(database, f"SELECT COUNT(*) as count FROM ({stmt})").iloc[0]['count']
-            total_pages = (total_rows + elements_per_page - 1) // elements_per_page
-            # calculate the offset for the current page
-            offset = (total_pages - page_index - 1) * elements_per_page
-            stmt = f"{stmt} LIMIT {elements_per_page} OFFSET {offset}"
+            if offset is None:
+                # Reverse paging: page_index 0 is the oldest page.
+                total_rows = DatabaseCore.read_df_from_database(database, f"SELECT COUNT(*) as count FROM ({stmt})").iloc[0]['count']
+                total_pages = (total_rows + elements_per_page - 1) // elements_per_page
+                offset = (total_pages - page_index - 1) * elements_per_page
+            stmt = f"{stmt} LIMIT {int(elements_per_page)} OFFSET {int(offset)}"
 
         logging.debug(f"[DATABASE] query EventsRepo.db_get_photos: return_data={return_data}, date_start={date_start}, date_end={date_end}, cats_only={cats_only}, mouse_only={mouse_only}, mouse_probability={mouse_probability}, page_index={page_index}, elements_per_page={elements_per_page}, ignore_deleted={ignore_deleted}")
 
@@ -867,7 +1018,8 @@ class EventsRepo:
             conn = sqlite3.connect(database, timeout=30)
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT OR REPLACE INTO motion_timeline (block_id, timeline_json) VALUES (?, ?)",
+                "INSERT INTO motion_timeline (block_id, timeline_json) VALUES (?, ?) "
+                "ON CONFLICT(block_id) DO UPDATE SET timeline_json=excluded.timeline_json",
                 (int(block_id), json.dumps(timeline_entries, ensure_ascii=False)),
             )
             conn.commit()
@@ -906,6 +1058,54 @@ class EventsRepo:
             except Exception:
                 result[int(row["block_id"])] = []
         return result
+
+    @staticmethod
+    def db_get_block_object_max(database: str, block_ids: list[int], object_names: list[str]) -> dict:
+        """Return {block_id: {object_name: max probability}} for the given objects (names compared case-insensitively)."""
+        wanted = {str(n).lower() for n in object_names}
+        if not block_ids or not wanted:
+            return {}
+        ids = ",".join(str(int(b)) for b in block_ids)
+        stmt = (
+            f"SELECT block_id, event_text FROM events WHERE block_id IN ({ids}) "
+            "AND deleted = 0 AND event_text LIKE '%object_name%'"
+        )
+        df = DatabaseCore.read_df_from_database(database, stmt)
+        result: dict = {}
+        if df is None or df.empty:
+            return result
+        for __, row in df.iterrows():
+            try:
+                objects = json.loads(row["event_text"] or "{}").get("detected_objects", [])
+            except Exception:
+                continue
+            for obj in objects:
+                name = str(obj.get("object_name", "")).lower()
+                if name not in wanted:
+                    continue
+                block = result.setdefault(int(row["block_id"]), {})
+                block[name] = max(block.get(name, 0.0), float(obj.get("probability", 0.0) or 0.0))
+        return result
+
+    @staticmethod
+    def db_get_motion_frames(database: str, block_id: int) -> list:
+        """Return the complete captured-frame timeline for a motion block."""
+        if not DatabaseCore.check_if_table_exists(database, "motion_timeline"):
+            return []
+        if not DatabaseCore.check_if_column_exists(database, "motion_timeline", "frames_json"):
+            return []
+        stmt = (
+            "SELECT frames_json FROM motion_timeline "
+            f"WHERE block_id = {int(block_id)}"
+        )
+        df = DatabaseCore.read_df_from_database(database, stmt)
+        if df is None or df.empty:
+            return []
+        try:
+            frames = json.loads(df.iloc[0]["frames_json"] or "[]")
+            return frames if isinstance(frames, list) else []
+        except Exception:
+            return []
 
     @staticmethod
     def read_photo_by_id(database: str, photo_id: int) -> pd.DataFrame:
@@ -1100,7 +1300,11 @@ class EventsRepo:
                 effective_fps_block = 60.0
 
             index = 0
+            frame_timeline = []
             for element in elements:
+                frame_entry = {
+                    "at": DateTimeUtil.get_utc_date_string(element.timestamp),
+                }
                 # Write the image to the database, if the index is less than the maximum number of images
                 if index < max_images:
                     try:
@@ -1144,6 +1348,7 @@ class EventsRepo:
                         values_list.append(float(effective_fps_block))
                     cursor.execute(f"INSERT INTO events ({columns}) VALUES ({values})", values_list)
                     new_row_id = cursor.lastrowid
+                    frame_entry["pid"] = int(new_row_id)
                     # Persist original image to filesystem (if available)
                     if element.original_image is not None:
                         orig_path = EventsRepo._original_image_path(new_row_id)
@@ -1153,6 +1358,20 @@ class EventsRepo:
                         except Exception as e:
                             logging.warning(f"[DATABASE] Failed to write original image file '{orig_path}': {e}")
                     index += 1
+                else:
+                    frame_entry["objects"] = [
+                        {
+                            "x": round(obj.x, 2),
+                            "y": round(obj.y, 2),
+                            "w": round(obj.width, 2),
+                            "h": round(obj.height, 2),
+                            "name": (obj.object_name or "").strip(),
+                            "prob": round(obj.probability, 1) if obj.probability else 0,
+                        }
+                        for obj in (element.detected_objects or [])
+                        if (obj.object_name or "").strip().lower() != "false-accept"
+                    ]
+                frame_timeline.append(frame_entry)
 
                 # Delete the image from the buffer
                 if delete_from_buffer:
@@ -1171,11 +1390,17 @@ class EventsRepo:
                         cursor, max_count, has_motion_timeline=has_motion_timeline
                     )
 
-            if timeline_entries and has_motion_timeline:
+            if has_motion_timeline:
                 try:
                     cursor.execute(
-                        "INSERT OR REPLACE INTO motion_timeline (block_id, timeline_json) VALUES (?, ?)",
-                        (int(db_block_id), json.dumps(timeline_entries, ensure_ascii=False)),
+                        "INSERT INTO motion_timeline (block_id, timeline_json, frames_json) "
+                        "VALUES (?, ?, ?) ON CONFLICT(block_id) DO UPDATE SET "
+                        "timeline_json=excluded.timeline_json, frames_json=excluded.frames_json",
+                        (
+                            int(db_block_id),
+                            json.dumps(timeline_entries or [], ensure_ascii=False),
+                            json.dumps(frame_timeline, ensure_ascii=False),
+                        ),
                     )
                 except Exception as e:
                     logging.warning(f"[DATABASE] Could not store motion timeline for block {db_block_id}: {e}")
@@ -1643,7 +1868,7 @@ class CatsRepo:
         if return_data == ReturnDataCatDB.all:
              columns = "*"
         elif return_data == ReturnDataCatDB.all_except_photos:
-            columns = "id, created_at, name, rfid, enable_prey_detection, allow_entry, allow_exit"
+            columns = "id, created_at, name, rfid, enable_prey_detection, allow_entry, allow_exit, show_location"
 
         stmt = f"SELECT {columns} FROM cats"
         return DatabaseCore.read_df_from_database(database, stmt)
@@ -1676,7 +1901,7 @@ class CatsRepo:
         return result
 
     @staticmethod
-    def db_update_cat_data_by_id(database: str, cat_id: int, name: str, rfid: str, cat_image_path: str, enable_prey_detection: bool = True, allow_entry: bool = True, allow_exit: bool = True) -> Result:
+    def db_update_cat_data_by_id(database: str, cat_id: int, name: str, rfid: str, cat_image_path: str, enable_prey_detection: bool = True, allow_entry: bool = True, allow_exit: bool = True, show_location: bool = True) -> Result:
         """Update cat fields by ID; pass ``cat_image_path=None`` to keep the image."""
         if cat_image_path:
             try:
@@ -1698,13 +1923,13 @@ class CatsRepo:
             cursor = conn.cursor()
             if cat_image_blob is None:
                 cursor.execute(
-                    "UPDATE cats SET name = ?, rfid = ?, enable_prey_detection = ?, allow_entry = ?, allow_exit = ? WHERE id = ?",
-                    (name, rfid, int(enable_prey_detection), int(allow_entry), int(allow_exit), cat_id)
+                    "UPDATE cats SET name = ?, rfid = ?, enable_prey_detection = ?, allow_entry = ?, allow_exit = ?, show_location = ? WHERE id = ?",
+                    (name, rfid, int(enable_prey_detection), int(allow_entry), int(allow_exit), int(show_location), cat_id)
                 )
             else:
                 cursor.execute(
-                    "UPDATE cats SET name = ?, rfid = ?, cat_image = ?, enable_prey_detection = ?, allow_entry = ?, allow_exit = ? WHERE id = ?",
-                    (name, rfid, cat_image_blob, int(enable_prey_detection), int(allow_entry), int(allow_exit), cat_id)
+                    "UPDATE cats SET name = ?, rfid = ?, cat_image = ?, enable_prey_detection = ?, allow_entry = ?, allow_exit = ?, show_location = ? WHERE id = ?",
+                    (name, rfid, cat_image_blob, int(enable_prey_detection), int(allow_entry), int(allow_exit), int(show_location), cat_id)
                 )
             conn.commit()
             conn.close()
@@ -1720,7 +1945,7 @@ class CatsRepo:
 
     @staticmethod
     def db_add_new_cat(database: str, name: str, rfid: str, cat_image_path: str,
-                       enable_prey_detection: bool = True, allow_entry: bool = True, allow_exit: bool = True) -> Result: 
+                       enable_prey_detection: bool = True, allow_entry: bool = True, allow_exit: bool = True, show_location: bool = True) -> Result: 
         """Insert a new cat row (optional JPEG path becomes the cat_image blob)."""
         if cat_image_path:
             try:
@@ -1747,8 +1972,8 @@ class CatsRepo:
             else:
                 id += 1
             cursor.execute(
-                "INSERT INTO cats (id, created_at, name, rfid, cat_image, enable_prey_detection, allow_entry, allow_exit) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (id, DateTimeUtil.get_utc_date_string(tm.time()), name, rfid, cat_image_blob, int(enable_prey_detection), int(allow_entry), int(allow_exit))
+                "INSERT INTO cats (id, created_at, name, rfid, cat_image, enable_prey_detection, allow_entry, allow_exit, show_location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (id, DateTimeUtil.get_utc_date_string(tm.time()), name, rfid, cat_image_blob, int(enable_prey_detection), int(allow_entry), int(allow_exit), int(show_location))
             )
             conn.commit()
             conn.close()
@@ -1841,6 +2066,413 @@ class CatsRepo:
             return None
 
 
+def _parse_visit_timestamp(value) -> datetime | None:
+    """Parse a visit_stats timestamp to an aware UTC datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return None
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            try:
+                dt = datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _paired_stay_seconds(
+    previous: dict | None, direction: str, created_at: str
+) -> tuple[float | None, float | None]:
+    """Duration against an already-loaded previous passage. Does not lock."""
+    if not previous or direction not in ("in", "out"):
+        return None, None
+    last_dir = previous.get("direction")
+    if last_dir == direction or last_dir not in ("in", "out"):
+        return None, None
+    now_dt = _parse_visit_timestamp(created_at)
+    last_dt = _parse_visit_timestamp(previous.get("created_at"))
+    if now_dt is None or last_dt is None:
+        return None, None
+    delta = (now_dt - last_dt).total_seconds()
+    if delta <= 0:
+        return None, None
+    if direction == "in" and last_dir == "out":
+        return delta, None
+    if direction == "out" and last_dir == "in":
+        return None, delta
+    return None, None
+
+
+class VisitStatsRepo:
+    """Durable per-visit statistics (independent of picture purge)."""
+
+    _INSERT_SQL = """
+        INSERT INTO visit_stats (
+            created_at, cat_rfid, cat_name, conclusion, direction,
+            passed, prey, denied_entry, denied_exit, attempt_no_pass,
+            uncertain_entry, duration_outside_s, duration_inside_s, source_block_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    @staticmethod
+    def insert(database: str, row: dict) -> Result:
+        """Insert one visit_stats row. Duplicate ``source_block_id`` is ignored."""
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return result
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            cursor = conn.cursor()
+            cursor.execute(
+                VisitStatsRepo._INSERT_SQL,
+                (
+                    row.get("created_at"),
+                    row.get("cat_rfid"),
+                    row.get("cat_name"),
+                    row.get("conclusion"),
+                    row.get("direction"),
+                    int(row.get("passed") or 0),
+                    int(row.get("prey") or 0),
+                    int(row.get("denied_entry") or 0),
+                    int(row.get("denied_exit") or 0),
+                    int(row.get("attempt_no_pass") or 0),
+                    int(row.get("uncertain_entry") or 0),
+                    row.get("duration_outside_s"),
+                    row.get("duration_inside_s"),
+                    row.get("source_block_id"),
+                ),
+            )
+            conn.commit()
+            conn.close()
+        except sqlite3.IntegrityError:
+            logging.debug(
+                "[VISIT_STATS] Skipping duplicate source_block_id=%s",
+                row.get("source_block_id"),
+            )
+            return Result(True, "duplicate")
+        except Exception as e:
+            error_message = f"[VISIT_STATS] Failed to insert visit: {e}"
+            logging.error(error_message)
+            return Result(False, error_message)
+        else:
+            return Result(True, "")
+        finally:
+            DatabaseCore.release_database()
+
+    @staticmethod
+    def get_last_passed(database: str, cat_rfid: str) -> dict | None:
+        """Latest passed in/out row for ``cat_rfid``, or None."""
+        if not cat_rfid:
+            return None
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return None
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, created_at, direction, conclusion
+                FROM visit_stats
+                WHERE cat_rfid = ? AND passed = 1 AND direction IN ('in', 'out')
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (cat_rfid,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return dict(row) if row else None
+        except Exception as e:
+            logging.error(f"[VISIT_STATS] Failed to read last passed visit: {e}")
+            return None
+        finally:
+            DatabaseCore.release_database()
+
+    @staticmethod
+    def apply_manual_location(
+        database: str,
+        *,
+        cat_rfid: str,
+        cat_name: str | None,
+        direction: str,
+        created_at: str,
+        conclusion: str,
+        coalesce_s: float,
+    ) -> Result:
+        """Insert, replace, or drop one manual in/out mark under a single lock.
+
+        Returns a successful Result whose message is ``unchanged``, ``reverted``,
+        ``updated``, or ``inserted``.
+        """
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return result
+        conn = None
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, created_at, direction, conclusion
+                FROM visit_stats
+                WHERE cat_rfid = ? AND passed = 1 AND direction IN ('in', 'out')
+                ORDER BY created_at DESC, id DESC
+                LIMIT 2
+                """,
+                (cat_rfid,),
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+            latest = rows[0] if rows else None
+            previous = rows[1] if len(rows) > 1 else None
+
+            if latest and latest.get("direction") == direction:
+                return Result(True, "unchanged")
+
+            if latest and str(latest.get("conclusion") or "") == conclusion:
+                now_dt = _parse_visit_timestamp(created_at)
+                last_dt = _parse_visit_timestamp(latest.get("created_at"))
+                age = None
+                if now_dt is not None and last_dt is not None:
+                    age = (now_dt - last_dt).total_seconds()
+                if age is not None and 0 <= age < float(coalesce_s):
+                    prev_dir = previous.get("direction") if previous else None
+                    if previous is not None and prev_dir == direction:
+                        cursor.execute(
+                            "DELETE FROM visit_stats WHERE id = ?",
+                            (latest["id"],),
+                        )
+                        conn.commit()
+                        return Result(True, "reverted")
+                    dur_out, dur_in = _paired_stay_seconds(
+                        previous, direction, created_at
+                    )
+                    cursor.execute(
+                        """
+                        UPDATE visit_stats
+                        SET created_at = ?, cat_name = ?, direction = ?,
+                            duration_outside_s = ?, duration_inside_s = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            created_at,
+                            cat_name,
+                            direction,
+                            dur_out,
+                            dur_in,
+                            latest["id"],
+                        ),
+                    )
+                    conn.commit()
+                    return Result(True, "updated")
+
+            dur_out, dur_in = _paired_stay_seconds(latest, direction, created_at)
+            cursor.execute(
+                VisitStatsRepo._INSERT_SQL,
+                (
+                    created_at,
+                    cat_rfid,
+                    cat_name,
+                    conclusion,
+                    direction,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    dur_out,
+                    dur_in,
+                    None,
+                ),
+            )
+            conn.commit()
+            return Result(True, "inserted")
+        except Exception as e:
+            error_message = f"[VISIT_STATS] Failed to apply manual location: {e}"
+            logging.error(error_message)
+            return Result(False, error_message)
+        finally:
+            if conn is not None:
+                conn.close()
+            DatabaseCore.release_database()
+
+    @staticmethod
+    def query_range(
+        database: str,
+        date_start: str,
+        date_end: str,
+        cat_rfid: str | None = None,
+    ) -> list[dict]:
+        """Return visit_stats rows in ``[date_start, date_end]``, oldest first."""
+        if not DatabaseCore.check_if_table_exists(database, "visit_stats"):
+            return []
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return []
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            sql = """
+                SELECT * FROM visit_stats
+                WHERE created_at >= ? AND created_at <= ?
+            """
+            params: list = [date_start, date_end]
+            if cat_rfid == "__unknown__":
+                sql += " AND (cat_rfid IS NULL OR cat_rfid = '')"
+            elif cat_rfid:
+                sql += " AND cat_rfid = ?"
+                params.append(cat_rfid)
+            sql += " ORDER BY created_at ASC, id ASC"
+            cursor.execute(sql, params)
+            rows = [dict(r) for r in cursor.fetchall()]
+            conn.close()
+            return rows
+        except Exception as e:
+            logging.error(f"[VISIT_STATS] Failed to query range: {e}")
+            return []
+        finally:
+            DatabaseCore.release_database()
+
+    @staticmethod
+    def count(database: str) -> int:
+        """Total visit_stats rows, or 0 if the table is missing."""
+        if not DatabaseCore.check_if_table_exists(database, "visit_stats"):
+            return 0
+        df = DatabaseCore.read_df_from_database(
+            database, "SELECT COUNT(*) AS n FROM visit_stats"
+        )
+        if df.empty:
+            return 0
+        try:
+            return int(df.iloc[0]["n"])
+        except Exception:
+            return 0
+
+    @staticmethod
+    def list_cats(database: str) -> list[dict]:
+        """Distinct RFID/name pairs seen in visit_stats (unknown = empty rfid)."""
+        if not DatabaseCore.check_if_table_exists(database, "visit_stats"):
+            return []
+        df = DatabaseCore.read_df_from_database(
+            database,
+            "SELECT cat_rfid, cat_name FROM visit_stats GROUP BY cat_rfid, cat_name",
+        )
+        if df.empty:
+            return []
+        out = []
+        for __, row in df.iterrows():
+            out.append(
+                {
+                    "cat_rfid": row["cat_rfid"] if pd.notna(row["cat_rfid"]) else None,
+                    "cat_name": row["cat_name"] if pd.notna(row["cat_name"]) else None,
+                }
+            )
+        return out
+
+    @staticmethod
+    def get_meta(database: str, key: str) -> str | None:
+        """Read a visit_stats_meta value, or None."""
+        if not DatabaseCore.check_if_table_exists(database, "visit_stats_meta"):
+            return None
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return None
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM visit_stats_meta WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            conn.close()
+            return str(row[0]) if row else None
+        except Exception as e:
+            logging.error(f"[VISIT_STATS] Failed to read meta '{key}': {e}")
+            return None
+        finally:
+            DatabaseCore.release_database()
+
+    @staticmethod
+    def set_meta(database: str, key: str, value: str) -> Result:
+        """Upsert a visit_stats_meta key."""
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return result
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT OR REPLACE INTO visit_stats_meta (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            error_message = f"[VISIT_STATS] Failed to set meta '{key}': {e}"
+            logging.error(error_message)
+            return Result(False, error_message)
+        else:
+            return Result(True, "")
+        finally:
+            DatabaseCore.release_database()
+
+    @staticmethod
+    def fetch_motion_blocks_for_backfill(database: str) -> list[dict]:
+        """One representative events-row per motion block, oldest first (includes deleted)."""
+        if not DatabaseCore.check_if_table_exists(database, "events"):
+            return []
+        stmt = """
+            SELECT e.block_id, e.created_at, e.event_type,
+                   COALESCE(
+                       NULLIF(TRIM(e.rfid), ''),
+                       (
+                           SELECT TRIM(e2.rfid) FROM events e2
+                           WHERE e2.block_id = e.block_id
+                             AND e2.rfid IS NOT NULL
+                             AND TRIM(e2.rfid) != ''
+                           LIMIT 1
+                       )
+                   ) AS rfid
+            FROM events e
+            INNER JOIN (
+                SELECT block_id, MIN(id) AS min_id
+                FROM events
+                WHERE block_id IS NOT NULL
+                GROUP BY block_id
+            ) t ON e.id = t.min_id
+            ORDER BY e.created_at ASC, e.id ASC
+        """
+        df = DatabaseCore.read_df_from_database(database, stmt)
+        if df.empty:
+            return []
+        rows = []
+        for __, row in df.iterrows():
+            rfid = row["rfid"] if "rfid" in row and pd.notna(row["rfid"]) else None
+            if isinstance(rfid, str) and not rfid.strip():
+                rfid = None
+            rows.append(
+                {
+                    "block_id": int(row["block_id"]) if pd.notna(row["block_id"]) else None,
+                    "created_at": str(row["created_at"]) if pd.notna(row["created_at"]) else "",
+                    "event_type": str(row["event_type"]) if pd.notna(row["event_type"]) else "",
+                    "rfid": rfid,
+                }
+            )
+        return rows
+
+
 class DbMigrations:
     """Table creation and one-shot migrations between kittyflap/kittyhack schemas."""
 
@@ -1873,12 +2505,58 @@ class DbMigrations:
         return result
 
     @staticmethod
+    def create_visit_stats_tables(database: str) -> Result:
+        """Create visit_stats and visit_stats_meta tables (and indexes) if missing."""
+        stmt_stats = """
+            CREATE TABLE IF NOT EXISTS visit_stats (
+                id INTEGER PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                cat_rfid TEXT,
+                cat_name TEXT,
+                conclusion TEXT NOT NULL,
+                direction TEXT,
+                passed INTEGER NOT NULL DEFAULT 0,
+                prey INTEGER NOT NULL DEFAULT 0,
+                denied_entry INTEGER NOT NULL DEFAULT 0,
+                denied_exit INTEGER NOT NULL DEFAULT 0,
+                attempt_no_pass INTEGER NOT NULL DEFAULT 0,
+                uncertain_entry INTEGER NOT NULL DEFAULT 0,
+                duration_outside_s REAL,
+                duration_inside_s REAL,
+                source_block_id INTEGER
+            )
+        """
+        stmt_meta = """
+            CREATE TABLE IF NOT EXISTS visit_stats_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """
+        result = DatabaseCore.write_stmt_to_database(database, stmt_stats)
+        if not result.success:
+            return result
+        result = DatabaseCore.write_stmt_to_database(database, stmt_meta)
+        if not result.success:
+            return result
+        for idx_stmt in (
+            "CREATE INDEX IF NOT EXISTS idx_visit_stats_created_at ON visit_stats (created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_visit_stats_cat_created ON visit_stats (cat_rfid, created_at)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_visit_stats_source_block ON visit_stats (source_block_id) WHERE source_block_id IS NOT NULL",
+        ):
+            result = DatabaseCore.write_stmt_to_database(database, idx_stmt)
+            if not result.success:
+                return result
+        logging.info(f"[DATABASE] Ensured visit_stats tables in '{database}'.")
+        return Result(True, "")
+
+    @staticmethod
     def create_motion_timeline_table(database: str):
         """Create the motion_timeline table (one JSON timeline per motion block)."""
         stmt = """
             CREATE TABLE IF NOT EXISTS motion_timeline (
                 block_id INTEGER PRIMARY KEY,
-                timeline_json TEXT NOT NULL DEFAULT '[]'
+                timeline_json TEXT NOT NULL DEFAULT '[]',
+                frames_json TEXT NOT NULL DEFAULT '[]'
             )
         """
         result = DatabaseCore.write_stmt_to_database(database, stmt)
@@ -1934,7 +2612,8 @@ class DbMigrations:
                 cat_image BLOB,
                 enable_prey_detection INTEGER DEFAULT 1,
                 allow_entry INTEGER DEFAULT 1,
-                allow_exit INTEGER DEFAULT 1
+                allow_exit INTEGER DEFAULT 1,
+                show_location INTEGER DEFAULT 1
             )
         """
         result = DatabaseCore.write_stmt_to_database(database, stmt)
@@ -2125,6 +2804,8 @@ check_if_column_exists = DatabaseCore.check_if_column_exists
 add_column_to_table = DatabaseCore.add_column_to_table
 check_database_integrity = DatabaseCore.check_database_integrity
 backup_database_sqlite = DatabaseCore.backup_database_sqlite
+validate_kittyhack_database = DatabaseCore.validate_kittyhack_database
+replace_database_file = DatabaseCore.replace_database_file
 get_jpeg_size = EventsRepo.get_jpeg_size
 update_image_dimensions_for_block = EventsRepo.update_image_dimensions_for_block
 _event_bundle_paths = EventsRepo._event_bundle_paths
@@ -2141,6 +2822,7 @@ get_thubmnail_by_id = EventsRepo.get_thubmnail_by_id
 write_motion_timeline = EventsRepo.write_motion_timeline
 delete_motion_timeline_by_block_id = EventsRepo.delete_motion_timeline_by_block_id
 db_get_motion_timelines = EventsRepo.db_get_motion_timelines
+db_get_motion_frames = EventsRepo.db_get_motion_frames
 read_photo_by_id = EventsRepo.read_photo_by_id
 delete_photo_by_id = EventsRepo.delete_photo_by_id
 delete_photos_by_block_id = EventsRepo.delete_photos_by_block_id
@@ -2165,6 +2847,7 @@ get_cat_names_list = CatsRepo.get_cat_names_list
 get_cat_thumbnail = CatsRepo.get_cat_thumbnail
 create_kittyhack_events_table = DbMigrations.create_kittyhack_events_table
 create_motion_timeline_table = DbMigrations.create_motion_timeline_table
+create_visit_stats_tables = DbMigrations.create_visit_stats_tables
 create_kittyhack_photo_table = DbMigrations.create_kittyhack_photo_table
 create_kittyhack_cats_table = DbMigrations.create_kittyhack_cats_table
 migrate_cats_to_kittyhack = DbMigrations.migrate_cats_to_kittyhack

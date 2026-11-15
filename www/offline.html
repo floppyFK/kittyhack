@@ -3,12 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="theme-color" content="#FFFFFF">
   <title>KITTYHACK</title>
+  <script>
+    (function () {
+      var THEME_PREF_KEY = 'kittyhack_theme_pref_v1';
+      var pref = 'auto';
+      try {
+        var raw = localStorage.getItem(THEME_PREF_KEY);
+        if (raw === 'dark' || raw === 'light' || raw === 'auto') pref = raw;
+      } catch (e) {}
+      var systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var effective = (pref === 'auto') ? (systemDark ? 'dark' : 'light') : pref;
+      document.documentElement.setAttribute('data-bs-theme', effective);
+      document.documentElement.setAttribute('data-theme-pref', pref);
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', effective === 'dark' ? '#121212' : '#FFFFFF');
+    })();
+  </script>
   <style>
     * {
       margin: 0;
       padding: 0;
       box-sizing: border-box;
+    }
+    html {
+      color-scheme: light;
+      --kh-page-bg: #f8f9fa;
+      --kh-card-bg: #ffffff;
+      --kh-text: #212529;
+      --kh-muted: #6c757d;
+      --kh-border: #dee2e6;
+      --kh-header-border: #e9ecef;
+    }
+    html[data-bs-theme="dark"] {
+      color-scheme: dark;
+      --kh-page-bg: #121212;
+      --kh-card-bg: #212529;
+      --kh-text: #f8f9fa;
+      --kh-muted: #adb5bd;
+      --kh-border: rgba(73, 80, 87, 0.9);
+      --kh-header-border: rgba(255, 255, 255, 0.12);
     }
     body {
       display: flex;
@@ -16,23 +51,27 @@
       justify-content: center;
       align-items: center;
       min-height: 100vh;
-      background-color: #f8f9fa;
+      background-color: var(--kh-page-bg);
+      color: var(--kh-text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       padding: 20px;
-      color: #5a5c69;
     }
     .offline-card {
       max-width: 500px;
       width: 100%;
-      border-radius: 8px;
-      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-      background-color: white;
+      border-radius: 0.5rem;
+      border: 1px solid var(--kh-border);
+      background-color: var(--kh-card-bg);
+      color: var(--kh-text);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
       overflow: hidden;
     }
+    html[data-bs-theme="dark"] .offline-card {
+      box-shadow: 0px 1px 2px rgba(0, 0, 0, .35), 0px 3px 7px rgba(0, 0, 0, .35), 0px 12px 30px rgba(0, 0, 0, .28);
+    }
     .offline-card-header {
-      border-bottom: 1px solid #e3e6f0;
+      border-bottom: 1px solid var(--kh-header-border);
       padding: 15px 20px;
-      background-color: #f8f9fa;
       text-align: center;
     }
     .offline-card-body {
@@ -41,42 +80,39 @@
     }
     .header-text {
       margin: 0;
-      font-weight: bold;
-      color: #4e73df;
-      font-size: 1.1rem;
-    }
-    .offline-symbol {
-      font-size: 48px;
-      margin-bottom: 20px;
-      color: #e74a3b;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      font-size: 1.05rem;
     }
     h1 {
       font-size: 1.8rem;
-      margin-bottom: 20px;
-      color: #5a5c69;
+      margin-bottom: 16px;
+      font-weight: 600;
     }
     p {
       margin-bottom: 24px;
       line-height: 1.5;
+      color: var(--kh-muted);
     }
     .btn-retry {
       padding: 10px 24px;
       font-size: 1rem;
-      background-color: #4e73df;
-      border: none;
-      color: white;
+      font-weight: 600;
+      background-color: #5a9fd4;
+      border: 1px solid #5a9fd4;
+      color: #ffffff;
       cursor: pointer;
-      border-radius: 5px;
-      transition: background-color 0.2s;
-      font-weight: 500;
+      border-radius: 0.375rem;
     }
-    .btn-retry:hover {
-      background-color: #2e59d9;
+    .btn-retry:hover,
+    .btn-retry:focus {
+      background-color: #4a8bc9;
+      border-color: #3a7bbf;
     }
     .status {
       margin-top: 20px;
       font-size: 0.95rem;
-      color: #858796;
+      color: var(--kh-muted);
     }
     @media (max-width: 576px) {
       .offline-card {
@@ -87,75 +123,6 @@
       }
     }
   </style>
-  <script>
-    const CHECK_INTERVAL = 5000;
-
-    // Determine the return URL: if we stored an active tab before going offline,
-    // navigate back to that tab path instead of the root.
-    var TAB_SESSION_KEY = 'kittyhack_active_tab_v1';
-    var TAB_ROUTES = {
-      'live-view': '/live-view/', 'pictures': '/pictures/', 'manage-cats': '/manage-cats/',
-      'add-new-cat': '/add-new-cat/', 'ai-training': '/ai-training/', 'system': '/system/',
-      'configuration': '/configuration/', 'wlan-configuration': '/wlan-configuration/', 'info': '/info/'
-    };
-    var savedTab = '';
-    try { savedTab = sessionStorage.getItem(TAB_SESSION_KEY) || ''; } catch(e) {}
-    const TARGET_URL = (savedTab && TAB_ROUTES[savedTab]) ? TAB_ROUTES[savedTab] : '/';
-
-    let countdownInterval;
-
-    function updateStatus(text) {
-      const el = document.getElementById("status-text");
-      if (el) el.textContent = text;
-    }
-
-    function startRetryLoop() {
-      let countdown = CHECK_INTERVAL / 1000;
-
-      updateStatus(`Retrying in ${countdown} seconds...`);
-
-      countdownInterval = setInterval(() => {
-        countdown--;
-        if (countdown <= 0) {
-          clearInterval(countdownInterval);
-          updateStatus("Checking connectivity...");
-          checkConnectivity();
-        } else {
-          updateStatus(`Retrying in ${countdown} seconds...`);
-        }
-      }, 1000);
-    }
-
-    async function checkConnectivity() {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3000);
-
-        const response = await fetch(TARGET_URL, {
-          method: "HEAD",
-          cache: "no-store",
-          signal: controller.signal
-        });
-
-        clearTimeout(timeout);
-
-        if (response.ok) {
-          window.location.href = TARGET_URL;
-        } else {
-          console.log("Initial check failed, starting retry loop.");
-          startRetryLoop();
-        }
-      } catch (err) {
-        console.log("Offline or fetch failed.");
-        startRetryLoop();
-      }
-    }
-
-    window.addEventListener("load", () => {
-      updateStatus("Checking connectivity...");
-      checkConnectivity();
-    });
-  </script>
 </head>
 <body>
   <div class="offline-card">
@@ -163,14 +130,157 @@
       <h5 class="header-text">KITTYHACK</h5>
     </div>
     <div class="offline-card-body">
-      <div class="offline-symbol">⚠️</div>
-      <h1>Not reachable</h1>
-      <p>The connection to your Kittyflap has been lost. This might be due to network issues or the device being powered off.</p>
-      <button onclick="window.location.href = (typeof TARGET_URL !== 'undefined' ? TARGET_URL : '/')" class="btn-retry">
-        Try to reload the WebGUI
-      </button>
-      <div class="status" id="status-text">Initializing...</div>
+      <h1 id="offline-title">Not reachable</h1>
+      <p id="offline-body">The connection to your Kittyflap has been lost. This might be due to network issues or the device being powered off.</p>
+      <button type="button" id="offline-retry" class="btn-retry">Try to reload the WebGUI</button>
+      <div class="status" id="status-text">Checking connectivity…</div>
     </div>
   </div>
+  <script>
+    var CHECK_INTERVAL = 5000;
+    var THEME_PREF_KEY = 'kittyhack_theme_pref_v1';
+    var LANG_KEY = 'kittyhack_lang_v1';
+    var STRINGS = {
+      en: {
+        title: 'Not reachable',
+        body: 'The connection to your Kittyflap has been lost. This might be due to network issues or the device being powered off.',
+        retry: 'Try to reload the WebGUI',
+        checking: 'Checking connectivity…',
+        retryIn: function (n) {
+          return n === 1 ? 'Retrying in 1 second…' : 'Retrying in ' + n + ' seconds…';
+        }
+      },
+      de: {
+        title: 'Nicht erreichbar',
+        body: 'Die Verbindung zu deiner Kittyflap ist unterbrochen. Das kann am Netzwerk liegen oder daran, dass das Gerät ausgeschaltet ist.',
+        retry: 'Weboberfläche neu laden',
+        checking: 'Verbindung wird geprüft…',
+        retryIn: function (n) {
+          return n === 1 ? 'Erneuter Versuch in 1 Sekunde…' : 'Erneuter Versuch in ' + n + ' Sekunden…';
+        }
+      }
+    };
+
+    function currentLang() {
+      try {
+        var stored = localStorage.getItem(LANG_KEY);
+        if (stored === 'de' || stored === 'en') return stored;
+      } catch (e) {}
+      var nav = (navigator.language || 'en').toLowerCase();
+      return nav.indexOf('de') === 0 ? 'de' : 'en';
+    }
+
+    var lang = currentLang();
+    var copy = STRINGS[lang] || STRINGS.en;
+
+    function applyCopy() {
+      document.documentElement.lang = lang;
+      document.title = 'KITTYHACK';
+      var title = document.getElementById('offline-title');
+      var body = document.getElementById('offline-body');
+      var button = document.getElementById('offline-retry');
+      if (title) title.textContent = copy.title;
+      if (body) body.textContent = copy.body;
+      if (button) button.textContent = copy.retry;
+    }
+
+    function applyTheme(pref) {
+      var systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var effective = (pref === 'auto') ? (systemDark ? 'dark' : 'light') : pref;
+      document.documentElement.setAttribute('data-bs-theme', effective);
+      document.documentElement.setAttribute('data-theme-pref', pref);
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', effective === 'dark' ? '#121212' : '#FFFFFF');
+    }
+
+    var TAB_SESSION_KEY = 'kittyhack_active_tab_v1';
+    var TAB_ROUTES = {
+      'live-view': '/live-view/',
+      'pictures': '/pictures/',
+      'statistics': '/statistics/',
+      'manage-cats': '/manage-cats/',
+      'add-new-cat': '/manage-cats/',
+      'ai-training': '/ai-training/',
+      'system': '/system/',
+      'configuration': '/configuration/',
+      'wlan-configuration': '/system/',
+      'info': '/info/'
+    };
+    var savedTab = '';
+    try { savedTab = sessionStorage.getItem(TAB_SESSION_KEY) || ''; } catch (e) {}
+    var TARGET_URL = (savedTab && TAB_ROUTES[savedTab]) ? TAB_ROUTES[savedTab] : '/';
+
+    var countdownInterval;
+
+    function updateStatus(text) {
+      var el = document.getElementById('status-text');
+      if (el) el.textContent = text;
+    }
+
+    function startRetryLoop() {
+      var countdown = CHECK_INTERVAL / 1000;
+      updateStatus(copy.retryIn(countdown));
+      countdownInterval = setInterval(function () {
+        countdown--;
+        if (countdown <= 0) {
+          clearInterval(countdownInterval);
+          updateStatus(copy.checking);
+          checkConnectivity();
+        } else {
+          updateStatus(copy.retryIn(countdown));
+        }
+      }, 1000);
+    }
+
+    function checkConnectivity() {
+      var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var timeout = setTimeout(function () {
+        if (controller) controller.abort();
+      }, 3000);
+      var opts = { method: 'HEAD', cache: 'no-store' };
+      if (controller) opts.signal = controller.signal;
+      fetch(TARGET_URL, opts).then(function (response) {
+        clearTimeout(timeout);
+        if (response && response.ok) {
+          window.location.href = TARGET_URL;
+        } else {
+          startRetryLoop();
+        }
+      }).catch(function () {
+        clearTimeout(timeout);
+        startRetryLoop();
+      });
+    }
+
+    var retryButton = document.getElementById('offline-retry');
+    if (retryButton) {
+      retryButton.addEventListener('click', function () {
+        window.location.href = TARGET_URL || '/';
+      });
+    }
+
+    applyCopy();
+    window.addEventListener('load', function () {
+      updateStatus(copy.checking);
+      checkConnectivity();
+    });
+
+    if (window.matchMedia) {
+      var themeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      var onThemeChange = function () {
+        var pref = 'auto';
+        try {
+          var raw = localStorage.getItem(THEME_PREF_KEY);
+          if (raw === 'dark' || raw === 'light' || raw === 'auto') pref = raw;
+        } catch (e) {}
+        if (pref === 'auto') applyTheme('auto');
+      };
+      if (typeof themeQuery.addEventListener === 'function') {
+        themeQuery.addEventListener('change', onThemeChange);
+      } else if (typeof themeQuery.addListener === 'function') {
+        themeQuery.addListener(onThemeChange);
+      }
+    }
+  </script>
 </body>
 </html>

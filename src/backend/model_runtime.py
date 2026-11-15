@@ -10,8 +10,12 @@ from src.model import ModelHandler, YoloModel
 
 
 def _get_model_threads() -> int:
-    """Return inference thread count (all CPUs in remote/all-cores mode, else 1)."""
-    if is_remote_mode() or CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING']:
+    """Return inference thread count.
+
+    Kittyflap hardware always uses 1 core (all-core inference undervolts the Pi).
+    Remote-mode hosts use every available CPU.
+    """
+    if is_remote_mode():
         return multiprocessing.cpu_count()
     return 1
 

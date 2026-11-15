@@ -13,6 +13,7 @@ If you find bugs or have ideas, please use the GitHub issue tracker.
 - **Control who may enter/exit** (global rules or **individual rules per cat**)
 - **Prey detection** (on/off) + **per-cat settings** (when enabled)
 - **See events and pictures** (filter by date, cat/prey detection)
+- **Statistics** (entries/exits, time outside/inside, prey, activity by time of day; stored independently of picture retention)
 - **Live camera view** + detection overlay
 - **Manage cats** (RFID, name, per-cat settings)
 - **Use external IP cameras** (better angle / night vision compared to the internal camera)
@@ -35,7 +36,7 @@ See: [doc/remote-mode.md](doc/remote-mode.md)
 - SSH access to your Kittyflap (user: `pi`, password: `kittyflap`)
 - A stable WiFi connection during installation (downloads can be a few hundred MB)
 - About **1 GB free space** on the Kittyflap
-- **Python 3.11** is required (the setup script will try to provision it automatically on newer systems)
+- **Python 3.14** is required (the setup script will try to provision it automatically on newer systems)
 
 You can usually find the Kittyflap IP address in your router:
 
@@ -181,6 +182,7 @@ Wenn du Bugs findest oder Ideen hast, nutze bitte den GitHub Issue Tracker.
 - **Steuern, wer rein/raus darf** (globale Regeln oder **individuell pro Katze**)
 - **Beuteerkennung** (an/aus) + **pro Katze konfigurierbar** (wenn aktiviert)
 - **Events & Bilder ansehen** (Filter nach Datum, Katze/Beute-Erkennung)
+- **Statistik** (Eingänge/Ausgänge, Zeit draußen/drinnen, Beute, Aktivität nach Tageszeit; unabhängig von der Bild-Aufbewahrung)
 - **Live-Kamerabild** + Overlay mit erkannten Objekten
 - **Katzen verwalten** (RFID, Name, Einstellungen pro Katze)
 - **Externe IP-Kameras** (besserer Blickwinkel / bessere Nachtsicht als die interne Kamera)
@@ -203,7 +205,7 @@ Siehe: [doc/remote-mode_de.md](doc/remote-mode_de.md)
 - SSH-Zugriff auf die Kittyflap (User: `pi`, Passwort: `kittyflap`)
 - Stabile WLAN-Verbindung während der Installation (Downloads können mehrere hundert MB sein)
 - Ca. **1 GB freier Speicher** auf der Kittyflap
-- **Python 3.11** wird benötigt (das Setup versucht es auf neueren Systemen automatisch bereitzustellen)
+- **Python 3.14** wird benötigt (das Setup versucht es auf neueren Systemen automatisch bereitzustellen)
 
 Die IP-Adresse findest du meist im Router:
 

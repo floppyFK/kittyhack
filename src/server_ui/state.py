@@ -11,9 +11,11 @@ from src.paths import kittyhack_root
 
 reload_trigger_wlan = reactive.Value(0)
 reload_trigger_photos = reactive.Value(0)
+event_subject_mode_revision = reactive.Value(0)
 reload_trigger_ai = reactive.Value(0)
 reload_trigger_config = reactive.Value(0)
 reload_trigger_api_tokens = reactive.Value(0)
+stats_hidden_cats_revision = reactive.Value(0)
 
 ls_project_choices = reactive.Value({})
 
@@ -29,6 +31,8 @@ update_progress_state = {
     "result": None,
     "error_msg": "",
     "is_venv_update": False,
+    # False: the failure did not change the install, so the UI must not demand a reboot.
+    "reboot_required": True,
 }
 update_progress_lock = threading.Lock()
 
@@ -43,6 +47,18 @@ def get_update_progress():
     """Return a copy of the current update-progress snapshot."""
     with update_progress_lock:
         return update_progress_state.copy()
+
+
+def update_dialog_is_open() -> bool:
+    """True while the update progress or reboot/error dialog should stay in front.
+
+    A remote update drops the control websocket on purpose. That must not raise
+    the "remote disconnected" modal over the update dialog.
+    """
+    state = get_update_progress()
+    if state.get("in_progress"):
+        return True
+    return state.get("result") in ("ok", "error", "reboot_dialog")
 
 
 user_wlan_action_in_progress = False

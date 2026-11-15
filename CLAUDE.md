@@ -38,6 +38,10 @@ Setup files: `setup/kittyhack.service`, `setup/kittyhack_control.service`, `setu
 | Subprocess wrappers (nmcli, systemctl, git, pip, …) | `src/system.py` | `update_kittyhack()`, `switch_wlan_connection()`, `apply_wlan_runtime_settings()`, `systemctl()` |
 | Version check / release notes / update-repo resolution | `src/helper.py` | `read_latest_kittyhack_version()`, `fetch_github_release_notes()`, `resolved_update_repo()` |
 | Door hardware | `src/magnets_rfid.py` | `Magnets` singleton (`Magnets.instance`), `queue_command("unlock_inside" | "lock_inside" | "unlock_outside" | "lock_outside")`, state getters |
+| TFLite / LiteRT inference | `src/model/model_handler.py` | `from ai_edge_litert.interpreter import Interpreter` (replaces `tflite_runtime` on Python 3.12+) |
+| Required Python pin | `setup/REQUIRED_PYTHON` | Currently `3.14`; enforced by `setup/ensure_venv.sh` |
+| Target deps | `requirements.txt` | Kittyflap venv. No torch/ultralytics (native NCNN + LiteRT). |
+| Remote deps | `requirements_remote.txt` | Remote host venv. Adds OpenVINO. No torch. CUDA extra: `requirements_remote_cuda.txt`. OpenVINO export: `requirements_openvino_export.txt` (CPU torch). |
 | DB access | `src/database.py` | `db_get_cats`, `db_get_motion_blocks`, `get_cat_settings_map`, backup helpers |
 | MQTT | `src/mqtt.py` | `MqttPublisher`, topics, `handle_manual_override()` bridge in backend |
 | REST API (PR #153, not yet merged to main) | `src/api.py` | Token storage, auth, Starlette routes, middleware |
@@ -47,13 +51,11 @@ Setup files: `setup/kittyhack.service`, `setup/kittyhack_control.service`, `setu
 
 ## Config pattern (adding a new setting)
 
-Three places, exactly in this order, or load/save drifts silently:
+Settings live in the `settings` table of `kittyhack.db` (one JSON value per key). `config.ini` and `config.remote.ini` are imported once on startup and then deleted. The database path is `<kittyhack_root>/kittyhack.db` (env `KITTYHACK_DATABASE_PATH` for tests), exposed as `CONFIG["KITTYHACK_DATABASE_PATH"]`.
 
-1. `DEFAULT_CONFIG["Settings"][…]` in `baseconfig.py` (~line 185+): lowercase ini-key → default value.
-2. `new_config = { … "UPPER_KEY": safe_str/int/bool/float/enum(…) }` in `load_config()` (~line 442+).
-3. `settings["lowercase_key"] = CONFIG["UPPER_KEY"]` in `save_config()` (~line 611+).
+Add a new setting only in `SETTINGS_SCHEMA` in `baseconfig.py`. `load_config()`, `save_config()`, and `update_single_config_parameter()` pick it up. Runtime code keeps reading and writing the `CONFIG` dict. `remote_only=True` marks keys that a remote controller restores after a database sync from the flap.
 
-For UI: add input to `ui_configuration()` in `server.py` (~line 6441+), then assign from `input.<id>()` in `on_save_kittyhack_config()` (~line 7645+).
+For UI: add input to `ui_configuration()` in `server_ui/configuration.py`, then assign from `input.<id>()` in `on_save_kittyhack_config()`.
 
 Conditional visibility pattern: give the container an `id=` and toggle via a new init function in `www/server-ui.js` (see `initIpCameraUrlToggle`, `initUpdateRepoToggle`).
 
@@ -108,14 +110,14 @@ Tags are **lightweight** (no annotation, `git tag vX.Y.Z`). Follow the style.
 3. `git remote set-url origin <resolved_url>` (if custom update repo configured)
 4. `git fetch --all --tags`
 5. `git checkout <tag>` (tag mode) OR `git checkout -B <ref> origin/<ref>` (branch mode)
-6. `setup/ensure_venv.sh --prepare` (no-op while `REQUIRED_PYTHON` matches `.venv`; otherwise builds `.venv.new`)
-7. `pip install -r requirements.txt` if requirements hash changed **and** no `.venv.new` was prepared
+6. `setup/ensure_venv.sh --prepare` (no-op while `REQUIRED_PYTHON` matches `.venv`; otherwise builds `.venv.new`). Passes `--requirements` for the host: `requirements.txt` on the Kittyflap, `requirements_remote.txt` in remote mode (`requirements_remote_cuda.txt` when `inference_device` is `cuda:*`, or `--cuda`).
+7. `pip install -r` that same file if its hash changed **and** no `.venv.new` was prepared. If that file does not pin torch, leftover torch/ultralytics and the `nvidia-*` / triton packages are uninstalled (pip does not drop removed pins).
 8. Install systemd unit files, `daemon-reload`, apply boot semantics (enable/start may be deferred when updating from `kittyhack_control`)
 9. Rollback branch (`git checkout <current_version>`) on any failure; also removes a half-prepared `.venv.new`
 
 On the next service start/reboot, `ExecStartPre` runs `ensure_venv.sh --apply` (atomic `.venv.new` → `.venv` swap if pending). See `doc/python_venv_upgrade.md`.
 
-**Implication:** anything that must survive updates has to be in `.gitignore` (step 2). Already there: `config.ini`, `config.remote.ini`, `notifications.json`, `api_tokens.json`, `*.db`, `kittyhack.log*`, `.venv/`, `.venv.new/`, `.venv.old/`, etc.
+**Implication:** anything that must survive updates has to be in `.gitignore` (step 2). Already there: `kittyhack.db`, `notifications.json`, `api_tokens.json`, `*.db`, `kittyhack.log*`, `.venv/`, `.venv.new/`, `.venv.old/`, etc. Legacy `config.ini` / `config.remote.ini` stay ignored so a leftover file can still be imported once.
 
 Update source is resolved via `resolved_update_repo()` in `helper.py` — driven by `CONFIG['UPDATE_REPOSITORY_MODE']` (`standard`|`beta`|`custom`) and `CONFIG['UPDATE_REPOSITORY']` (format `owner/repo` or `owner/repo@ref`). **Standard** uses `/releases/latest` and never offers `_beta_N` tags. **Beta** picks the highest `vX.Y.Z_beta_N` tag on `floppyFK/kittyhack` when that beta base is ahead of the latest release; if no beta exists or the latest release base is `>=` the beta base (e.g. release `v2.6.3` vs `v2.6.3_beta_4`), it falls back to the latest non-beta release. Branch/custom-ref mode returns `<ref>@<sha7>` as the "latest version" so the UI's version comparison keeps working.
 
@@ -137,7 +139,7 @@ Post-reconnect: call `apply_wlan_runtime_settings()` to re-apply TX-Power + `pow
 
 Under `/api/v1/*`. Three auth methods (priority order): `Authorization: Bearer`, `X-API-Key` header, `?token=`/`?api_key=` query param (for URL-only clients like Stream Deck).
 
-Tokens in `api_tokens.json` next to `config.ini`, SHA-256 hashed. Managed via the **System tab** card (list/create/revoke) or CLI `tools/api_token.py`.
+Tokens in `api_tokens.json` next to `kittyhack.db`, SHA-256 hashed. Managed via the **Settings tab** card (list/create/revoke) or CLI `tools/api_token.py`.
 
 Routes:
 - `GET /status` — door state + mode

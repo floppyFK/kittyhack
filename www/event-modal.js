@@ -300,6 +300,9 @@
         try { data = JSON.parse((dataScript && dataScript.textContent) || '{}'); } catch (e) { data = {}; }
 
         this.frames = data.frames || [];
+        this.doorMarkers = data.doorMarkers || [];
+        this.doorStatus = data.doorStatus || {};
+        this.missingPictureText = data.missingPictureText || 'No picture stored';
         this.mouseThreshold = parseFloat(data.mouseThreshold) || 50.0;
         this.overlayOn = (data.overlayInitial !== false);
         this.fps = parseFloat(data.fps) || 4.0;
@@ -348,13 +351,15 @@
         this._attachModalCloseHandler();
         this._attachKeyboardHandler();
 
-        // Show first frame
-        this.showFrame(0);
-
-        // Auto-play for multi-frame events
-        if (this.frames.length > 1) {
+        // Auto-play only the frames that actually contain a picture.
+        // Hatched regions stay on the scrubber for manual seeking while paused.
+        var pictureCount = this._pictureCount();
+        if (pictureCount >= 2) {
+            this.showFrame(this._firstPictureIdx());
             this._startPlayback();
         } else {
+            var stillIdx = pictureCount === 1 ? this._firstPictureIdx() : 0;
+            this.showFrame(stillIdx);
             this.playing = false;
         }
         this._updatePlayPauseUI();
@@ -370,6 +375,13 @@
         this.currentIdx = idx;
 
         var frame = this.frames[idx];
+        if (frame.missing || frame.pid === null || typeof frame.pid === 'undefined') {
+            this._showMissingFrame(frame, idx);
+            this._updateScrubber(idx);
+            this._signalFrameIdx(idx);
+            this._updateDownloadSingleState();
+            return;
+        }
         var src = this._resolveFrameSrc(frame.pid);
 
         if (!src) {
@@ -384,6 +396,33 @@
         this._updateScrubber(idx);
         this._signalFrameIdx(idx);
         this._prefetchAdjacent(idx);
+        this._updateDownloadSingleState();
+    };
+
+    Player.prototype._showMissingFrame = function (frame, idx) {
+        if (!this.wrap) return;
+        this._swapToken = '';
+        this.wrap.classList.remove('has-image');
+        this.wrap.classList.add('has-missing-image');
+        this.wrap.style.removeProperty('--kh-event-bg');
+        if (this._layerInfo) {
+            var images = [this._layerInfo.a, this._layerInfo.b];
+            for (var i = 0; i < images.length; i++) {
+                images[i].removeAttribute('src');
+                images[i].setAttribute('aria-hidden', 'true');
+            }
+            var bg = this._layerInfo.layer.querySelector('img[data-role="bg"]');
+            if (bg) bg.removeAttribute('src');
+        }
+        var placeholder = this.wrap.querySelector('.event-modal-missing-picture');
+        if (!placeholder) {
+            placeholder = document.createElement('div');
+            placeholder.className = 'event-modal-missing-picture';
+            placeholder.innerHTML = '<span class="event-modal-missing-icon" aria-hidden="true">▧</span>'
+                + '<span>' + _escHtml(this.missingPictureText) + '</span>';
+            this.wrap.appendChild(placeholder);
+        }
+        this._renderOverlay(frame, idx);
     };
 
     Player.prototype._resolveFrameSrc = function (pid) {
@@ -416,6 +455,7 @@
 
     Player.prototype._swapImage = function (src) {
         if (!src || !this.wrap || !this._layerInfo) return;
+        this.wrap.classList.remove('has-missing-image');
         var layer = this._layerInfo;
         var active = layer.getActive();
         var inactive = layer.getInactive();
@@ -476,7 +516,7 @@
 
         var html = '<div id="event_modal_overlay" style="position:absolute;inset:0;pointer-events:none;">';
 
-        if (this.overlayOn && !this.fallbackMode && frame.objects && frame.objects.length > 0) {
+        if (!frame.missing && this.overlayOn && !this.fallbackMode && frame.objects && frame.objects.length > 0) {
             for (var i = 0; i < frame.objects.length; i++) {
                 var obj = frame.objects[i];
                 var nameL = (obj.name || '').toLowerCase();
@@ -522,8 +562,63 @@
             + 'background-color:rgba(0,0,0,0.5);color:white;padding:2px 5px;border-radius:3px;z-index:3;">'
             + (idx + 1) + '/' + this.frames.length + '</div>';
 
+        html += this._doorStatusHtml(idx);
+
         html += '</div>';
         this.overlayContainer.innerHTML = html;
+    };
+
+    // Latest door-lock marker at or before this frame, per side.
+    // The chip stays until a later marker of the same side replaces it.
+    Player.prototype._doorMarkersOnFrame = function (idx) {
+        var inside = null;
+        var outside = null;
+        var insideFrame = -1;
+        var outsideFrame = -1;
+        for (var i = 0; i < this.doorMarkers.length; i++) {
+            var marker = this.doorMarkers[i] || {};
+            var frame = parseIntSafe(marker.frame, -1);
+            if (frame < 0 || frame > idx) continue;
+            var kind = String(marker.kind || '');
+            if (kind.indexOf('inside-') === 0 && frame >= insideFrame) {
+                inside = marker;
+                insideFrame = frame;
+            } else if (kind.indexOf('outside-') === 0 && frame >= outsideFrame) {
+                outside = marker;
+                outsideFrame = frame;
+            }
+        }
+        return { inside: inside, outside: outside };
+    };
+
+    Player.prototype._doorChipHtml = function (side, marker) {
+        var copy = this.doorStatus || {};
+        var kind = String((marker && marker.kind) || '');
+        var open = kind.indexOf('-open') !== -1;
+        var title = (marker && marker.label) || '';
+        if (!title) {
+            if (side === 'inside') title = open ? copy.insideUnlocked : copy.insideLocked;
+            else title = open ? copy.outsideUnlocked : copy.outsideLocked;
+        }
+        var sideLabel = side === 'inside' ? copy.inside : copy.outside;
+        var icon = open ? copy.iconUnlocked : copy.iconLocked;
+        var variant = open ? 'ok' : 'muted';
+        return '<div class="live-view-overlay-chip">'
+            + '<span class="live-view-overlay-title">' + _escHtml(sideLabel || '') + '</span>'
+            + '<span class="live-view-pill live-view-pill--' + variant + '"'
+            + ' title="' + _escHtml(title) + '" aria-label="' + _escHtml(title) + '">'
+            + (icon || '')
+            + '</span></div>';
+    };
+
+    Player.prototype._doorStatusHtml = function (idx) {
+        var marks = this._doorMarkersOnFrame(idx);
+        if (!marks.inside && !marks.outside) return '';
+        var html = '<div class="event-modal-door-status live-view-overlay-row">';
+        if (marks.inside) html += this._doorChipHtml('inside', marks.inside);
+        if (marks.outside) html += this._doorChipHtml('outside', marks.outside);
+        html += '</div>';
+        return html;
     };
 
     function _escHtml(s) {
@@ -543,11 +638,17 @@
         var html = '<div id="event_scrubber_wrap" class="event-modal-scrubber" data-playing="' + (this.playing ? '1' : '0') + '">';
         html += '<div class="event-modal-range-wrap">';
         html += '<input type="range" class="event-modal-range" min="0" max="' + (n - 1) + '" value="0" step="1">';
+        html += '<div class="event-scrubber-gaps" aria-hidden="true">';
+        html += this._buildGapSegments(n);
+        html += '</div>';
         html += '</div>';
 
         // Marker overlay (prey / other detection segments)
         html += '<div class="event-scrubber-markers" aria-hidden="true">';
         html += this._buildMarkerSegments(n);
+        html += '</div>';
+        html += '<div class="event-scrubber-door-markers">';
+        html += this._buildDoorMarkers();
         html += '</div>';
         html += '</div>';
 
@@ -572,6 +673,95 @@
                 self._updateScrubberFill(rangeInput);
             });
         }
+
+        var doorMarks = container.querySelectorAll('.event-scrubber-door-mark');
+        for (var i = 0; i < doorMarks.length; i++) {
+            doorMarks[i].addEventListener('click', function () {
+                if (self.playing) {
+                    self._stopPlayback();
+                    self.playing = false;
+                    self._updatePlayPauseUI();
+                    self._updateNavButtonsState();
+                    self._updateScrubberPlayingState();
+                }
+                self.showFrame(parseIntSafe(this.getAttribute('data-frame'), 0));
+            });
+        }
+    };
+
+    Player.prototype._buildDoorMarkers = function () {
+        var html = '';
+        for (var i = 0; i < this.doorMarkers.length; i++) {
+            var marker = this.doorMarkers[i] || {};
+            var pct = Math.max(0, Math.min(100, (parseFloat(marker.position) || 0) * 100));
+            var kind = String(marker.kind || '').replace(/[^a-z-]/g, '');
+            html += '<button type="button" class="event-scrubber-door-mark is-' + kind + '"'
+                + ' data-frame="' + parseIntSafe(marker.frame, 0) + '"'
+                + ' style="left:' + pct.toFixed(4) + '%"'
+                + ' title="' + _escHtml(marker.label || '') + '"'
+                + ' aria-label="' + _escHtml(marker.label || '') + '"></button>';
+        }
+        return html;
+    };
+
+    Player.prototype._frameHasPicture = function (frame) {
+        return !!(frame && !frame.missing && frame.pid !== null && typeof frame.pid !== 'undefined');
+    };
+
+    Player.prototype._pictureCount = function () {
+        var count = 0;
+        for (var i = 0; i < this.frames.length; i++) {
+            if (this._frameHasPicture(this.frames[i])) count++;
+        }
+        return count;
+    };
+
+    Player.prototype._firstPictureIdx = function () {
+        for (var i = 0; i < this.frames.length; i++) {
+            if (this._frameHasPicture(this.frames[i])) return i;
+        }
+        return -1;
+    };
+
+    // Next frame that has a picture, wrapping past hatched regions.
+    // Returns -1 when the timeline contains no pictures.
+    Player.prototype._nextPictureIdx = function (fromIdx) {
+        var n = this.frames.length;
+        if (n === 0) return -1;
+        var start = parseIntSafe(fromIdx, -1);
+        for (var step = 1; step <= n; step++) {
+            var idx = (start + step) % n;
+            if (idx < 0) idx += n;
+            if (this._frameHasPicture(this.frames[idx])) return idx;
+        }
+        return -1;
+    };
+
+    Player.prototype._buildGapSegments = function (nFrames) {
+        if (nFrames <= 1) return '';
+        var html = '';
+        var start = -1;
+        var denom = Math.max(1, nFrames - 1);
+
+        function push(from, to) {
+            var leftEdge = from === 0 ? 0 : from - 0.5;
+            var rightEdge = to === nFrames - 1 ? nFrames - 1 : to + 0.5;
+            var left = (leftEdge / denom) * 100;
+            var width = ((rightEdge - leftEdge) / denom) * 100;
+            html += '<div class="event-scrubber-gap" style="left:'
+                + left.toFixed(4) + '%;width:' + Math.max(width, 0).toFixed(4) + '%;"></div>';
+        }
+
+        for (var i = 0; i < nFrames; i++) {
+            if (!this._frameHasPicture(this.frames[i])) {
+                if (start < 0) start = i;
+            } else if (start >= 0) {
+                push(start, i - 1);
+                start = -1;
+            }
+        }
+        if (start >= 0) push(start, nFrames - 1);
+        return html;
     };
 
     Player.prototype._buildMarkerSegments = function (nFrames) {
@@ -658,11 +848,27 @@
 
     Player.prototype._startPlayback = function () {
         this._stopPlayback();
+        var pictureCount = this._pictureCount();
+        if (pictureCount < 2) {
+            if (!this._frameHasPicture(this.frames[this.currentIdx])) {
+                var only = this._firstPictureIdx();
+                if (only >= 0) this.showFrame(only);
+            }
+            this.playing = false;
+            return;
+        }
+        // Leave a hatched frame immediately; don't show the placeholder for one tick.
+        if (!this._frameHasPicture(this.frames[this.currentIdx])) {
+            var jump = this._nextPictureIdx(this.currentIdx);
+            if (jump < 0) { this.playing = false; return; }
+            this.showFrame(jump);
+        }
         var intervalMs = Math.max(10, Math.round(1000 / Math.max(0.1, Math.min(30, this.fps))));
         var self = this;
         this.playTimer = setInterval(function () {
             if (self.destroyed || !self.playing) { self._stopPlayback(); return; }
-            var next = (self.currentIdx + 1) % self.frames.length;
+            var next = self._nextPictureIdx(self.currentIdx);
+            if (next < 0) { self.playing = false; self._stopPlayback(); return; }
             self.showFrame(next);
         }, intervalMs);
     };
@@ -672,7 +878,12 @@
     };
 
     Player.prototype.togglePlayPause = function () {
-        if (this.frames.length <= 1) return;
+        if (this.frames.length <= 1 || this._pictureCount() < 2) {
+            if (this._pictureCount() === 1 && !this._frameHasPicture(this.frames[this.currentIdx])) {
+                this.showFrame(this._firstPictureIdx());
+            }
+            return;
+        }
         this.playing = !this.playing;
         if (this.playing) {
             this._startPlayback();
@@ -738,14 +949,18 @@
         try {
             var scope = this.root.closest('.modal-content') || document;
             var btns = scope.querySelectorAll('.event-modal-toolbar-bottom-left a, .event-modal-toolbar-bottom-left button');
+            var frame = (this.currentIdx >= 0 && this.currentIdx < this.frames.length) ? this.frames[this.currentIdx] : null;
+            var unavailable = this.playing || !frame || frame.missing || frame.pid === null || typeof frame.pid === 'undefined';
             for (var i = 0; i < btns.length; i++) {
                 var btn = btns[i];
-                if (this.playing) {
+                if (unavailable) {
                     btn.classList.add('disabled');
+                    btn.setAttribute('aria-disabled', 'true');
                     btn.style.opacity = '0.5';
                     btn.style.pointerEvents = 'none';
                 } else {
                     btn.classList.remove('disabled');
+                    btn.removeAttribute('aria-disabled');
                     btn.style.opacity = '';
                     btn.style.pointerEvents = '';
                 }
@@ -860,8 +1075,8 @@
             if (this.frames.length <= 1) return;
             var prevIdx = (idx - 1 + this.frames.length) % this.frames.length;
             var nextIdx = (idx + 1) % this.frames.length;
-            var prevSrc = this._resolveFrameSrc(this.frames[prevIdx].pid);
-            var nextSrc = this._resolveFrameSrc(this.frames[nextIdx].pid);
+            var prevSrc = this.frames[prevIdx].missing ? '' : this._resolveFrameSrc(this.frames[prevIdx].pid);
+            var nextSrc = this.frames[nextIdx].missing ? '' : this._resolveFrameSrc(this.frames[nextIdx].pid);
             if (prevSrc) prefetchSrc(prevSrc);
             if (nextSrc) prefetchSrc(nextSrc);
         } catch (e) {}

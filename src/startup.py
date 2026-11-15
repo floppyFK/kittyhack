@@ -20,6 +20,7 @@ from src.baseconfig import (
     UserNotifications,
     get_loggable_config_value,
     remote_setup_required as check_remote_setup_required,
+    ensure_settings_persisted,
     save_config,
     set_language,
     update_single_config_parameter,
@@ -28,6 +29,7 @@ from src.helper import (
     SystemInfo,
     Versioning,
     check_and_stop_kittyflap_services,
+    discard_previous_venv,
     is_valid_uuid4,
     sigterm_monitor,
     wait_for_network,
@@ -47,6 +49,10 @@ from src.clock import monotonic_time
 from src.mode import is_remote_mode
 from src.paths import kittyhack_root
 from src.model import RemoteModelTrainer
+from src.backend.decisions import (
+    sync_original_model_notice,
+    sync_pir_second_factor_suggestion,
+)
 _ = set_language(CONFIG["LANGUAGE"])
 
 git_version = "unknown"
@@ -362,10 +368,10 @@ def _ensure_valid_startup_model_selection() -> None:
         update_single_config_parameter("TFLITE_MODEL_VERSION")
         try:
             UserNotifications.add(
-                header=_("Model fallback applied"),
+                header=_("Model selection updated"),
                 message=(
-                    _("The configured YOLO model was not found at startup:") + f" {configured_yolo}\n\n" +
-                    _("Kittyhack switched automatically to another available YOLO model:") + f" {fallback_yolo_name}"
+                    _("The configured YOLO model could not be found:") + f" {configured_yolo}\n\n" +
+                    _("Kittyhack selected another available YOLO model:") + f" {fallback_yolo_name}"
                 ),
                 type="warning",
                 id="model_fallback_missing_yolo",
@@ -382,10 +388,10 @@ def _ensure_valid_startup_model_selection() -> None:
     update_single_config_parameter("TFLITE_MODEL_VERSION")
     try:
         UserNotifications.add(
-            header=_("Model fallback applied"),
+            header=_("Model selection updated"),
             message=(
-                _("The configured YOLO model was not found at startup:") + f" {configured_yolo}\n\n" +
-                _("No other YOLO model was available. Kittyhack switched to the shipped TFLite model:") +
+                _("The configured YOLO model could not be found:") + f" {configured_yolo}\n\n" +
+                _("No other YOLO model was available. Kittyhack selected the included TFLite model:") +
                 " original_kittyflap_model_v2"
             ),
             type="warning",
@@ -413,31 +419,18 @@ def run() -> None:
 
     if CONFIG['NOT_GRACEFUL_SHUTDOWNS'] >= 3:
         logging.error("Not graceful shutdown detected 3 times in a row!")
-        if not is_remote_mode():
-            logging.error("We will disable the 'use all cores' setting, if it was enabled.")
-            CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = False
-            update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
-        else:
-            logging.error("[REMOTE_MODE] Keeping 'use all cores' enabled by policy.")
         CONFIG['NOT_GRACEFUL_SHUTDOWNS'] = 0
         update_single_config_parameter("NOT_GRACEFUL_SHUTDOWNS")
 
         # Add a entry to the user notifications, which will be shown at the next login in the frontend
         shutdown_message = (
-            _("The kittyflap was not shut down gracefully several times in a row. Please do not power off the device without shutting it down first, otherwise the database may be corrupted!") + "\n\n" +
-            _("If you have shut it down gracefully and see this message, please report it in the") + " " +
-            "[GitHub issue tracker](https://github.com/floppyFK/kittyhack/issues), " +
-            _("thanks!")
+            _("The Kittyflap was not shut down safely several times. Please use the shutdown control before disconnecting power to help protect the database.") + "\n\n" +
+            _("If you shut down the device safely, please report this in the") + " " +
+            "[GitHub issue tracker](https://github.com/floppyFK/kittyhack/issues)."
         )
-        if not is_remote_mode():
-            shutdown_message += (
-                "\n\n" +
-                _("> **NOTE:** The option `Use all CPU cores for image processing` has been disabled now automatically, since this could cause the issue on some devices.") + "\n" +
-                _("Please check the settings and enable it again, if you want to use it.")
-            )
 
         UserNotifications.add(
-            header=_("Several crashes detected!"),
+            header=_("Repeated unclean shutdowns detected"),
             message=shutdown_message,
                     type="warning",
                     id="not_graceful_shutdown",
@@ -450,11 +443,14 @@ def run() -> None:
         update_single_config_parameter('MQTT_DEVICE_ID')
         logging.info(f"[BACKEND] Generated MQTT device ID: {CONFIG['MQTT_DEVICE_ID']}")
 
-    # Now proceed with the startup
-    # Remote-mode policy: image processing must always use all CPU cores.
+    # Image-processing core policy: all CPUs in remote-mode, always 1 core on Kittyflap hardware.
     if is_remote_mode() and not CONFIG.get('USE_ALL_CORES_FOR_IMAGE_PROCESSING', False):
         logging.info("[REMOTE_MODE] Enforcing USE_ALL_CORES_FOR_IMAGE_PROCESSING=True.")
         CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = True
+        update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
+    elif (not is_remote_mode()) and CONFIG.get('USE_ALL_CORES_FOR_IMAGE_PROCESSING', False):
+        logging.info("[TARGET] Disabling USE_ALL_CORES_FOR_IMAGE_PROCESSING (unsupported on Kittyflap hardware).")
+        CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = False
         update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
 
     _ensure_valid_startup_model_selection()
@@ -475,14 +471,6 @@ def run() -> None:
             logging.warning(f"Using version from changelog files: {git_version}")
 
     remote_setup_required = check_remote_setup_required()
-
-    last_booted_version = CONFIG['LAST_BOOTED_VERSION']
-    # Check if we need to update the USE_ALL_CORES_FOR_IMAGE_PROCESSING setting
-    # This is only needed once after updating to version 1.5.2 or higher
-    if (not is_remote_mode()) and Versioning.normalize_version(last_booted_version) < '1.5.2' and Versioning.normalize_version(git_version) >= '1.5.2':
-        logging.info("First run after update to 1.5.2 or higher. Setting USE_ALL_CORES_FOR_IMAGE_PROCESSING to the new default value.")
-        CONFIG['USE_ALL_CORES_FOR_IMAGE_PROCESSING'] = False
-        update_single_config_parameter("USE_ALL_CORES_FOR_IMAGE_PROCESSING")
 
     # Now update the last booted version in the configuration
     CONFIG['LAST_BOOTED_VERSION'] = git_version
@@ -575,7 +563,7 @@ def run() -> None:
                         try:
                             UserNotifications.add(
                                 header=_("Database restored"),
-                                message=_("The kittyhack database was corrupted at startup and has been restored from backup: {}. The corrupted file was archived as: {}").format(latest_backup, corrupt_archive),
+                                message=_("Kittyhack restored the database from backup: {}. The damaged file was archived as {}.").format(latest_backup, corrupt_archive),
                                 type="warning",
                                 id="db_restored",
                                 skip_if_id_exists=True
@@ -596,6 +584,13 @@ def run() -> None:
     if not os.path.exists(CONFIG['KITTYHACK_DATABASE_PATH']):
         logging.info(f"Database '{CONFIG['KITTYHACK_DATABASE_PATH']}' not found. Creating it...")
         DbMigrations.create_kittyhack_events_table(CONFIG['KITTYHACK_DATABASE_PATH'])
+
+    # A restore can replace kittyhack.db with a backup that has no settings table.
+    # The migrated values are still in CONFIG; write them back into the live file.
+    try:
+        ensure_settings_persisted()
+    except Exception as e:
+        logging.error(f"[CONFIG] Failed to persist settings after database startup checks: {e}")
 
     if not DatabaseCore.check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "events"):
         logging.warning(f"Table 'events' not found in the kittyhack database. Creating it...")
@@ -627,6 +622,16 @@ def run() -> None:
     if not DatabaseCore.check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "motion_timeline"):
         logging.warning("Table 'motion_timeline' not found in the kittyhack database. Creating it...")
         DbMigrations.create_motion_timeline_table(CONFIG['KITTYHACK_DATABASE_PATH'])
+    elif not DatabaseCore.check_if_column_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "motion_timeline", "frames_json"):
+        logging.warning("Column 'frames_json' not found in 'motion_timeline'. Adding it...")
+        DatabaseCore.add_column_to_table(
+            CONFIG['KITTYHACK_DATABASE_PATH'],
+            "motion_timeline",
+            "frames_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )
+
+    DbMigrations.create_visit_stats_tables(CONFIG['KITTYHACK_DATABASE_PATH'])
 
     if not DatabaseCore.check_if_table_exists(CONFIG['KITTYHACK_DATABASE_PATH'], "photo"):
         logging.warning(f"Legacy table 'photo' not found in the kittyhack database. Creating it...")
@@ -658,6 +663,10 @@ def run() -> None:
                     logging.warning(f"Column 'allow_exit' not found in the 'cats' table of {db}. Adding it...")
                     DatabaseCore.add_column_to_table(db, "cats", "allow_exit", "INTEGER DEFAULT 1")
                     DatabaseCore.write_stmt_to_database(db, "UPDATE cats SET allow_exit = 1 WHERE allow_exit IS NULL")
+                if not DatabaseCore.check_if_column_exists(db, "cats", "show_location"):
+                    logging.warning(f"Column 'show_location' not found in the 'cats' table of {db}. Adding it...")
+                    DatabaseCore.add_column_to_table(db, "cats", "show_location", "INTEGER DEFAULT 1")
+                    DatabaseCore.write_stmt_to_database(db, "UPDATE cats SET show_location = 1 WHERE show_location IS NULL")
         except Exception as e:
             logging.error(f"Failed to ensure per-cat settings columns in database {db}: {e}")
 
@@ -665,9 +674,9 @@ def run() -> None:
         logging.info("Table 'photo' found in the kittyhack database. Migrating it to 'events'...")
         DbMigrations.migrate_photos_to_events(CONFIG['KITTYHACK_DATABASE_PATH'])
 
-    # Migrate the kittyflap config database table into the config.ini:
+    # Migrate the legacy kittyflap config table into kittyhack settings.
     if DatabaseCore.check_if_table_exists(CONFIG['DATABASE_PATH'], "config") and CONFIG['KITTYFLAP_CONFIG_MIGRATED'] == False:
-        logging.info("Table 'config' found in the kittyflap database. Migrating it to the config.ini...")
+        logging.info("Table 'config' found in the kittyflap database. Migrating it into kittyhack settings...")
         df_config = DatabaseCore.db_get_config(CONFIG['DATABASE_PATH'], ReturnDataConfigDB.all)
         if not df_config.empty:
             CONFIG['MOUSE_CHECK_ENABLED'] = bool(df_config.iloc[0]["detect_prey"])
@@ -682,6 +691,12 @@ def run() -> None:
 
     # Create indexes for the kittyhack database
     DatabaseCore.create_index_on_events(CONFIG['KITTYHACK_DATABASE_PATH'])
+
+    try:
+        from src.statistics import backfill_from_events
+        backfill_from_events(CONFIG['KITTYHACK_DATABASE_PATH'])
+    except Exception as e:
+        logging.error(f"[VISIT_STATS] Backfill failed: {e}")
 
     # Wait for internet connectivity and NTP sync
     logging.info("Waiting for network connectivity...")
@@ -707,6 +722,16 @@ def run() -> None:
     else:
         WlanManager.apply_wlan_runtime_settings()
 
+    try:
+        sync_pir_second_factor_suggestion()
+    except Exception as e:
+        logging.warning(f"[USR_NOTIFICATIONS] Failed to sync PIR-second-factor suggestion: {e}")
+
+    try:
+        sync_original_model_notice()
+    except Exception as e:
+        logging.warning(f"[USR_NOTIFICATIONS] Failed to sync original-model notice: {e}")
+
     logging.info("Starting frontend...")
 
     CONFIG["LABELSTUDIO_VERSION"] = LabelStudioInstall.get_labelstudio_installed_version()
@@ -722,3 +747,9 @@ def run() -> None:
         logging.warning("[REMOTE_MODE] Remote configuration missing; background tasks deferred.")
     else:
         start_background_task_if_needed()
+
+    # The new runtime has finished booting. Drop the previous venv so the next
+    # Python migration is not blocked by a ~1 GB leftover on a small SD card.
+    # Skipped when the swap is unfinished or the active .venv does not match
+    # REQUIRED_PYTHON, so a failed boot can still be restored over SSH.
+    discard_previous_venv()

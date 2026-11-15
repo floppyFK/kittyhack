@@ -167,13 +167,13 @@ def event_subject_mode_tip(mode: str) -> str:
     """Tooltip for the current mode. Clicking the button switches to the other one."""
     if normalize_event_subject_mode(mode) == "chip":
         return _(
-            "This toggles how events show a recognized cat: only a stored microchip is shown. "
-            "Click to also use the name from the camera."
+            "Choose how events are assigned to a cat (display only). "
+            "With the current setting, a cat name is only shown based on a recognized chip."
         )
     return _(
-        "This toggles how events show a recognized cat: when no microchip was recognized, "
-        "the cat is identified from the pictures stored for this event. "
-        "Click to show the microchip only."
+        "Choose how events are assigned to a cat (display only). "
+        "With the current setting, if no chip was recognized, Kittyhack also tries "
+        "to show the cat name based on the pictures of the event."
     )
 
 

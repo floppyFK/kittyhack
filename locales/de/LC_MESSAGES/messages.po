@@ -4987,11 +4987,11 @@ msgstr "Nur Chip"
 msgid "Chip + camera"
 msgstr "Chip + Kamera"
 
-msgid "This toggles how events show a recognized cat: only a stored microchip is shown. Click to also use the name from the camera."
-msgstr "Damit schaltest du um, wie Ereignisse eine erkannte Katze anzeigen: gerade zählt nur der gespeicherte Chip. Ein Klick verwendet zusätzlich den Namen aus der Kamera."
+msgid "Choose how events are assigned to a cat (display only). With the current setting, a cat name is only shown based on a recognized chip."
+msgstr "Bestimme, wie die Ereignisse einer Katze zugeordnet werden sollen (nur zur Anzeige). In der aktuellen Einstellung wird ein Katzenname nur anhand eines erkannten Chips angezeigt."
 
-msgid "This toggles how events show a recognized cat: when no microchip was recognized, the cat is identified from the pictures stored for this event. Click to show the microchip only."
-msgstr "Damit schaltest du um, wie Ereignisse eine erkannte Katze anzeigen: ohne erkannten Chip wird versucht, die Katze anhand der gespeicherten Bilder des Events zu bestimmen. Ein Klick zeigt nur den Chip."
+msgid "Choose how events are assigned to a cat (display only). With the current setting, if no chip was recognized, Kittyhack also tries to show the cat name based on the pictures of the event."
+msgstr "Bestimme, wie die Ereignisse einer Katze zugeordnet werden sollen (nur zur Anzeige). In der aktuellen Einstellung wird ohne erkannten Chip zusätzlich versucht, den Katzennamen anhand der Bilder des Ereignisses anzuzeigen."
 
 msgid "Recognized by the camera. No microchip was stored for this event."
 msgstr "Von der Kamera erkannt. Für dieses Ereignis wurde kein Chip gespeichert."

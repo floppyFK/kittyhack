@@ -330,6 +330,31 @@ def test_conclude_motion_event_types():
     )
 
 
+def test_conclude_inside_only_block_is_no_passage():
+    # A block that only ever saw inside motion (cat sniffing at the open exit, nothing
+    # outside) must not be concluded as an entry just because the outside timestamp is 0.
+    assert (
+        conclude_motion_event_type(
+            first_motion_outside_mono=0.0,
+            first_motion_inside_raw_mono=15.0,
+            unlock_inside_tm=0.0,
+            tag_id=None,
+            no_mouse_detected=True,
+        )
+        is None
+    )
+    assert (
+        conclude_motion_event_type(
+            first_motion_outside_mono=0.0,
+            first_motion_inside_raw_mono=15.0,
+            unlock_inside_tm=12.0,
+            tag_id="CAT1",
+            no_mouse_detected=False,
+        )
+        is None
+    )
+
+
 def test_time_in_exit_ranges_day_and_overnight():
     ranges = [(True, "09:00", "17:00"), (False, "00:00", "00:00"), (False, "00:00", "00:00")]
     assert time_in_exit_ranges("12:00", ranges) is True

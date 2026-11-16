@@ -295,8 +295,16 @@ def conclude_motion_event_type(
     unlock_inside_tm: float,
     tag_id,
     no_mouse_detected: bool,
-) -> str:
-    """Pick the motion-block conclusion event-type string (``EventType`` value)."""
+) -> str | None:
+    """Pick the motion-block conclusion event-type string (``EventType`` value).
+
+    Returns ``None`` for a block that never saw outside motion (inside motion only, e.g. a
+    cat sniffing at the open exit without going out): nobody crossed the flap, so there is
+    no passage to record. Without this guard ``0.0 < first_motion_inside_raw_mono`` would
+    conclude such a block as ``CAT_WENT_INSIDE``.
+    """
+    if first_motion_outside_mono <= 0.0:
+        return None
     if first_motion_inside_raw_mono == 0.0 or (
         first_motion_outside_mono - first_motion_inside_raw_mono
     ) > 60.0:

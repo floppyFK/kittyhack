@@ -544,10 +544,14 @@ def backend_main(
             return
 
         pending_fast_exit_finalize_mono = 0.0
+        # A block started by inside motion that never saw outside motion: nobody crossed
+        # the flap (e.g. cat sniffing at the open exit). It only ends via the timeout and
+        # must neither hold the inside auto-unlock nor be recorded as a passage.
+        inside_only_block = first_motion_outside_mono <= 0.0
 
         if trigger_source == "outside_motion_end":
             timeline_append(motion_timeline_entries, TimelineAction.MOTION_OUTSIDE_END)
-        if trigger_source == "outside_motion_timeout":
+        if trigger_source == "outside_motion_timeout" and not inside_only_block:
             if not inside_unlock_needs_confirm:
                 logging.warning(
                     "[BACKEND] Motion-block timeout with outside motion still active. "
@@ -574,7 +578,9 @@ def backend_main(
             magnets.queue_command("lock_inside")
             _timeline_log_inside_close(TimelineAction.INSIDE_CLOSED_MOTION_END)
 
-        if first_motion_inside_raw_mono == 0.0 or (first_motion_outside_mono - first_motion_inside_raw_mono) > 60.0:
+        if inside_only_block:
+            logging.info("[BACKEND] Motion event conclusion: Inside motion only, nobody crossed the flap. No event recorded.")
+        elif first_motion_inside_raw_mono == 0.0 or (first_motion_outside_mono - first_motion_inside_raw_mono) > 60.0:
             if unlock_inside_tm > first_motion_outside_mono and tag_id is not None:
                 logging.info("[BACKEND] Motion event conclusion: No motion inside detected but the inside was unlocked. Cat went probably to the inside (PIR interference issue).")
             elif mouse_check_conditions["no_mouse_detected"]:
@@ -604,11 +610,12 @@ def backend_main(
         ):
             _reset_inside_unlock_escalation(f"passage conclusion {event_type}")
 
-        timeline_append(
-            motion_timeline_entries,
-            TimelineAction.EVENT_CONCLUSION,
-            conclusion=str(event_type),
-        )
+        if event_type is not None:
+            timeline_append(
+                motion_timeline_entries,
+                TimelineAction.EVENT_CONCLUSION,
+                conclusion=str(event_type),
+            )
 
         # Guard against state combinations where an outside-motion block is finalized
         # without a properly initialized outside start timestamp (e.g. block started from
@@ -621,7 +628,9 @@ def backend_main(
             outside_start_mono = _mono()
 
         if first_motion_outside_tm <= 0.0:
-            logging.warning(
+            # Expected for inside-only blocks; only warn for real outside blocks.
+            log_fn = logging.debug if inside_only_block else logging.warning
+            log_fn(
                 "[BACKEND] Missing first outside-motion timestamp while finalizing block; "
                 f"using fallback start time {outside_start_tm}."
             )
@@ -642,7 +651,7 @@ def backend_main(
         if trigger_source == "fast_in_out_crossing" and last_motion_outside_tm <= 0.0:
             last_motion_outside_tm = _wall()
 
-        all_events = str(event_type)
+        all_events = str(event_type) if event_type is not None else "inside_motion_only"
         verdict_snapshot = list(additional_verdict_infos) if additional_verdict_infos else []
         if additional_verdict_infos:
             for info in additional_verdict_infos:
@@ -675,7 +684,9 @@ def backend_main(
                 "the flap runs standalone until the link returns."
             )
             remote_observer_logged = True
-        should_write_pictures = record_here and (
+        # Inside-only blocks (event_type None) are not a passage: nothing to persist.
+        persist_event = record_here and event_type is not None
+        should_write_pictures = persist_event and (
             (len(ids_exceeding_mouse_th) + len(ids_exceeding_nomouse_th) + len(ids_exceeding_own_cat_th) > 0)
             or (event_type in [EventType.CAT_WENT_OUTSIDE])
             or (tag_id is not None)
@@ -691,14 +702,14 @@ def backend_main(
             logging.info(f"[BACKEND] Minimal threshold exceeded or tag ID detected. Images will be written to the database. Updated block ID for {len(img_ids_for_motion_block)} elements to '{motion_block_id}' and tag ID to '{tag_id if tag_id is not None else ''}'")
             timeline_snapshot = list(motion_timeline_entries)
         else:
-            if record_here:
+            if persist_event:
                 logging.info(f"[BACKEND] No elements found that exceed the minimal threshold '{CONFIG['MIN_THRESHOLD']}' and no tag ID was detected. No picture database entry will be created.")
             if len(img_ids_for_motion_block) > 0:
                 for element in img_ids_for_motion_block:
                     image_buffer.delete_by_id(element)
             timeline_snapshot = None
 
-        if record_here:
+        if persist_event:
             db_thread = threading.Thread(
                 target=_persist_concluded_motion,
                 args=(CONFIG['KITTYHACK_DATABASE_PATH'], motion_block_id, all_events),
@@ -735,7 +746,8 @@ def backend_main(
                 cat_name = get_cat_name(tag_id)
             else:
                 cat_name = get_cat_name(tag_id_from_video)
-            mqtt_bridge.mqtt_publisher.publish_event_type(all_events, cat_name)
+            if persist_event:
+                mqtt_bridge.mqtt_publisher.publish_event_type(all_events, cat_name)
             mqtt_bridge.mqtt_publisher.publish_motion_outside(False)
 
         tag_id_from_video = None

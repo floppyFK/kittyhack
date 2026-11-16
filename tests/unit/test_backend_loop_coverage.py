@@ -929,6 +929,37 @@ def test_max_motion_block_seconds_finalizes(harness):
     assert harness.magnets.get_inside_state() is False
 
 
+def test_inside_only_block_timeout_records_no_entry(harness, monkeypatch, caplog):
+    """Inside motion without any outside motion (cat at the open exit, nobody crossed)
+    must not be concluded as 'cat went inside' when the block runs into the timeout."""
+    baseconfig.CONFIG["ALLOWED_TO_EXIT"] = AllowedToExit.ALLOW
+    for i in (1, 2, 3):
+        baseconfig.CONFIG[f"ALLOWED_TO_EXIT_RANGE{i}"] = False
+    persisted = []
+    monkeypatch.setattr(
+        loop_mod,
+        "_persist_concluded_motion",
+        lambda *args, **kwargs: persisted.append((args, kwargs)),
+    )
+    caplog.set_level(logging.INFO)
+
+    harness.set_inside(True)
+    harness.pump(3)
+    assert harness.magnets.get_outside_state() is True
+    harness.set_inside(False)
+    harness.advance(1.5)
+    harness.pump(3)
+
+    harness.advance(5.5)
+    harness.pump(5)
+    time_mod.sleep(0.1)  # let a (wrongly) started persist thread run
+
+    assert "Motion event conclusion: Cat went inside" not in caplog.text
+    assert "Motion event conclusion: Inside motion only" in caplog.text
+    assert "Motion-block timeout with outside motion still active" not in caplog.text
+    assert persisted == []
+
+
 # --- Immediate lock / deferred entry / cat went inside -----------------------
 
 

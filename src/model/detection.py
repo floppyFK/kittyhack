@@ -1,6 +1,23 @@
 """YOLO detection result parsing."""
 import logging
 
+# Mean pixel value (0-255) below which a frame counts as (almost) black. Such frames appear
+# for a moment when the light goes off and the camera switches to night vision; YOLO models
+# can report confident full-frame "cat" boxes on them. Real night-vision frames with a cat
+# are far brighter (darkest seen in the field: ~26).
+DARK_FRAME_MEAN_THRESHOLD = 8.0
+
+
+def is_dark_frame(frame, threshold: float = DARK_FRAME_MEAN_THRESHOLD) -> bool:
+    """True if ``frame`` (numpy image) is almost completely black. Never raises."""
+    try:
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return False
+        # Subsample for speed; plenty of pixels for a mean over a uniform black frame.
+        return float(frame[::8, ::8].mean()) < float(threshold)
+    except Exception:
+        return False
+
 
 def build_detection_payload(
     items: list[tuple[float, float, float, float, float, int]],

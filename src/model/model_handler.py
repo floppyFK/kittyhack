@@ -28,7 +28,7 @@ from .camera_config import (
     _effective_camera_stream_config,
     _is_remote_internal_proxy_stream,
 )
-from .detection import _parse_yolo_detection_results
+from .detection import _parse_yolo_detection_results, is_dark_frame
 from .yolo_inference_worker import yolo_model_worker_process
 
 if TYPE_CHECKING:
@@ -547,6 +547,18 @@ class ModelHandler:
                                 detected_objects.append(DetectedObject(
                                     obj['x'], obj['y'], obj['w'], obj['h'], obj['name'], obj['probability']
                                 ))
+
+                    # Black frames (light switched off, camera switching to night vision)
+                    # can yield confident full-frame cat boxes. Nothing is visible on them,
+                    # so drop their detections before they reach the backend.
+                    if (detected_objects or mouse_probability or own_cat_probability) and is_dark_frame(frame):
+                        logging.info(
+                            f"[MODEL] Ignoring {len(detected_objects)} detection(s) on an almost black frame."
+                        )
+                        mouse_probability = 0
+                        no_mouse_probability = 0
+                        own_cat_probability = 0
+                        detected_objects = []
 
                     if not first_run:
                         try:

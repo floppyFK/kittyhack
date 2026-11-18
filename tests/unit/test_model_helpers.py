@@ -170,3 +170,20 @@ def test_read_ncnn_meta(tmp_path):
     imgsz, end2end = read_ncnn_meta(str(tmp_path), 320)
     assert imgsz == 416 and end2end is True
 
+
+
+def test_is_dark_frame_flags_black_frames_only():
+    from src.model.detection import DARK_FRAME_MEAN_THRESHOLD, is_dark_frame
+
+    # Black frame while the camera switches to night vision (mean ~1/255 in the field).
+    black = np.ones((600, 800, 3), dtype=np.uint8)
+    assert is_dark_frame(black) is True
+    # Darkest real night-vision frame with a cat seen in the field had a mean of ~26.
+    night = np.full((600, 800, 3), 26, dtype=np.uint8)
+    assert is_dark_frame(night) is False
+    just_above = np.full((600, 800, 3), int(DARK_FRAME_MEAN_THRESHOLD) + 1, dtype=np.uint8)
+    assert is_dark_frame(just_above) is False
+    # Grayscale input and unusable input never raise.
+    assert is_dark_frame(np.zeros((60, 80), dtype=np.uint8)) is True
+    assert is_dark_frame(None) is False
+    assert is_dark_frame(np.zeros((0, 0, 3), dtype=np.uint8)) is False

@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import os
+import uuid
 
 # Set by kittyhack_control --simulate before other imports that read the flag.
 _FORCE_SIMULATE: bool | None = None
 
 _ENV_TRUE = {"1", "true", "yes", "on"}
+
+# New value for every process start. The browser compares it with the id baked
+# into the page so a reboot reloads instead of reconnecting a stale session.
+PROCESS_INSTANCE_ID = uuid.uuid4().hex
 
 
 def set_simulate_mode(enabled: bool) -> None:

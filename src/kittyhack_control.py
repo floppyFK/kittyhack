@@ -639,6 +639,49 @@ def _build_boot_wait_page_html() -> str:
         "</html>\n"
     )
 
+_info_http_stop: asyncio.Event | None = None
+_INFO_HTTP_HOST = "0.0.0.0"
+_INFO_HTTP_PORT = 80
+_INFO_HTTP_RESTART_INTERVAL_S = 5.0
+_info_http_restart_not_before = 0.0
+
+
+def _info_http_server_is_listening() -> bool:
+    """True when the info HTTP server still has an open listening socket."""
+    server = STATE.http_server
+    if server is None:
+        return False
+    try:
+        return bool(server.is_serving())
+    except Exception:
+        return False
+
+
+def _signal_info_http_stop() -> None:
+    """Wake MJPEG handlers so they leave the frame-is-None sleep."""
+    if _info_http_stop is not None:
+        _info_http_stop.set()
+
+
+def _new_info_http_stop_event() -> asyncio.Event:
+    """Install a fresh unset stop event for the next info HTTP server."""
+    global _info_http_stop
+    event = asyncio.Event()
+    _info_http_stop = event
+    return event
+
+
+async def _info_http_wait(stop_event: asyncio.Event, timeout: float) -> bool:
+    """Wait up to ``timeout`` seconds. Return True when the info server is stopping."""
+    if stop_event.is_set() or sigterm_monitor.stop_now:
+        return True
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return bool(sigterm_monitor.stop_now)
+    return True
+
+
 async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     """Minimal HTTP handler for info / boot-wait pages and camera MJPEG."""
     try:
@@ -708,22 +751,28 @@ async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.Strea
             writer.write(headers)
             await writer.drain()
 
-            # Stream forever (until the client disconnects or process exits).
-            # Keep encoding work local to this handler so multiple clients can connect.
+            # Stream until the client disconnects, the process exits, or the
+            # info server is stopped. The stop event covers the path that only
+            # sleeps because the camera stream was already cleared: that path
+            # never writes, so a half-open client would otherwise pin
+            # wait_closed() and leave port 80 closed.
             import cv2  # local import to keep startup lightweight
 
+            stop_event = _info_http_stop if _info_http_stop is not None else asyncio.Event()
             last_sent_at = 0.0
             min_interval_s = 0.09  # ~11 fps cap for safety
-            while not sigterm_monitor.stop_now:
+            while not sigterm_monitor.stop_now and not stop_event.is_set():
                 try:
                     now = time.time()
                     if now - last_sent_at < min_interval_s:
-                        await asyncio.sleep(0.02)
+                        if await _info_http_wait(stop_event, 0.02):
+                            break
                         continue
 
                     frame = _internal_camera_latest_frame()
                     if frame is None:
-                        await asyncio.sleep(0.05)
+                        if await _info_http_wait(stop_event, 0.05):
+                            break
                         continue
 
                     # Offload encoding so we don't block the info-page HTTP server.
@@ -868,27 +917,72 @@ async def _http_info_handler(reader: asyncio.StreamReader, writer: asyncio.Strea
             pass
 
 async def _start_info_http_server() -> None:
-    """Serve boot-wait / remote-info HTML on port 80 while kittyhack is stopped."""
-    if STATE.http_server is not None:
+    """Serve boot-wait / remote-info HTML on port 80 while kittyhack is stopped.
+
+    A server object that is no longer listening is not reused. ``close()`` drops
+    the listen socket before ``wait_closed()`` returns, so a stale reference
+    would skip the bind and leave port 80 closed.
+    """
+    if _info_http_server_is_listening():
         return
+    if STATE.http_server is not None:
+        logging.warning("[CONTROL] Info page server is not listening; restarting it.")
+        await _stop_info_http_server()
+    _new_info_http_stop_event()
     try:
-        STATE.http_server = await asyncio.start_server(_http_info_handler, host="0.0.0.0", port=80)
-        logging.info("[CONTROL] Info page listening on 0.0.0.0:80")
+        STATE.http_server = await asyncio.start_server(
+            _http_info_handler,
+            host=_INFO_HTTP_HOST,
+            port=_INFO_HTTP_PORT,
+        )
+        logging.info(f"[CONTROL] Info page listening on {_INFO_HTTP_HOST}:{_INFO_HTTP_PORT}")
     except Exception as e:
         STATE.http_server = None
-        logging.warning(f"[CONTROL] Could not start info page on port 80: {e}")
+        logging.warning(f"[CONTROL] Could not start info page on port {_INFO_HTTP_PORT}: {e}")
 
 async def _stop_info_http_server() -> None:
-    """Stop the port-80 info HTTP server if running."""
-    if STATE.http_server is None:
+    """Stop the port-80 info HTTP server if running.
+
+    Drops MJPEG clients before waiting. A half-open ``/video`` connection must
+    not block release: ``close()`` has already freed the listen socket by the
+    time ``wait_closed()`` waits for those handlers to finish.
+    """
+    _signal_info_http_stop()
+    server = STATE.http_server
+    if server is None:
         return
     try:
-        STATE.http_server.close()
-        await STATE.http_server.wait_closed()
-    except Exception:
-        pass
+        abort = getattr(server, "abort_clients", None)
+        if callable(abort):
+            abort()
+        server.close()
+    except Exception as e:
+        logging.warning(f"[CONTROL] Could not close info page server: {e}")
     finally:
-        STATE.http_server = None
+        if STATE.http_server is server:
+            STATE.http_server = None
+    try:
+        await asyncio.wait_for(server.wait_closed(), timeout=2.0)
+    except asyncio.TimeoutError:
+        logging.warning("[CONTROL] Info page server did not close within 2s; continuing.")
+    except Exception as e:
+        logging.warning(f"[CONTROL] Could not stop info page server: {e}")
+
+async def _heal_info_http_server_if_dead(now: float | None = None) -> None:
+    """Restart the info server when its object is set but the socket is gone.
+
+    A clean stop clears ``STATE.http_server``, so this does not bind port 80
+    while ``kittyhack.service`` is supposed to own it.
+    """
+    global _info_http_restart_not_before
+    if STATE.http_server is None or _info_http_server_is_listening():
+        return
+    if now is None:
+        now = time.monotonic()
+    if now < _info_http_restart_not_before:
+        return
+    _info_http_restart_not_before = now + _INFO_HTTP_RESTART_INTERVAL_S
+    await _start_info_http_server()
 
 async def _start_kittyhack_from_control(reason: str) -> None:
     """Stop info HTTP/camera, clear boot-wait, and start kittyhack.service."""
@@ -1451,6 +1545,10 @@ async def _watchdog():
     while not sigterm_monitor.stop_now:
         await asyncio.sleep(0.5)
         now = time.monotonic()
+
+        # Heal a stale info-server object left behind by a half-open /video client.
+        # Rate-limited so a port that cannot be bound does not log on every tick.
+        await _heal_info_http_server_if_dead(now)
 
         # While remote-controlled, enforce that kittyhack.service stays stopped.
         if STATE.is_controlled() and now >= float(STATE.next_enforce_stop_at or 0.0):

@@ -1114,7 +1114,6 @@ async def _handle_sync_request(ws: WebSocketServerProtocol, include_labelstudio:
     try:
         import queue
         import threading
-        import tarfile
 
         # True streaming: create tar.gz directly into websocket-bound chunks.
         # This avoids creating a large temporary file on the source device.
@@ -1134,12 +1133,17 @@ async def _handle_sync_request(ws: WebSocketServerProtocol, include_labelstudio:
 
         def _produce_tar_stream():
             try:
+                from src.database import DatabaseCore
+
+                # Checkpoint kittyhack.db before the first tar byte, and hold the
+                # write lock only while that file is read. A failed checkpoint
+                # queues the error and sends no archive.
                 writer = _QueueWriter(chunk_queue)
-                with tarfile.open(mode="w|gz", fileobj=writer) as tf:
-                    for src, arc in items:
-                        tf.add(src, arcname=arc)
-                        # prevent watchdog timeout during potentially long archive creation
-                        STATE.last_seen = time.monotonic()
+                DatabaseCore.write_sync_tar(
+                    items,
+                    writer,
+                    on_item=lambda: setattr(STATE, "last_seen", time.monotonic()),
+                )
                 chunk_queue.put(None)
             except Exception as e:
                 chunk_queue.put(e)

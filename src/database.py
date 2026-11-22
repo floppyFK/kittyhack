@@ -6,6 +6,7 @@ Public API is organized into classes (`DatabaseCore`, `EventsRepo`, `CatsRepo`,
 """
 import os
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import pandas as pd
@@ -482,6 +483,98 @@ class DatabaseCore:
             except OSError as e:
                 logging.warning(f"[RESTORE_DB] Failed to remove '{sidecar}': {e}")
                 raise
+
+    @staticmethod
+    @contextmanager
+    def consistent_database_read(database: str):
+        """Checkpoint ``database`` and hold a write lock while the caller reads it.
+
+        Committed pages, including those that still sit in a WAL file, are folded
+        into the main file before the lock is taken. The lock covers only the
+        ``with`` block, so a caller can release it before copying unrelated files.
+        Raises ``RuntimeError`` when frames are still uncheckpointed after a few
+        tries (another connection may be holding a snapshot).
+        """
+        if not database or not os.path.isfile(database):
+            raise FileNotFoundError(database or "database")
+        # TRUNCATE waits out busy_timeout when a reader holds WAL frames, then
+        # reports them as still busy. Keep each try short; the loop retries.
+        conn = sqlite3.connect(database, timeout=0.2, isolation_level=None)
+        try:
+            conn.execute("PRAGMA busy_timeout = 200")
+            last = (1, -1, 0)
+            last_error: Exception | None = None
+            for attempt in range(5):
+                try:
+                    # Wait out other writers, then checkpoint outside a transaction.
+                    # wal_checkpoint refuses to run while this connection is in one.
+                    conn.execute("BEGIN IMMEDIATE")
+                    conn.execute("COMMIT")
+                    row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                    busy, log, checkpointed = (int(row[0]), int(row[1]), int(row[2])) if row else (1, -1, 0)
+                    last = (busy, log, checkpointed)
+                    last_error = None
+                    if busy == 0 and log == checkpointed:
+                        break
+                except sqlite3.OperationalError as e:
+                    last_error = e
+                    try:
+                        conn.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        pass
+                tm.sleep(0.05 * (attempt + 1))
+            else:
+                busy, log, checkpointed = last
+                if last_error is not None and last == (1, -1, 0):
+                    logging.error(f"[DATABASE] Refusing to copy '{database}': {last_error}")
+                    raise RuntimeError(f"Database checkpoint failed: {last_error}") from last_error
+                logging.error(
+                    f"[DATABASE] Refusing to copy '{database}': uncheckpointed WAL frames "
+                    f"(busy={busy}, log={log}, checkpointed={checkpointed})"
+                )
+                raise RuntimeError(
+                    "Database still has uncheckpointed WAL frames "
+                    f"(busy={busy}, log={log}, checkpointed={checkpointed})"
+                )
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+            finally:
+                try:
+                    conn.execute("COMMIT")
+                except sqlite3.Error:
+                    logging.warning("[DATABASE] Failed to release the consistent-read lock.", exc_info=True)
+        finally:
+            conn.close()
+
+    @staticmethod
+    def write_sync_tar(items: list[tuple[str, str]], fileobj, on_item=None) -> None:
+        """Write a sync tar.gz. Checkpoints ``kittyhack.db`` before the first byte.
+
+        The write lock is held only while that database file is added. Other
+        entries are packed afterwards. Raises before ``fileobj`` receives
+        anything when the database cannot be checkpointed.
+        """
+        import tarfile
+        from contextlib import ExitStack
+
+        db_item = next((item for item in items if os.path.basename(item[0]) == "kittyhack.db"), None)
+        with ExitStack() as stack:
+            if db_item is not None:
+                stack.enter_context(DatabaseCore.consistent_database_read(db_item[0]))
+            with tarfile.open(mode="w|gz", fileobj=fileobj) as tf:
+                if db_item is not None:
+                    tf.add(db_item[0], arcname=db_item[1])
+                    if on_item is not None:
+                        on_item()
+                    stack.close()
+                db_path = os.path.abspath(db_item[0]) if db_item is not None else None
+                for src, arc in items:
+                    if db_path is not None and os.path.abspath(src) == db_path:
+                        continue
+                    tf.add(src, arcname=arc)
+                    if on_item is not None:
+                        on_item()
 
     @staticmethod
     def replace_database_file(source_path: str, destination_path: str) -> Result:

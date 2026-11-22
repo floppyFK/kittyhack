@@ -13,6 +13,10 @@ locales/*/LC_MESSAGES/messages.mo
 locales/.runtime_locale_state.json
 config.ini
 config.ini.lock
+config.ini.bak
+config.ini.bak.lock
+kittyhack.db.pre-sync
+kittyhack.db.incoming
 sync-to-kittyflap.sh
 *.code-workspace
 notifications.json

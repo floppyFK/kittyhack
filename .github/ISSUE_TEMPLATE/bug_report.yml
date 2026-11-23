@@ -73,7 +73,7 @@ body:
         Dateien dürfen maximal 25 MB groß sein.
     validations:
       required: false
-      accept: ".log,.txt,.zip,.gz,.tar.gz"
+      accept: ".log,.txt,.zip,.gz"
 
   - type: upload
     id: screenshots

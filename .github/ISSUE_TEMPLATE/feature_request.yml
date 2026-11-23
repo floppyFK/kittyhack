@@ -1,0 +1,39 @@
+name: Feature-Wunsch
+description: Idee oder Verbesserung für kittyhack vorschlagen.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Hinweis
+
+        Bitte beschreibe den Wunsch so, dass wir verstehen, welches Problem er löst.
+        Bei Rückfragen bitte immer direkt über GitHub im Issue antworten und **nicht** per Mail.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Welches Problem soll gelöst werden?
+      description: Was fehlt heute, oder was ist umständlich?
+      placeholder: Aktuelles Verhalten oder fehlende Funktion ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Wie stellst du dir die Lösung vor?
+      description: Konkreter Vorschlag, gern mit Beispiel.
+      placeholder: Gewünschtes Verhalten ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Weiterer Kontext (optional)
+      description: Version, Setup oder Alternativen, die du schon nutzt.
+      placeholder: Zusätzliche Details ...
+    validations:
+      required: false

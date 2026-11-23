@@ -1,0 +1,85 @@
+name: Fehler melden / Hilfe anfordern
+description: Problem mit kittyhack melden oder Hilfe anfordern.
+title: "[Fehler] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Wichtige Hinweise
+
+        - Bitte beschreibe dein Problem möglichst genau - nur so können wir dir gezielt helfen.
+        - Bei Rückfragen bitte immer direkt über GitHub im Issue antworten und **nicht** per Mail.
+        - Anhänge aus E-Mail-Antworten werden von GitHub nicht übernommen. Bitte lade Logdateien und Screenshots direkt hier im Formular hoch.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: Was ist passiert?
+      description: Was genau ist passiert? Was hast du beobachtet?
+      placeholder: Problem möglichst genau beschreiben ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: when
+    attributes:
+      label: Wann ist es passiert?
+      description: Datum und Uhrzeit. Seit wann tritt das Problem auf?
+      placeholder: z. B. heute gegen 14 Uhr, seit dem letzten Update oder bei jedem Start ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: how
+    attributes:
+      label: Wie ist es passiert?
+      description: Was hast du unmittelbar davor gemacht? Lässt sich das Problem reproduzieren? Welche Schritte führen dazu?
+      placeholder: Schritte möglichst chronologisch beschreiben ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: kittyhack-Version
+      description: Welche Version ist installiert?
+      placeholder: z. B. 3.x.x
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Zusätzliche Systeminformationen (optional)
+      description: |
+        Nur ausfüllen, wenn für dein Problem relevant:
+        - Welche externe Kamera wird verwendet (falls vorhanden)?
+        - Bei einem Remote-Setup: Welche PC-Konfiguration wird verwendet (Betriebssystem, Prozessor, Grafikkarte, RAM)?
+      placeholder: |
+        Externe Kamera:
+        Remote-PC / Betriebssystem:
+        Prozessor / Grafikkarte / RAM:
+    validations:
+      required: false
+
+  - type: upload
+    id: logs
+    attributes:
+      label: Logdateien (optional)
+      description: |
+        Falls möglich, bitte die vollständigen Logdateien aus dem relevanten Zeitraum hochladen.
+        Mehrere Dateien können auch als ZIP-Datei zusammengefasst werden.
+        Dateien dürfen maximal 25 MB groß sein.
+    validations:
+      required: false
+      accept: ".log,.txt,.zip,.gz,.tar.gz"
+
+  - type: upload
+    id: screenshots
+    attributes:
+      label: Screenshots (optional)
+      description: Bilder zur Veranschaulichung des Problems.
+    validations:
+      required: false
+      accept: ".png,.jpg,.jpeg,.webp"

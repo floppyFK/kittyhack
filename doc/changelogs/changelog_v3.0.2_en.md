@@ -1,5 +1,9 @@
 # v3.0.2
 
+## New Features
+
+- **Delete events from the list**: On *Live view* and on *Pictures* when events are grouped, you can select one or more events and delete them without opening each one.
+
 ## Bugfixes
 
 - **Camera after a network outage**: In remote mode, a dropped connection could leave the Kittyflap no longer listening on port 80. The remote computer then received no camera stream and did not unlock the flap inwards until `kittyhack_control` was restarted. The info page now closes stuck video connections and starts listening again on its own.

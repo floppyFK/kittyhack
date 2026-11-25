@@ -2372,6 +2372,95 @@ html[data-bs-theme="dark"] .date-separator-row td {
   cursor: default;
 }
 
+.generic-container.kh-event-list-card,
+.generic-container.kh-photos-grouped-card {
+  overflow: visible;
+}
+
+.kh-event-list {
+  text-align: left;
+}
+
+.kh-event-select-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.55rem;
+  position: static;
+  z-index: auto;
+  margin: 0 0 0.65rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--bs-border-color, #dee2e6);
+  border-radius: 0.65rem;
+  background: var(--bs-body-bg, #fff);
+}
+
+.kh-event-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  min-height: 2.75rem;
+  cursor: pointer;
+  flex: 1 1 auto;
+}
+
+.kh-event-select-count {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--bs-body-color, #212529);
+}
+
+.kh-event-select-clear,
+.kh-event-delete-selected {
+  min-height: 2.25rem;
+}
+
+.kh-event-select-clear[hidden],
+.kh-event-delete-selected[hidden] {
+  display: none !important;
+}
+
+.kh-event-delete-selected {
+  margin-left: auto;
+}
+
+.event-select-cell {
+  width: 2.75rem;
+  padding: 0.15rem !important;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.kh-event-select-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  margin: 0;
+  cursor: pointer;
+}
+
+.kh-event-select,
+.kh-event-select-all-input {
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--bs-primary, #0d6efd);
+}
+
+.event-data-row td:nth-child(2) {
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
+}
+
+.event-data-row.is-selected td {
+  background-color: color-mix(in srgb, var(--bs-primary, #0d6efd) 14%, transparent) !important;
+}
+
 .event-timeline-panel {
   margin-top: 0.35rem;
   width: 100%;

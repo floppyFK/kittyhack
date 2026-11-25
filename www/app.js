@@ -357,7 +357,7 @@ document.addEventListener("DOMContentLoaded", function() {
     function khShouldIgnoreEventRowToggle(target) {
         if (!target || !target.closest) return false;
         return !!target.closest(
-            'a, button, input, select, textarea, label, .event-action-cell, [data-bs-toggle="tooltip"]'
+            'a, button, input, select, textarea, label, .event-action-cell, .event-select-cell, .kh-event-select-bar, [data-bs-toggle="tooltip"]'
         );
     }
 
@@ -371,10 +371,268 @@ document.addEventListener("DOMContentLoaded", function() {
     document.addEventListener('keydown', function(ev) {
         const row = ev.target && ev.target.closest ? ev.target.closest('.kh-event-row-toggle') : null;
         if (!row) return;
+        if (khShouldIgnoreEventRowToggle(ev.target)) return;
         if (ev.key !== 'Enter' && ev.key !== ' ') return;
         ev.preventDefault();
         khToggleEventTimelineRow(row);
     }, false);
+
+    // Select events on Live view and on Pictures (grouped) and delete them
+    // without opening the event. Selection stays in the browser until Delete.
+    (function initEventBulkSelect() {
+        var selections = { last: new Set(), photos: new Set() };
+        var lastClicked = { last: null, photos: null };
+        var messageRegistered = false;
+
+        function listRoot(scope) {
+            return document.querySelector('.kh-event-list[data-kh-event-scope="' + scope + '"]');
+        }
+
+        function boxesFor(scope) {
+            var root = listRoot(scope);
+            if (!root) return [];
+            return Array.prototype.slice.call(root.querySelectorAll('.kh-event-select'));
+        }
+
+        function setText(el, value) {
+            // Assigning textContent always replaces the text node, even when the
+            // string is unchanged. That is a childList mutation and would retrigger
+            // the list observer forever.
+            if (el && el.textContent !== value) el.textContent = value;
+        }
+
+        function syncBar(scope) {
+            var root = listRoot(scope);
+            if (!root) return;
+            var set = selections[scope];
+            var boxes = boxesFor(scope);
+            var present = {};
+            boxes.forEach(function(box) {
+                var id = box.getAttribute('data-block-id');
+                present[id] = true;
+                var on = set.has(id);
+                if (box.checked !== on) box.checked = on;
+                var row = box.closest('.event-data-row');
+                if (row) {
+                    if (on) row.classList.add('is-selected');
+                    else row.classList.remove('is-selected');
+                }
+            });
+            Array.from(set).forEach(function(id) {
+                if (!present[id]) set.delete(id);
+            });
+            var count = set.size;
+            var total = boxes.length;
+            var bar = root.querySelector('.kh-event-select-bar');
+            if (!bar) return;
+            var countEl = bar.querySelector('.kh-event-select-count');
+            var allBox = bar.querySelector('.kh-event-select-all-input');
+            var deleteBtn = bar.querySelector('.kh-event-delete-selected');
+            var clearBtn = bar.querySelector('.kh-event-select-clear');
+            if (countEl) {
+                if (count === 0) {
+                    setText(countEl, bar.getAttribute('data-label-all') || 'Select all');
+                } else if (count === 1) {
+                    setText(countEl, bar.getAttribute('data-count-one') || '1 selected');
+                } else {
+                    var template = bar.getAttribute('data-count-many') || '{} selected';
+                    setText(countEl, template.replace('{}', String(count)));
+                }
+            }
+            if (allBox) {
+                var allOn = total > 0 && count === total;
+                if (allBox.checked !== allOn) allBox.checked = allOn;
+                allBox.indeterminate = count > 0 && count < total;
+            }
+            if (deleteBtn) {
+                var hideDelete = count === 0;
+                if (deleteBtn.hidden !== hideDelete) deleteBtn.hidden = hideDelete;
+                if (deleteBtn.disabled !== hideDelete) deleteBtn.disabled = hideDelete;
+            }
+            if (clearBtn) {
+                var hideClear = count === 0;
+                if (clearBtn.hidden !== hideClear) clearBtn.hidden = hideClear;
+            }
+        }
+
+        function syncAll() {
+            syncBar('last');
+            syncBar('photos');
+        }
+
+        function scopeFrom(el) {
+            var root = el && el.closest ? el.closest('.kh-event-list') : null;
+            return root ? root.getAttribute('data-kh-event-scope') : null;
+        }
+
+        document.addEventListener('click', function(ev) {
+            var target = ev.target;
+            if (!target || !target.closest) return;
+
+            var box = target.closest('.kh-event-select');
+            if (box) {
+                var scope = scopeFrom(box);
+                if (!scope || !selections[scope]) return;
+                var set = selections[scope];
+                var id = box.getAttribute('data-block-id');
+                var boxes = boxesFor(scope);
+                if (ev.shiftKey && lastClicked[scope]) {
+                    var ids = boxes.map(function(item) { return item.getAttribute('data-block-id'); });
+                    var from = ids.indexOf(lastClicked[scope]);
+                    var to = ids.indexOf(id);
+                    if (from >= 0 && to >= 0) {
+                        var lo = Math.min(from, to);
+                        var hi = Math.max(from, to);
+                        var turnOn = box.checked;
+                        for (var i = lo; i <= hi; i++) {
+                            if (turnOn) set.add(ids[i]);
+                            else set.delete(ids[i]);
+                        }
+                        lastClicked[scope] = id;
+                        syncBar(scope);
+                        return;
+                    }
+                }
+                if (box.checked) set.add(id);
+                else set.delete(id);
+                lastClicked[scope] = id;
+                syncBar(scope);
+                return;
+            }
+
+            var selectAll = target.closest('.kh-event-select-all-input');
+            if (selectAll) {
+                var allScope = scopeFrom(selectAll);
+                if (!allScope || !selections[allScope]) return;
+                var allSet = selections[allScope];
+                if (selectAll.checked) {
+                    boxesFor(allScope).forEach(function(item) {
+                        allSet.add(item.getAttribute('data-block-id'));
+                    });
+                } else {
+                    allSet.clear();
+                }
+                lastClicked[allScope] = null;
+                syncBar(allScope);
+                return;
+            }
+
+            var clearBtn = target.closest('.kh-event-select-clear');
+            if (clearBtn) {
+                ev.preventDefault();
+                var clearScope = scopeFrom(clearBtn);
+                if (!clearScope || !selections[clearScope]) return;
+                selections[clearScope].clear();
+                lastClicked[clearScope] = null;
+                syncBar(clearScope);
+                return;
+            }
+
+            var deleteBtn = target.closest('.kh-event-delete-selected');
+            if (deleteBtn) {
+                ev.preventDefault();
+                if (deleteBtn.disabled) return;
+                var deleteScope = scopeFrom(deleteBtn);
+                if (!deleteScope || !selections[deleteScope]) return;
+                var blockIds = Array.from(selections[deleteScope]).map(function(raw) {
+                    return parseInt(raw, 10);
+                }).filter(function(num) { return num > 0; });
+                if (!blockIds.length) return;
+                if (!(window.Shiny && typeof window.Shiny.setInputValue === 'function')) return;
+                registerDeleteMessage();
+                window.Shiny.setInputValue('events_bulk_delete', {
+                    block_ids: blockIds,
+                    nonce: Date.now()
+                }, { priority: 'event' });
+                return;
+            }
+
+            var cell = target.closest('.event-select-cell');
+            if (cell && !target.closest('input, label')) {
+                var cellBox = cell.querySelector('.kh-event-select');
+                if (cellBox) cellBox.click();
+            }
+
+        }, false);
+
+        function deletedBlockIds(value) {
+            if (!value) return [];
+            if (value.forEach) return value;
+            if (typeof value === 'object') {
+                return Object.keys(value).map(function(key) { return value[key]; });
+            }
+            return [];
+        }
+
+        function onDeleteFinished(message) {
+            if (message && message.ok) {
+                deletedBlockIds(message.block_ids).forEach(function(id) {
+                    var key = String(id);
+                    selections.last.delete(key);
+                    selections.photos.delete(key);
+                });
+            }
+            syncAll();
+        }
+
+        function registerDeleteMessage() {
+            if (messageRegistered) return;
+            if (!(window.Shiny && typeof window.Shiny.addCustomMessageHandler === 'function')) return;
+            window.Shiny.addCustomMessageHandler('events-bulk-delete-finished', onDeleteFinished);
+            messageRegistered = true;
+        }
+
+        var observers = {};
+
+        function restore(outputId) {
+            var entry = observers[outputId];
+            if (!entry) return;
+            // Drop the observer before touching the DOM. Replacing a text node
+            // would otherwise schedule this function again.
+            entry.observer.disconnect();
+            try {
+                syncBar(entry.scope);
+            } finally {
+                if (entry.el.isConnected) {
+                    entry.observer.observe(entry.el, { childList: true, subtree: true });
+                }
+            }
+        }
+
+        function ensureWatch(outputId, scope) {
+            var el = document.getElementById(outputId);
+            if (!el) return;
+            var entry = observers[outputId];
+            if (entry && entry.el === el) return;
+            if (entry) entry.observer.disconnect();
+            var observer = new MutationObserver(function() {
+                restore(outputId);
+            });
+            observers[outputId] = { el: el, observer: observer, scope: scope };
+            observer.observe(el, { childList: true, subtree: true });
+            if (el.querySelector('.kh-event-select')) restore(outputId);
+        }
+
+        function onShinyValue(event) {
+            var name = event && (event.name || (event.target && event.target.id));
+            if (name === 'ui_last_events_table') ensureWatch('ui_last_events_table', 'last');
+            else if (name === 'ui_events_by_date_table') ensureWatch('ui_events_by_date_table', 'photos');
+        }
+
+        function onShinyConnected() {
+            registerDeleteMessage();
+            ensureWatch('ui_last_events_table', 'last');
+            ensureWatch('ui_events_by_date_table', 'photos');
+        }
+
+        onShinyConnected();
+        document.addEventListener('shiny:value', onShinyValue);
+        document.addEventListener('shiny:connected', onShinyConnected);
+        if (window.jQuery) {
+            window.jQuery(document).on('shiny:value', onShinyValue);
+            window.jQuery(document).on('shiny:connected', onShinyConnected);
+        }
+    })();
 
     // --- Event modal: show spinner until first image is rendered ---
     function syncEventModalSpinner(root) {

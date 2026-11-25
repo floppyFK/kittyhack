@@ -5004,3 +5004,40 @@ msgstr "Bestimme, wie die Ereignisse einer Katze zugeordnet werden sollen (nur z
 
 msgid "Recognized by the camera. No microchip was stored for this event."
 msgstr "Von der Kamera erkannt. Für dieses Ereignis wurde kein Chip gespeichert."
+
+msgid "Select all"
+msgstr "Alle auswählen"
+
+msgid "1 selected"
+msgstr "1 ausgewählt"
+
+#, python-brace-format
+msgid "{} selected"
+msgstr "{} ausgewählt"
+
+msgid "Clear"
+msgstr "Auswahl aufheben"
+
+#, python-brace-format
+msgid "Select event at {}"
+msgstr "Ereignis um {} auswählen"
+
+msgid "Too many events selected. Select fewer and try again."
+msgstr "Zu viele Ereignisse ausgewählt. Wähle weniger aus und versuche es erneut."
+
+#, python-brace-format
+msgid "Delete these {} events and all their pictures?"
+msgstr "Diese {} Ereignisse und alle zugehörigen Bilder löschen?"
+
+msgid "Delete events"
+msgstr "Ereignisse löschen"
+
+msgid "Event deleted."
+msgstr "Ereignis gelöscht."
+
+#, python-brace-format
+msgid "{} events deleted."
+msgstr "{} Ereignisse gelöscht."
+
+msgid "Events could not be deleted. Try again."
+msgstr "Die Ereignisse konnten nicht gelöscht werden. Versuche es erneut."

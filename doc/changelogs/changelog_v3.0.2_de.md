@@ -1,5 +1,9 @@
 # v3.0.2
 
+## Neue Features
+
+- **Ereignisse in der Liste löschen**: In der *Live-Ansicht* und unter *Bilder*, wenn die Bilder als Ereignisse gruppiert sind, kannst du eines oder mehrere auswählen und löschen, ohne sie einzeln zu öffnen.
+
 ## Bugfixes
 
 - **Kamera nach einem Netzwerkausfall**: Im Remote-Modus konnte die Kittyflap nach einem Verbindungsabbruch nicht mehr auf Port 80 erreichbar sein. Der Remote-Rechner bekam dann keinen Kamerastream und hat die Klappe nach innen nicht entriegelt, bis `kittyhack_control` neu gestartet wurde. Die Infoseite beendet hängende Video-Verbindungen jetzt und lauscht von selbst wieder.

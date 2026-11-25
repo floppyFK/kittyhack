@@ -11,7 +11,7 @@ from typing import Any
 
 import websockets
 
-from src.baseconfig import CONFIG, restore_remote_only_settings, snapshot_remote_only_settings
+from src.baseconfig import CONFIG
 from src.clock import monotonic_time
 from src.helper import sigterm_monitor
 
@@ -21,6 +21,183 @@ from src.helper import sigterm_monitor
 _WS_OPEN_TIMEOUT_S = 10.0
 _WS_SEND_TIMEOUT_S = 5.0
 _RFID_FIELD_RESEND_S = 5.0
+
+
+def _sideline_legacy_config_ini() -> list[tuple[str, str]]:
+    """Rename a leftover config.ini so the next startup does not import it.
+
+    ``load_config()`` treats that file as a full configuration and fills every
+    missing key from the defaults. Returns ``(original, renamed)`` pairs so a
+    failed install can put them back.
+    """
+    from src.baseconfig import CONFIGFILE
+
+    moved: list[tuple[str, str]] = []
+    for src, dst in (
+        (CONFIGFILE, CONFIGFILE + ".bak"),
+        (CONFIGFILE + ".lock", CONFIGFILE + ".bak.lock"),
+    ):
+        if not os.path.isfile(src):
+            continue
+        os.replace(src, dst)
+        moved.append((src, dst))
+        logging.info(f"[REMOTE_CTRL] Moved '{src}' to '{dst}' so it is not imported over synced settings.")
+    return moved
+
+
+def _restore_sidelined_config_ini(moved: list[tuple[str, str]]) -> None:
+    for src, dst in reversed(moved):
+        if not os.path.isfile(dst):
+            continue
+        try:
+            os.replace(dst, src)
+        except OSError as e:
+            logging.warning(f"[REMOTE_CTRL] Could not restore '{src}': {e}")
+
+
+def install_synced_database(source_path: str) -> None:
+    """Replace the live kittyhack database with a database from the flap.
+
+    Snapshots remote-only keys first, then swaps the file without replaying an
+    old WAL or journal. Settings are counted before those keys are written
+    back: an empty settings table restores the previous file and raises, and
+    does not write a ``.remote_synced`` marker. ``source_path`` must be on the
+    same filesystem as the live database (the sync extract puts it beside it).
+    """
+    from src.baseconfig import (
+        kittyhack_db_path,
+        restore_remote_only_settings,
+        settings_count,
+        snapshot_remote_only_settings,
+    )
+    from src.database import DatabaseCore
+
+    if not source_path or not os.path.isfile(source_path):
+        raise FileNotFoundError(source_path or "synced database")
+
+    remote_settings = snapshot_remote_only_settings()
+    dest = kittyhack_db_path()
+    parked = dest + ".pre-sync"
+    parked_now = False
+    replaced = False
+    moved_ini: list[tuple[str, str]] = []
+    try:
+        if os.path.exists(dest):
+            # Fold a leftover WAL into the file we may have to restore, then
+            # drop sidecars so they cannot replay onto the database from the flap.
+            try:
+                with DatabaseCore.consistent_database_read(dest):
+                    pass
+            except Exception as e:
+                logging.warning(
+                    f"[REMOTE_CTRL] Could not checkpoint the current database before replacing it: {e}"
+                )
+            os.replace(dest, parked)
+            parked_now = True
+        DatabaseCore._remove_sqlite_sidecars(dest)
+        os.replace(source_path, dest)
+        replaced = True
+        DatabaseCore._remove_sqlite_sidecars(dest)
+        if settings_count(dest) <= 0:
+            raise RuntimeError("synced database contains no settings")
+        restore_remote_only_settings(remote_settings)
+        moved_ini = _sideline_legacy_config_ini()
+        if parked_now and os.path.exists(parked):
+            try:
+                os.remove(parked)
+            except OSError as e:
+                logging.warning(f"[REMOTE_CTRL] Could not remove '{parked}': {e}")
+        marker = dest + ".remote_synced"
+        try:
+            with open(marker, "w", encoding="utf-8") as handle:
+                handle.write(str(time.time()))
+        except OSError as e:
+            logging.warning(f"[REMOTE_CTRL] Could not write sync marker '{marker}': {e}")
+        logging.info("[REMOTE_CTRL] Installed synced database.")
+    except Exception:
+        _restore_sidelined_config_ini(moved_ini)
+        try:
+            if parked_now and os.path.exists(parked):
+                os.replace(parked, dest)
+                DatabaseCore._remove_sqlite_sidecars(dest)
+            elif replaced and os.path.exists(dest):
+                os.remove(dest)
+                DatabaseCore._remove_sqlite_sidecars(dest)
+        except Exception as rollback_error:
+            logging.error(f"[REMOTE_CTRL] Failed to restore the previous database: {rollback_error}")
+        raise
+
+
+def _is_synced_database_member(member, name: str) -> bool:
+    is_file = getattr(member, "isreg", None)
+    if not callable(is_file) or not is_file():
+        return False
+    return os.path.basename(name.rstrip("/")) == "kittyhack.db"
+
+
+def _copy_tar_member(tf, member, dest_path: str) -> None:
+    import shutil
+
+    source = tf.extractfile(member)
+    if source is None:
+        raise RuntimeError(f"archive member '{member.name}' has no content")
+    partial = dest_path + ".partial"
+    try:
+        with source, open(partial, "wb") as out:
+            shutil.copyfileobj(source, out)
+        os.replace(partial, dest_path)
+    finally:
+        if os.path.exists(partial):
+            try:
+                os.remove(partial)
+            except OSError:
+                pass
+
+
+def extract_sync_archive(tar_path: str) -> None:
+    """Extract a sync archive and install ``kittyhack.db`` by atomic replace.
+
+    Pictures, models, and Label Studio data are extracted as before. The
+    database is written beside the live file and swapped only after the
+    archive has been read, so a long transfer does not truncate the open
+    database in place.
+    """
+    import tarfile
+
+    from src.baseconfig import kittyhack_db_path
+    from src.paths import install_base, models_yolo_root, pictures_root
+
+    incoming = kittyhack_db_path() + ".incoming"
+    wrote_incoming = False
+    try:
+        with tarfile.open(tar_path, "r:gz") as tf:
+            base = install_base()
+            # Paths relative to '/' restore to the same absolute location.
+            ls_prefixes = (
+                "root/.config/label-studio",
+                "root/.local/share/label-studio",
+            )
+            for member in tf:
+                name = str(getattr(member, "name", "") or "")
+                if _is_synced_database_member(member, name):
+                    _copy_tar_member(tf, member, incoming)
+                    wrote_incoming = True
+                    continue
+                if name.startswith(ls_prefixes):
+                    tf.extract(member, path="/")
+                else:
+                    tf.extract(member, path=base)
+        os.makedirs(models_yolo_root(), exist_ok=True)
+        os.makedirs(pictures_root(), exist_ok=True)
+        if not wrote_incoming:
+            raise RuntimeError("synced archive contains no kittyhack.db")
+        install_synced_database(incoming)
+    finally:
+        if os.path.exists(incoming):
+            try:
+                os.remove(incoming)
+            except OSError:
+                pass
 
 
 @dataclass
@@ -725,9 +902,6 @@ class RemoteControlClient:
         # For simplicity we detect the sync by a magic prefix.
         magic = b"KITTYHACK_SYNC_TAR_GZ\n"
         try:
-            import tarfile
-            from src.paths import install_base, models_yolo_root, pictures_root
-
             is_magic = payload.startswith(magic)
             body = payload[len(magic):] if is_magic else payload
 
@@ -736,39 +910,16 @@ class RemoteControlClient:
                 tmp_path = self._sync_tmp_path
                 self._sync_tmp_path = None
 
-                # The archive replaces kittyhack.db, including settings. Keep this
-                # controller's connection settings and write them back afterwards.
-                remote_settings = snapshot_remote_only_settings()
-                with tarfile.open(tmp_path, "r:gz") as tf:
-                    base = install_base()
-                    # Some synced paths must land outside install_base (absolute target paths).
-                    # We encode those as paths relative to '/', e.g. 'root/.config/label-studio/...'.
-                    ls_prefixes = (
-                        "root/.config/label-studio",
-                        "root/.local/share/label-studio",
-                    )
-                    for member in tf:
-                        name = str(getattr(member, "name", "") or "")
-                        if name.startswith(ls_prefixes):
-                            tf.extract(member, path="/")
-                        else:
-                            tf.extract(member, path=base)
-                restore_remote_only_settings(remote_settings)
-
-                os.makedirs(models_yolo_root(), exist_ok=True)
-                os.makedirs(pictures_root(), exist_ok=True)
-
-                marker = CONFIG.get("KITTYHACK_DATABASE_PATH", "kittyhack.db") + ".remote_synced"
+                # Install kittyhack.db by rename after the archive is complete.
+                # install_synced_database keeps remote-only settings, rejects an
+                # empty settings table, and writes the sync marker only then.
                 try:
-                    with open(marker, "w", encoding="utf-8") as f:
-                        f.write(str(time.time()))
-                except Exception:
-                    pass
-
-                try:
-                    os.remove(tmp_path)
-                except Exception:
-                    pass
+                    extract_sync_archive(tmp_path)
+                finally:
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
 
                 logging.info("[REMOTE_CTRL] Initial sync extracted.")
                 with self._sync_status_lock:

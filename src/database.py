@@ -1253,21 +1253,96 @@ class EventsRepo:
     @staticmethod
     def delete_photos_by_block_id(database: str, block_id: int) -> Result:
         """Soft-delete all events in a block and remove their image/bundle files."""
-        # Collect IDs in this block first
-        df_ids = DatabaseCore.read_df_from_database(database, f"SELECT id FROM events WHERE block_id = {block_id}")
-        ids = df_ids['id'].tolist() if not df_ids.empty else []
+        try:
+            bid = int(block_id)
+        except (TypeError, ValueError):
+            return Result(False, "invalid block_id")
+        return EventsRepo.delete_photos_by_block_ids(database, [bid])
 
-        stmt = f"UPDATE events SET original_image = NULL, modified_image = NULL, thumbnail = NULL, deleted = 1 WHERE block_id = {block_id}"
-        result = DatabaseCore.write_stmt_to_database(database, stmt)
-        if result.success is True:
-            removed_orig, removed_thumb = EventsRepo._remove_event_image_files(ids)
-            removed_bundles = EventsRepo._remove_event_bundle_files([block_id])
-            logging.info(
-                f"[DATABASE] Photos with block ID '{block_id}' deleted "
-                f"(filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}, bundles={removed_bundles})."
-            )
-            EventsRepo.delete_motion_timeline_by_block_id(database, block_id)
-        return result
+    @staticmethod
+    def _positive_block_ids(block_ids: Iterable) -> list[int]:
+        """Unique positive block ids, in first-seen order. Non-integers are skipped."""
+        seen: set[int] = set()
+        cleaned: list[int] = []
+        for raw in block_ids or []:
+            try:
+                bid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if bid <= 0 or bid in seen:
+                continue
+            seen.add(bid)
+            cleaned.append(bid)
+        return cleaned
+
+    @staticmethod
+    def delete_photos_by_block_ids(database: str, block_ids: Iterable[int]) -> Result:
+        """Soft-delete every picture in the given blocks and remove their files.
+
+        ``Result.message`` is the number of blocks that had event rows, as a
+        decimal string. An empty or invalid list is a successful no-op (``"0"``).
+        ``visit_stats`` rows are left in place. Image files are removed after the
+        database commit, matching the single-block delete.
+        """
+        cleaned = EventsRepo._positive_block_ids(block_ids)
+        if not cleaned:
+            return Result(True, "0")
+
+        result = DatabaseCore.lock_database()
+        if not result.success:
+            return result
+
+        photo_ids: list[int] = []
+        found_blocks: set[int] = set()
+        # Stay under older SQLite host-parameter limits.
+        chunk_size = 400
+        try:
+            conn = sqlite3.connect(database, timeout=30)
+            try:
+                cursor = conn.cursor()
+                has_timeline = cursor.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='motion_timeline'"
+                ).fetchone() is not None
+                for offset in range(0, len(cleaned), chunk_size):
+                    chunk = cleaned[offset:offset + chunk_size]
+                    placeholders = ",".join("?" for _ in chunk)
+                    cursor.execute(
+                        f"SELECT id, block_id FROM events WHERE block_id IN ({placeholders})",
+                        chunk,
+                    )
+                    for pid, bid in cursor.fetchall():
+                        photo_ids.append(int(pid))
+                        found_blocks.add(int(bid))
+                    cursor.execute(
+                        "UPDATE events SET original_image = NULL, modified_image = NULL, "
+                        f"thumbnail = NULL, deleted = 1 WHERE block_id IN ({placeholders})",
+                        chunk,
+                    )
+                    if has_timeline:
+                        cursor.execute(
+                            f"DELETE FROM motion_timeline WHERE block_id IN ({placeholders})",
+                            chunk,
+                        )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+        except Exception as e:
+            error_message = f"[DATABASE] Failed to delete event blocks {cleaned}: {e}"
+            logging.error(error_message)
+            return Result(False, error_message)
+        finally:
+            DatabaseCore.release_database()
+
+        removed_orig, removed_thumb = EventsRepo._remove_event_image_files(photo_ids)
+        removed_bundles = EventsRepo._remove_event_bundle_files(found_blocks)
+        logging.info(
+            f"[DATABASE] Photos for block IDs {sorted(found_blocks)} deleted "
+            f"(filesystem removed: originals={removed_orig}, thumbnails={removed_thumb}, bundles={removed_bundles})."
+        )
+        return Result(True, str(len(found_blocks)))
 
     @staticmethod
     def create_json_from_event(detected_objects: List[DetectedObject]) -> str:
@@ -2919,6 +2994,7 @@ db_get_motion_frames = EventsRepo.db_get_motion_frames
 read_photo_by_id = EventsRepo.read_photo_by_id
 delete_photo_by_id = EventsRepo.delete_photo_by_id
 delete_photos_by_block_id = EventsRepo.delete_photos_by_block_id
+delete_photos_by_block_ids = EventsRepo.delete_photos_by_block_ids
 create_json_from_event = EventsRepo.create_json_from_event
 read_event_from_json = EventsRepo.read_event_from_json
 get_detected_object_by_index = EventsRepo.get_detected_object_by_index

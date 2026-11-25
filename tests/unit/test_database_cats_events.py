@@ -3,7 +3,7 @@
 import json
 import sqlite3
 
-from src.database import CatsRepo, EventsRepo, ReturnDataCatDB
+from src.database import CatsRepo, EventsRepo, ReturnDataCatDB, VisitStatsRepo
 
 
 def test_add_cat_and_settings_map(tmp_kittyhack_db):
@@ -94,3 +94,103 @@ def test_block_object_max(tmp_kittyhack_db):
     result = EventsRepo.db_get_block_object_max(tmp_kittyhack_db, [101, 102, 103, 104], ["mia", "Leo", "person"])
     assert result == {101: {"person": 91.0, "mia": 66.0}, 102: {"leo": 95.0}}
     assert EventsRepo.db_get_block_object_max(tmp_kittyhack_db, [], ["person"]) == {}
+
+
+def test_delete_photos_by_block_ids(tmp_kittyhack_db, tmp_path, monkeypatch):
+    con = sqlite3.connect(tmp_kittyhack_db)
+    con.executemany(
+        "INSERT INTO events (id, block_id, created_at, event_type, rfid, event_text, deleted) "
+        "VALUES (?, ?, '2026-10-31 05:00:00', 'motion_outside_only', '', '', 0)",
+        [(1, 10), (2, 10), (3, 11), (4, 12)],
+    )
+    con.executemany(
+        "INSERT INTO motion_timeline (block_id, timeline_json, frames_json) VALUES (?, '[]', '[]')",
+        [(10,), (11,), (12,)],
+    )
+    con.commit()
+    con.close()
+
+    inserted = VisitStatsRepo.insert(
+        tmp_kittyhack_db,
+        {
+            "created_at": "2026-10-31 05:00:00+00:00",
+            "cat_rfid": "RFID001",
+            "cat_name": "Mia",
+            "conclusion": "inside",
+            "direction": "in",
+            "passed": 1,
+            "source_block_id": 10,
+        },
+    )
+    assert inserted.success
+    assert VisitStatsRepo.count(tmp_kittyhack_db) == 1
+
+    orig = tmp_path / "orig"
+    thumb = tmp_path / "thumb"
+    bundles = tmp_path / "bundles"
+    orig.mkdir()
+    thumb.mkdir()
+    bundles.mkdir()
+    (orig / "1.jpg").write_bytes(b"a")
+    (orig / "2.jpg").write_bytes(b"b")
+    (thumb / "1.jpg").write_bytes(b"c")
+    (thumb / "3.jpg").write_bytes(b"d")
+    (bundles / "event_10.tar").write_bytes(b"e")
+    (bundles / "event_11.tar").write_bytes(b"f")
+    (orig / "4.jpg").write_bytes(b"keep")
+    (bundles / "event_12.tar").write_bytes(b"keep")
+
+    monkeypatch.setattr(
+        EventsRepo,
+        "_original_image_path",
+        staticmethod(lambda image_id: str(orig / f"{int(image_id)}.jpg")),
+    )
+    monkeypatch.setattr(
+        EventsRepo,
+        "_thumbnail_image_path",
+        staticmethod(lambda image_id: str(thumb / f"{int(image_id)}.jpg")),
+    )
+    monkeypatch.setattr(
+        EventsRepo,
+        "_event_bundle_paths",
+        staticmethod(lambda block_id: [str(bundles / f"event_{int(block_id)}.tar")]),
+    )
+
+    empty = EventsRepo.delete_photos_by_block_ids(tmp_kittyhack_db, [])
+    assert empty.success and empty.message == "0"
+    junk = EventsRepo.delete_photos_by_block_ids(tmp_kittyhack_db, ["nope", 0, -3])
+    assert junk.success and junk.message == "0"
+
+    deleted = EventsRepo.delete_photos_by_block_ids(tmp_kittyhack_db, [10, 10, "11", "bad"])
+    assert deleted.success and deleted.message == "2"
+
+    con = sqlite3.connect(tmp_kittyhack_db)
+    rows = con.execute(
+        "SELECT id, block_id, deleted FROM events ORDER BY id"
+    ).fetchall()
+    assert rows == [(1, 10, 1), (2, 10, 1), (3, 11, 1), (4, 12, 0)]
+    timelines = [
+        row[0] for row in con.execute("SELECT block_id FROM motion_timeline ORDER BY block_id")
+    ]
+    assert timelines == [12]
+    assert con.execute("SELECT COUNT(*) FROM visit_stats").fetchone()[0] == 1
+    con.close()
+
+    assert not (orig / "1.jpg").exists()
+    assert not (orig / "2.jpg").exists()
+    assert not (thumb / "1.jpg").exists()
+    assert not (thumb / "3.jpg").exists()
+    assert not (bundles / "event_10.tar").exists()
+    assert not (bundles / "event_11.tar").exists()
+    assert (orig / "4.jpg").read_bytes() == b"keep"
+    assert (bundles / "event_12.tar").read_bytes() == b"keep"
+
+    single = EventsRepo.delete_photos_by_block_id(tmp_kittyhack_db, 12)
+    assert single.success and single.message == "1"
+    con = sqlite3.connect(tmp_kittyhack_db)
+    assert con.execute("SELECT deleted FROM events WHERE id = 4").fetchone()[0] == 1
+    assert con.execute("SELECT COUNT(*) FROM motion_timeline").fetchone()[0] == 0
+    assert con.execute("SELECT COUNT(*) FROM visit_stats").fetchone()[0] == 1
+    con.close()
+    assert not (orig / "4.jpg").exists()
+    assert not (bundles / "event_12.tar").exists()

@@ -1,5 +1,6 @@
 """Live view tab UI, door actions, last events."""
 
+import asyncio
 import os
 import pandas as pd
 from datetime import datetime, timedelta
@@ -19,6 +20,7 @@ from src.baseconfig import (
 from src.helper import (
     DateTimeUtil,
     EventType,
+    Result,
 )
 from src.database import (
     CatsRepo,
@@ -315,6 +317,59 @@ def _parse_cat_location_input(payload) -> tuple[int | None, str | None]:
     if direction not in ("in", "out"):
         return None, None
     return cat_id, direction
+
+
+_EVENT_TABLE_COLUMNS = 5
+_MAX_BULK_DELETE = 2000
+
+
+def _event_select_bar_html(panel_prefix: str) -> str:
+    """Selection toolbar rendered above an event table. Not a Shiny input."""
+    scope = html_module.escape(panel_prefix, quote=True)
+    select_all = html_module.escape(_("Select all"), quote=True)
+    count_one = html_module.escape(_("1 selected"), quote=True)
+    count_many = html_module.escape(_("{} selected"), quote=True)
+    clear_label = html_module.escape(_("Clear"), quote=True)
+    delete_label = html_module.escape(_("Delete"), quote=True)
+    return (
+        f'<div class="kh-event-list" data-kh-event-scope="{scope}">'
+        '<div class="kh-event-select-bar" '
+        f'data-count-one="{count_one}" data-count-many="{count_many}" '
+        f'data-label-all="{select_all}">'
+        '<label class="kh-event-select-all">'
+        f'<input type="checkbox" class="kh-event-select-all-input" aria-label="{select_all}">'
+        f'<span class="kh-event-select-count">{select_all}</span>'
+        "</label>"
+        '<button type="button" class="btn btn-sm btn-outline-secondary kh-event-select-clear" hidden>'
+        f"{clear_label}</button>"
+        '<button type="button" class="btn btn-sm btn-danger kh-event-delete-selected" hidden disabled>'
+        f"{delete_label}</button>"
+        "</div>"
+    )
+
+
+def _sanitize_block_ids(raw, limit: int = _MAX_BULK_DELETE) -> tuple[list[int], bool]:
+    """Return ``(ids, too_many)``. Non-integers and non-positive ids are dropped."""
+    if isinstance(raw, dict):
+        raw = list(raw.values())
+    elif isinstance(raw, (str, int)):
+        raw = [raw]
+    elif not isinstance(raw, (list, tuple)):
+        return [], False
+    seen: set[int] = set()
+    out: list[int] = []
+    for item in raw:
+        try:
+            bid = int(item)
+        except (TypeError, ValueError):
+            continue
+        if bid <= 0 or bid in seen:
+            continue
+        seen.add(bid)
+        out.append(bid)
+        if len(out) > limit:
+            return [], True
+    return out, False
 
 
 def register_live_view(input, output, session, ctx: SessionContext):
@@ -659,7 +714,7 @@ def register_live_view(input, output, session, ctx: SessionContext):
                     ),
                     ui.output_ui("ui_last_events_table"),
                     full_screen=False,
-                    class_="generic-container",
+                    class_="generic-container kh-event-list-card",
                     style_="margin-bottom: 40px;",
                     min_height="150px",
                 ),
@@ -753,6 +808,139 @@ def register_live_view(input, output, session, ctx: SessionContext):
             CONFIG["MOUSE_THRESHOLD"],
             panel_prefix="photos",
         )
+
+    _pending_delete_ids: list[int] = []
+    _delete_busy = [False]
+
+    def _finish_bulk_delete_ui(ok: bool, block_ids: list[int] | None = None):
+        # send_custom_message is async. Calling it without scheduling the
+        # coroutine drops the message, and the browser keeps Delete disabled.
+        payload = {
+            "ok": bool(ok),
+            "block_ids": [int(block_id) for block_id in (block_ids or [])],
+        }
+
+        async def _notify():
+            try:
+                await session.send_custom_message(
+                    "events-bulk-delete-finished", payload
+                )
+            except Exception as exc:
+                logging.debug(
+                    "Could not notify the browser about event delete: %s", exc
+                )
+
+        try:
+            asyncio.get_running_loop().create_task(_notify())
+        except RuntimeError:
+            logging.debug("No running loop; cannot notify the browser about event delete")
+
+    # No ignore_init: this input does not exist until the browser sends it, so
+    # the first value is the click. ignore_init would swallow that click.
+    # ignore_none (the default) still skips a missing value.
+    @reactive.effect
+    @reactive.event(input.events_bulk_delete)
+    def _request_bulk_delete():
+        if _delete_busy[0]:
+            return
+        payload = input.events_bulk_delete()
+        if not isinstance(payload, dict):
+            _finish_bulk_delete_ui(False)
+            return
+        ids, too_many = _sanitize_block_ids(payload.get("block_ids"))
+        if too_many:
+            _pending_delete_ids.clear()
+            ui.notification_show(
+                _("Too many events selected. Select fewer and try again."),
+                duration=5,
+                type="warning",
+            )
+            _finish_bulk_delete_ui(False)
+            return
+        if not ids:
+            _finish_bulk_delete_ui(False)
+            return
+        _pending_delete_ids.clear()
+        _pending_delete_ids.extend(ids)
+        count = len(ids)
+        if count == 1:
+            body = _("Delete this event and all its pictures?")
+            title = _("Delete event")
+        else:
+            body = _("Delete these {} events and all their pictures?").format(count)
+            title = _("Delete events")
+        ui.modal_remove()
+        ui.modal_show(
+            ui.modal(
+                body,
+                title=title,
+                easy_close=False,
+                footer=ui.div(
+                    ui.input_action_button(
+                        "btn_modal_delete_selected_events_ok",
+                        _("Delete"),
+                        class_="btn-danger",
+                    ),
+                    ui.input_action_button("btn_modal_cancel", _("Cancel")),
+                ),
+            )
+        )
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_cancel)
+    def _cancel_bulk_delete():
+        if _delete_busy[0] or not _pending_delete_ids:
+            return
+        _pending_delete_ids.clear()
+        ui.modal_remove()
+        _finish_bulk_delete_ui(False)
+
+    @reactive.effect
+    @reactive.event(input.btn_modal_delete_selected_events_ok)
+    async def _confirm_bulk_delete():
+        if _delete_busy[0]:
+            return
+        ids = list(_pending_delete_ids)
+        if not ids:
+            ui.modal_remove()
+            _finish_bulk_delete_ui(False)
+            return
+        _delete_busy[0] = True
+        _pending_delete_ids.clear()
+        try:
+            result = await asyncio.to_thread(
+                EventsRepo.delete_photos_by_block_ids,
+                CONFIG["KITTYHACK_DATABASE_PATH"],
+                ids,
+            )
+        except Exception as exc:
+            logging.error("Bulk event delete failed: %s", exc)
+            result = Result(False, str(exc))
+        finally:
+            _delete_busy[0] = False
+        ui.modal_remove()
+        if result.success:
+            try:
+                deleted = int(result.message)
+            except (TypeError, ValueError):
+                deleted = len(ids)
+            if deleted == 1:
+                message = _("Event deleted.")
+            elif deleted > 1:
+                message = _("{} events deleted.").format(deleted)
+            else:
+                message = None
+            if message:
+                ui.notification_show(message, duration=3, type="message")
+            reload_trigger_photos.set(reload_trigger_photos.get() + 1)
+            _finish_bulk_delete_ui(True, ids)
+            return
+        ui.notification_show(
+            _("Events could not be deleted. Try again."),
+            duration=5,
+            type="error",
+        )
+        _finish_bulk_delete_ui(False)
 
     def get_events_table_html(
         block_count=0,
@@ -936,14 +1124,18 @@ def register_live_view(input, output, session, ctx: SessionContext):
                 }
 
                 # Start building the HTML table
-            html = '<table class="dataframe shiny-table table w-100">'
+            html = _event_select_bar_html(panel_prefix)
+            html += '<table class="dataframe shiny-table table w-100">'
             html += "<tbody>"
 
             # Iterate through the events and add date rows when the date changes
             last_date = None
             for idx, row in df_events.iterrows():
                 if row["date_display"] != last_date:
-                    html += f'<tr class="date-separator-row"><td colspan="4" class="event-date-separator">{row["date_display"]}</td></tr>'
+                    html += (
+                        f'<tr class="date-separator-row"><td colspan="{_EVENT_TABLE_COLUMNS}" '
+                        f'class="event-date-separator">{row["date_display"]}</td></tr>'
+                    )
                     last_date = row["date_display"]
 
                 event_info = event_icons[idx]
@@ -959,10 +1151,21 @@ def register_live_view(input, output, session, ctx: SessionContext):
                 timeline_html = timeline_entries_to_html(
                     timeline_entries, CONFIG["TIMEZONE"]
                 )
+                select_label = html_module.escape(
+                    _("Select event at {}").format(row["time"]),
+                    quote=True,
+                )
                 html += (
                     f'<tr class="event-data-row kh-event-row-toggle" data-kh-panel-id="{panel_id}" '
-                    f'role="button" tabindex="0" aria-expanded="false" aria-controls="{panel_id}" '
+                    f'tabindex="0" aria-expanded="false" aria-controls="{panel_id}" '
                     f'title="{event_row_title}">'
+                )
+                html += (
+                    f'<td class="event-select-cell">'
+                    f'<label class="kh-event-select-label">'
+                    f'<input type="checkbox" class="kh-event-select" data-block-id="{block_id}" '
+                    f'aria-label="{select_label}">'
+                    f"</label></td>"
                 )
                 html += f"<td>{row['time']}</td>"
                 html += (
@@ -978,12 +1181,12 @@ def register_live_view(input, output, session, ctx: SessionContext):
                 html += "</tr>"
                 html += (
                     f'<tr class="event-timeline-row">'
-                    f'<td colspan="4" class="event-timeline-row-cell">'
+                    f'<td colspan="{_EVENT_TABLE_COLUMNS}" class="event-timeline-row-cell">'
                     f'<div class="event-timeline-panel collapse" id="{panel_id}">{timeline_html}</div>'
                     f"</td></tr>"
                 )
 
-            html += "</tbody></table>"
+            html += "</tbody></table></div>"
             return ui.HTML(html)
         except Exception as e:
             logging.error(f"Failed to read events from the database: {e}")

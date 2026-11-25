@@ -40,6 +40,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route, Router
 
 from src.paths import kittyhack_root
+from src.runtime_flags import PROCESS_INSTANCE_ID
 
 
 TOKEN_FILE = os.path.join(kittyhack_root(), "api_tokens.json")
@@ -482,6 +483,58 @@ async def events_list(request: Request):
 # ---------------------------------------------------------------------------
 
 
+def instance_status() -> dict[str, str]:
+    """Process id and version for the open page to compare after a disconnect.
+
+    Unauthenticated on purpose: the browser calls it before the Shiny socket
+    is opened again, and it exposes only the id already embedded in the page.
+    """
+    version = "unknown"
+    try:
+        from src import startup
+
+        version = str(getattr(startup, "git_version", "") or "unknown")
+    except Exception:
+        logging.debug("[INSTANCE] version unavailable", exc_info=True)
+    return {"id": PROCESS_INSTANCE_ID, "version": version}
+
+
+class HtmlNoStoreMiddleware:
+    """Mark HTML documents ``Cache-Control: no-store``.
+
+    A reload after reboot must receive the new page shell. Images, scripts,
+    and other assets keep the cache headers the inner app set.
+    """
+
+    def __init__(self, asgi_app):
+        self.app = asgi_app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_nostore(message):
+            if message.get("type") == "http.response.start":
+                headers = list(message.get("headers") or [])
+                content_type = ""
+                for key, value in headers:
+                    if key.lower() == b"content-type":
+                        content_type = value.decode("latin-1").split(";", 1)[0].strip().lower()
+                        break
+                if content_type == "text/html":
+                    headers = [
+                        (key, value)
+                        for key, value in headers
+                        if key.lower() not in (b"cache-control", b"pragma", b"expires")
+                    ]
+                    headers.append((b"cache-control", b"no-store"))
+                    message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_nostore)
+
+
 def build_router() -> Router:
     """Build the Starlette Router that the ASGI middleware dispatches to."""
     routes = [
@@ -512,9 +565,10 @@ def build_router() -> Router:
 
 
 class ApiMiddleware:
-    """ASGI middleware that dispatches `/api/v1/*` to the Starlette API router.
+    """ASGI middleware that dispatches `/api/v1/*` and `GET /kh/instance`.
 
-    Non-API requests pass through untouched to the wrapped app (Shiny SPA).
+    `/kh/instance` is unauthenticated. Every other non-API request passes
+    through to the wrapped app (Shiny SPA).
     """
 
     def __init__(self, asgi_app):
@@ -524,7 +578,26 @@ class ApiMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
             path = scope.get("path", "")
+            if path.rstrip("/") == "/kh/instance":
+                await self._serve_instance(scope, receive, send)
+                return
             if path.startswith("/api/"):
                 await self.router(scope, receive, send)
                 return
         await self.app(scope, receive, send)
+
+    async def _serve_instance(self, scope, receive, send):
+        method = str(scope.get("method") or "GET").upper()
+        if method != "GET":
+            response = JSONResponse(
+                {"error": "method_not_allowed"},
+                status_code=405,
+                headers={"Cache-Control": "no-store"},
+            )
+            await response(scope, receive, send)
+            return
+        response = JSONResponse(
+            instance_status(),
+            headers={"Cache-Control": "no-store"},
+        )
+        await response(scope, receive, send)

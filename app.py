@@ -10,7 +10,7 @@ from shiny import App
 from src.ui import app_ui
 from src.server import server
 from src.paths import pictures_thumbnails_dir, pictures_original_dir
-from src.api import ApiMiddleware
+from src.api import ApiMiddleware, HtmlNoStoreMiddleware
 
 path_www = os.path.join(os.path.dirname(__file__), "www")
 path_doc_diagrams = os.path.join(os.path.dirname(__file__), "doc", "diagrams")
@@ -69,7 +69,8 @@ shiny_app = App(
 )
 
 # Middleware chain (outermost first, evaluated top-down on each request):
-#   ApiMiddleware       -> captures /api/v1/* and serves the REST API
+#   ApiMiddleware        -> /api/v1/* and the unauthenticated /kh/instance probe
+#   HtmlNoStoreMiddleware -> Cache-Control: no-store on text/html documents only
 #   TabRoutingMiddleware -> rewrites tab paths (/pictures/..., /system/...) to "/"
-#   shiny_app           -> the SPA + static asset mounts
-app = ApiMiddleware(TabRoutingMiddleware(shiny_app))
+#   shiny_app            -> the SPA + static asset mounts
+app = ApiMiddleware(HtmlNoStoreMiddleware(TabRoutingMiddleware(shiny_app)))

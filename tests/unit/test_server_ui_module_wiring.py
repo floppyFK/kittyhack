@@ -101,6 +101,55 @@ def test_labelstudio_job_is_single_flight():
     assert training._labelstudio_job_is_running() is False
 
 
+def test_update_buttons_ignore_restored_clicks():
+    """A reconnect must not start another update or reboot (commit 0259187)."""
+    info = (SERVER_UI / "info.py").read_text(encoding="utf-8")
+    system = (SERVER_UI / "system_tab.py").read_text(encoding="utf-8")
+    for event in (
+        "input.update_kittyhack, ignore_init=True",
+        "input.update_target_kittyhack, ignore_init=True",
+        "input.update_remote_kittyhack, ignore_init=True",
+        "input.btn_force_update_kittyhack, ignore_init=True",
+    ):
+        assert event in info
+    assert "input.btn_modal_reboot_ok, ignore_init=True" in system
+
+
+def test_reboot_reload_compares_instance_before_reconnect():
+    """A new process reloads the page before Shiny can replay Restart or Update."""
+    ui_py = (ROOT / "src" / "ui.py").read_text(encoding="utf-8")
+    assert 'id="kh_server_instance"' in ui_py or '"kh_server_instance"' in ui_py
+    assert "data-instance" in ui_py
+    app_js = (ROOT / "www" / "app.js").read_text(encoding="utf-8")
+    assert "fetch('/kh/instance'" in app_js
+    fetch_at = app_js.index("fetch('/kh/instance'")
+    assert "cache: 'no-store'" in app_js[fetch_at - 400:fetch_at]
+    assert "originalReconnect()" in app_js
+    assert "if (action !== 'reconnect') return;" in app_js
+    for action_id in (
+        "btn_modal_reboot_ok",
+        "btn_modal_reboot_local_ok",
+        "btn_modal_reboot_target_ok",
+        "btn_modal_shutdown_ok",
+        "btn_modal_shutdown_local_ok",
+        "btn_modal_shutdown_target_ok",
+        "update_kittyhack",
+        "update_target_kittyhack",
+        "update_remote_kittyhack",
+        "btn_force_update_kittyhack",
+        "btn_remote_restart_kittyhack",
+        "bRestartKittyflap",
+        "bTargetRebootKittyflap",
+        "bRemoteReboot",
+        "bShutdownKittyflap",
+        "bTargetShutdownKittyflap",
+        "bRemoteShutdown",
+    ):
+        assert action_id in app_js
+    app_py = (ROOT / "app.py").read_text(encoding="utf-8")
+    assert "HtmlNoStoreMiddleware" in app_py
+
+
 def test_statistics_tab_is_wired():
     """Statistics tab must be registered in nav, routing, and register_all."""
     init = (SERVER_UI / "__init__.py").read_text(encoding="utf-8")

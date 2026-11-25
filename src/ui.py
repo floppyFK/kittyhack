@@ -2,6 +2,7 @@ from shiny import ui
 from faicons import icon_svg
 from pathlib import Path
 from src.baseconfig import CONFIG, set_language
+from src.runtime_flags import PROCESS_INSTANCE_ID
 
 js_file = Path(__file__).parent.parent / "www" / "app.js"
 server_ui_js_file = Path(__file__).parent.parent / "www" / "server-ui.js"
@@ -109,6 +110,13 @@ app_ui = ui.page_fillable(
             "style": "display:none;",
             "data-message": _("Connection lost. Trying to reconnect…"),
             "data-try-now": _("Try now"),
+        }
+    ),
+    ui.tags.div(
+        {
+            "id": "kh_server_instance",
+            "style": "display:none;",
+            "data-instance": PROCESS_INSTANCE_ID,
         }
     ),
     ui.tags.script(src=f"app.js?v={_js_version}", defer=True),

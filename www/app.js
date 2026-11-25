@@ -711,6 +711,8 @@ document.addEventListener("DOMContentLoaded", function() {
     function enableShinyReconnect() {
         const app = getShinyApp();
         if (!app) return;
+        // Install the instance-id gate before Shiny is allowed to reconnect itself.
+        installReconnectGate(app);
         // "force": reconnect even when not hosted on Shiny Server / Posit Connect.
         app.$allowReconnect = 'force';
     }
@@ -721,12 +723,167 @@ document.addEventListener("DOMContentLoaded", function() {
         return !!(sock && sock.readyState === WebSocket.OPEN);
     }
 
+    // Restoring any of these with Shiny.setInputValue({ priority: 'event' })
+    // would reboot, shut down, or start another update. A reconnect used to
+    // replay them and the Kittyflap rebooted until the tab was closed.
+    const KH_ACTION_INPUT_IDS = {
+        btn_modal_reboot_ok: true,
+        btn_modal_reboot_local_ok: true,
+        btn_modal_reboot_target_ok: true,
+        btn_modal_shutdown_ok: true,
+        btn_modal_shutdown_local_ok: true,
+        btn_modal_shutdown_target_ok: true,
+        update_kittyhack: true,
+        update_target_kittyhack: true,
+        update_remote_kittyhack: true,
+        btn_force_update_kittyhack: true,
+        btn_remote_restart_kittyhack: true,
+        bRestartKittyflap: true,
+        bTargetRebootKittyflap: true,
+        bRemoteReboot: true,
+        bShutdownKittyflap: true,
+        bTargetShutdownKittyflap: true,
+        bRemoteShutdown: true
+    };
+    const KH_INSTANCE_RELOAD_KEY = 'kittyhack_instance_reload_v1';
+    let instanceCheckInFlight = null;
+    let instanceRetryTimer = null;
+
+    function isReplayableActionId(id) {
+        return !!(id && KH_ACTION_INPUT_IDS[id]);
+    }
+
+    function embeddedInstanceId() {
+        const el = document.getElementById('kh_server_instance');
+        return (el && el.getAttribute('data-instance')) || '';
+    }
+
+    function instanceReloadAlreadyTried(nextId) {
+        try { return sessionStorage.getItem(KH_INSTANCE_RELOAD_KEY) === nextId; }
+        catch (e) { return false; }
+    }
+
+    function rememberInstanceReload(nextId) {
+        try { sessionStorage.setItem(KH_INSTANCE_RELOAD_KEY, nextId); } catch (e) {}
+    }
+
+    function clearInstanceReloadGuardIfCurrent(embedded) {
+        try {
+            if (sessionStorage.getItem(KH_INSTANCE_RELOAD_KEY) === embedded) {
+                sessionStorage.removeItem(KH_INSTANCE_RELOAD_KEY);
+            }
+        } catch (e) {}
+    }
+
+    function fetchServerInstance() {
+        const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timer = setTimeout(function() {
+            if (controller) {
+                try { controller.abort(); } catch (e) {}
+            }
+        }, 3000);
+        const opts = { cache: 'no-store', headers: { 'Accept': 'application/json' } };
+        if (controller) opts.signal = controller.signal;
+        return fetch('/kh/instance', opts).then(function(response) {
+            clearTimeout(timer);
+            if (response.status === 404) return { missing: true };
+            if (!response.ok) return { down: true };
+            return response.json().then(function(data) {
+                const id = data && data.id ? String(data.id) : '';
+                if (!id) return { missing: true };
+                return { id: id };
+            }, function() { return { missing: true }; });
+        }).catch(function() {
+            clearTimeout(timer);
+            return { down: true };
+        });
+    }
+
+    function reloadForNewInstance(nextId) {
+        if (isNavigatingAway || document.visibilityState !== 'visible') return false;
+        rememberInstanceReload(nextId);
+        const started = attemptReload('server instance changed');
+        if (!started) {
+            try { sessionStorage.removeItem(KH_INSTANCE_RELOAD_KEY); } catch (e) {}
+            return false;
+        }
+        return true;
+    }
+
+    function scheduleInstanceRecheck() {
+        if (instanceRetryTimer) return;
+        instanceRetryTimer = setTimeout(function() {
+            instanceRetryTimer = null;
+            if (isNavigatingAway) return;
+            const app = getShinyApp();
+            if (!app || (typeof app.isConnected === 'function' && app.isConnected())) return;
+            enableShinyReconnect();
+            try { app.reconnect(); } catch (e) {}
+        }, 1000);
+    }
+
+    // 'reconnect' = same process (or no id to compare). 'wait' = device still down.
+    // 'reload' / 'stop' = a new process; do not open the Shiny socket.
+    function reconcileServerInstance(reason) {
+        if (instanceCheckInFlight) return instanceCheckInFlight;
+        const embedded = embeddedInstanceId();
+        if (!embedded) return Promise.resolve('reconnect');
+        instanceCheckInFlight = fetchServerInstance().then(function(result) {
+            if (!result || result.down) return 'wait';
+            if (result.missing || !result.id || result.id === embedded) {
+                if (result && result.id && result.id === embedded) {
+                    clearInstanceReloadGuardIfCurrent(embedded);
+                }
+                return 'reconnect';
+            }
+            if (instanceReloadAlreadyTried(result.id)) return 'stop';
+            if (!reloadForNewInstance(result.id)) return 'wait';
+            return 'reload';
+        }).then(function(action) {
+            if (action === 'wait') scheduleInstanceRecheck();
+            return action;
+        }).catch(function(e) {
+            console.warn('Instance check failed:', reason, e);
+            scheduleInstanceRecheck();
+            return 'wait';
+        }).finally(function() {
+            instanceCheckInFlight = null;
+        });
+        return instanceCheckInFlight;
+    }
+
+    function installReconnectGate(app) {
+        if (!app || app.__khReconnectGated || typeof app.reconnect !== 'function') return;
+        const originalReconnect = app.reconnect.bind(app);
+        app.__khReconnectGated = true;
+        // Shiny's own timer calls reconnect() as soon as the socket drops.
+        // Compare the process id first so a reboot cannot replay Restart or Update.
+        app.reconnect = function() {
+            reconcileServerInstance('reconnect').then(function(action) {
+                if (action !== 'reconnect') return;
+                const sock = app.$socket;
+                const pending = sock && (
+                    sock.readyState === WebSocket.CONNECTING ||
+                    sock.readyState === WebSocket.OPEN
+                );
+                if (pending) return;
+                if (typeof app.isConnected === 'function' && app.isConnected()) return;
+                scheduleFormRestore('reconnect');
+                try {
+                    originalReconnect();
+                } catch (e) {
+                    console.warn('Shiny reconnect failed:', e);
+                }
+            });
+        };
+    }
+
     function snapshotUnsavedInputs() {
         const data = {};
         const nodes = document.querySelectorAll('input, select, textarea');
         for (let i = 0; i < nodes.length; i++) {
             const el = nodes[i];
-            if (!el.id) continue;
+            if (!el.id || isReplayableActionId(el.id)) continue;
             const type = (el.type || '').toLowerCase();
             if (type === 'button' || type === 'submit' || type === 'reset' || type === 'file' || type === 'image') continue;
             if (type === 'checkbox' || type === 'radio') {
@@ -757,6 +914,7 @@ document.addEventListener("DOMContentLoaded", function() {
         if (!snap || !snap.data) return 0;
         let restored = 0;
         Object.keys(snap.data).forEach(function(id) {
+            if (isReplayableActionId(id)) return;
             const item = snap.data[id];
             const el = document.getElementById(id);
             if (!el || !item) return;
@@ -831,8 +989,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (now - lastReconnectAttemptMs < 800) return true;
                 lastReconnectAttemptMs = now;
                 console.log('Shiny reconnect:', reason);
+                // app.reconnect is gated: it fetches /kh/instance before opening a socket.
                 app.reconnect();
-                scheduleFormRestore(reason);
                 return true;
             }
         } catch (e) {
@@ -842,6 +1000,13 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     function probeShinySocket(reason) {
+        // A rebooted process must reload before this probe opens a new socket.
+        reconcileServerInstance(reason).then(function(action) {
+            if (action === 'reconnect') probeOpenShinySocket(reason);
+        });
+    }
+
+    function probeOpenShinySocket(reason) {
         enableShinyReconnect();
         const app = getShinyApp();
         if (!app) return;
@@ -861,6 +1026,7 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
+    clearInstanceReloadGuardIfCurrent(embeddedInstanceId());
     enableShinyReconnect();
     (function pollEnableReconnect() {
         let tries = 0;
@@ -914,19 +1080,21 @@ document.addEventListener("DOMContentLoaded", function() {
 
         if (!options.allowWhenNavigatingAway && isNavigatingAway) {
             console.warn('[ReloadDebug] suppressed (navigating away)');
-            return;
+            return false;
         }
         if (!options.allowWhenHidden && document.visibilityState !== 'visible') {
             console.warn('[ReloadDebug] suppressed (page hidden)');
-            return;
+            return false;
         }
         snapshotUnsavedInputs();
         try { sessionStorage.setItem(KH_RESTORE_FLAG_KEY, '1'); } catch (e) {}
         // Persist the active tab so the reload lands on the same view.
+        // kittyhack_power_action_v1 stays set: tabToPersist() uses it to open Live view.
         if (typeof window.__kh_saveActiveTab === 'function') {
             try { window.__kh_saveActiveTab(); } catch (e) {}
         }
         location.reload();
+        return true;
     }
 
     // Print previous reload attempt on load (helps on Android after the page already reloaded)
@@ -1172,7 +1340,9 @@ document.addEventListener("DOMContentLoaded", function() {
             isNavigatingAway = false;
             isPageHidden = (document.visibilityState !== 'visible');
             if (e.persisted) {
-                probeShinySocket('pageshow-bfcache');
+                reconcileServerInstance('pageshow-bfcache').then(function(action) {
+                    if (action === 'reconnect') probeOpenShinySocket('pageshow-bfcache');
+                });
             }
             // Attempt service worker update on HTTPS
             if (navigator.serviceWorker && navigator.serviceWorker.ready) {

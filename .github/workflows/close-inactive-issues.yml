@@ -1,0 +1,34 @@
+name: Close inactive issues
+
+on:
+  schedule:
+    # 06:15 UTC. GitHub may start the run later when Actions is busy.
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  close-inactive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v11
+        with:
+          days-before-issue-stale: 30
+          days-before-issue-close: 0
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          stale-issue-label: stale
+          exempt-issue-labels: no-stale
+          close-issue-reason: not_planned
+          operations-per-run: 200
+          sort-by: updated
+          ascending: true
+          stale-issue-message: |
+            Dieses Issue hatte seit 30 Tagen keine Aktivität und wird geschlossen.
+            Wenn es noch aktuell ist, kannst du es wieder öffnen und kurz kommentieren.
+
+            This issue had no activity for 30 days and is being closed.
+            If it is still relevant, reopen it and leave a short comment.
+          close-issue-message: ""

@@ -103,9 +103,164 @@ fetch_latest_stable_release_tag() {
 # Optional: uninstall mode
 DO_UNINSTALL=false
 
+# Same filesystem as /root/kittyhack, so moving user data is a rename and needs no extra disk space.
+PRESERVE_DIR="/root/kittyhack-setup-preserve"
+
 # Function to check if a service is active
 is_service_active() {
     systemctl is-active --quiet "$1"
+}
+
+# kittyhack_control supervises kittyhack and would start it again, so control goes first.
+# A missing unit is fine. A unit that is still active is not: it keeps the old .venv mapped.
+stop_unit_or_absent() {
+    local unit="$1"
+    if ! systemctl cat "$unit" >/dev/null 2>&1; then
+        echo -e "${GREY}${unit} is not installed. Skipping.${NC}"
+        return 0
+    fi
+    echo -e "${GREY}Stopping ${unit}...${NC}"
+    systemctl stop "$unit" || true
+    if is_service_active "$unit"; then
+        echo -e "${RED}Failed to stop ${unit}. Aborting before any files are removed.${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}${unit} stopped.${NC}"
+    return 0
+}
+
+stop_kittyhack_services() {
+    echo -e "${CYAN}--- Stop kittyhack services ---${NC}"
+    stop_unit_or_absent "kittyhack_control.service" || return 1
+    stop_unit_or_absent "kittyhack.service" || return 1
+    return 0
+}
+
+preserve_message_kept() {
+    if [ "$LANGUAGE" == "de" ]; then
+        echo -e "${YELLOW}Nutzerdaten bleiben erhalten in ${PRESERVE_DIR}.${NC}"
+    else
+        echo -e "${YELLOW}User data is kept in ${PRESERVE_DIR}.${NC}"
+    fi
+}
+
+user_data_names() {
+    printf '%s\n' \
+        kittyhack.db \
+        kittyhack.db-wal \
+        kittyhack.db-shm \
+        kittyhack.db-journal \
+        config.ini \
+        config.remote.ini \
+        notifications.json \
+        api_tokens.json \
+        .remote-mode
+}
+
+# Rename user data out of the install directory. Fails closed: the caller must not delete on error.
+preserve_install_user_data() {
+    local src="$1"
+    local name backup
+
+    echo -e "${GREY}Moving database, configuration, and tokens to ${PRESERVE_DIR}...${NC}"
+    if ! mkdir -p "$PRESERVE_DIR"; then
+        echo -e "${RED}Failed to create ${PRESERVE_DIR}. Installation directory was not removed.${NC}"
+        return 1
+    fi
+
+    while IFS= read -r name; do
+        if [[ -e "${src}/${name}" ]]; then
+            if ! mv -f "${src}/${name}" "${PRESERVE_DIR}/${name}"; then
+                echo -e "${RED}Failed to move ${src}/${name}. Installation directory was not removed.${NC}"
+                preserve_message_kept
+                return 1
+            fi
+            echo -e "${GREEN}Moved ${name}.${NC}"
+        fi
+    done < <(user_data_names)
+
+    for backup in "${src}"/kittyhack_backup_*.db; do
+        [[ -e "$backup" ]] || continue
+        if ! mv -f "$backup" "${PRESERVE_DIR}/$(basename "$backup")"; then
+            echo -e "${RED}Failed to move ${backup}. Installation directory was not removed.${NC}"
+            preserve_message_kept
+            return 1
+        fi
+        echo -e "${GREEN}Moved $(basename "$backup").${NC}"
+    done
+    # Nothing to keep (or an older preserve dir is still populated): drop an empty directory
+    # so a later clone failure does not claim that user data was saved.
+    rmdir "$PRESERVE_DIR" 2>/dev/null || true
+    return 0
+}
+
+# Move preserved files back. Each preserve entry is removed only after its mv succeeds.
+restore_install_user_data() {
+    local dest="$1"
+    local name backup
+
+    [[ -d "$PRESERVE_DIR" ]] || return 0
+    if [[ ! -d "$dest" ]]; then
+        echo -e "${RED}Install directory ${dest} does not exist. User data was not moved back.${NC}"
+        preserve_message_kept
+        return 1
+    fi
+
+    echo -e "${GREY}Restoring database, configuration, and tokens...${NC}"
+    while IFS= read -r name; do
+        if [[ -e "${PRESERVE_DIR}/${name}" ]]; then
+            if ! mv -f "${PRESERVE_DIR}/${name}" "${dest}/${name}"; then
+                echo -e "${RED}Failed to restore ${name}.${NC}"
+                preserve_message_kept
+                return 1
+            fi
+            echo -e "${GREEN}Restored ${name}.${NC}"
+        fi
+    done < <(user_data_names)
+
+    for backup in "${PRESERVE_DIR}"/kittyhack_backup_*.db; do
+        [[ -e "$backup" ]] || continue
+        if ! mv -f "$backup" "${dest}/$(basename "$backup")"; then
+            echo -e "${RED}Failed to restore $(basename "$backup").${NC}"
+            preserve_message_kept
+            return 1
+        fi
+        echo -e "${GREEN}Restored $(basename "$backup").${NC}"
+    done
+    rmdir "$PRESERVE_DIR" 2>/dev/null || true
+    return 0
+}
+
+purge_download_caches() {
+    echo -e "${GREY}Removing pip and uv download caches...${NC}"
+    rm -rf /root/.cache/pip /root/.cache/uv
+}
+
+# --use-local-sources keeps the tree. Drop only the spare venvs and download caches.
+free_stale_runtime_files() {
+    local root="$1"
+    echo -e "${GREY}Removing ${root}/.venv.new and ${root}/.venv.old if present...${NC}"
+    rm -rf "${root}/.venv.new" "${root}/.venv.old"
+    purge_download_caches
+}
+
+# Stop services, move user data aside, then delete the install directory.
+replace_install_dir() {
+    local dir="$1"
+    if ! stop_kittyhack_services; then
+        return 1
+    fi
+    if ! preserve_install_user_data "$dir"; then
+        return 1
+    fi
+    echo -e "${GREY}Removing ${dir}...${NC}"
+    if ! rm -rf "$dir"; then
+        echo -e "${RED}Failed to remove ${dir}.${NC}"
+        preserve_message_kept
+        return 1
+    fi
+    echo -e "${GREEN}Removed ${dir}.${NC}"
+    return 0
 }
 
 # Function to check if a line in crontab is already commented
@@ -302,17 +457,8 @@ install_full() {
         echo -e "${GREEN}Internet connection is active.${NC}"
     fi
 
-    echo -e "${CYAN}--- BASE INSTALL Step 1: Stop kittyhack service ---${NC}"
-    if systemctl is-active --quiet kittyhack.service; then
-        systemctl stop kittyhack.service
-        if systemctl is-active --quiet kittyhack.service; then
-            ((FAIL_COUNT++))
-            echo -e "${RED}Failed to stop KittyHack service.${NC}"
-        else
-            echo -e "${GREEN}KittyHack service stopped successfully.${NC}"
-        fi
-    else
-            echo -e "${GREY}KittyHack service is already inactive.${NC}"
+    if ! stop_kittyhack_services; then
+        return 1
     fi
 
     echo -e "${CYAN}--- BASE INSTALL Step 2: Disable unwanted services ---${NC}"
@@ -652,7 +798,7 @@ install_full() {
         echo -e "${YELLOW}OpenCV runtime libs may be missing (libGL.so.1 not found in ldconfig).${NC}"
     fi
 
-    install_kittyhack
+    install_kittyhack || return 1
 }
 
 # Remote-mode installation (e.g. amd64 Debian): no Raspberry Pi camera steps.
@@ -707,6 +853,10 @@ install_remote_mode() {
             ;;
     esac
 
+    if ! stop_kittyhack_services; then
+        return 1
+    fi
+
     # Determine source/install directory for remote mode.
     if $USE_LOCAL_SOURCES; then
         if [[ -z "$KITTYHACK_ROOT" || "$KITTYHACK_ROOT" == "/" ]]; then
@@ -722,14 +872,21 @@ install_remote_mode() {
         KITTYHACK_INSTALL_DIR="/root/kittyhack"
         echo -e "${CYAN}--- REMOTE MODE INSTALL: Clone KittyHack repository ---${NC}"
         if [[ -d "${KITTYHACK_INSTALL_DIR}" ]]; then
-            rm -rf "${KITTYHACK_INSTALL_DIR}"
+            if ! replace_install_dir "${KITTYHACK_INSTALL_DIR}"; then
+                return 1
+            fi
         fi
+        purge_download_caches
         if ! git clone https://github.com/floppyFK/kittyhack.git "${KITTYHACK_INSTALL_DIR}" --quiet; then
             echo -e "${RED}Failed to clone the repository. Please check your internet connection.${NC}"
-            exit 1
+            if [[ -d "${PRESERVE_DIR}" ]]; then
+                preserve_message_kept
+            fi
+            return 1
         fi
 
         local remote_git_ref=""
+        local checkout_ok=true
         if [[ -n "$KITTYHACK_VERSION_REF" ]]; then
             remote_git_ref="$KITTYHACK_VERSION_REF"
             echo -e "${GREY}Using requested version ref: ${remote_git_ref}${NC}"
@@ -745,8 +902,14 @@ install_remote_mode() {
         if [[ -n "$remote_git_ref" ]]; then
             if ! git -C "${KITTYHACK_INSTALL_DIR}" checkout "$remote_git_ref" --quiet; then
                 echo -e "${RED}Failed to checkout ${remote_git_ref}.${NC}"
-                exit 1
+                checkout_ok=false
             fi
+        fi
+        if ! restore_install_user_data "${KITTYHACK_INSTALL_DIR}"; then
+            return 1
+        fi
+        if [[ "$checkout_ok" == false ]]; then
+            return 1
         fi
     fi
     echo -e "${CYAN}Kittyhack path: ${KITTYHACK_INSTALL_DIR}${NC}"
@@ -764,6 +927,9 @@ install_remote_mode() {
 
     echo -e "${CYAN}--- REMOTE MODE INSTALL Step 2: Create virtualenv + install Python deps ---${NC}"
     cd "$KITTYHACK_INSTALL_DIR" || exit 1
+    if $USE_LOCAL_SOURCES; then
+        free_stale_runtime_files "${KITTYHACK_INSTALL_DIR}"
+    fi
     if ! bash "${KITTYHACK_INSTALL_DIR}/setup/ensure_venv.sh" \
         --bootstrap \
         --root "${KITTYHACK_INSTALL_DIR}" \
@@ -864,20 +1030,11 @@ install_update() {
         echo -e "${GREEN}Internet connection is active.${NC}"
     fi
 
-    echo -e "${CYAN}--- Stop kittyhack service ---${NC}"
-    if systemctl is-active --quiet kittyhack.service; then
-        systemctl stop kittyhack.service
-        if systemctl is-active --quiet kittyhack.service; then
-            ((FAIL_COUNT++))
-            echo -e "${RED}Failed to stop KittyHack service.${NC}"
-        else
-            echo -e "${GREEN}KittyHack service stopped successfully.${NC}"
-        fi
-    else
-            echo -e "${GREY}KittyHack service is already inactive.${NC}"
+    if ! stop_kittyhack_services; then
+        return 1
     fi
 
-    install_kittyhack
+    install_kittyhack || return 1
 }
 
 install_kittyhack() {
@@ -892,6 +1049,10 @@ install_kittyhack() {
             return 1
         fi
 
+        if ! stop_kittyhack_services; then
+            return 1
+        fi
+
         # Best-effort: if an old /root/kittyhack exists, import its config/db if local ones don't exist.
         if [[ -d /root/kittyhack && "${KITTYHACK_INSTALL_DIR}" != "/root/kittyhack" ]]; then
             [ -f /root/kittyhack/config.ini ] && [ ! -f "${KITTYHACK_INSTALL_DIR}/config.ini" ] && cp /root/kittyhack/config.ini "${KITTYHACK_INSTALL_DIR}/config.ini" || true
@@ -902,26 +1063,23 @@ install_kittyhack() {
         KITTYHACK_INSTALL_DIR="/root/kittyhack"
         echo -e "${CYAN}--- KITTYHACK INSTALL Step 1: Clone KittyHack repository ---${NC}"
         if [[ -d "${KITTYHACK_INSTALL_DIR}" ]]; then
-            echo -e "${GREY}Existing KittyHack repository found. Backing up database and config.ini...${NC}"
-
-            # Backup important files if they exist
-            [ -f "${KITTYHACK_INSTALL_DIR}/config.ini" ] && cp "${KITTYHACK_INSTALL_DIR}/config.ini" /tmp/config.ini.bak
-            [ -f "${KITTYHACK_INSTALL_DIR}/config.remote.ini" ] && cp "${KITTYHACK_INSTALL_DIR}/config.remote.ini" /tmp/config.remote.ini.bak
-            [ -f "${KITTYHACK_INSTALL_DIR}/kittyhack.db" ] && cp "${KITTYHACK_INSTALL_DIR}/kittyhack.db" /tmp/kittyhack.db.bak
-
-            # Remove old repository
-            echo -e "${GREY}removing kittyhack installation...${NC}"
-            rm -rf "${KITTYHACK_INSTALL_DIR}"
+            if ! replace_install_dir "${KITTYHACK_INSTALL_DIR}"; then
+                return 1
+            fi
+        elif ! stop_kittyhack_services; then
+            return 1
         fi
 
+        purge_download_caches
         echo -e "${GREY}Cloning KittyHack repository...${NC}"
-        git clone https://github.com/floppyFK/kittyhack.git "${KITTYHACK_INSTALL_DIR}" --quiet
-        if [[ $? -eq 0 ]]; then
-            echo -e "${GREEN}Repository cloned successfully.${NC}"
-        else
-            ((FAIL_COUNT++))
+        if ! git clone https://github.com/floppyFK/kittyhack.git "${KITTYHACK_INSTALL_DIR}" --quiet; then
             echo -e "${RED}Failed to clone the repository. Please check your internet connection.${NC}"
+            if [[ -d "${PRESERVE_DIR}" ]]; then
+                preserve_message_kept
+            fi
+            return 1
         fi
+        echo -e "${GREEN}Repository cloned successfully.${NC}"
     fi
 
     if $USE_LOCAL_SOURCES; then
@@ -960,15 +1118,10 @@ install_kittyhack() {
         echo -e "${RED}Failed to fetch tags. Please check your internet connection.${NC}"
     fi
     
-    # Restore backed up files if they exist
-    if [ -f /tmp/config.ini.bak ]; then
-        cp /tmp/config.ini.bak "${KITTYHACK_INSTALL_DIR}/config.ini" && rm -f /tmp/config.ini.bak
-    fi
-    if [ -f /tmp/config.remote.ini.bak ]; then
-        cp /tmp/config.remote.ini.bak "${KITTYHACK_INSTALL_DIR}/config.remote.ini" && rm -f /tmp/config.remote.ini.bak
-    fi
-    if [ -f /tmp/kittyhack.db.bak ]; then
-        cp /tmp/kittyhack.db.bak "${KITTYHACK_INSTALL_DIR}/kittyhack.db" && rm -f /tmp/kittyhack.db.bak
+    if ! $USE_LOCAL_SOURCES; then
+        if ! restore_install_user_data "${KITTYHACK_INSTALL_DIR}"; then
+            return 1
+        fi
     fi
 
     # Set configured UI language based on the setup language.
@@ -978,6 +1131,10 @@ install_kittyhack() {
     # and the driver debs must be in place before kittyhack_control starts the camera.
     if [[ "${INSTALL_CAMERA_DRIVERS:-false}" == true ]]; then
         reinstall_camera_drivers || ((FAIL_COUNT++))
+    fi
+
+    if $USE_LOCAL_SOURCES; then
+        free_stale_runtime_files "${KITTYHACK_INSTALL_DIR}"
     fi
 
     echo -e "${CYAN}--- KITTYHACK INSTALL Step 2: Set up Python virtual environment ---${NC}"
@@ -1077,7 +1234,7 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
     systemctl enable kittyhack_control.service
-    systemctl start kittyhack_control.service
+    systemctl restart kittyhack_control.service
     if systemctl is-active --quiet kittyhack_control.service; then
         echo -e "${GREEN}kittyhack_control service installed and started successfully.${NC}"
     else

@@ -1,0 +1,48 @@
+name: Allgemeine Frage
+description: Frage, Hinweis oder anderes Thema, das kein Fehler und kein Feature-Wunsch ist.
+title: "[Allgemein] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Hinweis
+
+        Bei Rückfragen bitte immer direkt über GitHub im Issue antworten und **nicht** per Mail.
+        Anhänge aus E-Mail-Antworten werden von GitHub nicht übernommen. Bitte lade Dateien und Screenshots direkt hier im Formular hoch.
+
+  - type: textarea
+    id: topic
+    attributes:
+      label: Worum geht es?
+      description: Kurz das Thema.
+      placeholder: z. B. Frage zur Konfiguration
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Was möchtest du wissen oder besprechen?
+      description: Deine Frage oder der Hinweis.
+      placeholder: Möglichst konkret beschreiben ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: kittyhack-Version (optional)
+      description: Welche Version ist installiert, falls bekannt?
+      placeholder: z. B. 3.x.x
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Weiterer Kontext (optional)
+      description: Setup oder was du schon versucht hast.
+      placeholder: Zusätzliche Details ...
+    validations:
+      required: false
